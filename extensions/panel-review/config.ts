@@ -9,12 +9,18 @@
  *       { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
  *       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
  *     ],
- *     "maxConcurrency": 4
+ *     "maxConcurrency": 4,
+ *     "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
  *   }
+ *
+ * "synthesis" is required: it picks the model that merges the reviewer
+ * reports into the lead verdict after the panel finishes.
  *
  * With no config file, the built-in low-cost DEFAULT_PANEL is used, filtered
  * to models available in the registry; scoped models and finally the active
- * model are the fallback chain.
+ * model are the fallback chain. Synthesis then runs on the small, fast
+ * DEFAULT_SYNTHESIS model, falling back to the active model when it is
+ * unavailable.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -29,6 +35,9 @@ export const DEFAULT_MAX_CONCURRENCY = 4;
 /** Thinking levels Pi understands; used to validate config entries. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
+/** "provider/model"; extra path segments allowed (e.g. openrouter/moonshotai/kimi-k3). */
+const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
+
 /**
  * Built-in low-cost default panel, used when no panel-review.json exists.
  * Entries are filtered against the model registry at resolution time; at
@@ -39,6 +48,13 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
 	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
 ];
+
+/**
+ * Built-in synthesis model for the no-config path: synthesis merges bounded
+ * reviewer reports, so a small, fast model is enough. Config files must name
+ * their synthesis model explicitly.
+ */
+export const DEFAULT_SYNTHESIS = { model: "openrouter/google/gemini-3.5-flash-lite" } as const;
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 	const dir = env.PI_CODING_AGENT_DIR;
@@ -80,7 +96,7 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 			return { ok: false, error: `Duplicate reviewer label "${r.label}".` };
 		}
 		labels.add(r.label);
-		if (typeof r.model !== "string" || !/^[^/\s]+(\/[^/\s]+)+$/.test(r.model)) {
+		if (typeof r.model !== "string" || !MODEL_ID_RE.test(r.model)) {
 			return {
 				ok: false,
 				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/moonshotai/kimi-k3").`,
@@ -109,7 +125,35 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 		}
 		maxConcurrency = obj.maxConcurrency;
 	}
-	return { ok: true, config: { reviewers, maxConcurrency } };
+	const synthesis = validateSynthesis(obj);
+	if (!synthesis.ok) return synthesis;
+	return { ok: true, config: { reviewers, maxConcurrency, synthesis: synthesis.spec } };
+}
+
+function validateSynthesis(obj: Record<string, unknown>): { ok: true; spec: { model: string; thinking?: string } } | { ok: false; error: string } {
+	if (typeof obj.synthesis !== "object" || obj.synthesis === null || Array.isArray(obj.synthesis)) {
+		return {
+			ok: false,
+			error: '"synthesis" is required: {"model": "provider/model", "thinking"?} — the model that merges reviewer reports into the verdict.',
+		};
+	}
+	const s = obj.synthesis as Record<string, unknown>;
+	if (typeof s.model !== "string" || !MODEL_ID_RE.test(s.model)) {
+		return {
+			ok: false,
+			error: `"synthesis.model" must be "provider/model" (extra path segments allowed), got ${JSON.stringify(s.model)}.`,
+		};
+	}
+	if (
+		s.thinking !== undefined &&
+		(typeof s.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(s.thinking))
+	) {
+		return {
+			ok: false,
+			error: `"synthesis.thinking" must be one of ${THINKING_LEVELS.join(", ")}, got ${JSON.stringify(s.thinking)}.`,
+		};
+	}
+	return { ok: true, spec: { model: s.model, thinking: s.thinking as string | undefined } };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
@@ -147,6 +191,46 @@ export interface ResolveDeps {
 export type ReviewerResolution =
 	| { ok: true; reviewers: ReviewerSpec[]; maxConcurrency: number; warnings: string[] }
 	| { ok: false; error: string };
+
+export type SynthesisResolution =
+	| { ok: true; model: string; thinking?: string; source: "config" | "default" | "active"; warnings: string[] }
+	| { ok: false; error: string };
+
+/**
+ * Resolve the synthesis model. With a config file the required "synthesis"
+ * entry must be available (hard error otherwise, matching reviewer policy).
+ * Without one, the built-in small, fast DEFAULT_SYNTHESIS model is used,
+ * falling back to the active model with a warning.
+ */
+export function resolveSynthesisModel(config: PanelConfig | null, deps: ResolveDeps): SynthesisResolution {
+	const warnings: string[] = [];
+	if (config) {
+		const slash = config.synthesis.model.indexOf("/");
+		if (!deps.find(config.synthesis.model.slice(0, slash), config.synthesis.model.slice(slash + 1))) {
+			return {
+				ok: false,
+				error:
+					`Configured synthesis model is unavailable or unauthenticated: ${config.synthesis.model}\n` +
+					"Fix panel-review.json or authenticate the provider.",
+			};
+		}
+		return { ok: true, model: config.synthesis.model, thinking: config.synthesis.thinking, source: "config", warnings };
+	}
+	const slash = DEFAULT_SYNTHESIS.model.indexOf("/");
+	if (deps.find(DEFAULT_SYNTHESIS.model.slice(0, slash), DEFAULT_SYNTHESIS.model.slice(slash + 1))) {
+		return { ok: true, model: DEFAULT_SYNTHESIS.model, source: "default", warnings };
+	}
+	if (deps.activeModel) {
+		warnings.push(`Default synthesis model ${DEFAULT_SYNTHESIS.model} unavailable; using the active model instead.`);
+		return {
+			ok: true,
+			model: `${deps.activeModel.provider}/${deps.activeModel.id}`,
+			source: "active",
+			warnings,
+		};
+	}
+	return { ok: false, error: `No model available for synthesis (${DEFAULT_SYNTHESIS.model} unavailable and no active model).` };
+}
 
 /**
  * Resolve the reviewer panel from config, falling back to scoped models and

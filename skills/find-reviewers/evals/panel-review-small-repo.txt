@@ -1,1 +1,0 @@
-In the repo /Users/krishnan@aaru.com/Code/krishnan-pi-extensions I'm planning a change to the panel-review extension (extensions/panel-review/). Who should review that PR? Keep it read-only.

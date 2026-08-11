@@ -14,8 +14,17 @@ The sessions are linked twice:
 ```text
 /handoff now implement this for teams as well
 /handoff execute phase one of the plan
+/handoff --model anthropic/claude-sonnet-4-5 execute phase one of the plan
+/handoff -m openai/gpt-5.2 fix the flaky test
 /handoff                          # continue from the prior resume point
 ```
+
+`--model` (also `-m` or `--model=provider/model-id`) selects the model for the
+replacement session. It accepts a canonical `provider/model-id`, a unique bare
+model id, or a unique partial id/name match (provider-scoped when the reference
+contains a slash). When model scoping is active (`--models` / `enabledModels`),
+only scoped models are accepted. Without the flag, the replacement session
+starts on the parent session's active model.
 
 The editor opens with a deterministic prompt like:
 
@@ -49,10 +58,12 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 
 - **Reference-only:** no conversation serialization, synthesis call, generated summary, or inherited conversation payload.
 - **On-demand history:** the replacement agent retrieves normalized recent entries or targeted matches through the handoff-specific tools.
+- **Model selection:** `--model` switches to the requested model right before the replacement session is created; without it, the parent session's active model is pinned so the new session starts on it. Both paths use `pi.setModel()` before `ctx.newSession()`, because a brand-new session resolves its model from the configured default. An unknown or ambiguous model reference fails before the editor opens; a requested model without an API key cancels the handoff. Choosing a model also persists it as the configured default, the same as `/model` or `Ctrl+P`.
+- **Model selection limits:** this mechanism works in the default configuration. A startup `pi --model` flag or active model scoping (`--models` / `enabledModels`) takes precedence over it; when that happens the handoff warns about the model the replacement session actually started on instead of claiming the requested one. With scoping active, `--model` only accepts scoped models. Inheritance is best effort: if the parent model cannot be pinned (e.g. its credentials were removed), the handoff proceeds on the configured default and says so.
 - **No model required:** `/handoff` works even when no model is currently selected because the command itself makes no model call.
 - **Persisted sessions only:** ephemeral `--no-session` sessions are rejected because they have no durable history artifact for the next agent to inspect.
 - **Interactive only:** the command requires TUI mode so the user can edit the continuation prompt.
-- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active.
+- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active. If an explicit `--model` switch was already applied, it is rolled back on the parent session when the replacement is cancelled or fails.
 
 ## Tests
 
@@ -60,4 +71,4 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 node --test extensions/handoff/*.test.ts
 ```
 
-The tests verify the deterministic prompt, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, cancellation paths, and stale-context safety without making any model calls.
+The tests verify the deterministic prompt, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, cancellation paths, stale-context safety, model flag parsing, model resolution, inheritance, explicit model switching, model restoration on cancelled or failed handoffs, scoped-model validation, and override detection without making any model calls.

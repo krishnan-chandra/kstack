@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DEFAULT_PANEL, modelCliId, resolveReviewers, validateConfig } from "./config.ts";
+import { DEFAULT_PANEL, DEFAULT_SYNTHESIS, modelCliId, resolveReviewers, resolveSynthesisModel, validateConfig } from "./config.ts";
 
 describe("validateConfig", () => {
 	it("accepts a valid config", () => {
@@ -10,9 +10,11 @@ describe("validateConfig", () => {
 				{ label: "B", model: "openai/gpt-5.4" },
 			],
 			maxConcurrency: 2,
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
 		});
 		assert.ok(r.ok);
 		assert.equal(r.config.maxConcurrency, 2);
+		assert.equal(r.config.synthesis.model, "openrouter/google/gemini-3.5-flash-lite");
 	});
 	it("rejects 1 or 5+ reviewers", () => {
 		assert.ok(!validateConfig({ reviewers: [{ label: "A", model: "a/b" }] }).ok);
@@ -46,9 +48,11 @@ describe("validateConfig", () => {
 				{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
 				{ label: "sol", model: "openai/gpt-5.6-sol" },
 			],
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
 		});
 		assert.ok(r.ok);
 		assert.equal(r.config.reviewers[0].model, "openrouter/moonshotai/kimi-k3");
+		assert.equal(r.config.synthesis.model, "openrouter/google/gemini-3.5-flash-lite");
 	});
 
 	it("rejects unknown thinking levels", () => {
@@ -65,8 +69,50 @@ describe("validateConfig", () => {
 				{ label: "A", model: "a/b", thinking: "xhigh" },
 				{ label: "B", model: "c/d", thinking: "low" },
 			],
+			synthesis: { model: "a/b" },
 		});
 		assert.ok(good.ok);
+	});
+
+	it("requires a synthesis entry with a valid model", () => {
+		const missing = validateConfig({
+			reviewers: [
+				{ label: "A", model: "a/b" },
+				{ label: "B", model: "c/d" },
+			],
+		});
+		assert.ok(!missing.ok);
+		assert.match(missing.error, /"synthesis" is required/);
+
+		const badModel = validateConfig({
+			reviewers: [
+				{ label: "A", model: "a/b" },
+				{ label: "B", model: "c/d" },
+			],
+			synthesis: { model: "noslash" },
+		});
+		assert.ok(!badModel.ok);
+		assert.match(badModel.error, /synthesis\.model/);
+
+		const badThinking = validateConfig({
+			reviewers: [
+				{ label: "A", model: "a/b" },
+				{ label: "B", model: "c/d" },
+			],
+			synthesis: { model: "a/b", thinking: "banana" },
+		});
+		assert.ok(!badThinking.ok);
+		assert.match(badThinking.error, /synthesis\.thinking/);
+
+		const good = validateConfig({
+			reviewers: [
+				{ label: "A", model: "a/b" },
+				{ label: "B", model: "c/d" },
+			],
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite", thinking: "low" },
+		});
+		assert.ok(good.ok);
+		assert.equal(good.config.synthesis.thinking, "low");
 	});
 });
 
@@ -90,6 +136,7 @@ describe("resolveReviewers", () => {
 				{ label: "B", model: "openai/y" },
 			],
 			maxConcurrency: 4,
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
 		};
 		const ok = resolveReviewers(config, { find: find(["anthropic/x", "openai/y"]), scopedModels: [] });
 		assert.ok(ok.ok);
@@ -172,6 +219,63 @@ describe("resolveReviewers", () => {
 
 	it("errors when no model is available at all", () => {
 		const r = resolveReviewers(null, { find: find([]), scopedModels: [] });
+		assert.ok(!r.ok);
+	});
+});
+
+describe("resolveSynthesisModel", () => {
+	it("uses the configured synthesis model when available", () => {
+		const config = {
+			reviewers: [
+				{ label: "A", model: "anthropic/x" },
+				{ label: "B", model: "openai/y" },
+			],
+			maxConcurrency: 4,
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite", thinking: "low" },
+		};
+		const r = resolveSynthesisModel(config, { find: find(["openrouter/google/gemini-3.5-flash-lite"]), scopedModels: [] });
+		assert.ok(r.ok);
+		assert.equal(r.model, "openrouter/google/gemini-3.5-flash-lite");
+		assert.equal(r.thinking, "low");
+		assert.equal(r.source, "config");
+	});
+
+	it("hard-errors when the configured synthesis model is unavailable", () => {
+		const config = {
+			reviewers: [
+				{ label: "A", model: "anthropic/x" },
+				{ label: "B", model: "openai/y" },
+			],
+			maxConcurrency: 4,
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
+		};
+		const r = resolveSynthesisModel(config, { find: find(["anthropic/x"]), scopedModels: [] });
+		assert.ok(!r.ok);
+		assert.match(r.error, /gemini-3\.5-flash-lite/);
+	});
+
+	it("uses the built-in small, fast default without a config", () => {
+		const r = resolveSynthesisModel(null, { find: find([DEFAULT_SYNTHESIS.model]), scopedModels: [] });
+		assert.ok(r.ok);
+		assert.equal(r.model, DEFAULT_SYNTHESIS.model);
+		assert.equal(r.source, "default");
+		assert.equal(r.warnings.length, 0);
+	});
+
+	it("falls back to the active model with a warning when the default is unavailable", () => {
+		const r = resolveSynthesisModel(null, {
+			find: find([]),
+			scopedModels: [],
+			activeModel: { provider: "anthropic", id: "current" },
+		});
+		assert.ok(r.ok);
+		assert.equal(r.model, "anthropic/current");
+		assert.equal(r.source, "active");
+		assert.ok(r.warnings.some((w) => w.includes(DEFAULT_SYNTHESIS.model)));
+	});
+
+	it("errors when neither the default nor an active model exists", () => {
+		const r = resolveSynthesisModel(null, { find: find([]), scopedModels: [] });
 		assert.ok(!r.ok);
 	});
 });
