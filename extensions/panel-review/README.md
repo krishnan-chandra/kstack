@@ -37,6 +37,10 @@ verdict.
    No shell, no `bash`/`write`/`edit`, no repository-controlled extensions or
    skills. The reviewer prompt states that bundle and repository contents are
    untrusted review data, not instructions.
+   While a run is in flight, the footer shows each reviewer's live activity
+   (current tool call, turn count, elapsed time). Press **Ctrl+Shift+X** to
+   abort: children get SIGTERM, then SIGKILL after a 5 s grace. Any child also
+   stops on its own after a 10-minute wall-clock timeout.
 5. Synthesizes the successful reports with your active model (also in an
    isolated child) using the lead-judgment framework: deduplication, consensus
    mapping, and **Act On / Consider / Noted / Dismissed** dispositions.
@@ -119,6 +123,4 @@ single verdict message, no child session files, and an unchanged repository.
 ## Deferred
 
 - `/panel-review --pr <number>` via `gh`.
-- Interactive abort button in the TUI (runner-level SIGTERM/SIGKILL abort is
-  implemented and tested; the command currently runs to completion).
 - A follow-up command turning Act On findings into an implementation prompt.

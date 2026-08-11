@@ -59,6 +59,21 @@ interface VerdictDetails {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Set while a panel run (reviewers or synthesis) is in flight.
+	let activeAbort: AbortController | undefined;
+
+	pi.registerShortcut("ctrl+shift+x", {
+		description: "Abort the running panel review",
+		handler: async (ctx) => {
+			if (activeAbort && !activeAbort.signal.aborted) {
+				activeAbort.abort();
+				ctx.ui.setStatus("panel-review", "panel-review: aborting (SIGTERM, SIGKILL after grace)…");
+			} else {
+				ctx.ui.notify("No panel review is running.", "info");
+			}
+		},
+	});
+
 	pi.registerMessageRenderer("panel-review", (message, { expanded, outputPad }, theme) => {
 		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		const details = message.details as VerdictDetails | undefined;
@@ -131,7 +146,12 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const resolution = resolveReviewers(configLoad.status === "loaded" ? configLoad.config : null, {
-				find: (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
+				find: (provider, modelId) => {
+					const m = ctx.modelRegistry.find(provider, modelId);
+					// find() is catalog-only; require configured auth so unavailable
+					// models are skipped (default panel) or rejected (config) up front.
+					return m && ctx.modelRegistry.hasConfiguredAuth(m) ? m : undefined;
+				},
 				scopedModels: ctx.scopedModels,
 				activeModel: ctx.model,
 			});
@@ -144,6 +164,7 @@ export default function (pi: ExtensionAPI) {
 			let scope: ScopeBundle | undefined;
 			let promptDir: string | undefined;
 			let ticker: ReturnType<typeof setInterval> | undefined;
+			let runAbort: AbortController | undefined;
 			try {
 				scope = collectScope(repoRoot, base, intent);
 				if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
@@ -163,7 +184,8 @@ export default function (pi: ExtensionAPI) {
 						`${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
 						`Reviewers:\n${reviewerList}\n\n` +
 						"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, " +
-						"no extensions or skills). The repository is never modified.",
+						"no extensions or skills). The repository is never modified. " +
+						"Each child times out after 10 min; press Ctrl+Shift+X to abort mid-run.",
 				);
 				if (!confirmed) return;
 
@@ -172,6 +194,8 @@ export default function (pi: ExtensionAPI) {
 				writeFileSync(reviewerPromptFile, assembleReviewerPrompt(), { encoding: "utf8", mode: 0o600 });
 
 				const abort = new AbortController();
+				runAbort = abort;
+				activeAbort = abort;
 				const task = `Review the bundle at ${scope.path}.`;
 				const progress = new Map<string, string>();
 				let doneCount = 0;
@@ -273,6 +297,7 @@ export default function (pi: ExtensionAPI) {
 				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });
 			} finally {
 				if (ticker) clearInterval(ticker);
+				if (runAbort && activeAbort === runAbort) activeAbort = undefined;
 				ctx.ui.setStatus("panel-review", undefined);
 				if (scope) {
 					try {

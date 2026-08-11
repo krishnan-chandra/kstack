@@ -104,6 +104,21 @@ describe("readUntracked", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("truncates large files on a UTF-8 boundary without reading them whole", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pr-scope-"));
+		try {
+			// 2-byte chars; a cut at an odd byte lands mid-sequence.
+			writeFileSync(join(dir, "big.txt"), "é".repeat(100));
+			const r = readUntracked(dir, "big.txt", undefined, 51) as { text: string; truncated: boolean };
+			assert.equal(r.truncated, true);
+			assert.ok(Buffer.byteLength(r.text, "utf8") <= 51);
+			assert.ok(!r.text.includes("�")); // no mojibake at the cut
+			assert.equal(r.text, "é".repeat(25)); // 50 bytes, last whole char kept
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("collectScope", () => {

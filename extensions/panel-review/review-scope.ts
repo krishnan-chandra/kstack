@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, lstatSync, mkdtempSync, openSync, readSync, closeSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, openSync, readSync, closeSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { LIMITS, type BaseResolution, type BaseStrategy, type ScopeBundle } from "./types.ts";
@@ -126,9 +126,12 @@ interface Fs {
 	lstatSync: typeof lstatSync;
 	realpathSync: typeof realpathSync;
 	readFileSync: typeof readFileSync;
+	openSync: typeof openSync;
+	readSync: typeof readSync;
+	closeSync: typeof closeSync;
 }
 
-const defaultFs: Fs = { lstatSync, realpathSync, readFileSync };
+const defaultFs: Fs = { lstatSync, realpathSync, readFileSync, openSync, readSync, closeSync };
 
 /** Read an untracked file's text when it is a safe, regular, non-binary file. */
 export function readUntracked(
@@ -154,21 +157,28 @@ export function readUntracked(
 	} catch {
 		return { skipped: "unreadable" };
 	}
+	// Bounded read: files over the cap are read only up to cap + one multibyte
+	// tail, so huge untracked dumps are never loaded whole into memory.
 	let buf: Buffer;
 	try {
-		buf = fsImpl.readFileSync(join(root, relPath)) as unknown as Buffer;
+		if (stat.size > cap) {
+			const fd = fsImpl.openSync(join(root, relPath), "r");
+			try {
+				const tmp = Buffer.alloc(cap + 4);
+				const n = fsImpl.readSync(fd, tmp, 0, tmp.length, 0);
+				buf = tmp.subarray(0, n);
+			} finally {
+				fsImpl.closeSync(fd);
+			}
+		} else {
+			buf = fsImpl.readFileSync(join(root, relPath)) as unknown as Buffer;
+		}
 	} catch {
 		return { skipped: "unreadable" };
 	}
 	if (looksBinary(buf)) return { skipped: "binary" };
-	let truncated = false;
-	if (buf.length > cap) {
-		buf = buf.subarray(0, cap);
-		truncated = true;
-	}
-	// UTF-8 safe truncation: drop a trailing partial multi-byte sequence.
-	let text = buf.toString("utf8");
-	if (truncated) text = text.replace(/[-￿]*$/, (m) => (Buffer.byteLength(m) < m.length * 3 ? "" : m));
+	const truncated = buf.length > cap;
+	const text = truncated ? truncateUtf8(buf.toString("utf8"), cap).text : buf.toString("utf8");
 	return { path: relPath, text, truncated };
 }
 
@@ -297,11 +307,17 @@ export function collectScope(
 
 	const dir = mkdtempSync(join(options.tmpDir ?? tmpdir(), "pi-panel-review-"));
 	const bundlePath = join(dir, "bundle.md");
-	writeFileSync(bundlePath, sections.join(""), { encoding: "utf8", mode: 0o600 });
 	try {
-		chmodSync(bundlePath, 0o600);
-	} catch {
-		/* best effort on non-POSIX filesystems */
+		writeFileSync(bundlePath, sections.join(""), { encoding: "utf8", mode: 0o600 });
+		try {
+			chmodSync(bundlePath, 0o600);
+		} catch {
+			/* best effort on non-POSIX filesystems */
+		}
+	} catch (err) {
+		// Don't leak the mode-0600 temp dir when the bundle write fails.
+		rmSync(dir, { recursive: true, force: true });
+		throw err;
 	}
 
 	const fileCount = (nameStatus.trim() ? nameStatus.trim().split("\n").length : 0) + untracked.length;
@@ -322,14 +338,3 @@ export function collectScope(
 	};
 }
 
-/** Probe helpers kept sync-free for tests that only need parse utilities. */
-export function _probeFd(path: string): Buffer {
-	const fd = openSync(path, "r");
-	try {
-		const buf = Buffer.alloc(8192);
-		const read = readSync(fd, buf, 0, buf.length, 0);
-		return buf.subarray(0, read);
-	} finally {
-		closeSync(fd);
-	}
-}
