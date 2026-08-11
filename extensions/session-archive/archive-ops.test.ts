@@ -1,8 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, readFileSync, symlinkSync } from "node:fs";
-import { basename, join } from "node:path";
-import { archiveCurrentSession, archiveInactiveSession, type FreshSessionHandle } from "./archive-ops.ts";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import {
+	archiveCurrentSession,
+	archiveInactiveSession,
+	archiveInactiveSessions,
+	type FreshSessionHandle,
+} from "./archive-ops.ts";
 import { getSessionRow, openArchiveDb, searchArchive } from "./archive-store.ts";
 import { archiveDestination, hashFile } from "./archive-files.ts";
 import { sha256Hex } from "./session-jsonl.ts";
@@ -335,5 +340,134 @@ describe("archiveInactiveSession", () => {
 			sessionDir: tree.sessionDir,
 		});
 		assert.equal(second.status, "rejected");
+	});
+});
+
+describe("archiveInactiveSessions", () => {
+	const ID_A = "019ff002-aaaa-7aaa-8aaa-aaaaaaaaaaaa";
+	const ID_B = "019ff003-bbbb-7bbb-8bbb-bbbbbbbbbbbb";
+	const ID_C = "019ff004-cccc-7ccc-8ccc-cccccccccccc";
+
+	function writeThree(tree: ReturnType<typeof makeTempTree>) {
+		const a = tree.writeSession(ID_A, richSessionJsonl({ id: ID_A }));
+		const b = tree.writeSession(ID_B, richSessionJsonl({ id: ID_B }));
+		const c = tree.writeSession(ID_C, richSessionJsonl({ id: ID_C }));
+		return [a, b, c];
+	}
+
+	it("archives every candidate in one batch", async () => {
+		const tree = makeTempTree();
+		const sources = writeThree(tree);
+		const outcomes = await archiveInactiveSessions({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sourcePaths: sources,
+			sessionDir: tree.sessionDir,
+		});
+		assert.equal(outcomes.length, 3);
+		assert.ok(outcomes.every((o) => o.result.status === "archived"));
+		assert.ok(sources.every((s) => !existsSync(s)));
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			for (const id of [ID_A, ID_B, ID_C]) {
+				assert.equal(getSessionRow(db, id)?.state, "archived");
+			}
+		} finally {
+			db.close();
+		}
+	});
+
+	it("reports progress for every session in order", async () => {
+		const tree = makeTempTree();
+		const sources = writeThree(tree);
+		const progress: Array<[number, number, string]> = [];
+		await archiveInactiveSessions({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sourcePaths: sources,
+			sessionDir: tree.sessionDir,
+			onProgress: (done, total, outcome) => progress.push([done, total, outcome.result.status]),
+		});
+		assert.deepEqual(progress, [
+			[1, 3, "archived"],
+			[2, 3, "archived"],
+			[3, 3, "archived"],
+		]);
+	});
+
+	it("continues past malformed and empty sessions without losing them", async () => {
+		const tree = makeTempTree();
+		const good = tree.writeSession(ID_A, richSessionJsonl({ id: ID_A }));
+		const malformed = tree.writeSession(ID_B, "this is not json\n");
+		const empty = tree.writeSession(ID_C, sessionJsonl([], { id: ID_C }));
+		const outcomes = await archiveInactiveSessions({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sourcePaths: [good, malformed, empty],
+			sessionDir: tree.sessionDir,
+		});
+		assert.deepEqual(
+			outcomes.map((o) => o.result.status),
+			["archived", "rejected", "rejected"],
+		);
+		assert.ok(!existsSync(good));
+		// Rejected sources stay exactly where they were.
+		assert.ok(existsSync(malformed));
+		assert.ok(existsSync(empty));
+	});
+
+	it("refuses the current session inside the batch but archives the rest", async () => {
+		const tree = makeTempTree();
+		const [current, other] = [
+			tree.writeSession(ID_A, richSessionJsonl({ id: ID_A })),
+			tree.writeSession(ID_B, richSessionJsonl({ id: ID_B })),
+		];
+		const outcomes = await archiveInactiveSessions({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sourcePaths: [current, other],
+			currentSessionFile: current,
+			sessionDir: tree.sessionDir,
+		});
+		assert.deepEqual(
+			outcomes.map((o) => o.result.status),
+			["rejected", "archived"],
+		);
+		assert.ok(existsSync(current));
+		assert.ok(!existsSync(other));
+	});
+
+	it("keeps a failed move pending and still archives later sessions", async () => {
+		const tree = makeTempTree();
+		const [failing, fine] = [
+			tree.writeSession(ID_A, richSessionJsonl({ id: ID_A })),
+			tree.writeSession(ID_B, richSessionJsonl({ id: ID_B })),
+		];
+		let moved = 0;
+		const outcomes = await archiveInactiveSessions({
+			deps: {
+				dbPath: tree.dbPath,
+				archiveRoot: tree.archiveRoot,
+				move: (source, dest, sha, size) => {
+					moved += 1;
+					if (moved === 1) throw new Error("disk full");
+					mkdirSync(dirname(dest), { recursive: true });
+					renameSync(source, dest);
+					assert.equal(hashFile(dest).sha256, sha);
+					assert.equal(hashFile(dest).size, size);
+				},
+			},
+			sourcePaths: [failing, fine],
+			sessionDir: tree.sessionDir,
+		});
+		assert.deepEqual(
+			outcomes.map((o) => o.result.status),
+			["failed", "archived"],
+		);
+		assert.ok(existsSync(failing));
+		assert.ok(!existsSync(fine));
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			assert.equal(getSessionRow(db, ID_A)?.state, "pending");
+			assert.equal(getSessionRow(db, ID_B)?.state, "archived");
+		} finally {
+			db.close();
+		}
 	});
 });

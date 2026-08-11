@@ -264,6 +264,54 @@ interface ArchiveInactiveOptions {
 	sessionDir: string;
 }
 
+export interface BulkArchiveOutcome {
+	sourcePath: string;
+	result: ArchiveResult;
+}
+
+interface ArchiveInactiveBulkOptions {
+	deps: ArchiveDeps;
+	sourcePaths: string[];
+	/** Absolute path of the currently active session file, if any. */
+	currentSessionFile?: string;
+	sessionDir: string;
+	/** Optional progress callback invoked after each session settles. */
+	onProgress?: (done: number, total: number, outcome: BulkArchiveOutcome) => void;
+}
+
+/**
+ * Archive many inactive sessions sequentially. Each session runs the full
+ * inactive-session state machine independently: one malformed file, live
+ * session, or move failure never aborts the rest of the batch, and the
+ * per-session result is reported in the returned outcomes.
+ */
+export async function archiveInactiveSessions(options: ArchiveInactiveBulkOptions): Promise<BulkArchiveOutcome[]> {
+	const outcomes: BulkArchiveOutcome[] = [];
+	const total = options.sourcePaths.length;
+	for (const sourcePath of options.sourcePaths) {
+		let outcome: BulkArchiveOutcome;
+		try {
+			const result = await archiveInactiveSession({
+				deps: options.deps,
+				sourcePath,
+				currentSessionFile: options.currentSessionFile,
+				sessionDir: options.sessionDir,
+			});
+			outcome = { sourcePath, result };
+		} catch (err) {
+			// Defense in depth: archiveInactiveSession converts known failures
+			// into results, but an unexpected throw must not lose the batch.
+			outcome = {
+				sourcePath,
+				result: { status: "failed", message: `Unexpected error: ${(err as Error).message}` },
+			};
+		}
+		outcomes.push(outcome);
+		options.onProgress?.(outcomes.length, total, outcome);
+	}
+	return outcomes;
+}
+
 /**
  * Archive a session that is not currently loaded in Pi. Revalidates the
  * selected path immediately before mutation because picker metadata is stale.

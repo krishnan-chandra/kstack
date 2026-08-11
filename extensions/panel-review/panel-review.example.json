@@ -1,0 +1,8 @@
+{
+	"reviewers": [
+		{ "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "xhigh" },
+		{ "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" },
+		{ "label": "sol", "model": "openai/gpt-5.6-sol", "thinking": "low" }
+	],
+	"maxConcurrency": 4
+}

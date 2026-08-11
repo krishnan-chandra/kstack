@@ -10,6 +10,7 @@ Personal extensions for [Pi](https://pi.dev).
 | --- | --- |
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
+| [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
 
 ## Requirements
 
@@ -72,10 +73,12 @@ pi -e "$HOME/Code/krishnan-pi-extensions/extensions/session-archive/index.ts"
 
 ## Development
 
-Run the session archive tests from the repository root:
+Run the extension tests from the repository root:
 
 ```bash
 node --test extensions/session-archive/*.test.ts
+node --test extensions/handoff/*.test.ts
+node --test extensions/panel-review/*.test.ts
 ```
 
 The full smoke test starts isolated Pi RPC processes, makes two small model calls, and does not touch the normal Pi session directory:
