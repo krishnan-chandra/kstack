@@ -62,7 +62,9 @@ export default async function (pi: ExtensionAPI) {
 		readEntries,
 		searchArchive,
 	} = await import("./archive-store.ts");
-	const { archiveCurrentSession, archiveInactiveSession } = await import("./archive-ops.ts");
+	const { archiveCurrentSession, archiveInactiveSession, archiveInactiveSessions } = await import(
+		"./archive-ops.ts"
+	);
 	const { inspectArchiveIntegrity, reconcileArchive } = await import("./reconcile.ts");
 
 	// Write/edit guard: archived content is read-only for agents.
@@ -221,6 +223,52 @@ export default async function (pi: ExtensionAPI) {
 				sessionDir,
 			});
 			reportResult(ctx.ui.notify.bind(ctx.ui), result);
+		},
+	});
+
+	pi.registerCommand("session-archive-all", {
+		description: "Archive every inactive session in this directory in one confirmed batch",
+		handler: async (_args, ctx) => {
+			await ctx.waitForIdle();
+			const currentFile = ctx.sessionManager.getSessionFile();
+			const sessionDir = ctx.sessionManager.getSessionDir();
+			const sessions = await SessionManager.list(ctx.cwd, sessionDir);
+			const candidates = sessions.filter((s) => s.path !== currentFile);
+			if (candidates.length === 0) {
+				ctx.ui.notify("No other sessions found for this directory.", "info");
+				return;
+			}
+			const confirmed = await ctx.ui.confirm(
+				`Archive ${candidates.length} session(s)?`,
+				`All ${candidates.length} inactive session(s) for ${ctx.cwd} will become read-only, ` +
+					"leave the /resume list, and stay searchable. " +
+					"Continue only if none of them is open in another Pi process.",
+			);
+			if (!confirmed) return;
+			ctx.ui.notify(`Archiving ${candidates.length} session(s)…`, "info");
+			const outcomes = await archiveInactiveSessions({
+				deps: { dbPath, archiveRoot },
+				sourcePaths: candidates.map((s) => s.path),
+				currentSessionFile: currentFile,
+				sessionDir,
+			});
+			const archived = outcomes.filter((o) => o.result.status === "archived");
+			const skipped = outcomes.filter((o) => o.result.status === "rejected");
+			const failed = outcomes.filter((o) => o.result.status === "failed");
+			const lines = [
+				`Bulk archive complete: ${archived.length} archived, ${skipped.length} skipped, ${failed.length} failed.`,
+			];
+			for (const group of [
+				["Skipped", skipped],
+				["Failed", failed],
+			] as const) {
+				const [label, list] = group;
+				for (const outcome of list.slice(0, 5)) {
+					lines.push(`${label}: ${outcome.sourcePath} — ${outcome.result.message}`);
+				}
+				if (list.length > 5) lines.push(`…and ${list.length - 5} more ${label.toLowerCase()}.`);
+			}
+			ctx.ui.notify(lines.join("\n"), failed.length > 0 ? "warning" : "info");
 		},
 	});
 
