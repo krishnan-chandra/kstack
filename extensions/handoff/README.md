@@ -1,37 +1,35 @@
 # handoff
 
-Transfer the current Pi session to a fresh, focused session without lossy compaction.
+Continue work in a fresh, lean Pi session while keeping a durable reference to the previous session's history.
 
-`/handoff` reads the canonical (compaction-aware) conversation context, asks an LLM
-to synthesize a self-contained continuation prompt, lets you edit it, and opens a
-new session with that prompt ready in the editor. The new session is linked to the
-old one twice:
+`/handoff` does **not** copy the old conversation into the new context and does not call an LLM to summarize it. It builds a small editable prompt containing the user's goal and the previous session reference, then opens a linked replacement session. The next agent follows that reference and reads only the history it needs.
 
-- `parentSession` in the session header preserves Pi's native provenance.
-- A `handoff` `custom_message` entry stores the old session's file, exact session
-  ID, and cwd — the durable identity you can use with `read_session_archive` if
-  the old JSONL is later archived (or with `search_session_archive` plus its
-  `session_id` filter to search within it), e.g. by the
-  [`session-archive`](../session-archive/) extension).
+The sessions are linked twice:
+
+- `parentSession` in the new session header preserves Pi's native provenance.
+- A visible `handoff` `custom_message` stores the old session's exact file path, session ID, and cwd.
 
 ## Usage
 
-```
+```text
 /handoff now implement this for teams as well
 /handoff execute phase one of the plan
-/handoff                          # infer the resume point and next step
+/handoff                          # continue from the prior resume point
 ```
 
-With no argument, the goal defaults to "Continue implementation from the current
-resume point." The generated prompt follows this shape:
+The editor opens with a deterministic prompt like:
 
-```
-## Context
-…decisions, done vs pending, resume point…
-Files involved: …
+```markdown
+Continue work from the previous Pi session.
 
-## Task
-…
+## Goal
+Implement teams support.
+
+## Instructions
+1. Inspect the previous session before making changes; inherit its decisions and do not redo completed work.
+2. If the active JSONL path exists, read it incrementally and focus on relevant entries.
+3. If archived, use read_session_archive with the exact session ID, or search_session_archive with session_id for targeted search.
+4. Determine what is done, pending, and the concrete resume point, then continue.
 
 ## Previous session
 Previous session: /path/to/old-session.jsonl
@@ -39,22 +37,16 @@ Session ID: <uuid>  CWD: /path/to/project
 Lookup: use the active path above; if it is later archived, use read_session_archive with the exact session ID (or search_session_archive with session_id to search within it)
 ```
 
-Every step is cancellable: aborting the loader, cancelling the editor, or a
-`session_before_switch` handler cancelling the new session leaves the old session
-untouched.
+Edit or cancel this prompt before any session replacement occurs. After the switch, submit it when ready.
 
 ## Behavior notes
 
-- **Compaction-aware**: context comes from
-  `ctx.sessionManager.buildSessionContext()`, so compacted branches hand off
-  their summary plus retained tail.
-- **Ephemeral sessions**: with no session file, `parentSession` is omitted and
-  the history reference notes the history lives in the prompt only.
-- **Context budget**: if the complete synthesis request exceeds ~90% of the
-  selected model's context window, handoff stops and recommends `/compact`
-  rather than silently dropping recent context. Synthesis output is explicitly
-  capped to the remaining context space (and at most 4096 tokens).
-- **Interactive only**: requires TUI mode.
+- **Reference-only:** no conversation serialization, synthesis call, generated summary, or inherited conversation payload.
+- **On-demand history:** the replacement agent reads the active JSONL with `read`, or uses the [`session-archive`](../session-archive/) tools after archival.
+- **No model required:** `/handoff` works even when no model is currently selected because the command itself makes no model call.
+- **Persisted sessions only:** ephemeral `--no-session` sessions are rejected because they have no durable history artifact for the next agent to inspect.
+- **Interactive only:** the command requires TUI mode so the user can edit the continuation prompt.
+- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active.
 
 ## Tests
 
@@ -62,5 +54,4 @@ untouched.
 node --test extensions/handoff/*.test.ts
 ```
 
-The lifecycle tests drive `createHandoffHandler` with fake contexts — no Pi
-runtime or real LLM calls.
+The tests verify the deterministic prompt, durable reference, reference-only lifecycle, cancellation paths, and stale-context safety without making any model calls.

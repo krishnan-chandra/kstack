@@ -9,7 +9,7 @@ Personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
-| [`handoff`](extensions/handoff/) | Hands the current session off to a fresh session with a generated, editable continuation prompt and a durable link back to the old session's history. |
+| [`handoff`](extensions/handoff/) | Opens a lean replacement session with a small, editable reference prompt and a durable link back to the old session's history. |
 
 ## Requirements
 

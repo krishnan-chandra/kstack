@@ -1,60 +1,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-	buildHandoffConversationText,
-	buildHandoffUserMessage,
+	buildReferenceHandoffPrompt,
 	DEFAULT_HANDOFF_GOAL,
-	ensureHistoryReference,
-	estimateConversationTokens,
 	formatHistoryReference,
-	HANDOFF_SYSTEM_PROMPT,
-	type ConversationConverters,
 } from "./handoff-context.ts";
 
-const SESSION_FILE = "/Users/x/.pi/agent/sessions/--proj--/2026-08-11T00-00-00-000Z_11111111-2222-3333-4444-555555555555.jsonl";
+const SESSION_FILE =
+	"/Users/x/.pi/agent/sessions/--proj--/2026-08-11T00-00-00-000Z_11111111-2222-3333-4444-555555555555.jsonl";
 const SESSION_ID = "11111111-2222-3333-4444-555555555555";
 const CWD = "/Users/x/proj";
 
-/** Fake converters that pass messages through as JSON text. */
-const fakeConverters: ConversationConverters = {
-	convertToLlm: ((messages: unknown[]) => messages) as ConversationConverters["convertToLlm"],
-	serializeConversation: ((messages: unknown[]) =>
-		messages.map((m) => JSON.stringify(m)).join("\n")) as ConversationConverters["serializeConversation"],
-};
-
-describe("buildHandoffConversationText", () => {
-	it("serializes messages through the injected Pi converters", () => {
-		const messages = [
-			{ role: "user", content: "hello", timestamp: 1 },
-			{ role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 2 },
-		];
-		const text = buildHandoffConversationText(messages as never, fakeConverters);
-		assert.ok(text.includes('"hello"'));
-		assert.ok(text.includes('"hi"'));
-		assert.equal(text.split("\n").length, 2);
-	});
-
-	it("returns empty text for an empty message list", () => {
-		assert.equal(buildHandoffConversationText([], fakeConverters), "");
-	});
-});
-
-describe("ensureHistoryReference", () => {
-	it("appends an exact history section when the model omits it", () => {
-		const ref = formatHistoryReference(SESSION_FILE, SESSION_ID, CWD);
-		const prompt = ensureHistoryReference("## Context\nWork in progress.", ref);
-		assert.equal(prompt, `## Context\nWork in progress.\n\n## Previous session\n${ref}`);
-	});
-
-	it("does not duplicate an exact history reference already in the prompt", () => {
-		const ref = formatHistoryReference(SESSION_FILE, SESSION_ID, CWD);
-		const prompt = `## Context\nWork in progress.\n\n## Previous session\n${ref}`;
-		assert.equal(ensureHistoryReference(prompt, ref), prompt);
-	});
-});
-
 describe("formatHistoryReference", () => {
-	it("includes file, session id, cwd, and archive lookup guidance", () => {
+	it("includes file, session id, cwd, and accurate archive lookup guidance", () => {
 		const ref = formatHistoryReference(SESSION_FILE, SESSION_ID, CWD);
 		assert.ok(ref.includes(`Previous session: ${SESSION_FILE}`));
 		assert.ok(ref.includes(`Session ID: ${SESSION_ID}`));
@@ -63,39 +21,25 @@ describe("formatHistoryReference", () => {
 		assert.ok(ref.includes("search_session_archive"));
 		assert.ok(ref.includes("session_id"));
 	});
-
-	it("marks ephemeral sessions as prompt-only history", () => {
-		const ref = formatHistoryReference(undefined, SESSION_ID, CWD);
-		assert.ok(ref.includes("(ephemeral"));
-		assert.ok(ref.includes(SESSION_ID));
-		assert.ok(!ref.includes("Lookup:"));
-	});
 });
 
-describe("buildHandoffUserMessage", () => {
-	it("embeds history, reference, and goal", () => {
-		const msg = buildHandoffUserMessage("CONVERSATION", "GOAL", "REFERENCE");
-		assert.ok(msg.includes("## Conversation History\n\nCONVERSATION"));
-		assert.ok(msg.includes("## History Reference\n\nREFERENCE"));
-		assert.ok(msg.includes("## User's Goal for New Thread\n\nGOAL"));
-	});
-});
-
-describe("prompts and estimates", () => {
-	it("system prompt requires resume point and verbatim history reference", () => {
-		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("resume point"));
-		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("verbatim"));
-		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("## Previous session"));
-		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("untrusted data"));
+describe("buildReferenceHandoffPrompt", () => {
+	it("builds a small prompt with the goal and exact reference", () => {
+		const ref = formatHistoryReference(SESSION_FILE, SESSION_ID, CWD);
+		const prompt = buildReferenceHandoffPrompt("Implement teams support.", ref);
+		assert.ok(prompt.includes("## Goal\nImplement teams support."));
+		assert.ok(prompt.includes(`## Previous session\n${ref}`));
 	});
 
-	it("default goal names the resume point", () => {
+	it("directs the next agent to inspect history rather than receiving a summary", () => {
+		const prompt = buildReferenceHandoffPrompt("Continue.", "REFERENCE");
+		assert.ok(prompt.includes("Inspect the previous session before making changes"));
+		assert.ok(prompt.includes("read it incrementally"));
+		assert.ok(prompt.includes("what is done, what is pending"));
+		assert.ok(!prompt.includes("## Context"));
+	});
+
+	it("keeps the default goal focused on the previous resume point", () => {
 		assert.ok(DEFAULT_HANDOFF_GOAL.includes("resume point"));
-	});
-
-	it("estimates tokens at ~4 chars per token", () => {
-		assert.equal(estimateConversationTokens(""), 0);
-		assert.equal(estimateConversationTokens("abcd"), 1);
-		assert.equal(estimateConversationTokens("abcde"), 2);
 	});
 });
