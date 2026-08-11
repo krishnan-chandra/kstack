@@ -6,7 +6,7 @@
  *
  *   {
  *     "reviewers": [
- *       { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "xhigh" },
+ *       { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
  *       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
  *     ],
  *     "maxConcurrency": 4
@@ -35,7 +35,7 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
-	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "xhigh" },
+	{ label: "qwen", model: "qwen/qwen3.8-max", thinking: "high" },
 	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
 	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
 ];
@@ -83,7 +83,7 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 		if (typeof r.model !== "string" || !/^[^/\s]+(\/[^/\s]+)+$/.test(r.model)) {
 			return {
 				ok: false,
-				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/z-ai/glm-5.2").`,
+				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/moonshotai/kimi-k3").`,
 			};
 		}
 		if (

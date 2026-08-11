@@ -65,7 +65,7 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
 ```json
 {
   "reviewers": [
-    { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "xhigh" },
+    { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
     { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
   ],
   "maxConcurrency": 4
@@ -75,8 +75,8 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
 - 2–4 reviewers, unique labels, models resolved through Pi's model registry.
   `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
   `xhigh`, `max`.
-- Without a config, a built-in low-cost default panel runs: **GLM-5.2**
-  (`openrouter/z-ai/glm-5.2`, xhigh), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
+- Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
+  (`qwen/qwen3.8-max`, high), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
   high), and **GPT-5.6 Sol** (`openai/gpt-5.6-sol`, low). Defaults that are
   unavailable or unauthenticated are skipped with a warning; write a config to
   override the panel.

@@ -40,15 +40,15 @@ describe("validateConfig", () => {
 			}).ok,
 		);
 	});
-	it("accepts multi-segment model ids like openrouter/z-ai/glm-5.2", () => {
+	it("accepts multi-segment model ids like openrouter/moonshotai/kimi-k3", () => {
 		const r = validateConfig({
 			reviewers: [
-				{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "xhigh" },
+				{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
 				{ label: "sol", model: "openai/gpt-5.6-sol" },
 			],
 		});
 		assert.ok(r.ok);
-		assert.equal(r.config.reviewers[0].model, "openrouter/z-ai/glm-5.2");
+		assert.equal(r.config.reviewers[0].model, "openrouter/moonshotai/kimi-k3");
 	});
 
 	it("rejects unknown thinking levels", () => {
