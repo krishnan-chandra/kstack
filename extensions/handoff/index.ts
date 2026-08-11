@@ -5,7 +5,12 @@
  * Usage:
  *   /handoff now implement this for teams as well
  *   /handoff execute phase one of the plan
+ *   /handoff --model anthropic/claude-sonnet-4-5 execute phase one of the plan
  *   /handoff                        # continue from the prior resume point
+ *
+ * Model selection: with `--model`, the replacement session starts on that
+ * model; without it, the replacement session inherits the parent session's
+ * active model. Both paths go through `pi.setModel()` before `newSession()`.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -20,16 +25,49 @@ import {
 	searchHandoffHistory,
 	type HandoffSource,
 } from "./history-reader.ts";
+import { formatModelRef, parseHandoffArgs, resolveModelReference, type HandoffModel } from "./model-selection.ts";
 
-/** Build the command handler separately so lifecycle behavior is easy to test. */
-export function createHandoffHandler() {
+/**
+ * Build the command handler separately so lifecycle behavior is easy to test.
+ *
+ * The handler needs `pi.setModel` to control the replacement session's model:
+ * `ctx.newSession()` takes no model option, and a brand-new session resolves
+ * its model from the configured default. `setModel` persists that default,
+ * so applying it before `newSession` determines the replacement's model.
+ */
+export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("handoff requires interactive mode", "error");
 			return;
 		}
 
-		const goal = args.trim() || DEFAULT_HANDOFF_GOAL;
+		const parsed = parseHandoffArgs(args);
+		if (!parsed.ok) {
+			ctx.ui.notify(parsed.error, "error");
+			return;
+		}
+
+		const goal = parsed.goal.trim() || DEFAULT_HANDOFF_GOAL;
+
+		// Resolve an explicit model before opening the editor so a typo fails
+		// fast. The actual switch is deferred until after the user confirms the
+		// prompt, so cancelling never changes the parent session's model.
+		let targetModel: HandoffModel | undefined;
+		if (parsed.modelRef !== undefined) {
+			const resolution = resolveModelReference(ctx.modelRegistry.getAll() as HandoffModel[], parsed.modelRef);
+			if (resolution.status === "not-found") {
+				ctx.ui.notify(`Unknown model "${parsed.modelRef}". Use provider/model-id; see /model for available models.`, "error");
+				return;
+			}
+			if (resolution.status === "ambiguous") {
+				const options = resolution.matches.slice(0, 8).map(formatModelRef).join(", ");
+				ctx.ui.notify(`Model "${parsed.modelRef}" is ambiguous. Matches: ${options}. Use provider/model-id.`, "error");
+				return;
+			}
+			targetModel = resolution.model;
+		}
+
 		await ctx.waitForIdle();
 
 		// Reference-only handoff requires a durable source artifact. An ephemeral
@@ -59,6 +97,35 @@ export function createHandoffHandler() {
 			return;
 		}
 
+		if (targetModel) {
+			let switched = false;
+			try {
+				switched = await api.setModel(targetModel);
+			} catch (err) {
+				ctx.ui.notify(
+					`Could not switch to ${formatModelRef(targetModel)}: ${err instanceof Error ? err.message : String(err)}`,
+					"error",
+				);
+				return;
+			}
+			if (!switched) {
+				ctx.ui.notify(`No API key available for ${formatModelRef(targetModel)}; handoff cancelled`, "error");
+				return;
+			}
+		} else if (ctx.model) {
+			// Inherit the parent session's model. A fresh session resolves its
+			// model from the configured default, which can lag the active
+			// session (e.g. after `pi --model` or resuming another session),
+			// so pin it explicitly. Best effort: if this fails, fall back to
+			// Pi's normal default resolution instead of blocking the handoff.
+			try {
+				await api.setModel(ctx.model);
+			} catch {
+				// Ignore; the replacement session still gets the configured default.
+			}
+		}
+
+		const modelNote = targetModel ? ` Model: ${formatModelRef(targetModel)}.` : "";
 		const result = await ctx.newSession({
 			parentSession: oldFile,
 			setup: async (sm) => {
@@ -66,7 +133,7 @@ export function createHandoffHandler() {
 			},
 			withSession: async (fresh) => {
 				fresh.ui.setEditorText(edited);
-				fresh.ui.notify(`Handoff ready. Previous session: ${oldFile}`, "info");
+				fresh.ui.notify(`Handoff ready.${modelNote} Previous session: ${oldFile}`, "info");
 			},
 		});
 
@@ -88,8 +155,9 @@ export default async function (pi: ExtensionAPI) {
 	const [{ Type }, { StringEnum }] = await Promise.all([import("typebox"), import("@earendil-works/pi-ai")]);
 
 	pi.registerCommand("handoff", {
-		description: "Continue in a lean session linked to the current session's history",
-		handler: createHandoffHandler(),
+		description:
+			"Continue in a lean session linked to the current session's history (optional --model provider/model-id)",
+		handler: createHandoffHandler(pi),
 	});
 
 	pi.registerTool({
