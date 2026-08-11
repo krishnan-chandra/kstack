@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { collectScope, parsePorcelainZ, readUntracked, resolveBase, truncateUtf8, type GitExec } from "./review-scope.ts";
+import { collectScope, parsePorcelainZ, readUntracked, resolveBase, touchesContextFile, truncateUtf8, type GitExec } from "./review-scope.ts";
 
 /** Fake git: map "args joined" prefixes to stdout; throw on unknown. */
 function fakeGit(responses: Record<string, string>): GitExec {
@@ -121,6 +121,17 @@ describe("readUntracked", () => {
 	});
 });
 
+describe("touchesContextFile", () => {
+	it("matches basenames Pi loads as context files", () => {
+		assert.ok(touchesContextFile("AGENTS.md"));
+		assert.ok(touchesContextFile("docs/CLAUDE.md"));
+		assert.ok(touchesContextFile("AGENTS.override.md"));
+		assert.ok(!touchesContextFile("docs/agents.md")); // case-sensitive
+		assert.ok(!touchesContextFile("AGENTS.md.bak"));
+		assert.ok(!touchesContextFile("src/agent.ts"));
+	});
+});
+
 describe("collectScope", () => {
 	function makeRepo(): { root: string; cleanup: () => void } {
 		const root = mkdtempSync(join(tmpdir(), "pr-repo-"));
@@ -161,6 +172,47 @@ describe("collectScope", () => {
 			assert.equal(scope.binaryCount, 1);
 			assert.equal(scope.truncated, false);
 			assert.equal((parseInt((0o100600).toString(8), 8) & 0o777) === 0o600, true);
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("flags changesets that touch context files", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		try {
+			const exec: GitExec = (args) => {
+				const key = args.join(" ");
+				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+				if (key.startsWith("rev-parse HEAD")) return "headsha\n";
+				if (key.startsWith("diff --find-renames --find-copies")) return "diff --git a/AGENTS.md b/AGENTS.md\n+x\n";
+				if (key.startsWith("diff --name-status")) return "M\tAGENTS.md\n";
+				if (key.startsWith("status --porcelain")) return "M  AGENTS.md\0?? docs/CLAUDE.md\0";
+				if (key.startsWith("log --format=%s")) return "subject\n";
+				throw new Error(`unexpected: ${key}`);
+			};
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", { exec });
+			bundleDir = scope.dir;
+			assert.equal(scope.contextFilesTouched, true);
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("does not flag ordinary changesets", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		try {
+			const scope = collectScope(
+				root,
+				{ ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" },
+				"i",
+				{ exec: gitFor(root, "diff --git a/tracked.ts b/tracked.ts\n+line\n") },
+			);
+			bundleDir = scope.dir;
+			assert.equal(scope.contextFilesTouched, false);
 		} finally {
 			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			cleanup();

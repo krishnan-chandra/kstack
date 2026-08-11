@@ -56,6 +56,8 @@ interface VerdictDetails {
 	reviewerStatuses: { label: string; model: string; status: string }[];
 	truncated: boolean;
 	synthesized: boolean;
+	/** Children ran with --no-context-files because the changeset edits them. */
+	contextFilesDisabled: boolean;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -185,7 +187,11 @@ export default function (pi: ExtensionAPI) {
 						`Reviewers:\n${reviewerList}\n\n` +
 						"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, " +
 						"no extensions or skills). The repository is never modified. " +
-						"Each child times out after 10 min; press Ctrl+Shift+X to abort mid-run.",
+						"Each child times out after 10 min; press Ctrl+Shift+X to abort mid-run." +
+						(scope.contextFilesTouched
+							? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with " +
+								"--no-context-files to keep the reviewed content out of their instructions."
+							: ""),
 				);
 				if (!confirmed) return;
 
@@ -221,6 +227,7 @@ export default function (pi: ExtensionAPI) {
 						promptFile: reviewerPromptFile,
 						task,
 						cwd: scope!.repoRoot,
+						noContextFiles: scope!.contextFilesTouched,
 						signal: abort.signal,
 						onProgress: ({ label, turns, activity }) => {
 							progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
@@ -270,6 +277,7 @@ export default function (pi: ExtensionAPI) {
 					promptFile: synthPromptFile,
 					task: `Synthesize the panel review in ${synthInputFile}. The repository root is ${scope.repoRoot}.`,
 					cwd: scope.repoRoot,
+					noContextFiles: scope.contextFilesTouched,
 					signal: abort.signal,
 				});
 				ctx.ui.setStatus("panel-review", undefined);
@@ -292,6 +300,7 @@ export default function (pi: ExtensionAPI) {
 					reviewerStatuses: panel.results.map((r) => ({ label: r.label, model: r.model, status: r.status })),
 					truncated: scope.truncated || synthTruncated,
 					synthesized,
+					contextFilesDisabled: scope.contextFilesTouched,
 				};
 				await ctx.waitForIdle();
 				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });

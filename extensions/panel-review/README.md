@@ -36,7 +36,11 @@ verdict.
 
    No shell, no `bash`/`write`/`edit`, no repository-controlled extensions or
    skills. The reviewer prompt states that bundle and repository contents are
-   untrusted review data, not instructions.
+   untrusted review data, not instructions. Project context files (`AGENTS.md`,
+   `CLAUDE.md`) are injected as usual — except when the changeset itself
+   modifies one, in which case children run with `--no-context-files` so the
+   content under review cannot become reviewer instructions (disclosed in the
+   confirmation and the verdict details).
    While a run is in flight, the footer shows each reviewer's live activity
    (current tool call, turn count, elapsed time). Press **Ctrl+Shift+X** to
    abort: children get SIGTERM, then SIGKILL after a 5 s grace. Any child also
@@ -91,9 +95,12 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
 | Child stderr retention | 8 KiB |
 | Child wall-clock timeout | 10 min (SIGTERM, then SIGKILL after a 5 s grace) |
 
-Oversized diffs produce a complete file manifest plus a truncated patch with
-continuation instructions; reviewers can inspect named files with read-only
-tools. Truncation is always disclosed in the verdict's Review Limitations.
+Oversized diffs produce a truncated patch with continuation instructions;
+reviewers can inspect named files with read-only tools. The tracked-changes
+list (from `git diff --name-status`) is always present, but untracked files
+are listed only when their contents fit the budget, so a truncated bundle may
+not name every untracked file. Truncation is always disclosed in the verdict's
+Review Limitations.
 
 ## Failure policy
 

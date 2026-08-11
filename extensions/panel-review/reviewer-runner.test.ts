@@ -31,6 +31,13 @@ describe("buildChildArgs", () => {
 		assert.ok(!joined.includes("edit"));
 		assert.deepEqual(args[args.length - 1], "Review /tmp/b.md");
 	});
+
+	it("omits context files only when asked", () => {
+		const base = buildChildArgs({ model: "a/b", promptFile: "/tmp/p.md", task: "t" });
+		assert.ok(!base.includes("--no-context-files"));
+		const stripped = buildChildArgs({ model: "a/b", promptFile: "/tmp/p.md", task: "t", noContextFiles: true });
+		assert.ok(stripped.includes("--no-context-files"));
+	});
 });
 
 interface FakeProcSpec {

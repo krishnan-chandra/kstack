@@ -16,6 +16,7 @@ const scope: ScopeBundle = {
 	untrackedCount: 1,
 	binaryCount: 0,
 	truncated: false,
+	contextFilesTouched: false,
 	generatedAt: "2026-01-01T00:00:00Z",
 };
 
@@ -60,6 +61,8 @@ describe("buildSynthesisInput", () => {
 	it("discloses scope truncation", () => {
 		const { input } = buildSynthesisInput({ intent: "x", scope: { ...scope, truncated: true }, results: [completed("A", "ok")] });
 		assert.match(input, /Bundle truncated: yes/);
+		assert.match(input, /may be incomplete/);
+		assert.ok(!/manifest is complete/.test(input));
 	});
 });
 

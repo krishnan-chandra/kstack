@@ -57,7 +57,7 @@ export function buildSynthesisInput(opts: {
 		`- HEAD: ${scope.headSha}`,
 		`- Changed files: ${scope.fileCount} (${scope.untrackedCount} untracked, ${scope.binaryCount} binary skipped)`,
 		`- Diff size: ${scope.diffBytes} bytes`,
-		`- Bundle truncated: ${scope.truncated ? "yes — the changeset exceeded budget; the file manifest is complete but the patch is partial" : "no"}`,
+		`- Bundle truncated: ${scope.truncated ? "yes — the changeset exceeded budget; the patch is partial and the file lists may be incomplete (untracked files are listed only when their contents fit the budget)" : "no"}`,
 		"",
 		"## Reviewer Reports",
 		"",

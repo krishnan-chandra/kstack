@@ -54,6 +54,8 @@ export function buildChildArgs(opts: {
 	model: string;
 	promptFile: string;
 	task: string;
+	/** Disable AGENTS.md/CLAUDE.md injection (used when the changeset edits them). */
+	noContextFiles?: boolean;
 }): string[] {
 	return [
 		"--mode", "json",
@@ -62,6 +64,7 @@ export function buildChildArgs(opts: {
 		"--no-extensions",
 		"--no-skills",
 		"--no-prompt-templates",
+		...(opts.noContextFiles ? ["--no-context-files"] : []),
 		"--tools", "read,grep,find,ls",
 		"--model", opts.model,
 		"--append-system-prompt", opts.promptFile,
@@ -153,6 +156,8 @@ export interface RunReviewerOptions {
 	promptFile: string;
 	task: string;
 	cwd: string;
+	/** Disable AGENTS.md/CLAUDE.md injection in the child. */
+	noContextFiles?: boolean;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
 	onProgress?: (info: { label: string; turns: number; activity?: string }) => void;
@@ -162,7 +167,9 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 	const { spec, model, promptFile, task, cwd, signal } = options;
 	const deps = options.deps ?? {};
 	const spawnImpl = deps.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
-	const invocation = (deps.piInvocation ?? getPiInvocation)(buildChildArgs({ model, promptFile, task }));
+	const invocation = (deps.piInvocation ?? getPiInvocation)(
+		buildChildArgs({ model, promptFile, task, noContextFiles: options.noContextFiles }),
+	);
 	const outputCap = deps.outputCapBytes ?? LIMITS.reviewerOutputBytes;
 	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
 	const killGraceMs = deps.killGraceMs ?? 5000;

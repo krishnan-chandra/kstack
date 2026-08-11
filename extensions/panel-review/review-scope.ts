@@ -106,6 +106,14 @@ export function parsePorcelainZ(raw: string): StatusEntry[] {
 	return entries;
 }
 
+/** Context files Pi injects into child system prompts (see pi usage docs). */
+export const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
+
+/** True when a repo-relative path names a context file Pi would load. */
+export function touchesContextFile(path: string): boolean {
+	return CONTEXT_FILE_NAMES.has(path.split("/").pop() ?? path);
+}
+
 function isPathInside(root: string, target: string): boolean {
 	const rel = resolve(root, target);
 	return rel === root || rel.startsWith(root + sep);
@@ -321,6 +329,14 @@ export function collectScope(
 	}
 
 	const fileCount = (nameStatus.trim() ? nameStatus.trim().split("\n").length : 0) + untracked.length;
+	// Context files are normally injected into reviewer children; when the
+	// changeset itself modifies one, injection becomes a prompt-injection
+	// channel and children must run with --no-context-files instead.
+	const contextFilesTouched =
+		nameStatus
+			.split("\n")
+			.some((line) => line.split("\t").slice(1).some(touchesContextFile)) ||
+		statusEntries.some((e) => touchesContextFile(e.path) || (e.origPath !== undefined && touchesContextFile(e.origPath)));
 	return {
 		path: bundlePath,
 		dir,
@@ -334,6 +350,7 @@ export function collectScope(
 		untrackedCount: untracked.length,
 		binaryCount,
 		truncated,
+		contextFilesTouched,
 		generatedAt,
 	};
 }

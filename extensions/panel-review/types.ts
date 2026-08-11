@@ -60,6 +60,8 @@ export interface ScopeBundle {
 	untrackedCount: number;
 	binaryCount: number;
 	truncated: boolean;
+	/** True when the changeset touches AGENTS.md / CLAUDE.md / AGENTS.override.md. */
+	contextFilesTouched: boolean;
 	generatedAt: string;
 }
 
