@@ -12,6 +12,12 @@ Personal extensions for [Pi](https://pi.dev).
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
 
+## Skills
+
+| Skill | Description |
+| --- | --- |
+| [`create-pi-extension`](skills/create-pi-extension/) | Designs and implements Pi extensions using the installed documentation, repository patterns, lifecycle/security ground rules, and an incremental verification checklist. |
+
 ## Requirements
 
 - Pi 0.84.1 or newer
@@ -80,6 +86,8 @@ node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 ```
+
+The package also includes the `create-pi-extension` skill. It is discovered when this repository is installed with `pi install`; invoke it explicitly with `/skill:create-pi-extension` or let Pi load it when extension-development work matches its description.
 
 The full smoke test starts isolated Pi RPC processes, makes two small model calls, and does not touch the normal Pi session directory:
 
