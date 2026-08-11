@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildChildArgs, JsonLineParser, runReviewer, type SpawnImpl } from "./reviewer-runner.ts";
+import { buildChildArgs, JsonLineParser, runReviewer, summarizeToolCall, type SpawnImpl } from "./reviewer-runner.ts";
 import type { ReviewerResult } from "./types.ts";
 
 describe("JsonLineParser", () => {
@@ -101,7 +101,36 @@ function run(spec: FakeProcSpec, extra: Partial<Parameters<typeof runReviewer>[0
 	});
 }
 
+describe("summarizeToolCall", () => {
+	it("prefers path basename and clips long values", () => {
+		assert.equal(summarizeToolCall("read", { path: "/tmp/x/review-scope.ts" }), "read review-scope.ts");
+		assert.equal(summarizeToolCall("grep", { pattern: "collectScope" }), "grep collectScope");
+		assert.equal(summarizeToolCall("ls", {}), "ls");
+		const long = summarizeToolCall("grep", { pattern: "x".repeat(80) });
+		assert.ok(long.length <= 53); // "grep " + 47 chars + ellipsis
+		assert.ok(long.endsWith("…"));
+	});
+});
+
 describe("runReviewer", () => {
+	it("reports tool activity through onProgress", async () => {
+		const seen: { turns: number; activity?: string }[] = [];
+		const r = await run(
+			{
+				events: [
+					{ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "/repo/bundle.md" } },
+					{ type: "tool_execution_end", toolCallId: "c1", toolName: "read", isError: false },
+				],
+			},
+			{ onProgress: (info) => seen.push({ turns: info.turns, activity: info.activity }) },
+		);
+		assert.equal(r.status, "completed");
+		assert.deepEqual(seen[0], { turns: 0, activity: "read bundle.md" });
+		assert.deepEqual(seen[1], { turns: 0, activity: "thinking" });
+		// Final assistant message carries the last known activity and the turn count.
+		assert.deepEqual(seen.at(-1), { turns: 1, activity: "thinking" });
+	});
+
 	it("completes with final assistant text and usage", async () => {
 		const r = await run({ finalText: "No findings", usage: { input: 10, output: 5, cost: { total: 0.01 } } });
 		assert.equal(r.status, "completed");

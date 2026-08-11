@@ -40,6 +40,17 @@ describe("validateConfig", () => {
 			}).ok,
 		);
 	});
+	it("accepts multi-segment model ids like openrouter/z-ai/glm-5.2", () => {
+		const r = validateConfig({
+			reviewers: [
+				{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "xhigh" },
+				{ label: "sol", model: "openai/gpt-5.6-sol" },
+			],
+		});
+		assert.ok(r.ok);
+		assert.equal(r.config.reviewers[0].model, "openrouter/z-ai/glm-5.2");
+	});
+
 	it("rejects unknown thinking levels", () => {
 		const bad = validateConfig({
 			reviewers: [

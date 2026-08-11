@@ -143,6 +143,7 @@ export default function (pi: ExtensionAPI) {
 
 			let scope: ScopeBundle | undefined;
 			let promptDir: string | undefined;
+			let ticker: ReturnType<typeof setInterval> | undefined;
 			try {
 				scope = collectScope(repoRoot, base, intent);
 				if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
@@ -174,11 +175,18 @@ export default function (pi: ExtensionAPI) {
 				const task = `Review the bundle at ${scope.path}.`;
 				const progress = new Map<string, string>();
 				let doneCount = 0;
+				const startedAt = Date.now();
+				const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
 				const updateStatus = () => {
 					const lines = resolution.reviewers.map((r) => `${r.label}:${progress.get(r.label) ?? "queued"}`).join(" ");
-					ctx.ui.setStatus("panel-review", `panel-review: ${doneCount}/${resolution.reviewers.length} done — ${lines}`);
+					ctx.ui.setStatus(
+						"panel-review",
+						`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${elapsed()} — ${lines}`,
+					);
 				};
 				updateStatus();
+				ticker = setInterval(updateStatus, 1000);
+				ticker.unref?.();
 
 				const panel = await runPanel(resolution.reviewers, resolution.maxConcurrency, (spec) => {
 					progress.set(spec.label, "running");
@@ -190,8 +198,8 @@ export default function (pi: ExtensionAPI) {
 						task,
 						cwd: scope!.repoRoot,
 						signal: abort.signal,
-						onProgress: ({ label, turns }) => {
-							progress.set(label, `${turns}t`);
+						onProgress: ({ label, turns, activity }) => {
+							progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
 							updateStatus();
 						},
 					}).then((result) => {
@@ -202,6 +210,8 @@ export default function (pi: ExtensionAPI) {
 					});
 				});
 
+				clearInterval(ticker);
+				ticker = undefined;
 				ctx.ui.setStatus("panel-review", undefined);
 				if (panel.aborted > 0 && panel.completed === 0 && panel.failed === 0) {
 					notify("Panel review aborted.", "info");
@@ -262,6 +272,7 @@ export default function (pi: ExtensionAPI) {
 				await ctx.waitForIdle();
 				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });
 			} finally {
+				if (ticker) clearInterval(ticker);
 				ctx.ui.setStatus("panel-review", undefined);
 				if (scope) {
 					try {

@@ -77,6 +77,9 @@ function truncateHeadUtf8(text: string, maxBytes: number): string {
 
 interface ChildEvent {
 	type: string;
+	toolCallId?: string;
+	toolName?: string;
+	args?: Record<string, unknown>;
 	message?: {
 		role?: string;
 		model?: string;
@@ -123,6 +126,21 @@ export class JsonLineParser {
 	}
 }
 
+/** Short human-readable summary of a tool call, e.g. `read review-scope.ts`. */
+export function summarizeToolCall(toolName: string, args: Record<string, unknown> | undefined): string {
+	const raw =
+		(args?.path as string) ??
+		(args?.filePath as string) ??
+		(args?.pattern as string) ??
+		(args?.command as string) ??
+		Object.values(args ?? {}).find((v): v is string => typeof v === "string");
+	if (!raw) return toolName;
+	// Show the basename for paths; clamp anything long.
+	const compact = raw.includes("/") ? (raw.split("/").filter(Boolean).pop() ?? raw) : raw;
+	const clipped = compact.length > 48 ? `${compact.slice(0, 47)}…` : compact;
+	return `${toolName} ${clipped}`;
+}
+
 function emptyUsage(): UsageSummary {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
@@ -135,7 +153,7 @@ export interface RunReviewerOptions {
 	cwd: string;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
-	onProgress?: (info: { label: string; turns: number }) => void;
+	onProgress?: (info: { label: string; turns: number; activity?: string }) => void;
 }
 
 export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult> {
@@ -168,8 +186,19 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 		let errorMessage: string | undefined;
 		let wasAborted = false;
 		let settled = false;
+		let activity: string | undefined;
 
 		const parser = new JsonLineParser((event) => {
+			if (event.type === "tool_execution_start" && event.toolName) {
+				activity = summarizeToolCall(event.toolName, event.args);
+				options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
+				return;
+			}
+			if (event.type === "tool_execution_end") {
+				activity = "thinking";
+				options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
+				return;
+			}
 			if (event.type !== "message_end" || !event.message) return;
 			const msg = event.message;
 			if (msg.role !== "assistant") return;
@@ -186,7 +215,7 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 			for (const part of msg.content ?? []) {
 				if (part.type === "text" && part.text) finalText = part.text;
 			}
-			options.onProgress?.({ label: spec.label, turns: usage.turns });
+			options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
 		});
 
 		proc.stdout.on("data", (data: Buffer) => parser.push(data.toString("utf8")));

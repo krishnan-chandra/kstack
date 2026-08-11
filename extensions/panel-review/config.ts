@@ -80,10 +80,10 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 			return { ok: false, error: `Duplicate reviewer label "${r.label}".` };
 		}
 		labels.add(r.label);
-		if (typeof r.model !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(r.model)) {
+		if (typeof r.model !== "string" || !/^[^/\s]+(\/[^/\s]+)+$/.test(r.model)) {
 			return {
 				ok: false,
-				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model".`,
+				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/z-ai/glm-5.2").`,
 			};
 		}
 		if (
