@@ -33,8 +33,8 @@ describe("buildReferenceHandoffPrompt", () => {
 
 	it("directs the next agent to inspect history rather than receiving a summary", () => {
 		const prompt = buildReferenceHandoffPrompt("Continue.", "REFERENCE");
-		assert.ok(prompt.includes("Inspect the previous session before making changes"));
-		assert.ok(prompt.includes("read it incrementally"));
+		assert.ok(prompt.includes("Call read_handoff_history before making changes"));
+		assert.ok(prompt.includes("Use search_handoff_history"));
 		assert.ok(prompt.includes("what is done, what is pending"));
 		assert.ok(!prompt.includes("## Context"));
 	});

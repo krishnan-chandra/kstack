@@ -16,7 +16,7 @@ interface FakeCtxOptions {
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	const notifications: Array<{ message: string; level: string }> = [];
-	const customMessages: Array<{ customType: string; content: string; display: boolean }> = [];
+	const customMessages: Array<{ customType: string; content: string; display: boolean; details?: unknown }> = [];
 	const calls = {
 		editorDrafts: [] as string[],
 		setEditorText: [] as string[],
@@ -65,8 +65,8 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 			if (opts.newSessionResult?.cancelled) return opts.newSessionResult;
 
 			await options.setup?.({
-				appendCustomMessageEntry: (customType: string, content: string, display: boolean) => {
-					customMessages.push({ customType, content, display });
+				appendCustomMessageEntry: (customType: string, content: string, display: boolean, details?: unknown) => {
+					customMessages.push({ customType, content, display, details });
 					return "entry-id";
 				},
 			});
@@ -126,7 +126,8 @@ describe("handoff command lifecycle", () => {
 		assert.ok(draft.includes("## Goal\nimplement teams support"));
 		assert.ok(draft.includes(SESSION_FILE));
 		assert.ok(draft.includes(SESSION_ID));
-		assert.ok(draft.includes("Inspect the previous session"));
+		assert.ok(draft.includes("read_handoff_history"));
+		assert.ok(draft.includes("search_handoff_history"));
 		assert.ok(!draft.includes("## Conversation History"));
 		assert.deepEqual(calls.setEditorText, [`EDITED ${draft}`]);
 
@@ -136,6 +137,12 @@ describe("handoff command lifecycle", () => {
 		assert.ok(customMessages[0].content.includes(SESSION_FILE));
 		assert.ok(customMessages[0].content.includes(SESSION_ID));
 		assert.ok(customMessages[0].content.includes("read_session_archive"));
+		assert.deepEqual(customMessages[0].details, {
+			version: 1,
+			sessionFile: SESSION_FILE,
+			sessionId: SESSION_ID,
+			cwd: CWD,
+		});
 	});
 
 	it("uses the default goal when no argument is given", async () => {

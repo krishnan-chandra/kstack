@@ -27,10 +27,9 @@ export function buildReferenceHandoffPrompt(goal: string, historyReference: stri
 ${goal}
 
 ## Instructions
-1. Inspect the previous session before making changes; inherit its decisions and do not redo completed work.
-2. If the active JSONL path exists, read it incrementally and focus on relevant user, assistant, tool-result, compaction, and branch-summary entries.
-3. If it has been archived, use read_session_archive with the exact session ID. Use search_session_archive with session_id when targeted search is more efficient.
-4. Determine what is done, what is pending, and the concrete resume point, then continue with the goal above.
+1. Call read_handoff_history before making changes; it reads the latest normalized entries from the linked previous session and automatically handles active or archived storage.
+2. Use search_handoff_history when targeted lookup for a decision, file, error, or topic is more efficient than paging through unrelated entries.
+3. Inherit prior decisions and do not redo completed work. Determine what is done, what is pending, and the concrete resume point, then continue with the goal above.
 
 ## Previous session
 ${historyReference}`;
