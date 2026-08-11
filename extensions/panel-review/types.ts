@@ -74,4 +74,6 @@ export const LIMITS = {
 	synthesisInputBytes: 96 * 1024,
 	/** Child stderr retention. */
 	stderrBytes: 8 * 1024,
+	/** Wall-clock limit per child process (reviewers and synthesizer). */
+	reviewerTimeoutMs: 10 * 60 * 1000,
 } as const;

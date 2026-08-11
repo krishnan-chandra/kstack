@@ -85,6 +85,7 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
 | Per reviewer report into synthesis | 24 KiB |
 | Aggregate synthesis input | 96 KiB |
 | Child stderr retention | 8 KiB |
+| Child wall-clock timeout | 10 min (SIGTERM, then SIGKILL after a 5 s grace) |
 
 Oversized diffs produce a complete file manifest plus a truncated patch with
 continuation instructions; reviewers can inspect named files with read-only

@@ -31,6 +31,8 @@ export interface RunnerDeps {
 	piInvocation?: (args: string[]) => { command: string; args: string[] };
 	/** Grace period between SIGTERM and SIGKILL on abort. */
 	killGraceMs?: number;
+	/** Wall-clock limit per child; on expiry the child is killed like an abort. */
+	timeoutMs?: number;
 	outputCapBytes?: number;
 	stderrCapBytes?: number;
 }
@@ -164,6 +166,7 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 	const outputCap = deps.outputCapBytes ?? LIMITS.reviewerOutputBytes;
 	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
 	const killGraceMs = deps.killGraceMs ?? 5000;
+	const timeoutMs = deps.timeoutMs ?? LIMITS.reviewerTimeoutMs;
 
 	return new Promise<ReviewerResult>((resolve) => {
 		let proc: SpawnedProcess;
@@ -185,8 +188,11 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 		let stopReason: string | undefined;
 		let errorMessage: string | undefined;
 		let wasAborted = false;
+		let timedOut = false;
+		let closed = false;
 		let settled = false;
 		let activity: string | undefined;
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const parser = new JsonLineParser((event) => {
 			if (event.type === "tool_execution_start" && event.toolName) {
@@ -228,6 +234,8 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 		const finish = (result: ReviewerResult) => {
 			if (settled) return;
 			settled = true;
+			clearTimeout(timeoutTimer);
+			if (graceTimer) clearTimeout(graceTimer);
 			signal?.removeEventListener("abort", killProc);
 			resolve(result);
 		};
@@ -245,27 +253,49 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 			}
 		};
 
-	const killProc = () => {
+		const escalate = () => {
+			graceTimer = setTimeout(() => {
+				if (!closed) killTree("SIGKILL");
+			}, killGraceMs);
+			graceTimer.unref?.();
+		};
+
+		const killProc = () => {
 			wasAborted = true;
 			killTree("SIGTERM");
-			const grace = setTimeout(() => {
-				if (!proc.killed) killTree("SIGKILL");
-			}, killGraceMs);
-			grace.unref?.();
+			escalate();
 		};
 		if (signal) {
 			if (signal.aborted) killProc();
 			else signal.addEventListener("abort", killProc, { once: true });
 		}
 
+		// Wall-clock timeout: same kill sequence as abort, reported as failed.
+		const timeoutTimer = setTimeout(() => {
+			timedOut = true;
+			killTree("SIGTERM");
+			escalate();
+		}, timeoutMs);
+		timeoutTimer.unref?.();
+
 		proc.on("error", (err) => {
 			finish({ status: "failed", label: spec.label, model, error: `Spawn failed: ${err.message}` });
 		});
 
 		proc.on("close", (code) => {
+			closed = true;
 			parser.flush();
 			if (wasAborted) {
 				finish({ status: "aborted", label: spec.label, model });
+				return;
+			}
+			if (timedOut) {
+				finish({
+					status: "failed",
+					label: spec.label,
+					model,
+					error: `Timed out after ${Math.round(timeoutMs / 1000)}s`,
+				});
 				return;
 			}
 			const output = truncateHeadUtf8(finalText.trim(), outputCap);

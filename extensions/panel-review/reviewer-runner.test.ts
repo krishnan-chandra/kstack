@@ -43,6 +43,8 @@ interface FakeProcSpec {
 	stopReason?: string;
 	errorMessage?: string;
 	neverClose?: boolean;
+	/** When set, kill() only closes the process for this signal. */
+	closeOnSig?: string;
 }
 
 function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImpl {
@@ -60,7 +62,9 @@ function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImp
 			kill(sig?: string) {
 				proc.killed = true;
 				onKill?.(sig ?? "SIGTERM");
-				queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+				if (!spec.closeOnSig || sig === spec.closeOnSig) {
+					queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+				}
 				return true;
 			},
 		};
@@ -190,5 +194,59 @@ describe("runReviewer", () => {
 		const r = await promise;
 		assert.equal(r.status, "aborted");
 		assert.deepEqual(killed, ["SIGTERM"]);
+	});
+
+	it("escalates to SIGKILL when SIGTERM is ignored", async () => {
+		const killed: string[] = [];
+		const abort = new AbortController();
+		const promise = runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			signal: abort.signal,
+			deps: {
+				spawnImpl: fakeSpawn({ neverClose: true, closeOnSig: "SIGKILL" }, (sig) => killed.push(sig)),
+				killGraceMs: 5,
+			},
+		});
+		abort.abort();
+		const r = await promise;
+		assert.equal(r.status, "aborted");
+		assert.deepEqual(killed, ["SIGTERM", "SIGKILL"]);
+	});
+
+	it("times out: SIGTERM then SIGKILL, result is failed with timeout error", async () => {
+		const killed: string[] = [];
+		const r = await runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			deps: {
+				spawnImpl: fakeSpawn({ neverClose: true, closeOnSig: "SIGKILL" }, (sig) => killed.push(sig)),
+				killGraceMs: 5,
+				timeoutMs: 10,
+			},
+		});
+		assert.equal(r.status, "failed");
+		if (r.status === "failed") assert.match(r.error, /Timed out after/);
+		assert.deepEqual(killed, ["SIGTERM", "SIGKILL"]);
+	});
+
+	it("does not time out when the child finishes promptly", async () => {
+		const killed: string[] = [];
+		const r = await runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			deps: { spawnImpl: fakeSpawn({ finalText: "ok" }, (sig) => killed.push(sig)), killGraceMs: 5, timeoutMs: 1000 },
+		});
+		assert.equal(r.status, "completed");
+		assert.deepEqual(killed, []);
 	});
 });
