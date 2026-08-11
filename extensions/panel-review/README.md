@@ -55,16 +55,23 @@ the raw reviewer reports are preserved instead.
 ```json
 {
   "reviewers": [
-    { "label": "A", "model": "anthropic/claude-sonnet-4-5", "thinking": "high" },
-    { "label": "B", "model": "openai/gpt-5.4", "thinking": "high" }
+    { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "xhigh" },
+    { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
   ],
   "maxConcurrency": 4
 }
 ```
 
 - 2–4 reviewers, unique labels, models resolved through Pi's model registry.
-- Without a config, up to four distinct models are picked from the session's
-  scoped models, preferring different providers.
+  `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
+  `xhigh`, `max`.
+- Without a config, a built-in low-cost default panel runs: **GLM-5.2**
+  (`openrouter/z-ai/glm-5.2`, xhigh), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
+  high), and **GPT-5.6 Sol** (`openai/gpt-5.6-sol`, low). Defaults that are
+  unavailable or unauthenticated are skipped with a warning; write a config to
+  override the panel.
+- If fewer than two default models are available, up to four distinct models
+  are picked from the session's scoped models, preferring different providers.
 - With only one model available, two independent reviewers run on it with a
   warning that model diversity is reduced.
 

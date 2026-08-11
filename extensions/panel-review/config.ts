@@ -6,11 +6,15 @@
  *
  *   {
  *     "reviewers": [
- *       { "label": "A", "model": "anthropic/claude-sonnet-4-5", "thinking": "high" },
- *       { "label": "B", "model": "openai/gpt-5.4", "thinking": "high" }
+ *       { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "xhigh" },
+ *       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
  *     ],
  *     "maxConcurrency": 4
  *   }
+ *
+ * With no config file, the built-in low-cost DEFAULT_PANEL is used, filtered
+ * to models available in the registry; scoped models and finally the active
+ * model are the fallback chain.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -21,6 +25,20 @@ import type { PanelConfig, ReviewerSpec } from "./types.ts";
 export const MIN_REVIEWERS = 2;
 export const MAX_REVIEWERS = 4;
 export const DEFAULT_MAX_CONCURRENCY = 4;
+
+/** Thinking levels Pi understands; used to validate config entries. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * Built-in low-cost default panel, used when no panel-review.json exists.
+ * Entries are filtered against the model registry at resolution time; at
+ * least MIN_REVIEWERS must be available or the fallback chain continues.
+ */
+export const DEFAULT_PANEL: ReviewerSpec[] = [
+	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "xhigh" },
+	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
+	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
+];
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 	const dir = env.PI_CODING_AGENT_DIR;
@@ -68,8 +86,14 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model".`,
 			};
 		}
-		if (r.thinking !== undefined && (typeof r.thinking !== "string" || !/^[a-z]+$/.test(r.thinking))) {
-			return { ok: false, error: `Reviewer "${r.label}" has invalid thinking level.` };
+		if (
+			r.thinking !== undefined &&
+			(typeof r.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(r.thinking))
+		) {
+			return {
+				ok: false,
+				error: `Reviewer "${r.label}" has invalid thinking level ${JSON.stringify(r.thinking)}; expected one of ${THINKING_LEVELS.join(", ")}.`,
+			};
 		}
 		reviewers.push({ label: r.label, model: r.model, thinking: r.thinking as string | undefined });
 	}
@@ -151,7 +175,24 @@ export function resolveReviewers(config: PanelConfig | null, deps: ResolveDeps):
 		return { ok: true, reviewers: config.reviewers, maxConcurrency: config.maxConcurrency, warnings };
 	}
 
-	// No config: pick up to four distinct scoped models, preferring provider diversity.
+	// No config: try the built-in low-cost default panel, filtered to models
+	// available in the registry. Skipped entries are surfaced as warnings.
+	const defaultAvailable: ReviewerSpec[] = [];
+	const defaultSkipped: string[] = [];
+	for (const r of DEFAULT_PANEL) {
+		const slash = r.model.indexOf("/");
+		if (deps.find(r.model.slice(0, slash), r.model.slice(slash + 1))) defaultAvailable.push(r);
+		else defaultSkipped.push(r.model);
+	}
+	if (defaultSkipped.length > 0) {
+		warnings.push(`Default panel models unavailable, skipping: ${defaultSkipped.join(", ")}.`);
+	}
+	if (defaultAvailable.length >= MIN_REVIEWERS) {
+		return { ok: true, reviewers: defaultAvailable, maxConcurrency: DEFAULT_MAX_CONCURRENCY, warnings };
+	}
+
+	// Default panel unavailable: pick up to four distinct scoped models,
+	// preferring provider diversity.
 	const seen = new Set<string>();
 	const distinct: { model: ModelLike; thinkingLevel?: string }[] = [];
 	for (const entry of deps.scopedModels) {

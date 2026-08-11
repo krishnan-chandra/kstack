@@ -47,7 +47,8 @@ export async function runPanel(
 			return await runOne(spec, index);
 		} catch (err) {
 			// A throwing runner must not take down siblings.
-			return { status: "failed", label: spec.label, model: spec.model, error: (err as Error).message };
+			const model = spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
+			return { status: "failed", label: spec.label, model, error: (err as Error).message };
 		}
 	});
 	return {

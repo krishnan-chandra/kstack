@@ -216,12 +216,13 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 			}
 		};
 
-		const killProc = () => {
+	const killProc = () => {
 			wasAborted = true;
 			killTree("SIGTERM");
-			setTimeout(() => {
+			const grace = setTimeout(() => {
 				if (!proc.killed) killTree("SIGKILL");
 			}, killGraceMs);
+			grace.unref?.();
 		};
 		if (signal) {
 			if (signal.aborted) killProc();
