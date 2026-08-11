@@ -14,6 +14,12 @@ export interface ReviewerSpec {
 export interface PanelConfig {
 	reviewers: ReviewerSpec[];
 	maxConcurrency: number;
+	/**
+	 * Required model for the post-panel synthesis step. Synthesis merges
+	 * bounded reviewer reports, so a small, fast model is usually the right
+	 * choice.
+	 */
+	synthesis: { model: string; thinking?: string };
 }
 
 export interface UsageSummary {

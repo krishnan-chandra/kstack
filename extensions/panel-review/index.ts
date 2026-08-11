@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { parseArgs } from "./args.ts";
-import { loadConfig, modelCliId, resolveReviewers } from "./config.ts";
+import { loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { runReviewer } from "./reviewer-runner.ts";
@@ -54,6 +54,8 @@ interface VerdictDetails {
 	headSha: string;
 	models: string[];
 	reviewerStatuses: { label: string; model: string; status: string }[];
+	/** Model that produced the lead verdict (may differ from the reviewers'). */
+	synthesisModel?: string;
 	truncated: boolean;
 	synthesized: boolean;
 	/** Children ran with --no-context-files because the changeset edits them. */
@@ -147,8 +149,8 @@ export default function (pi: ExtensionAPI) {
 				notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
 				return;
 			}
-			const resolution = resolveReviewers(configLoad.status === "loaded" ? configLoad.config : null, {
-				find: (provider, modelId) => {
+			const modelDeps = {
+				find: (provider: string, modelId: string) => {
 					const m = ctx.modelRegistry.find(provider, modelId);
 					// find() is catalog-only; require configured auth so unavailable
 					// models are skipped (default panel) or rejected (config) up front.
@@ -156,12 +158,28 @@ export default function (pi: ExtensionAPI) {
 				},
 				scopedModels: ctx.scopedModels,
 				activeModel: ctx.model,
-			});
+			};
+			const resolution = resolveReviewers(configLoad.status === "loaded" ? configLoad.config : null, modelDeps);
 			if (!resolution.ok) {
 				notify(resolution.error, "error");
 				return;
 			}
 			for (const warning of resolution.warnings) notify(warning, "warning");
+
+			// Synthesis model (required in config). Without a config, fall back
+			// from the built-in small, fast default to the panel's first model.
+			const synthResolution = resolveSynthesisModel(configLoad.status === "loaded" ? configLoad.config : null, modelDeps);
+			if (!synthResolution.ok) {
+				if (configLoad.status === "loaded") {
+					notify(synthResolution.error, "error");
+					return;
+				}
+				notify(`${synthResolution.error} Using the first reviewer model instead.`, "warning");
+			}
+			for (const warning of synthResolution.warnings) notify(warning, "warning");
+			const synthesisModel = synthResolution.ok ? synthResolution.model : resolution.reviewers[0].model;
+			const synthesisThinking = synthResolution.ok ? synthResolution.thinking : undefined;
+			const synthesisCliId = synthesisThinking ? `${synthesisModel}:${synthesisThinking}` : synthesisModel;
 
 			let scope: ScopeBundle | undefined;
 			let promptDir: string | undefined;
@@ -184,7 +202,8 @@ export default function (pi: ExtensionAPI) {
 					`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
 						`Changes: ${scope.fileCount} file(s), ${(scope.diffBytes / 1024).toFixed(0)} KiB diff, ` +
 						`${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
-						`Reviewers:\n${reviewerList}\n\n` +
+						`Reviewers:\n${reviewerList}\n` +
+						`Synthesis: ${synthesisCliId}\n\n` +
 						"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, " +
 						"no extensions or skills). The repository is never modified. " +
 						"Each child times out after 10 min; press Ctrl+Shift+X to abort mid-run." +
@@ -256,8 +275,8 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
-				// Synthesize with the active model in an isolated child process.
-				ctx.ui.setStatus("panel-review", "panel-review: synthesizing verdict…");
+				// Synthesize with the configured synthesis model in an isolated child process.
+				ctx.ui.setStatus("panel-review", `panel-review: synthesizing verdict with ${synthesisCliId}…`);
 				const { input, truncated: synthTruncated } = buildSynthesisInput({
 					intent,
 					scope,
@@ -270,10 +289,9 @@ export default function (pi: ExtensionAPI) {
 					encoding: "utf8",
 					mode: 0o600,
 				});
-				const activeModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : resolution.reviewers[0].model;
 				const synthResult: ReviewerResult = await runReviewer({
-					spec: { label: "lead", model: activeModel },
-					model: activeModel,
+					spec: { label: "lead", model: synthesisModel, thinking: synthesisThinking },
+					model: synthesisCliId,
 					promptFile: synthPromptFile,
 					task: `Synthesize the panel review in ${synthInputFile}. The repository root is ${scope.repoRoot}.`,
 					cwd: scope.repoRoot,
@@ -298,6 +316,7 @@ export default function (pi: ExtensionAPI) {
 					headSha: scope.headSha,
 					models: resolution.reviewers.map((r) => modelCliId(r)),
 					reviewerStatuses: panel.results.map((r) => ({ label: r.label, model: r.model, status: r.status })),
+					synthesisModel: synthesisCliId,
 					truncated: scope.truncated || synthTruncated,
 					synthesized,
 					contextFilesDisabled: scope.contextFilesTouched,

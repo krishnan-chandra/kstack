@@ -1,9 +1,11 @@
 /**
  * Lead-review synthesis helpers.
  *
- * The synthesizer is itself an isolated Pi child process running the user's
- * active model. It receives the intent, immutable scope metadata, bounded
- * reviewer reports, failure diagnostics, and the lead-judgment framework.
+ * The synthesizer is itself an isolated Pi child process running the model
+ * named by the required "synthesis" entry in panel-review.json (a small,
+ * fast model by convention; the built-in default when no config exists).
+ * It receives the intent, immutable scope metadata, bounded reviewer reports,
+ * failure diagnostics, and the lead-judgment framework.
  */
 
 import { LIMITS, type ReviewerResult, type ScopeBundle } from "./types.ts";

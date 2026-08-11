@@ -46,9 +46,11 @@ verdict.
    (current tool call, turn count, elapsed time). Press **Ctrl+Shift+X** to
    abort: children get SIGTERM, then SIGKILL after a 5 s grace. Any child also
    stops on its own after a 10-minute wall-clock timeout.
-5. Synthesizes the successful reports with your active model (also in an
-   isolated child) using the lead-judgment framework: deduplication, consensus
-   mapping, and **Act On / Consider / Noted / Dismissed** dispositions.
+5. Synthesizes the successful reports with the configured synthesis model
+   (required in `panel-review.json`; a small, fast model like
+   `google/gemini-3.5-flash-lite` by convention) in an isolated child, using
+   the lead-judgment framework: deduplication, consensus mapping, and
+   **Act On / Consider / Noted / Dismissed** dispositions.
 6. Appends the verdict to the session as a displayed `panel-review` custom
    message, so it stays in context and can guide later fixes. No fixes are
    applied automatically.
@@ -68,13 +70,22 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
     { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "high" },
     { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
   ],
-  "maxConcurrency": 4
+  "maxConcurrency": 4,
+  "synthesis": { "model": "google/gemini-3.5-flash-lite" }
 }
 ```
 
 - 2–4 reviewers, unique labels, models resolved through Pi's model registry.
   `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
   `xhigh`, `max`.
+- `synthesis` is **required**: it names the model that merges the reviewer
+  reports into the lead verdict after the panel finishes. Synthesis works on
+  bounded reports, so a small, fast model is usually the right pick; an
+  optional `thinking` level uses the same values as reviewers. A configured
+  synthesis model that is unavailable or unauthenticated aborts the run
+  before anything is launched. Without a config file, synthesis runs on the
+  built-in default `google/gemini-3.5-flash-lite`, falling back to the active
+  model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
   (`openrouter/qwen/qwen3.8-max`, high), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
   high), and **GPT-5.6 Sol** (`openai/gpt-5.6-sol`, low). Defaults that are
