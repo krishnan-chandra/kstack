@@ -4,6 +4,7 @@ import {
 	buildHandoffConversationText,
 	buildHandoffUserMessage,
 	DEFAULT_HANDOFF_GOAL,
+	ensureHistoryReference,
 	estimateConversationTokens,
 	formatHistoryReference,
 	HANDOFF_SYSTEM_PROMPT,
@@ -35,6 +36,20 @@ describe("buildHandoffConversationText", () => {
 
 	it("returns empty text for an empty message list", () => {
 		assert.equal(buildHandoffConversationText([], fakeConverters), "");
+	});
+});
+
+describe("ensureHistoryReference", () => {
+	it("appends an exact history section when the model omits it", () => {
+		const ref = formatHistoryReference(SESSION_FILE, SESSION_ID, CWD);
+		const prompt = ensureHistoryReference("## Context\nWork in progress.", ref);
+		assert.equal(prompt, `## Context\nWork in progress.\n\n## Previous session\n${ref}`);
+	});
+
+	it("does not duplicate an exact history reference already in the prompt", () => {
+		const ref = formatHistoryReference(SESSION_FILE, SESSION_ID, CWD);
+		const prompt = `## Context\nWork in progress.\n\n## Previous session\n${ref}`;
+		assert.equal(ensureHistoryReference(prompt, ref), prompt);
 	});
 });
 

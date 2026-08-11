@@ -23,6 +23,7 @@ import {
 	buildHandoffConversationText,
 	buildHandoffUserMessage,
 	DEFAULT_HANDOFF_GOAL,
+	ensureHistoryReference,
 	estimateConversationTokens,
 	formatHistoryReference,
 	HANDOFF_SYSTEM_PROMPT,
@@ -160,8 +161,13 @@ export function createHandoffHandler(deps: HandoffDeps) {
 			return;
 		}
 
+		// Do not trust model compliance for provenance: the prompt shown to the
+		// user must contain the exact history block even if synthesis omitted or
+		// rewrote it.
+		const promptWithHistory = ensureHistoryReference(generated, historyRef);
+
 		// Let the user review/edit the generated prompt.
-		const edited = await ctx.ui.editor("Edit handoff prompt", generated);
+		const edited = await ctx.ui.editor("Edit handoff prompt", promptWithHistory);
 		if (edited === undefined) {
 			ctx.ui.notify("Cancelled", "info");
 			return;

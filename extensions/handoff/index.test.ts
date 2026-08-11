@@ -163,8 +163,12 @@ describe("handoff command lifecycle", () => {
 			"newSession",
 			"fresh.setEditorText",
 		]);
-		// The edited prompt lands in the new session's editor, never via the stale ctx.
-		assert.deepEqual(calls.setEditorText, ["EDITED GENERATED PROMPT"]);
+		// The edited prompt lands in the new session's editor, never via the stale ctx,
+		// and carries the exact provenance even though the fake model omitted it.
+		assert.equal(calls.setEditorText.length, 1);
+		assert.ok(calls.setEditorText[0].startsWith("EDITED GENERATED PROMPT"));
+		assert.ok(calls.setEditorText[0].includes(SESSION_FILE));
+		assert.ok(calls.setEditorText[0].includes(SESSION_ID));
 		// Goal is trimmed and forwarded to the synthesis call.
 		assert.ok(calls.complete[0].text.includes("implement teams support"));
 		// The history custom message is appended in the new session.

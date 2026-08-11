@@ -69,6 +69,16 @@ export function buildHandoffUserMessage(conversationText: string, goal: string, 
 }
 
 /**
+ * Guarantee that the editable prompt carries the exact provenance block.
+ * Models can omit or rewrite requested output, so this requirement must not
+ * rely on prompt compliance alone.
+ */
+export function ensureHistoryReference(prompt: string, historyReference: string): string {
+	if (prompt.includes(historyReference)) return prompt;
+	return `${prompt.trimEnd()}\n\n## Previous session\n${historyReference}`;
+}
+
+/**
  * Stable provenance block embedded in the generated prompt and stored as a
  * `custom_message` in the new session. The file path is point-in-time
  * provenance (session-archive may later move the JSONL); the session ID is
