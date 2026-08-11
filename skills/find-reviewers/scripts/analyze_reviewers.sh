@@ -127,30 +127,79 @@ else
   echo "source: $CODEOWNERS (gitignore-style; last matching rule wins)"
   if command -v python3 >/dev/null 2>&1; then
     python3 - "$CODEOWNERS" "${FILES[@]}" <<'PYEOF'
-import sys, os
-from fnmatch import fnmatch
+import sys, re
 co, files = sys.argv[1], sys.argv[2:]
 
-def has_glob(p):
-    return any(c in p for c in "*?[")
+def translate_segment(seg):
+    """Translate one pattern segment: '*' and '?' never cross '/'."""
+    out = []
+    i = 0
+    while i < len(seg):
+        c = seg[i]
+        if c == "*":
+            if seg.startswith("**", i):
+                out.append(".*")  # '**' crosses directory boundaries
+                i += 2
+            else:
+                out.append("[^/]*")
+                i += 1
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        elif c == "[":
+            j = seg.find("]", i + 2)
+            if j == -1:
+                out.append(re.escape(c))
+                i += 1
+            else:
+                cls = seg[i : j + 1]
+                if cls.startswith("[!"):
+                    cls = "[^" + cls[2:]
+                out.append(cls)
+                i = j + 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return "".join(out)
 
-def rule_matches(pat, f):
-    anchored = pat.startswith("/")
-    p = pat.strip("/")
-    dir_rule = pat.endswith("/")
-    def match(candidate):
-        # A pattern naming a directory (explicit trailing slash, or no glob
-        # characters at all) owns that directory and everything beneath it.
-        if dir_rule or not has_glob(p):
-            return candidate == p or candidate.startswith(p + "/")
-        return fnmatch(candidate, p)
-    if anchored:
-        return match(f)
-    # unanchored rules match at any depth
-    if match(f) or match(os.path.basename(f)):
-        return True
+def compile_pattern(pat):
+    """Compile a CODEOWNERS/gitignore pattern.
+
+    Returns (regex, anchored, dir_only). '*' and '?' stay within one path
+    segment; '**' crosses segments. A leading '/' or any interior '/' anchors
+    the pattern to the repo root; otherwise it matches at any depth. A
+    trailing '/' restricts the pattern to directories, and a trailing '/**'
+    matches everything inside a directory. A matched directory owns its
+    contents, so file paths also match through their directory prefixes.
+    """
+    p = pat
+    dir_only = p.endswith("/")
+    p = p.rstrip("/")
+    anchored = p.startswith("/")
+    p = p.lstrip("/")
+    if p.startswith("**/"):
+        p = p[3:]  # '**/foo' matches foo at any depth
+    elif "/" in p:
+        anchored = True
+    inside_all = p.endswith("/**")
+    if inside_all:
+        p = p[:-3]
+    # 'a/**/b' matches zero or more intermediate directories
+    regex = "(?:/|/.+/)".join(translate_segment(part) for part in p.split("/**/"))
+    return re.compile(regex), anchored, dir_only or inside_all
+
+def rule_matches(compiled, f):
+    regex, anchored, dir_only = compiled
     parts = f.split("/")
-    return any(match("/".join(parts[i:])) for i in range(1, len(parts)))
+    candidates = set()
+    starts = [0] if anchored else range(len(parts))
+    for s in starts:
+        sub = parts[s:]
+        for i in range(1, len(sub) + 1):
+            candidates.add("/".join(sub[:i]))
+    if dir_only:
+        candidates.discard(f)  # must match a directory, not the file itself
+    return any(regex.fullmatch(c) for c in candidates)
 
 rules = []
 for lineno, line in enumerate(open(co), 1):
@@ -162,7 +211,8 @@ for lineno, line in enumerate(open(co), 1):
         continue
     rules.append((lineno, parts[0], " ".join(parts[1:])))
 
-hits = [(ln, pat, own, [f for f in files if rule_matches(pat, f)]) for ln, pat, own in rules]
+compiled = [(ln, pat, own, compile_pattern(pat)) for ln, pat, own in rules]
+hits = [(ln, pat, own, [f for f in files if rule_matches(c, f)]) for ln, pat, own, c in compiled]
 hits = [h for h in hits if h[3]]
 if not hits:
     print("(no CODEOWNERS rule matches the changed paths)")

@@ -4,9 +4,14 @@
  * The handoff command applies the chosen model through `pi.setModel()` before
  * calling `ctx.newSession()`. Pi resolves a brand-new session's model from the
  * configured default (settings), and `setModel` persists exactly that default,
- * so the replacement session starts on the model selected here. With no flag,
- * the handler re-applies the parent session's active model the same way, which
- * guarantees inheritance even when the configured default is stale.
+ * so in the default configuration the replacement session starts on the model
+ * selected here. Startup-level overrides — a `pi --model` CLI flag or model
+ * scoping via `--models` / `enabledModels` — take precedence over this
+ * mechanism; the handler compares the replacement session's actual model
+ * against the expectation and reports any mismatch instead of claiming the
+ * requested one. With no flag, the handler re-applies the parent session's
+ * active model the same way (best effort), so inheritance holds whenever the
+ * parent's model is usable and not overridden at startup.
  */
 
 /** Minimal structural view of a pi-ai Model, enough for resolution and setModel. */

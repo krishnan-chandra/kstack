@@ -9,8 +9,13 @@
  *   /handoff                        # continue from the prior resume point
  *
  * Model selection: with `--model`, the replacement session starts on that
- * model; without it, the replacement session inherits the parent session's
- * active model. Both paths go through `pi.setModel()` before `newSession()`.
+ * model; without it, the parent session's active model is pinned (best
+ * effort) so the replacement inherits it. Both paths go through
+ * `pi.setModel()` before `newSession()`. Startup-level overrides — a
+ * `pi --model` CLI flag or model scoping (`--models` / `enabledModels`) —
+ * take precedence over this mechanism; the handler compares the replacement
+ * session's actual model against the expectation and reports any mismatch
+ * instead of claiming success.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -33,7 +38,10 @@ import { formatModelRef, parseHandoffArgs, resolveModelReference, type HandoffMo
  * The handler needs `pi.setModel` to control the replacement session's model:
  * `ctx.newSession()` takes no model option, and a brand-new session resolves
  * its model from the configured default. `setModel` persists that default,
- * so applying it before `newSession` determines the replacement's model.
+ * so applying it before `newSession` determines the replacement's model in
+ * the default configuration. A startup `--model` flag or active model
+ * scoping still wins over this mechanism; the handler detects that from the
+ * replacement session's actual model and warns instead of claiming success.
  */
 export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
@@ -52,12 +60,22 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 
 		// Resolve an explicit model before opening the editor so a typo fails
 		// fast. The actual switch is deferred until after the user confirms the
-		// prompt, so cancelling never changes the parent session's model.
+		// prompt, so cancelling the editor never changes the parent session's
+		// model. When model scoping is active, only scoped models are valid
+		// choices: anything else would be silently replaced in the new session.
 		let targetModel: HandoffModel | undefined;
 		if (parsed.modelRef !== undefined) {
-			const resolution = resolveModelReference(ctx.modelRegistry.getAll() as HandoffModel[], parsed.modelRef);
+			const scoped = (ctx.scopedModels ?? []) as Array<{ model: HandoffModel }>;
+			const scopedActive = scoped.length > 0;
+			const catalogue: HandoffModel[] = scopedActive
+				? scoped.map((s) => s.model)
+				: (ctx.modelRegistry.getAll() as HandoffModel[]);
+			const resolution = resolveModelReference(catalogue, parsed.modelRef);
 			if (resolution.status === "not-found") {
-				ctx.ui.notify(`Unknown model "${parsed.modelRef}". Use provider/model-id; see /model for available models.`, "error");
+				const hint = scopedActive
+					? " Model scoping is active, so only scoped models are accepted (see /scoped-models)."
+					: " Use provider/model-id; see /model for available models.";
+				ctx.ui.notify(`Unknown model "${parsed.modelRef}".${hint}`, "error");
 				return;
 			}
 			if (resolution.status === "ambiguous") {
@@ -97,6 +115,8 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 			return;
 		}
 
+		const previousModel = ctx.model;
+
 		if (targetModel) {
 			let switched = false;
 			try {
@@ -112,35 +132,92 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 				ctx.ui.notify(`No API key available for ${formatModelRef(targetModel)}; handoff cancelled`, "error");
 				return;
 			}
-		} else if (ctx.model) {
+		} else if (previousModel) {
 			// Inherit the parent session's model. A fresh session resolves its
 			// model from the configured default, which can lag the active
-			// session (e.g. after `pi --model` or resuming another session),
-			// so pin it explicitly. Best effort: if this fails, fall back to
-			// Pi's normal default resolution instead of blocking the handoff.
+			// session (e.g. after resuming another session), so pin it
+			// explicitly. Best effort: if the pin fails (e.g. credentials were
+			// removed mid-session), fall back to Pi's normal default resolution
+			// instead of blocking the handoff.
+			let pinned = false;
 			try {
-				await api.setModel(ctx.model);
+				pinned = await api.setModel(previousModel);
 			} catch {
-				// Ignore; the replacement session still gets the configured default.
+				// Treated like a false result below.
+			}
+			if (!pinned) {
+				ctx.ui.notify(
+					`Could not pin ${formatModelRef(previousModel)} for the new session; it will start on the configured default model`,
+					"warning",
+				);
 			}
 		}
 
-		const modelNote = targetModel ? ` Model: ${formatModelRef(targetModel)}.` : "";
-		const result = await ctx.newSession({
-			parentSession: oldFile,
-			setup: async (sm) => {
-				sm.appendCustomMessageEntry("handoff", historyRef, true, source);
-			},
-			withSession: async (fresh) => {
-				fresh.ui.setEditorText(edited);
-				fresh.ui.notify(`Handoff ready.${modelNote} Previous session: ${oldFile}`, "info");
-			},
-		});
+		// An explicit --model switches the parent session before replacement.
+		// If the replacement does not happen, switch back so a cancelled or
+		// failed handoff leaves neither the parent session nor the persisted
+		// default model changed. There is nothing to restore to when no model
+		// was active before; the parent then keeps the requested model.
+		const restoreParentModel = async (): Promise<void> => {
+			if (!targetModel || !previousModel) return;
+			if (sameModel(previousModel, targetModel)) return;
+			try {
+				await api.setModel(previousModel);
+			} catch {
+				// Best effort; the parent keeps the requested model.
+			}
+		};
+
+		let result: { cancelled: boolean };
+		try {
+			result = await ctx.newSession({
+				parentSession: oldFile,
+				setup: async (sm) => {
+					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
+				},
+				withSession: async (fresh) => {
+					fresh.ui.setEditorText(edited);
+					// Report the model the replacement session actually started
+					// on. A startup --model flag or active model scoping can
+					// override the switch made above; never claim otherwise.
+					const actual = fresh.model as HandoffModel | undefined;
+					if (targetModel) {
+						if (actual && !sameModel(actual, targetModel)) {
+							fresh.ui.notify(
+								`Handoff ready, but the session started on ${formatModelRef(actual)} instead of ${formatModelRef(targetModel)} (a startup --model flag or model scoping overrides handoff selection). Previous session: ${oldFile}`,
+								"warning",
+							);
+						} else {
+							fresh.ui.notify(`Handoff ready. Model: ${formatModelRef(targetModel)}. Previous session: ${oldFile}`, "info");
+						}
+					} else if (previousModel && actual && !sameModel(actual, previousModel)) {
+						fresh.ui.notify(
+							`Handoff ready, but the session started on ${formatModelRef(actual)} instead of the parent's ${formatModelRef(previousModel)} (a startup --model flag or model scoping overrides inheritance). Previous session: ${oldFile}`,
+							"warning",
+						);
+					} else {
+						fresh.ui.notify(`Handoff ready. Previous session: ${oldFile}`, "info");
+					}
+				},
+			});
+		} catch (err) {
+			await restoreParentModel();
+			throw err;
+		}
 
 		if (result.cancelled) {
-			ctx.ui.notify("New session cancelled", "info");
+			await restoreParentModel();
+			if (targetModel && !previousModel) {
+				ctx.ui.notify(`New session cancelled; the parent session keeps ${formatModelRef(targetModel)}`, "info");
+			} else {
+				ctx.ui.notify("New session cancelled", "info");
+			}
 		}
 	};
+}
+
+function sameModel(a: HandoffModel, b: HandoffModel): boolean {
+	return a.provider === b.provider && a.id === b.id;
 }
 
 function requireHandoffSource(ctx: { sessionManager: { getBranch(): unknown[] } }): HandoffSource {

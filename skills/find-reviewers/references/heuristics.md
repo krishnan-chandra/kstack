@@ -49,6 +49,7 @@ Commit counts decay: a file rewritten six months ago transfers ownership to whoe
 
 - Locations, in precedence order: `.github/CODEOWNERS`, root `CODEOWNERS`, `docs/CODEOWNERS`, `.gitlab/CODEOWNERS`.
 - Patterns are gitignore-style; **last matching rule wins**. A rule on `src/api/` overrides a broader rule on `src/` for that subtree. The script marks overridden rules — do not recommend owners from overridden rules.
+- Matching details: `*` and `?` never cross `/` (`/src/*.test.ts` does not own `src/deep/x.test.ts`); `**` crosses directories; a pattern containing a slash is anchored to the repo root (`docs/*` does not own `other/docs/x`); a pattern without a slash matches at any depth.
 - A pattern naming a directory — with a trailing slash, or with no glob characters at all (`/platform`) — owns that directory **and everything beneath it**. Individual owners listed as `@handle` in any matching or sibling rule are a good source of GitHub handles.
 - Team owners (`@org/team`) are policy pointers, not people. Resolve them with history signals: the team member with the most recent commits to the matched paths is the practical reviewer. Say that you resolved a team to a person.
 - A path with no matching rule inherits nothing beyond repo-wide rules; don't invent owners from CODEOWNERS silence.
