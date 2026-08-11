@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -213,6 +213,70 @@ describe("collectScope", () => {
 			);
 			bundleDir = scope.dir;
 			assert.equal(scope.contextFilesTouched, false);
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("expands untracked directories via --untracked-files=all", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		const seenArgs: string[][] = [];
+		try {
+			writeFileSync(join(root, "new-file.ts"), "export const b = 2;\n");
+			const exec: GitExec = (args) => {
+				seenArgs.push(args);
+				const key = args.join(" ");
+				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+				if (key.startsWith("rev-parse HEAD")) return "headsha\n";
+				if (key.startsWith("diff --find-renames --find-copies")) return "";
+				if (key.startsWith("diff --name-status")) return "";
+				// With -uall, git lists the file inside the new directory, not "?? dir/".
+				if (key.startsWith("status --porcelain")) return "?? dir/new-file.ts\0";
+				if (key.startsWith("log --format=%s")) return "";
+				throw new Error(`unexpected: ${key}`);
+			};
+			mkdirSync(join(root, "dir"));
+			writeFileSync(join(root, "dir", "new-file.ts"), "export const b = 2;\n");
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", { exec });
+			bundleDir = scope.dir;
+			const statusCall = seenArgs.find((a) => a[0] === "status");
+			assert.ok(statusCall?.includes("--untracked-files=all"));
+			const content = readFileSync(scope.path, "utf8");
+			assert.match(content, /dir\/new-file\.ts/);
+			assert.match(content, /export const b = 2/);
+			assert.ok(!/not a regular file/.test(content));
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("caps the number of untracked files and discloses the overflow", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		try {
+			const exec: GitExec = (args) => {
+				const key = args.join(" ");
+				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+				if (key.startsWith("rev-parse HEAD")) return "headsha\n";
+				if (key.startsWith("diff --find-renames --find-copies")) return "";
+				if (key.startsWith("diff --name-status")) return "";
+				if (key.startsWith("status --porcelain")) return "?? a.ts\0?? b.ts\0?? c.ts\0";
+				if (key.startsWith("log --format=%s")) return "";
+				throw new Error(`unexpected: ${key}`);
+			};
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", {
+				exec,
+				untrackedFiles: 2,
+			});
+			bundleDir = scope.dir;
+			const content = readFileSync(scope.path, "utf8");
+			assert.match(content, /3 untracked files; only the first 2 are included/);
+			assert.match(content, /### a\.ts/);
+			assert.ok(!/### c\.ts/.test(content));
+			assert.equal(scope.untrackedCount, 3); // count reflects reality, not the cap
 		} finally {
 			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			cleanup();

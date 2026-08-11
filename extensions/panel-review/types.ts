@@ -70,6 +70,8 @@ export const LIMITS = {
 	bundleBytes: 2 * 1024 * 1024,
 	/** Per untracked text file. */
 	untrackedFileBytes: 256 * 1024,
+	/** Max untracked files included in the bundle (status uses -uall). */
+	untrackedFiles: 200,
 	/** Final output per reviewer handed to the synthesizer. */
 	reviewerOutputBytes: 24 * 1024,
 	/** Aggregate reviewer input to the synthesizer. */

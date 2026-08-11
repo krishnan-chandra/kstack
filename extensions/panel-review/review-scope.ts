@@ -206,6 +206,7 @@ export interface CollectScopeOptions {
 	now?: () => Date;
 	bundleBytes?: number;
 	untrackedFileBytes?: number;
+	untrackedFiles?: number;
 }
 
 /**
@@ -231,7 +232,10 @@ export function collectScope(
 	const diffArgs = ["diff", "--find-renames", "--find-copies", base.mergeBaseSha];
 	const diff = exec(diffArgs, cwd);
 	const nameStatus = tryGit(exec, ["diff", "--name-status", "--find-renames", base.mergeBaseSha], cwd) ?? "";
-	const statusRaw = exec(["status", "--porcelain=v1", "-z"], cwd);
+	// -uall expands untracked directories into individual files; without it a
+	// new directory collapses to one "?? dir/" entry and its contents — often
+	// the substance of the change — would never be reviewed.
+	const statusRaw = exec(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd);
 	const logRaw = tryGit(exec, ["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], cwd) ?? "";
 	const statusEntries = parsePorcelainZ(statusRaw);
 	const untracked = statusEntries.filter((e) => e.xy === "??");
@@ -294,8 +298,16 @@ export function collectScope(
 
 	let binaryCount = 0;
 	if (untracked.length > 0) {
+		const included = untracked.slice(0, options.untrackedFiles ?? LIMITS.untrackedFiles);
 		const parts: string[] = ["", "## Untracked Files", ""];
-		for (const entry of untracked) {
+		if (untracked.length > included.length) {
+			parts.push(
+				`(${untracked.length} untracked files; only the first ${included.length} are included. ` +
+					"The rest are not named here — inspect the repository directly if needed.)",
+				"",
+			);
+		}
+		for (const entry of included) {
 			const content = readUntracked(repoRoot, entry.path, fsImpl, fileCap);
 			if ("skipped" in content) {
 				if (content.skipped === "binary") binaryCount++;

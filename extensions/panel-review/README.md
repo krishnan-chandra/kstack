@@ -19,7 +19,8 @@ verdict.
 2. Builds a bounded bundle in a mode-`0600` temp file outside the repository:
    `git diff --find-renames --find-copies <merge-base>` (committed + staged +
    unstaged together), porcelain status, bounded contents of untracked text
-   files (symlinks, binaries, and path escapes skipped), and commit subjects.
+   files (`--untracked-files=all`, so new directories are expanded into their
+   files; symlinks, binaries, and path escapes skipped), and commit subjects.
    The diff is never passed on a command line.
 3. Asks for the review intent (from `--intent` or an editor prefilled with
    commit subjects) and confirms once before spending anything.
@@ -90,6 +91,7 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
 | --- | --- |
 | Total bundle | 2 MiB |
 | Per untracked text file | 256 KiB |
+| Untracked files included | 200 (overflow disclosed, not named) |
 | Per reviewer report into synthesis | 24 KiB |
 | Aggregate synthesis input | 96 KiB |
 | Child stderr retention | 8 KiB |
