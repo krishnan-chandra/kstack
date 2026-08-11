@@ -1,0 +1,31 @@
+{
+  "skill_name": "find-reviewers",
+  "evals": [
+    {
+      "id": 1,
+      "name": "fixture-two-owners",
+      "prompt_file": "fixture-two-owners.txt",
+      "prompt": "I have a small git repo at /tmp/find-reviewers-fixture. My branch `feat/billing-refund` (base `main`) adds partial refunds and a refunded status on invoices — it touches billing/refunds.py and billing/invoices.py. Who are the best people to review this PR? Recommend 2-3 reviewers in priority order with the evidence behind each pick. Treat the repo as read-only — don't modify anything in it.",
+      "expected_output": "Recommends Bob Marsh first (owns billing/refunds.py: 8 commits, 4 recent) and Alice Zhang second (owns billing/invoices.py: 5 commits once her two identities are merged), excludes Carol Reyes (PR author), with commit-count evidence and an explicit review order.",
+      "assertions": [
+        {"text": "Recommends Bob Marsh", "check": {"type": "file_contains", "path": "result.txt", "needle": "Bob"}},
+        {"text": "Recommends Alice Zhang", "check": {"type": "file_contains", "path": "result.txt", "needle": "Alice"}},
+        {"text": "Does not recommend Carol Reyes as a reviewer", "check": null},
+        {"text": "Merges Alice's two identities (alice@acme.io + alice.zhang@gmail.com) or cites her true total of ~5 commits on invoices.py", "check": null},
+        {"text": "Gives a review order and evidence (commit counts), not just names", "check": null}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "panel-review-small-repo",
+      "prompt_file": "panel-review-small-repo.txt",
+      "prompt": "In the repo /Users/krishnan@aaru.com/Code/krishnan-pi-extensions I'm planning a change to the panel-review extension (extensions/panel-review/). Who should review that PR? Keep it read-only.",
+      "expected_output": "Identifies Krishnan Chandra as the sole builder of panel-review (3 commits, two merged identities), and is honest that a single-contributor repo has weak reviewer signals — suggests the author's own nominations / external or pair review rather than inventing candidates.",
+      "assertions": [
+        {"text": "Names Krishnan Chandra as the extension's builder", "check": {"type": "file_contains", "path": "result.txt", "needle": "Krishnan"}},
+        {"text": "Is honest about the weak-signal situation (single contributor / author would review own work) instead of inventing reviewers", "check": null},
+        {"text": "Does not fabricate reviewers who never touched the repo", "check": null}
+      ]
+    }
+  ]
+}
