@@ -50,7 +50,8 @@ the raw reviewer reports are preserved instead.
 
 ## Configuration
 
-`$PI_CODING_AGENT_DIR/panel-review.json` (fallback `~/.pi/agent/panel-review.json`):
+`$PI_CODING_AGENT_DIR/panel-review.json` (fallback `~/.pi/agent/panel-review.json`).
+Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.pi/agent/panel-review.json`:
 
 ```json
 {
