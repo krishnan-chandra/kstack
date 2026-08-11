@@ -10,7 +10,7 @@
  *       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
  *     ],
  *     "maxConcurrency": 4,
- *     "synthesis": { "model": "google/gemini-3.5-flash-lite" }
+ *     "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
  *   }
  *
  * "synthesis" is required: it picks the model that merges the reviewer
@@ -54,7 +54,7 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
  * reviewer reports, so a small, fast model is enough. Config files must name
  * their synthesis model explicitly.
  */
-export const DEFAULT_SYNTHESIS = { model: "google/gemini-3.5-flash-lite" } as const;
+export const DEFAULT_SYNTHESIS = { model: "openrouter/google/gemini-3.5-flash-lite" } as const;
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 	const dir = env.PI_CODING_AGENT_DIR;
