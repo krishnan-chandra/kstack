@@ -35,7 +35,7 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
-	{ label: "qwen", model: "qwen/qwen3.8-max", thinking: "high" },
+	{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "high" },
 	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
 	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
 ];

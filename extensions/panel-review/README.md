@@ -65,7 +65,7 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
 ```json
 {
   "reviewers": [
-    { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
+    { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "high" },
     { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
   ],
   "maxConcurrency": 4
@@ -76,7 +76,7 @@ Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.p
   `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
   `xhigh`, `max`.
 - Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
-  (`qwen/qwen3.8-max`, high), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
+  (`openrouter/qwen/qwen3.8-max`, high), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
   high), and **GPT-5.6 Sol** (`openai/gpt-5.6-sol`, low). Defaults that are
   unavailable or unauthenticated are skipped with a warning; write a config to
   override the panel.
