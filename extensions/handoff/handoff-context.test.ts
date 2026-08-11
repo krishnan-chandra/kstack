@@ -59,7 +59,9 @@ describe("formatHistoryReference", () => {
 		assert.ok(ref.includes(`Previous session: ${SESSION_FILE}`));
 		assert.ok(ref.includes(`Session ID: ${SESSION_ID}`));
 		assert.ok(ref.includes(`CWD: ${CWD}`));
+		assert.ok(ref.includes("read_session_archive"));
 		assert.ok(ref.includes("search_session_archive"));
+		assert.ok(ref.includes("session_id"));
 	});
 
 	it("marks ephemeral sessions as prompt-only history", () => {
@@ -84,6 +86,7 @@ describe("prompts and estimates", () => {
 		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("resume point"));
 		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("verbatim"));
 		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("## Previous session"));
+		assert.ok(HANDOFF_SYSTEM_PROMPT.includes("untrusted data"));
 	});
 
 	it("default goal names the resume point", () => {

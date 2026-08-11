@@ -9,8 +9,9 @@ old one twice:
 
 - `parentSession` in the session header preserves Pi's native provenance.
 - A `handoff` `custom_message` entry stores the old session's file, exact session
-  ID, and cwd — the durable identity you can use with `search_session_archive` if
-  the old JSONL is later archived (e.g. by the
+  ID, and cwd — the durable identity you can use with `read_session_archive` if
+  the old JSONL is later archived (or with `search_session_archive` plus its
+  `session_id` filter to search within it), e.g. by the
   [`session-archive`](../session-archive/) extension).
 
 ## Usage
@@ -35,7 +36,7 @@ Files involved: …
 ## Previous session
 Previous session: /path/to/old-session.jsonl
 Session ID: <uuid>  CWD: /path/to/project
-Lookup: use the active path above; if it is later archived, use search_session_archive with the exact session ID
+Lookup: use the active path above; if it is later archived, use read_session_archive with the exact session ID (or search_session_archive with session_id to search within it)
 ```
 
 Every step is cancellable: aborting the loader, cancelling the editor, or a
@@ -49,9 +50,10 @@ untouched.
   their summary plus retained tail.
 - **Ephemeral sessions**: with no session file, `parentSession` is omitted and
   the history reference notes the history lives in the prompt only.
-- **Context budget**: if the serialized conversation exceeds ~90% of the selected
-  model's context window, handoff stops and recommends `/compact` rather than
-  silently dropping recent context.
+- **Context budget**: if the complete synthesis request exceeds ~90% of the
+  selected model's context window, handoff stops and recommends `/compact`
+  rather than silently dropping recent context. Synthesis output is explicitly
+  capped to the remaining context space (and at most 4096 tokens).
 - **Interactive only**: requires TUI mode.
 
 ## Tests

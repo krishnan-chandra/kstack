@@ -9,7 +9,7 @@ const CWD = "/proj";
 
 interface FakeCtxOptions {
 	mode?: string;
-	model?: { contextWindow: number } | undefined;
+	model?: { contextWindow: number; maxTokens: number } | undefined;
 	messages?: unknown[];
 	completeResult?: unknown;
 	editorResult?: string | undefined;
@@ -22,7 +22,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	const customMessages: Array<{ customType: string; content: string; display: boolean }> = [];
 	const calls = {
 		setEditorText: [] as string[],
-		complete: [] as Array<{ systemPrompt: string; text: string }>,
+		complete: [] as Array<{ systemPrompt: string; text: string; maxTokens: number }>,
 		newSession: 0,
 	};
 
@@ -32,7 +32,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 
 	const ctx: Record<string, unknown> = {
 		mode: opts.mode ?? "tui",
-		model: "model" in opts ? opts.model : { contextWindow: 100_000 },
+		model: "model" in opts ? opts.model : { contextWindow: 100_000, maxTokens: 16_384 },
 		cwd: CWD,
 		waitForIdle: async () => {
 			order.push("waitForIdle");
@@ -46,9 +46,17 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 			getSessionId: () => SESSION_ID,
 		},
 		modelRegistry: {
-			complete: async (_model: unknown, request: { systemPrompt: string; messages: Array<{ content: Array<{ text: string }> }> }) => {
+			complete: async (
+				_model: unknown,
+				request: { systemPrompt: string; messages: Array<{ content: Array<{ text: string }> }> },
+				options: { maxTokens: number },
+			) => {
 				order.push("complete");
-				calls.complete.push({ systemPrompt: request.systemPrompt, text: request.messages[0].content[0].text });
+				calls.complete.push({
+					systemPrompt: request.systemPrompt,
+					text: request.messages[0].content[0].text,
+					maxTokens: options.maxTokens,
+				});
 				return completeResult;
 			},
 		},
@@ -139,9 +147,11 @@ describe("handoff command guards", () => {
 		assert.equal(calls.complete.length, 0);
 	});
 
-	it("stops with a /compact recommendation when history exceeds the budget", async () => {
+	it("stops with a /compact recommendation when the synthesis request exceeds the budget", async () => {
 		const order: string[] = [];
-		const { ctx, notifications, calls } = makeFakeCtx(order, { model: { contextWindow: 10 } });
+		const { ctx, notifications, calls } = makeFakeCtx(order, {
+			model: { contextWindow: 10, maxTokens: 4 },
+		});
 		await createHandoffHandler(makeDeps())("goal", ctx as never);
 		assert.ok(notifications[0].message.includes("/compact"));
 		assert.equal(notifications[0].level, "error");
@@ -169,14 +179,17 @@ describe("handoff command lifecycle", () => {
 		assert.ok(calls.setEditorText[0].startsWith("EDITED GENERATED PROMPT"));
 		assert.ok(calls.setEditorText[0].includes(SESSION_FILE));
 		assert.ok(calls.setEditorText[0].includes(SESSION_ID));
-		// Goal is trimmed and forwarded to the synthesis call.
+		// Goal is trimmed and forwarded to the synthesis call, and output is
+		// explicitly bounded to the context space reserved by the input guard.
 		assert.ok(calls.complete[0].text.includes("implement teams support"));
+		assert.equal(calls.complete[0].maxTokens, 4_096);
 		// The history custom message is appended in the new session.
 		assert.equal(customMessages.length, 1);
 		assert.equal(customMessages[0].customType, "handoff");
 		assert.equal(customMessages[0].display, true);
 		assert.ok(customMessages[0].content.includes(SESSION_FILE));
 		assert.ok(customMessages[0].content.includes(SESSION_ID));
+		assert.ok(customMessages[0].content.includes("read_session_archive"));
 		assert.ok(customMessages[0].content.includes("search_session_archive"));
 	});
 
@@ -205,6 +218,35 @@ describe("handoff command lifecycle", () => {
 });
 
 describe("handoff abort paths", () => {
+	it("creates no session when the loader is cancelled", async () => {
+		const order: string[] = [];
+		const { ctx, notifications, calls } = makeFakeCtx(order);
+		const deps = makeDeps();
+		deps.loaderFactory = () => {
+			const controller = new AbortController();
+			let abortHandler: (() => void) | undefined;
+			return {
+				get signal() {
+					return controller.signal;
+				},
+				get onAbort() {
+					return abortHandler;
+				},
+				set onAbort(handler: (() => void) | undefined) {
+					abortHandler = handler;
+					queueMicrotask(() => {
+						controller.abort();
+						abortHandler?.();
+					});
+				},
+			};
+		};
+
+		await createHandoffHandler(deps)("goal", ctx as never);
+		assert.equal(notifications.at(-1)!.message, "Cancelled");
+		assert.equal(calls.newSession, 0);
+	});
+
 	it("creates no session when the model call is aborted", async () => {
 		const order: string[] = [];
 		const { ctx, notifications, calls } = makeFakeCtx(order, {
@@ -226,11 +268,31 @@ describe("handoff abort paths", () => {
 		assert.equal(calls.newSession, 0);
 	});
 
+	it("creates no session when generation hits its output limit", async () => {
+		const order: string[] = [];
+		const { ctx, notifications, calls } = makeFakeCtx(order, {
+			completeResult: { stopReason: "length", content: [{ type: "text", text: "TRUNCATED" }] },
+		});
+		await createHandoffHandler(makeDeps())("goal", ctx as never);
+		assert.ok(notifications.at(-1)!.message.includes("length"));
+		assert.equal(notifications.at(-1)!.level, "error");
+		assert.equal(calls.newSession, 0);
+	});
+
 	it("creates no session when the editor is cancelled", async () => {
 		const order: string[] = [];
 		const { ctx, notifications, calls } = makeFakeCtx(order, { editorResult: undefined });
 		await createHandoffHandler(makeDeps())("goal", ctx as never);
 		assert.equal(notifications.at(-1)!.message, "Cancelled");
+		assert.equal(calls.newSession, 0);
+	});
+
+	it("creates no session when the edited prompt is empty", async () => {
+		const order: string[] = [];
+		const { ctx, notifications, calls } = makeFakeCtx(order, { editorResult: "  \n" });
+		await createHandoffHandler(makeDeps())("goal", ctx as never);
+		assert.equal(notifications.at(-1)!.message, "Handoff prompt cannot be empty");
+		assert.equal(notifications.at(-1)!.level, "error");
 		assert.equal(calls.newSession, 0);
 	});
 

@@ -51,6 +51,7 @@ export interface HandoffDeps extends ConversationConverters {
 }
 
 const DEFAULT_MAX_CONTEXT_FRACTION = 0.9;
+const MAX_HANDOFF_OUTPUT_TOKENS = 4096;
 
 /**
  * Build the /handoff command handler with injected Pi helpers. Kept separate
@@ -92,19 +93,27 @@ export function createHandoffHandler(deps: HandoffDeps) {
 		const historyRef = formatHistoryReference(oldFile, oldId, cwd);
 
 		const conversationText = buildHandoffConversationText(messages as AgentMessage[], deps);
+		const handoffUserText = buildHandoffUserMessage(conversationText, goal, historyRef);
 
-		// Budget guard: if the canonical projection already overflows the
-		// model's context window, recommend /compact instead of silently
-		// dropping recent context.
-		const estimatedTokens = estimateConversationTokens(conversationText);
-		if (estimatedTokens > model.contextWindow * maxFraction) {
+		// Budget the complete synthesis request rather than history alone. Reserve
+		// the remainder of the context window for output and explicitly cap output
+		// so providers that do not clamp maxTokens cannot reject an otherwise valid
+		// request because input + their model default exceeds the context window.
+		const estimatedTokens = estimateConversationTokens(`${HANDOFF_SYSTEM_PROMPT}\n\n${handoffUserText}`);
+		const inputBudget = Math.floor(model.contextWindow * maxFraction);
+		if (estimatedTokens > inputBudget) {
 			ctx.ui.notify(
-				`Conversation is ~${estimatedTokens} tokens, over ${Math.round(maxFraction * 100)}% of the ` +
+				`Handoff request is ~${estimatedTokens} tokens, over ${Math.round(maxFraction * 100)}% of the ` +
 					`${model.contextWindow}-token context window. Run /compact first, then hand off.`,
 				"error",
 			);
 			return;
 		}
+		const modelOutputLimit = model.maxTokens > 0 ? model.maxTokens : MAX_HANDOFF_OUTPUT_TOKENS;
+		const outputBudget = Math.max(
+			1,
+			Math.min(modelOutputLimit, MAX_HANDOFF_OUTPUT_TOKENS, model.contextWindow - inputBudget),
+		);
 
 		// Generate the handoff prompt behind an abortable loader.
 		let generateError: string | undefined;
@@ -115,14 +124,14 @@ export function createHandoffHandler(deps: HandoffDeps) {
 			const doGenerate = async (): Promise<string | null> => {
 				const userMessage = {
 					role: "user" as const,
-					content: [{ type: "text" as const, text: buildHandoffUserMessage(conversationText, goal, historyRef) }],
+					content: [{ type: "text" as const, text: handoffUserText }],
 					timestamp: Date.now(),
 				};
 
 				const response = await ctx.modelRegistry.complete(
 					model,
 					{ systemPrompt: HANDOFF_SYSTEM_PROMPT, messages: [userMessage] },
-					{ signal: loader.signal, cacheRetention: "none", sessionId: newCallId() },
+					{ signal: loader.signal, cacheRetention: "none", sessionId: newCallId(), maxTokens: outputBudget },
 				);
 
 				if (response.stopReason === "aborted") {
@@ -130,6 +139,9 @@ export function createHandoffHandler(deps: HandoffDeps) {
 				}
 				if (response.stopReason === "error") {
 					throw new Error(response.errorMessage ?? "model returned an error");
+				}
+				if (response.stopReason !== "stop") {
+					throw new Error(`model stopped before completing the handoff (${response.stopReason})`);
 				}
 
 				return response.content
@@ -170,6 +182,10 @@ export function createHandoffHandler(deps: HandoffDeps) {
 		const edited = await ctx.ui.editor("Edit handoff prompt", promptWithHistory);
 		if (edited === undefined) {
 			ctx.ui.notify("Cancelled", "info");
+			return;
+		}
+		if (edited.trim() === "") {
+			ctx.ui.notify("Handoff prompt cannot be empty", "error");
 			return;
 		}
 
