@@ -17,6 +17,7 @@ Personal extensions for [Pi](https://pi.dev).
 | Skill | Description |
 | --- | --- |
 | [`create-pi-extension`](skills/create-pi-extension/) | Designs and implements Pi extensions using the installed documentation, repository patterns, lifecycle/security ground rules, and an incremental verification checklist. |
+| [`create-skill`](skills/create-skill/) | Creates, tests, and improves Pi skills: draft, headless with-skill vs baseline eval runs, grading, benchmark aggregation, a static review page, and description/trigger optimization. |
 
 ## Requirements
 
@@ -87,7 +88,9 @@ node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 ```
 
-The package also includes the `create-pi-extension` skill. It is discovered when this repository is installed with `pi install`; invoke it explicitly with `/skill:create-pi-extension` or let Pi load it when extension-development work matches its description.
+The package also includes the `create-pi-extension` and `create-skill` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.
+
+Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
 The full smoke test starts isolated Pi RPC processes, makes two small model calls, and does not touch the normal Pi session directory:
 
