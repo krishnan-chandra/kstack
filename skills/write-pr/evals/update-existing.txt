@@ -1,0 +1,1 @@
+Refresh the existing PR's title and body from what the branch actually does now. Keep the issue link, but replace the stale implementation notes with a concise feature-level review guide.

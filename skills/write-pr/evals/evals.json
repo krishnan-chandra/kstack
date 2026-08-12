@@ -1,0 +1,26 @@
+{
+  "skill_name": "write-pr",
+  "evals": [
+    {
+      "id": 1,
+      "name": "create-draft",
+      "prompt": "Create the PR for my current branch. Set a good title and description, and make the review path clear for whoever picks it up.",
+      "expected_output": "Pushes the fixture branch if needed, creates a draft PR, and writes an accurate thematic title, summary, and review guide.",
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "update-existing",
+      "prompt": "Refresh the existing PR's title and body from what the branch actually does now. Keep the issue link, but replace the stale implementation notes with a concise feature-level review guide.",
+      "expected_output": "Updates rather than recreates the PR, preserves the issue link, removes stale notes, and groups the body by behavior.",
+      "assertions": []
+    },
+    {
+      "id": 3,
+      "name": "cross-cutting-review",
+      "prompt": "Update this PR's title and description. The change crosses the command entry point, persistence, and cleanup behavior; describe the user-facing result and give reviewers a useful order to review it without dumping a list of files.",
+      "expected_output": "Produces a concise outcome-oriented title and a review guide ordered by runtime flow rather than by changed file.",
+      "assertions": []
+    }
+  ]
+}

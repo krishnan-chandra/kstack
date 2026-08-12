@@ -1,0 +1,1 @@
+Update this PR's title and description. The change crosses the command entry point, persistence, and cleanup behavior; describe the user-facing result and give reviewers a useful order to review it without dumping a list of files.
