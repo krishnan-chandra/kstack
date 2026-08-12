@@ -30,12 +30,14 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |
 | [`reflect`](skills/reflect/) | Reviews a selected Pi session through independent judgment, tooling, and contrarian lenses, then proposes user-approved, durable workflow improvements. |
+| [`how`](skills/how/) | Explains code structure, ownership, and runtime flow through fast, allowlisted exploration models. |
+| [`why`](skills/why/) | Investigates design rationale through fast, allowlisted evidence gathering and reports direct evidence separately from inference. |
 
 ## Configuration
 
-Model assignments for panel-review, plan-implement, arena, and swarm live in a
-single unified config file: `$PI_CODING_AGENT_DIR/kstack.json` (default
-`~/.pi/agent/kstack.json`).
+Model assignments for panel-review, plan-implement, arena, swarm, and the
+`how` and `why` investigation skills live in a single unified config file:
+`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
 
 Copy the starter and edit:
 
@@ -46,6 +48,11 @@ cp kstack.example.json ~/.pi/agent/kstack.json
 See [`kstack.example.json`](kstack.example.json) for the full schema. Each
 section is optional — missing sections use built-in defaults or prompt for
 models at runtime.
+
+`how` and `why` use only models in `investigation.allowedModels`. The resolver
+requires every entry to come from kstack's curated fast-model set and to use at
+least `medium` thinking. It rejects a requested model outside the configured
+subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Requirements
 
@@ -184,6 +191,7 @@ node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
 node --test extensions/kstack-router/*.test.ts
 node --test skills/reflect/*.test.mjs
+node --test skills/investigation-model.test.mjs
 ```
 
 The router also has a headless smoke test that registers the real extension
@@ -194,7 +202,7 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, and `reflect` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, focused risk-review, or session-retrospective work matches their descriptions.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `how`, and `why` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, focused risk-review, or session-retrospective work matches their descriptions.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
