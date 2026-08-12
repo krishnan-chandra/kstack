@@ -1,10 +1,8 @@
 # kstack
 
-kstack = "Krishnan's Stack"
+kstack = "Krishnan's Stack". Named as an homage to [`pstack`](https://github.com/cursor/plugins/tree/main/pstack), which it is heavily inspired by.
 
 Krishnan's personal extensions for [Pi](https://pi.dev).
-
-> Named as an homage to [`pstack`](https://github.com/cursor/plugins/tree/main/pstack), which it is heavily inspired by.
 
 > Pi extensions execute with your full user permissions. Review extension code before installing it.
 
