@@ -224,7 +224,7 @@ describe("runReviewer", () => {
 		assert.deepEqual(killed, ["SIGTERM", "SIGKILL"]);
 	});
 
-	it("times out: SIGTERM then SIGKILL, result is failed with timeout error", async () => {
+	it("times out when the child goes silent: SIGTERM then SIGKILL, result is failed", async () => {
 		const killed: string[] = [];
 		const r = await runReviewer({
 			spec: specA,
@@ -239,7 +239,7 @@ describe("runReviewer", () => {
 			},
 		});
 		assert.equal(r.status, "failed");
-		if (r.status === "failed") assert.match(r.error, /Timed out after/);
+		if (r.status === "failed") assert.match(r.error, /Timed out: child produced no output for 10ms/);
 		assert.deepEqual(killed, ["SIGTERM", "SIGKILL"]);
 	});
 
@@ -255,5 +255,132 @@ describe("runReviewer", () => {
 		});
 		assert.equal(r.status, "completed");
 		assert.deepEqual(killed, []);
+	});
+});
+
+interface TimedChunk {
+	atMs: number;
+	text: string;
+}
+
+/** Fake child that emits stdout chunks on a schedule, then optionally closes. */
+function timedSpawn(
+	spec: { chunks: TimedChunk[]; closeAtMs?: number; finalText?: string },
+	onKill?: (sig: string) => void,
+): SpawnImpl {
+	return () => {
+		const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
+		const handlers: Record<string, ((v: never) => void)[]> = {};
+		const proc = {
+			killed: false,
+			pid: undefined,
+			stdout: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stdout.push(cb) },
+			stderr: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stderr.push(cb) },
+			on(event: string, cb: (v: never) => void) {
+				(handlers[event] ??= []).push(cb);
+			},
+			kill(sig?: string) {
+				proc.killed = true;
+				onKill?.(sig ?? "SIGTERM");
+				queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+				return true;
+			},
+		};
+		for (const chunk of spec.chunks) {
+			setTimeout(() => {
+				for (const cb of listeners.stdout) cb(Buffer.from(chunk.text));
+			}, chunk.atMs).unref();
+		}
+		if (spec.closeAtMs !== undefined) {
+			setTimeout(() => {
+				const assistant = {
+					type: "message_end",
+					message: { role: "assistant", content: [{ type: "text", text: spec.finalText ?? "done" }], usage: {} },
+				};
+				for (const cb of listeners.stdout) cb(Buffer.from(JSON.stringify(assistant) + "\n"));
+				handlers.close?.forEach((cb) => (cb as (c: number) => void)(0));
+			}, spec.closeAtMs).unref();
+		}
+		return proc;
+	};
+}
+
+describe("runReviewer stall detection", () => {
+	it("resets the idle timeout while the child produces output", async () => {
+		const killed: string[] = [];
+		const startedAt = Date.now();
+		const r = await runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			deps: {
+				// 200ms total runtime with output every 40ms; idle limit is 100ms.
+				spawnImpl: timedSpawn(
+					{ chunks: [40, 80, 120, 160].map((atMs) => ({ atMs, text: '{"type":"message_start"}\n' })), closeAtMs: 200, finalText: "ok" },
+					(sig) => killed.push(sig),
+				),
+				killGraceMs: 5,
+				timeoutMs: 100,
+				maxRuntimeMs: 5000,
+			},
+		});
+		assert.equal(r.status, "completed");
+		assert.ok(Date.now() - startedAt >= 150, "child ran past the idle limit without being killed");
+		assert.deepEqual(killed, []);
+	});
+
+	it("enforces the max runtime ceiling even when the child stays chatty", async () => {
+		const killed: string[] = [];
+		const chunks: TimedChunk[] = [];
+		for (let atMs = 20; atMs <= 400; atMs += 20) chunks.push({ atMs, text: '{"type":"message_start"}\n' });
+		const r = await runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			deps: {
+				spawnImpl: timedSpawn({ chunks }, (sig) => killed.push(sig)),
+				killGraceMs: 5,
+				timeoutMs: 60_000, // idle never fires: output every 20ms
+				maxRuntimeMs: 120,
+			},
+		});
+		assert.equal(r.status, "failed");
+		if (r.status === "failed") assert.match(r.error, /Timed out: exceeded max runtime of 120ms/);
+		assert.deepEqual(killed, ["SIGTERM"]);
+	});
+
+	it("timeout failures carry turn, activity, and usage diagnostics", async () => {
+		const r = await runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			deps: {
+				spawnImpl: timedSpawn({
+					chunks: [
+						{ atMs: 10, text: JSON.stringify({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "/repo/extensions/panel-review/types.ts" } }) + "\n" },
+						{ atMs: 20, text: JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "read" }) + "\n" },
+						{ atMs: 30, text: JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], usage: { input: 10 } } }) + "\n" },
+					],
+					// never closes: the child stalls after one completed turn
+				}),
+				killGraceMs: 5,
+				timeoutMs: 90,
+				maxRuntimeMs: 60_000,
+			},
+		});
+		assert.equal(r.status, "failed");
+		if (r.status === "failed") {
+			assert.match(r.error, /no output for 90ms/);
+			assert.match(r.error, /1 turns completed, last: thinking/);
+			assert.equal(r.activity, "thinking");
+			assert.equal(r.usage?.turns, 1);
+			assert.equal(r.usage?.input, 10);
+		}
 	});
 });

@@ -14,6 +14,10 @@ export interface ReviewerSpec {
 export interface PanelConfig {
 	reviewers: ReviewerSpec[];
 	maxConcurrency: number;
+	/** Per-child idle limit in minutes; any child output resets the timer. */
+	timeoutMinutes: number;
+	/** Absolute per-child wall-clock ceiling in minutes. */
+	maxRuntimeMinutes: number;
 	/**
 	 * Required model for the post-panel synthesis step. Synthesis merges
 	 * bounded reviewer reports, so a small, fast model is usually the right
@@ -33,7 +37,16 @@ export interface UsageSummary {
 
 export type ReviewerResult =
 	| { status: "completed"; label: string; model: string; output: string; usage: UsageSummary }
-	| { status: "failed"; label: string; model: string; error: string }
+	| {
+			status: "failed";
+			label: string;
+			model: string;
+			error: string;
+			/** Partial progress at failure: turns, tokens, and cost observed before the child died. */
+			usage?: UsageSummary;
+			/** Last known child activity (e.g. "read bundle.md", "thinking"). */
+			activity?: string;
+	  }
 	| { status: "aborted"; label: string; model: string };
 
 export interface PanelArgs {
@@ -84,6 +97,12 @@ export const LIMITS = {
 	synthesisInputBytes: 96 * 1024,
 	/** Child stderr retention. */
 	stderrBytes: 8 * 1024,
-	/** Wall-clock limit per child process (reviewers and synthesizer). */
+	/**
+	 * Idle limit per child process (reviewers and synthesizer): any stdout/
+	 * stderr output resets the timer, so slow-but-progressing children are
+	 * not killed. A silent child is assumed stalled.
+	 */
 	reviewerTimeoutMs: 10 * 60 * 1000,
+	/** Absolute wall-clock ceiling per child, regardless of activity. */
+	reviewerMaxRuntimeMs: 30 * 60 * 1000,
 } as const;

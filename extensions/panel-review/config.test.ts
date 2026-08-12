@@ -19,6 +19,47 @@ describe("validateConfig", () => {
 		assert.equal(r.config.maxConcurrency, 2);
 		assert.equal(r.config.synthesis.model, "openrouter/google/gemini-3.5-flash-lite");
 	});
+	it("applies default timeouts and accepts overrides", () => {
+		const base = {
+			reviewers: [
+				{ label: "A", model: "anthropic/claude-sonnet-4-5", thinking: "high" },
+				{ label: "B", model: "openai/gpt-5.4" },
+			],
+			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
+		};
+		const def = validateConfig(base);
+		assert.ok(def.ok);
+		assert.equal(def.config.timeoutMinutes, 10);
+		assert.equal(def.config.maxRuntimeMinutes, 30);
+		const custom = validateConfig({ ...base, timeoutMinutes: 5, maxRuntimeMinutes: 45 });
+		assert.ok(custom.ok);
+		assert.equal(custom.config.timeoutMinutes, 5);
+		assert.equal(custom.config.maxRuntimeMinutes, 45);
+	});
+
+	it("rejects invalid timeout values", () => {
+		const base = {
+			reviewers: [
+				{ label: "A", model: "a/b" },
+				{ label: "B", model: "c/d" },
+			],
+			synthesis: { model: "a/b" },
+		};
+		for (const timeoutMinutes of [0, -1, "10", Number.NaN]) {
+			const r = validateConfig({ ...base, timeoutMinutes });
+			assert.ok(!r.ok);
+			if (!r.ok) assert.match(r.error, /timeoutMinutes/);
+		}
+		for (const maxRuntimeMinutes of [0, -5, "30"]) {
+			const r = validateConfig({ ...base, maxRuntimeMinutes });
+			assert.ok(!r.ok);
+			if (!r.ok) assert.match(r.error, /maxRuntimeMinutes/);
+		}
+		const inverted = validateConfig({ ...base, timeoutMinutes: 20, maxRuntimeMinutes: 10 });
+		assert.ok(!inverted.ok);
+		if (!inverted.ok) assert.match(inverted.error, />= "timeoutMinutes"/);
+	});
+
 	it("rejects 1 or 5+ reviewers", () => {
 		assert.ok(!validateConfig({ reviewers: [{ label: "A", model: "a/b" }] }).ok);
 		assert.ok(

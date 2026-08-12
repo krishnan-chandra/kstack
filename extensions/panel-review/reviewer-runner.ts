@@ -3,8 +3,10 @@
  *
  * Spawns `pi --mode json -p --no-session` with read-only tools, discovery
  * disabled, and no shell. Parses newline-delimited JSON exactly like Pi's
- * subagent example, bounding stderr and output while streaming. On abort:
- * SIGTERM, a short grace period, then SIGKILL of the process tree.
+ * subagent example, bounding stderr and output while streaming. A child that
+ * goes silent for the idle timeout is killed as stalled; a separate absolute
+ * ceiling bounds total runtime. On abort: SIGTERM, a short grace period, then
+ * SIGKILL of the process tree.
  *
  * All process-spawn seams are injected so unit tests never launch Pi.
  */
@@ -31,8 +33,13 @@ export interface RunnerDeps {
 	piInvocation?: (args: string[]) => { command: string; args: string[] };
 	/** Grace period between SIGTERM and SIGKILL on abort. */
 	killGraceMs?: number;
-	/** Wall-clock limit per child; on expiry the child is killed like an abort. */
+	/**
+	 * Idle limit per child: any stdout/stderr output resets the timer, so a
+	 * slow-but-progressing child is not killed. A silent child is stalled.
+	 */
 	timeoutMs?: number;
+	/** Absolute wall-clock ceiling per child, regardless of activity. */
+	maxRuntimeMs?: number;
 	outputCapBytes?: number;
 	stderrCapBytes?: number;
 }
@@ -78,6 +85,11 @@ function truncateHeadUtf8(text: string, maxBytes: number): string {
 	let out = buf.subarray(0, maxBytes).toString("utf8");
 	while (Buffer.byteLength(out, "utf8") > maxBytes) out = out.slice(0, -1);
 	return `${out}\n\n[Output truncated at ${maxBytes} bytes.]`;
+}
+
+/** Duration for error messages: exact ms below one second, rounded seconds above. */
+export function formatDuration(ms: number): string {
+	return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
 }
 
 interface ChildEvent {
@@ -174,6 +186,7 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
 	const killGraceMs = deps.killGraceMs ?? 5000;
 	const timeoutMs = deps.timeoutMs ?? LIMITS.reviewerTimeoutMs;
+	const maxRuntimeMs = deps.maxRuntimeMs ?? LIMITS.reviewerMaxRuntimeMs;
 
 	return new Promise<ReviewerResult>((resolve) => {
 		let proc: SpawnedProcess;
@@ -195,11 +208,13 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 		let stopReason: string | undefined;
 		let errorMessage: string | undefined;
 		let wasAborted = false;
-		let timedOut = false;
+		let idleTimedOut = false;
+		let runtimeExceeded = false;
 		let closed = false;
 		let settled = false;
 		let activity: string | undefined;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const parser = new JsonLineParser((event) => {
 			if (event.type === "tool_execution_start" && event.toolName) {
@@ -231,8 +246,25 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 			options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
 		});
 
-		proc.stdout.on("data", (data: Buffer) => parser.push(data.toString("utf8")));
+		// Idle timeout: any child output (stdout events or stderr) re-arms the
+		// timer, so a slow-but-progressing child keeps running while a genuinely
+		// stalled child is killed. Defined before stream handlers reference it.
+		const armIdleTimer = () => {
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				idleTimedOut = true;
+				killTree("SIGTERM");
+				escalate();
+			}, timeoutMs);
+			idleTimer.unref?.();
+		};
+
+		proc.stdout.on("data", (data: Buffer) => {
+			armIdleTimer();
+			parser.push(data.toString("utf8"));
+		});
 		proc.stderr.on("data", (data: Buffer) => {
+			armIdleTimer();
 			if (Buffer.byteLength(stderr, "utf8") < stderrCap) {
 				stderr = truncateHeadUtf8(stderr + data.toString("utf8"), stderrCap);
 			}
@@ -241,11 +273,18 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 		const finish = (result: ReviewerResult) => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timeoutTimer);
+			if (idleTimer) clearTimeout(idleTimer);
+			clearTimeout(runtimeTimer);
 			if (graceTimer) clearTimeout(graceTimer);
 			signal?.removeEventListener("abort", killProc);
 			resolve(result);
 		};
+
+		/** Partial progress attached to timeout failures for post-mortem diagnosis. */
+		const timeoutDiagnostics = (): { usage: UsageSummary; activity?: string } => ({
+			usage: { ...usage },
+			...(activity ? { activity } : {}),
+		});
 
 		const killTree = (sig: "SIGTERM" | "SIGKILL") => {
 			try {
@@ -277,13 +316,16 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 			else signal.addEventListener("abort", killProc, { once: true });
 		}
 
-		// Wall-clock timeout: same kill sequence as abort, reported as failed.
-		const timeoutTimer = setTimeout(() => {
-			timedOut = true;
+		// Arm the idle timer at spawn; it resets on every child output chunk.
+		armIdleTimer();
+
+		// Absolute ceiling: bounds total runtime no matter how chatty the child is.
+		const runtimeTimer = setTimeout(() => {
+			runtimeExceeded = true;
 			killTree("SIGTERM");
 			escalate();
-		}, timeoutMs);
-		timeoutTimer.unref?.();
+		}, maxRuntimeMs);
+		runtimeTimer.unref?.();
 
 		proc.on("error", (err) => {
 			finish({ status: "failed", label: spec.label, model, error: `Spawn failed: ${err.message}` });
@@ -296,12 +338,23 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 				finish({ status: "aborted", label: spec.label, model });
 				return;
 			}
-			if (timedOut) {
+			if (idleTimedOut) {
 				finish({
 					status: "failed",
 					label: spec.label,
 					model,
-					error: `Timed out after ${Math.round(timeoutMs / 1000)}s`,
+					error: `Timed out: child produced no output for ${formatDuration(timeoutMs)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					...timeoutDiagnostics(),
+				});
+				return;
+			}
+			if (runtimeExceeded) {
+				finish({
+					status: "failed",
+					label: spec.label,
+					model,
+					error: `Timed out: exceeded max runtime of ${formatDuration(maxRuntimeMs)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					...timeoutDiagnostics(),
 				});
 				return;
 			}

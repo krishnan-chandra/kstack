@@ -7,16 +7,22 @@
  *   {
  *     "panel-review": {
  *       "reviewers": [
- *         { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
+ *         { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "medium" },
  *         { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
  *       ],
  *       "maxConcurrency": 4,
+ *       "timeoutMinutes": 10,
+ *       "maxRuntimeMinutes": 30,
  *       "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
  *     }
  *   }
  *
  * "synthesis" is required: it picks the model that merges the reviewer
  * reports into the lead verdict after the panel finishes.
+ *
+ * "timeoutMinutes" is the per-child idle limit: any child output resets the
+ * timer, so slow-but-progressing reviewers are not killed. "maxRuntimeMinutes"
+ * is the absolute per-child ceiling regardless of activity.
  *
  * With no config file, the built-in low-cost DEFAULT_PANEL is used, filtered
  * to models available in the registry; scoped models and finally the active
@@ -33,6 +39,8 @@ import type { PanelConfig, ReviewerSpec } from "./types.ts";
 export const MIN_REVIEWERS = 2;
 export const MAX_REVIEWERS = 4;
 export const DEFAULT_MAX_CONCURRENCY = 4;
+export const DEFAULT_TIMEOUT_MINUTES = 10;
+export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
 
 /** Thinking levels Pi understands; used to validate config entries. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -46,7 +54,9 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
-	{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "high" },
+	// Qwen at high thinking repeatedly exceeded the child timeout on large
+	// bundles; medium keeps it inside budget at similar review quality.
+	{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "medium" },
 	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
 	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
 ];
@@ -127,9 +137,37 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 		}
 		maxConcurrency = obj.maxConcurrency;
 	}
+	const timeouts = validateTimeouts(obj);
+	if (!timeouts.ok) return timeouts;
 	const synthesis = validateSynthesis(obj);
 	if (!synthesis.ok) return synthesis;
-	return { ok: true, config: { reviewers, maxConcurrency, synthesis: synthesis.spec } };
+	return {
+		ok: true,
+		config: {
+			reviewers,
+			maxConcurrency,
+			timeoutMinutes: timeouts.timeoutMinutes,
+			maxRuntimeMinutes: timeouts.maxRuntimeMinutes,
+			synthesis: synthesis.spec,
+		},
+	};
+}
+
+function validateTimeouts(
+	obj: Record<string, unknown>,
+): { ok: true; timeoutMinutes: number; maxRuntimeMinutes: number } | { ok: false; error: string } {
+	const timeoutMinutes = obj.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES;
+	if (typeof timeoutMinutes !== "number" || !Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) {
+		return { ok: false, error: '"timeoutMinutes" must be a positive number (per-child idle limit; output resets the timer).' };
+	}
+	const maxRuntimeMinutes = obj.maxRuntimeMinutes ?? DEFAULT_MAX_RUNTIME_MINUTES;
+	if (typeof maxRuntimeMinutes !== "number" || !Number.isFinite(maxRuntimeMinutes) || maxRuntimeMinutes <= 0) {
+		return { ok: false, error: '"maxRuntimeMinutes" must be a positive number (absolute per-child ceiling).' };
+	}
+	if (maxRuntimeMinutes < timeoutMinutes) {
+		return { ok: false, error: '"maxRuntimeMinutes" must be >= "timeoutMinutes".' };
+	}
+	return { ok: true, timeoutMinutes, maxRuntimeMinutes };
 }
 
 function validateSynthesis(obj: Record<string, unknown>): { ok: true; spec: { model: string; thinking?: string } } | { ok: false; error: string } {

@@ -51,8 +51,13 @@ runs.
    confirmation and the verdict details).
    While a run is in flight, the footer shows each reviewer's live activity
    (current tool call, turn count, elapsed time). Press **Ctrl+Shift+X** to
-   abort: children get SIGTERM, then SIGKILL after a 5 s grace. Any child also
-   stops on its own after a 10-minute wall-clock timeout.
+   abort: children get SIGTERM, then SIGKILL after a 5 s grace. A child that
+   produces no output for the idle timeout (`timeoutMinutes`, default 10) is
+   killed as stalled — any stdout/stderr output resets the timer, so
+   slow-but-progressing reviewers keep running. A separate absolute ceiling
+   (`maxRuntimeMinutes`, default 30) bounds total runtime regardless of
+   activity. Timeout failures report the turns completed, last activity, and
+   token usage observed before the kill.
 5. Synthesizes the successful reports with the configured synthesis model
    (required in `kstack.json`; a small, fast model like
    `openrouter/google/gemini-3.5-flash-lite` by convention) in an isolated child, using
@@ -78,10 +83,12 @@ the `"panel-review"` section:
 {
   "panel-review": {
     "reviewers": [
-      { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "high" },
+      { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "medium" },
       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
     ],
     "maxConcurrency": 4,
+    "timeoutMinutes": 10,
+    "maxRuntimeMinutes": 30,
     "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
   }
 }
@@ -90,6 +97,10 @@ the `"panel-review"` section:
 - 2–4 reviewers, unique labels, models resolved through Pi's model registry.
   `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
   `xhigh`, `max`.
+- `timeoutMinutes` (default 10) is the per-child idle limit: any child output
+  resets the timer, so a slow provider keeps running while it produces output
+  and only stalled children are killed. `maxRuntimeMinutes` (default 30) is
+  the absolute per-child ceiling and must be >= `timeoutMinutes`.
 - `synthesis` is **required**: it names the model that merges the reviewer
   reports into the lead verdict after the panel finishes. Synthesis works on
   bounded reports, so a small, fast model is usually the right pick; an
@@ -99,7 +110,7 @@ the `"panel-review"` section:
   built-in default `openrouter/google/gemini-3.5-flash-lite`, falling back to
   the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
-  (`openrouter/qwen/qwen3.8-max`, high), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
+  (`openrouter/qwen/qwen3.8-max`, medium), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
   high), and **GPT-5.6 Sol** (`openai/gpt-5.6-sol`, low). Defaults that are
   unavailable or unauthenticated are skipped with a warning; write a config to
   override the panel.
@@ -118,7 +129,8 @@ the `"panel-review"` section:
 | Per reviewer report into synthesis | 24 KiB |
 | Aggregate synthesis input | 96 KiB |
 | Child stderr retention | 8 KiB |
-| Child wall-clock timeout | 10 min (SIGTERM, then SIGKILL after a 5 s grace) |
+| Child idle timeout | 10 min without output (SIGTERM, then SIGKILL after a 5 s grace) |
+| Child max runtime | 30 min absolute ceiling |
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes

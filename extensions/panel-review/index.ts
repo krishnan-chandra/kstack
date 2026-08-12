@@ -22,7 +22,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { Box, Text } from "@earendil-works/pi-tui";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
-import { loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
+import { DEFAULT_MAX_RUNTIME_MINUTES, DEFAULT_TIMEOUT_MINUTES, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { runReviewer } from "./reviewer-runner.ts";
@@ -54,7 +54,7 @@ interface VerdictDetails {
 	baseSha: string;
 	headSha: string;
 	models: string[];
-	reviewerStatuses: { label: string; model: string; status: string }[];
+	reviewerStatuses: { label: string; model: string; status: string; error?: string }[];
 	/** Model that produced the lead verdict (may differ from the reviewers'). */
 	synthesisModel?: string;
 	truncated: boolean;
@@ -179,6 +179,10 @@ export default function (pi: ExtensionAPI) {
 			const synthesisModel = synthResolution.ok ? synthResolution.model : resolution.reviewers[0].model;
 			const synthesisThinking = synthResolution.ok ? synthResolution.thinking : undefined;
 			const synthesisCliId = synthesisThinking ? `${synthesisModel}:${synthesisThinking}` : synthesisModel;
+			const timeoutMinutes = configLoad.status === "loaded" ? configLoad.config.timeoutMinutes : DEFAULT_TIMEOUT_MINUTES;
+			const maxRuntimeMinutes =
+				configLoad.status === "loaded" ? configLoad.config.maxRuntimeMinutes : DEFAULT_MAX_RUNTIME_MINUTES;
+			const childDeps = { timeoutMs: timeoutMinutes * 60_000, maxRuntimeMs: maxRuntimeMinutes * 60_000 };
 
 			let scope: ScopeBundle | undefined;
 			let promptDir: string | undefined;
@@ -205,7 +209,8 @@ export default function (pi: ExtensionAPI) {
 						`Synthesis: ${synthesisCliId}\n\n` +
 						"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, " +
 						"no extensions or skills). The repository is never modified. " +
-						"Each child times out after 10 min; press Ctrl+Shift+X to abort mid-run." +
+						`A child silent for ${timeoutMinutes} min is killed as stalled (hard cap ${maxRuntimeMinutes} min); ` +
+					"press Ctrl+Shift+X to abort mid-run." +
 						(scope.contextFilesTouched
 							? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with " +
 								"--no-context-files to keep the reviewed content out of their instructions."
@@ -247,6 +252,7 @@ export default function (pi: ExtensionAPI) {
 						cwd: scope!.repoRoot,
 						noContextFiles: scope!.contextFilesTouched,
 						signal: abort.signal,
+						deps: childDeps,
 						onProgress: ({ label, turns, activity }) => {
 							progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
 							updateStatus();
@@ -296,6 +302,7 @@ export default function (pi: ExtensionAPI) {
 					cwd: scope.repoRoot,
 					noContextFiles: scope.contextFilesTouched,
 					signal: abort.signal,
+					deps: childDeps,
 				});
 				ctx.ui.setStatus("panel-review", undefined);
 
@@ -314,7 +321,12 @@ export default function (pi: ExtensionAPI) {
 					baseSha: scope.baseSha,
 					headSha: scope.headSha,
 					models: resolution.reviewers.map((r) => modelCliId(r)),
-					reviewerStatuses: panel.results.map((r) => ({ label: r.label, model: r.model, status: r.status })),
+					reviewerStatuses: panel.results.map((r) => ({
+						label: r.label,
+						model: r.model,
+						status: r.status,
+						...(r.status === "failed" ? { error: r.error } : {}),
+					})),
 					synthesisModel: synthesisCliId,
 					truncated: scope.truncated || synthTruncated,
 					synthesized,
