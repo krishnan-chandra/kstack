@@ -127,7 +127,7 @@ Configuration is the `"plan-implement"` section of
 ```json
 {
   "plan-implement": {
-    "planner": { "model": "openai/gpt-5.6-sol", "thinking": "max" },
+    "planner": { "model": "openai/gpt-5.6-sol", "thinking": "high" },
     "implementer": {
       "model": "openrouter/deepseek/deepseek-v4-flash",
       "thinking": "low"

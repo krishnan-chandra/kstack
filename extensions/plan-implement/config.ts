@@ -9,7 +9,7 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
 
 export const DEFAULT_PLANNERS: readonly RoleSpec[] = [
-	{ model: "openai/gpt-5.6-sol", thinking: "max" },
+	{ model: "openai/gpt-5.6-sol", thinking: "high" },
 	{ model: "openrouter/anthropic/claude-opus-4.6", thinking: "high" },
 	{ model: "anthropic/claude-fable-5", thinking: "high" },
 ];
