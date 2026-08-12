@@ -19,6 +19,7 @@ import { buildStackSkillPolicy } from "./skill-policy.ts";
 import type { PanelArgs } from "../panel-review/types.ts";
 import type { AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
+import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
@@ -138,6 +139,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const task = taskResult.task;
+		nameSessionIfUnnamed(pi, task);
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
 

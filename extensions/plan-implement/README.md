@@ -25,12 +25,14 @@ another option. Put `--` before a task that starts with dashes.
 
 1. Requires TUI or RPC mode, a Git working tree, and the `panel-review`
    extension.
-2. Resolves authenticated planner and implementer models and confirms the
+2. Names an unnamed parent session from the task before any child model call.
+   An explicit or previously assigned session name is preserved.
+3. Resolves authenticated planner and implementer models and confirms the
    assignments before spending.
-3. Runs the planner with only `read,grep,find,ls`.
-4. Displays the plan and asks for approval before mutation.
-5. Runs the implementer with Pi's normal built-in tools.
-6. Displays the implementer's final report and, on success, asks the loaded
+4. Runs the planner with only `read,grep,find,ls`.
+5. Displays the plan and asks for approval before mutation.
+6. Runs the implementer with Pi's normal built-in tools.
+7. Displays the implementer's final report and, on success, asks the loaded
    panel-review extension to run through Pi's in-process event bus. The panel
    keeps its own confirmation and verdict rendering.
 

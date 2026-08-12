@@ -22,6 +22,7 @@ import { loadConfig, resolveClassifierModel } from "./config.ts";
 import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
 import { changeKindLabel, type ChangeKind } from "../plan-implement/change-kind.ts";
 import { dispatchRoute, getRestrictedTools, getPlaybookForRoute } from "./dispatch.ts";
+import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { RouterLifecycle, type DispatchToken } from "./lifecycle.ts";
 import {
 	allowedReadToolsForRoute,
@@ -212,6 +213,11 @@ export default function (pi: ExtensionAPI): void {
 					return;
 				}
 			}
+
+			// Name the workflow session before classification or dispatch. The
+			// downstream plan-implement entry point uses the same name-if-unnamed
+			// rule, so routed changes never replace an explicit or router-set name.
+			nameSessionIfUnnamed(pi, task);
 
 			// Resolve route.
 			let route: RouteId | undefined = parsed.args.route;

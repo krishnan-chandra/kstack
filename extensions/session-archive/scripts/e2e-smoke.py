@@ -2,7 +2,7 @@
 """End-to-end smoke test for the session-archive Pi extension.
 
 Drives a real `pi --mode rpc` process with an isolated PI_CODING_AGENT_DIR:
-  1. archives an inactive fixture session via /session-archive-other,
+  1. archives an unnamed inactive fixture session via /session-archive-other,
   2. starts a named live session with Pi's built-in --name option and archives it,
   3. has the LLM call search_session_archive and read_session_archive,
   4. restarts Pi and verifies startup reconciliation and /session-archives.
@@ -41,8 +41,6 @@ FIXTURE_ENTRIES = [
     {"type": "message", "id": "b1", "parentId": "a1", "timestamp": "2026-08-11T08:49:20.000Z",
      "message": {"role": "bashExecution", "command": "echo archive-marker", "output": "archive-marker",
                  "exitCode": 0, "cancelled": False, "truncated": False, "timestamp": 1786438183627}},
-    {"type": "session_info", "id": "n1", "parentId": "b1", "timestamp": "2026-08-11T08:54:00.000Z",
-     "name": "e2e fixture session"},
 ]
 FIXTURE_HEADER = {"type": "session", "version": 3, "id": SESSION_ID,
                   "timestamp": "2026-08-11T08:48:02.226Z", "cwd": os.path.realpath("/tmp")}
@@ -159,10 +157,10 @@ def main():
         )
         check(True, "/session-archives reports an empty archive")
 
-        # --- /session-archive-other: pick and archive the fixture -----------
+        # --- /session-archive-other: archive an unnamed fixture -------------
         def answer_picker(msg):
             if msg.get("method") == "select":
-                option = [o for o in msg["options"] if "e2e fixture session" in o][0]
+                option = [o for o in msg["options"] if "(unnamed)" in o and "hello archive world" in o][0]
                 return {"value": option}
             if msg.get("method") == "confirm":
                 return {"confirmed": True}
@@ -170,7 +168,7 @@ def main():
 
         rpc.send({"id": "p1", "type": "prompt", "message": "/session-archive-other"})
         resp = rpc.wait_for(lambda m: m.get("id") == "p1" and m.get("type") == "response", respond=answer_picker)
-        check(resp.get("success") is True, "/session-archive-other completed")
+        check(resp.get("success") is True, "/session-archive-other archived an unnamed session")
 
         archived_path = Path(agent_dir) / "archive" / "sessions" / "2026" / "08" / SESSION_ID / "session.jsonl"
         check(not fixture_path.exists(), "fixture left the active session directory")
@@ -283,9 +281,9 @@ def main():
         rpc2.send({"id": "p6", "type": "prompt", "message": "/session-archives"})
         notify = rpc2.wait_for(
             lambda m: m.get("type") == "extension_ui_request" and m.get("method") == "notify"
-            and "e2e fixture session" in json.dumps(m),
+            and SESSION_ID[:8] in json.dumps(m),
         )
-        check(True, "after restart, /session-archives lists the archived fixture")
+        check(True, "after restart, /session-archives lists the unnamed archived fixture by id")
         bad = [m for m in rpc2.log if m.get("method") == "notify" and "integrity problem" in json.dumps(m)]
         check(len(bad) == 0, "no integrity warnings after restart")
     finally:

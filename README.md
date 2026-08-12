@@ -11,7 +11,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
-| [`session-archive`](extensions/session-archive/) | Moves named, completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
+| [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including unnamed inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review. Supports a `--stack` delivery mode that builds a local jj stack with Arena disabled. |
@@ -24,6 +24,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`create-skill`](skills/create-skill/) | Creates, tests, and improves Pi skills: draft, headless with-skill vs baseline eval runs, grading, benchmark aggregation, a static review page, and description/trigger optimization. |
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
+| [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
 | [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with `jst`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
@@ -54,21 +55,27 @@ requires every entry to come from kstack's curated fast-model set and to use at
 least `medium` thinking. It rejects a requested model outside the configured
 subset. Set `defaultModel` to one of the allowlisted model IDs.
 
-## Name sessions before starting work
+## Session names in development workflows
 
-Give each development session a short, specific name so `/resume` and archive selection stay readable. Use Pi's built-in naming support; no extension is needed:
+Kstack names an unnamed session from the first task when `/plan-implement` or
+`/kstack` starts. `/handoff` names its replacement session from the handoff goal
+before that session's first user message. Existing names are never overwritten.
+Keep names short and specific so `/resume` and archive selection stay readable.
+
+For workflows started outside those commands, use Pi's built-in naming support:
 
 ```bash
 pi --name "Named session archive"
 ```
 
-In an active interactive session, run:
+Or name an active interactive session:
 
 ```text
 /name Named session archive
 ```
 
-The archive picker lists named sessions only. Rename an older session from `/resume` with Ctrl+R before archiving it.
+Inactive sessions can be archived without names. `/session-archive` still
+requires the current session to have a name before it creates a replacement.
 
 ## Requirements
 
@@ -142,6 +149,7 @@ Skills can then be invoked explicitly, for example:
 /skill:create-skill
 /skill:find-reviewers
 /skill:arena
+/skill:architect
 /skill:swarm
 /skill:jj-stacked-prs
 /skill:unslop
@@ -208,7 +216,9 @@ node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
 node --test extensions/kstack-router/*.test.ts
+node --test extensions/shared/*.test.ts
 node --test skills/reflect/*.test.mjs
+node --test skills/architect/*.test.mjs
 node --test skills/investigation-model.test.mjs
 ```
 
@@ -220,11 +230,11 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `how`, and `why` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, focused risk-review, or session-retrospective work matches their descriptions.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `how`, and `why` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, focused risk-review, or session-retrospective work matches their descriptions.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
-The full smoke test starts isolated Pi RPC processes with a built-in session name, exercises named archive selection, makes a few small model calls, and does not touch the normal Pi session directory:
+The full smoke test starts isolated Pi RPC processes, archives an unnamed inactive fixture and a named live session, makes a few small model calls, and does not touch the normal Pi session directory:
 
 ```bash
 python3 extensions/session-archive/scripts/e2e-smoke.py

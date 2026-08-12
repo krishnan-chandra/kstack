@@ -65,10 +65,11 @@ const { PLAN_IMPLEMENT_REQUEST_EVENT } = await import(join(sandbox, "plan-implem
 
 // ---------------------------------------------------------------- mock Pi ---
 
-function makePi({ activeTools } = {}) {
+function makePi({ activeTools, sessionName } = {}) {
 	const handlers = new Map();
 	const state = {
 		tools: [...(activeTools ?? ["read", "grep", "find", "ls", "bash", "edit", "write"])],
+		sessionName,
 		setActiveToolsCalls: [],
 		messages: [],
 		userMessages: [],
@@ -89,6 +90,12 @@ function makePi({ activeTools } = {}) {
 		},
 		registerCommand(name, options) {
 			state.commands.set(name, options);
+		},
+		getSessionName() {
+			return state.sessionName;
+		},
+		setSessionName(name) {
+			state.sessionName = name;
 		},
 		getCommands() {
 			return [
@@ -199,6 +206,8 @@ await scenario("investigate gates tools, injects playbook once, restores on sett
 
 	// Restricted to the read-only intersection before the turn started.
 	assert.deepEqual(env.state.setActiveToolsCalls[0], ["read", "grep", "find", "ls"]);
+	// The session is named from the routed task before the first agent turn.
+	assert.equal(env.state.sessionName, "Explain the archive indexing");
 	// The task was delivered as a user message (triggers the agent turn).
 	assert.deepEqual(env.state.userMessages, ["Explain the archive indexing"]);
 	// A route card was displayed without triggering a turn itself.
@@ -216,6 +225,13 @@ await scenario("investigate gates tools, injects playbook once, restores on sett
 	// One-shot: the next ordinary turn gets no injection.
 	const second = await simulateTurn(env, "ordinary follow-up");
 	assert.equal(second, undefined);
+});
+
+await scenario("router preserves an explicit session name", async () => {
+	const env = setup({ sessionName: "Existing session name" });
+	const handler = env.state.commands.get("kstack").handler;
+	await handler("--route investigate check this", env.ctx);
+	assert.equal(env.state.sessionName, "Existing session name");
 });
 
 await scenario("tools are restored on session shutdown mid-dispatch", async () => {
@@ -256,6 +272,7 @@ await scenario("change route delegates the exact task, mode, and change kind to 
 	]);
 	const handler = env.state.commands.get("kstack").handler;
 	await handler('--route change --stack --change-kind feature "Split the feature into PRs"', env.ctx);
+	assert.equal(env.state.sessionName, "Split the feature into PRs");
 	assert.deepEqual(seen, [{ task: "Split the feature into PRs", mode: "stack", changeKind: "feature" }]);
 	assert.ok(env.state.messages.some((m) => m.details?.dispatchStatus === "dispatched"));
 });

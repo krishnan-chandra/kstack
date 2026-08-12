@@ -52,6 +52,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	const calls = {
 		editorDrafts: [] as string[],
 		setEditorText: [] as string[],
+		sessionNames: [] as string[],
 		newSession: 0,
 	};
 
@@ -102,6 +103,10 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 			if (opts.newSessionResult?.cancelled) return opts.newSessionResult;
 
 			await options.setup?.({
+				appendSessionInfo: (name: string) => {
+					calls.sessionNames.push(name);
+					return "session-name-entry-id";
+				},
 				appendCustomMessageEntry: (customType: string, content: string, display: boolean, details?: unknown) => {
 					customMessages.push({ customType, content, display, details });
 					return "entry-id";
@@ -174,6 +179,7 @@ describe("handoff command lifecycle", () => {
 		assert.ok(draft.includes("search_handoff_history"));
 		assert.ok(!draft.includes("## Conversation History"));
 		assert.deepEqual(calls.setEditorText, [`EDITED ${draft}`]);
+		assert.deepEqual(calls.sessionNames, ["implement teams support"]);
 
 		assert.equal(customMessages.length, 1);
 		assert.equal(customMessages[0].customType, "handoff");
@@ -195,6 +201,17 @@ describe("handoff command lifecycle", () => {
 		const { ctx, calls } = makeFakeCtx(order);
 		await createHandoffHandler(api)("   ", ctx as never);
 		assert.ok(calls.editorDrafts[0].includes(DEFAULT_HANDOFF_GOAL));
+		assert.deepEqual(calls.sessionNames, [DEFAULT_HANDOFF_GOAL]);
+	});
+
+	it("names the replacement from an edited goal", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const { ctx, calls } = makeFakeCtx(order, {
+			editorResult: "Continue work.\n\n## Goal\nShip the corrected archive workflow.\n",
+		});
+		await createHandoffHandler(api)("old goal", ctx as never);
+		assert.deepEqual(calls.sessionNames, ["Ship the corrected archive workflow."]);
 	});
 
 	it("notifies and stays in the old session when replacement is cancelled", async () => {

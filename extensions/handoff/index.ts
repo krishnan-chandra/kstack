@@ -31,6 +31,7 @@ import {
 	type HandoffSource,
 } from "./history-reader.ts";
 import { formatModelRef, parseHandoffArgs, resolveModelReference, type HandoffModel } from "./model-selection.ts";
+import { deriveSessionName } from "../shared/session-name.ts";
 
 /**
  * Build the command handler separately so lifecycle behavior is easy to test.
@@ -114,6 +115,8 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 			ctx.ui.notify("Handoff prompt cannot be empty", "error");
 			return;
 		}
+		const editedGoal = edited.match(/^## Goal\s*\n+([^\n]+)/m)?.[1]?.trim();
+		const replacementSessionName = deriveSessionName(editedGoal || goal);
 
 		const previousModel = ctx.model;
 
@@ -173,6 +176,7 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 			result = await ctx.newSession({
 				parentSession: oldFile,
 				setup: async (sm) => {
+					sm.appendSessionInfo(replacementSessionName);
 					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
 				},
 				withSession: async (fresh) => {
