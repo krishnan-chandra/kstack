@@ -21,7 +21,6 @@ import {
 	isArchiveWriteTarget,
 	readUtf8Ranges,
 } from "./archive-files.ts";
-import { normalizeSessionName, suggestSessionName } from "../session-naming/names.ts";
 import { buildNamedSessionChoices } from "./session-choices.ts";
 import { splitUtf8Chunks } from "./tool-output.ts";
 
@@ -111,16 +110,10 @@ export default async function (pi: ExtensionAPI) {
 		description: "Archive the named current session (read-only, searchable) and start a new one",
 		handler: async (_args, ctx) => {
 			const sessionId = ctx.sessionManager.getSessionId();
-			let sessionName = ctx.sessionManager.getSessionName();
+			const sessionName = ctx.sessionManager.getSessionName();
 			if (!sessionName) {
-				const suggestion = suggestSessionName("", sessionId);
-				const entered = await ctx.ui.input("Name this session before archiving", suggestion);
-				if (entered === undefined) {
-					ctx.ui.notify("Archive cancelled. A session name is required.", "info");
-					return;
-				}
-				sessionName = normalizeSessionName(entered) || suggestion;
-				pi.setSessionName(sessionName);
+				ctx.ui.notify("Name this session with /name <name>, then retry /session-archive.", "warning");
+				return;
 			}
 			await archiveCurrentSession({
 				deps: { dbPath, archiveRoot },

@@ -42,15 +42,15 @@ JSONL artifacts, although an automated reindex command is future work.
 
 | Command | Effect |
 |---|---|
-| `/session-archive` | Require a name, confirm, then archive the current session and continue in a new empty session. Legacy unnamed sessions get a naming prompt first. |
+| `/session-archive` | Require a name, confirm, then archive the current session and continue in a new empty session. Name an unnamed session first with Pi's built-in `/name <name>` command. |
 | `/session-archive-other` | Pick an inactive session by name and archive it. Unnamed sessions stay hidden until you rename them in `/resume` with Ctrl+R. Duplicate names show a modified timestamp. |
 | `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch. The command refuses to start if any candidate is unnamed. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
 | `/session-archives [filter]` | Read-only stats and archived-session listing; optional text filter. |
 
 Archiving is always explicit and confirmed. Nothing is archived automatically
-on shutdown, reload, or session switch. The separate
-[`session-naming`](../session-naming/) extension names new sessions before their
-first prompt; archive commands enforce names for older sessions too.
+on shutdown, reload, or session switch. Name sessions with Pi's built-in
+`--name` startup option or `/name <name>` command. Archive commands reject or
+hide unnamed sessions instead of falling back to first-message text.
 
 ## Agent tools
 
@@ -145,8 +145,9 @@ cross-process session-liveness detection described above.
 node --test ~/.pi/agent/extensions/session-archive/*.test.ts
 
 # Full end-to-end smoke test: drives a real pi RPC process with an isolated
-# PI_CODING_AGENT_DIR, selects a fixture by name, names and archives the live
-# session, has the LLM call both tools and attempt a blocked write, then restarts Pi.
+# PI_CODING_AGENT_DIR, selects a fixture by name, archives a live session named
+# with Pi's built-in --name option, has the LLM call both tools and attempt a
+# blocked write, then restarts Pi.
 # Spends a small number of tokens on a few tiny prompts.
 python3 ~/.pi/agent/extensions/session-archive/scripts/e2e-smoke.py
 ```

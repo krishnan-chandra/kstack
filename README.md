@@ -11,9 +11,8 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--] <task>` routes tasks through a classifier to the appropriate workflow. |
-| [`session-naming`](extensions/session-naming/) | Names each persisted session before its first prompt so `/resume` and archive selection stay readable. |
 | [`session-archive`](extensions/session-archive/) | Moves named, completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
-| [`handoff`](extensions/handoff/) | Opens a named, lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
+| [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
 | [`plan-implement`](extensions/plan-implement/) | Plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review through an in-process extension API. Supports a `--stack` delivery mode that builds a local jj stack of PRs with Arena deterministically disabled. Child agents retain normal skill discovery. |
 
@@ -54,6 +53,22 @@ models at runtime.
 requires every entry to come from kstack's curated fast-model set and to use at
 least `medium` thinking. It rejects a requested model outside the configured
 subset. Set `defaultModel` to one of the allowlisted model IDs.
+
+## Name sessions before starting work
+
+Give each development session a short, specific name so `/resume` and archive selection stay readable. Use Pi's built-in naming support; no extension is needed:
+
+```bash
+pi --name "Named session archive"
+```
+
+In an active interactive session, run:
+
+```text
+/name Named session archive
+```
+
+The archive picker lists named sessions only. Rename an older session from `/resume` with Ctrl+R before archiving it.
 
 ## Requirements
 
@@ -186,7 +201,6 @@ Run the extension tests from the repository root:
 
 ```bash
 node --test install.test.mjs
-node --test extensions/session-naming/*.test.ts
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
@@ -208,7 +222,7 @@ The package also includes the `create-pi-extension`, `create-skill`, `find-revie
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
-The full smoke test starts isolated Pi RPC processes, exercises pre-prompt naming and named archive selection, makes a few small model calls, and does not touch the normal Pi session directory:
+The full smoke test starts isolated Pi RPC processes with a built-in session name, exercises named archive selection, makes a few small model calls, and does not touch the normal Pi session directory:
 
 ```bash
 python3 extensions/session-archive/scripts/e2e-smoke.py

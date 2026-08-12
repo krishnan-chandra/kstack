@@ -44,7 +44,6 @@ interface FakeCtxOptions {
 	model?: HandoffModel | undefined;
 	scopedModels?: Array<{ model: HandoffModel }>;
 	freshModel?: HandoffModel | undefined;
-	parentName?: string;
 }
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
@@ -53,7 +52,6 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	const calls = {
 		editorDrafts: [] as string[],
 		setEditorText: [] as string[],
-		sessionNames: [] as string[],
 		newSession: 0,
 	};
 
@@ -77,7 +75,6 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 				order.push("getSessionId");
 				return SESSION_ID;
 			},
-			getSessionName: () => opts.parentName,
 		},
 		ui: {
 			notify: (message: string, level: string) => {
@@ -105,10 +102,6 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 			if (opts.newSessionResult?.cancelled) return opts.newSessionResult;
 
 			await options.setup?.({
-				appendSessionInfo: (name: string) => {
-					calls.sessionNames.push(name);
-					return "session-name-entry-id";
-				},
 				appendCustomMessageEntry: (customType: string, content: string, display: boolean, details?: unknown) => {
 					customMessages.push({ customType, content, display, details });
 					return "entry-id";
@@ -181,7 +174,6 @@ describe("handoff command lifecycle", () => {
 		assert.ok(draft.includes("search_handoff_history"));
 		assert.ok(!draft.includes("## Conversation History"));
 		assert.deepEqual(calls.setEditorText, [`EDITED ${draft}`]);
-		assert.deepEqual(calls.sessionNames, ["implement teams support"]);
 
 		assert.equal(customMessages.length, 1);
 		assert.equal(customMessages[0].customType, "handoff");
@@ -197,13 +189,12 @@ describe("handoff command lifecycle", () => {
 		});
 	});
 
-	it("uses the default goal and continues the parent session name when no argument is given", async () => {
+	it("uses the default goal when no argument is given", async () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
-		const { ctx, calls } = makeFakeCtx(order, { parentName: "Named archive flow" });
+		const { ctx, calls } = makeFakeCtx(order);
 		await createHandoffHandler(api)("   ", ctx as never);
 		assert.ok(calls.editorDrafts[0].includes(DEFAULT_HANDOFF_GOAL));
-		assert.deepEqual(calls.sessionNames, ["Named archive flow — continued"]);
 	});
 
 	it("notifies and stays in the old session when replacement is cancelled", async () => {

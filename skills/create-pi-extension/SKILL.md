@@ -23,7 +23,7 @@ Use an **extension** only when the feature needs deterministic runtime behavior:
 
 ## Design before wiring
 
-For nontrivial work, write or update `docs/plans/<extension>.md` before implementation. Define:
+For nontrivial work, write or update `plans/<extension>.md` before implementation. Define:
 
 - user-visible contract and explicit non-goals;
 - commands, tools, events, and persisted custom entries;
