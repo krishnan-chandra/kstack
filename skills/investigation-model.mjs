@@ -6,14 +6,14 @@ import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 
 const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const INVESTIGATION_THINKING_LEVELS = new Set(["medium", "high", "xhigh", "max"]);
 const FAST_MODELS = [
-	{ model: "openai/gpt-5.6-luna", thinking: "low" },
-	{ model: "openai/gpt-5.6-terra", thinking: "low" },
-	{ model: "openrouter/z-ai/glm-5.2" },
-	{ model: "openrouter/moonshotai/kimi-k3", thinking: "low" },
-	{ model: "openrouter/google/gemini-3.5-flash-lite", thinking: "low" },
-	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
+	{ model: "openai/gpt-5.6-luna", thinking: "medium" },
+	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
+	{ model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
+	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
+	{ model: "openrouter/google/gemini-3.5-flash-lite", thinking: "medium" },
+	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "medium" },
 ];
 const FAST_MODEL_IDS = new Set(FAST_MODELS.map(({ model }) => model));
 
@@ -41,8 +41,8 @@ export function validateInvestigationConfig(raw) {
 		if (!FAST_MODEL_IDS.has(entry.model)) {
 			return { ok: false, error: `"investigation.allowedModels" can contain only kstack's fast investigation models; ${entry.model} is unsupported.` };
 		}
-		if (entry.thinking !== undefined && (typeof entry.thinking !== "string" || !THINKING_LEVELS.has(entry.thinking))) {
-			return { ok: false, error: '"investigation.allowedModels[].thinking" must be a valid Pi thinking level.' };
+		if (typeof entry.thinking !== "string" || !INVESTIGATION_THINKING_LEVELS.has(entry.thinking)) {
+			return { ok: false, error: '"investigation.allowedModels[].thinking" must be medium, high, xhigh, or max.' };
 		}
 		if (seen.has(entry.model)) return { ok: false, error: `"investigation.allowedModels" contains ${entry.model} more than once.` };
 		seen.add(entry.model);

@@ -50,9 +50,9 @@ section is optional — missing sections use built-in defaults or prompt for
 models at runtime.
 
 `how` and `why` use only models in `investigation.allowedModels`. The resolver
-requires every entry to come from kstack's curated fast-model set and rejects a
-requested model outside the configured subset. Set `defaultModel` to one of the
-allowlisted model IDs.
+requires every entry to come from kstack's curated fast-model set and to use at
+least `medium` thinking. It rejects a requested model outside the configured
+subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Requirements
 
