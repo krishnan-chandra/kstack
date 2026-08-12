@@ -2,12 +2,11 @@
 name: reflect
 description: Review a completed or troubled Pi session for durable workflow lessons, using independent judgment, tooling, and contrarian lenses, then propose approved improvements to skills, playbooks, extensions, or a backlog. Use when the user says "reflect", asks for a session retrospective or postmortem, wants to extract reusable lessons from agent work, or after repeated corrections, dead ends, or a novel successful workflow. Do not use for routine one-off tasks.
 license: MIT
-disable-model-invocation: true
 ---
 
 # Reflect
 
-Turn a session into a small set of durable, evidence-backed workflow improvements. Reflection is explicit: do not rewrite skills after every task or infer a lasting preference from one correction.
+Turn a session into a small set of durable, evidence-backed workflow improvements. Do not rewrite skills after every task or infer a lasting preference from one correction.
 
 ## Scope and safety
 
@@ -39,9 +38,17 @@ Before delegation, extract a compact session map:
 
 ## 2. Review through independent lenses
 
-Run the three lenses in parallel. Use isolated read-only subagents when the environment provides them. Otherwise run independent headless Pi processes with only the selected transcript or digest and non-mutating tools. The parent alone applies changes.
+Run the three lenses in parallel. Use isolated subagents only when they can be given an enforced read-only tool allowlist. Otherwise start independent headless Pi processes with no extensions, skills, context files, or session persistence, and an explicit read-only allowlist:
 
-Give each reviewer the session source or digest, the session map, and the matching template below. Instruct reviewers to return 3–5 findings, cite evidence, and make no writes or external mutations.
+```bash
+pi -p --no-session --no-extensions --no-skills --no-context-files \
+  --tools read,grep,find,ls --model <provider/model[:thinking]> \
+  "<review brief with the exact transcript path or digest>" &
+```
+
+Start all three commands, then `wait`. Do not rely on a reviewer prompt to prevent writes: the allowlist is the boundary. The fallback cannot use MCP tools because extensions are disabled. If an MCP lookup is essential, the parent performs the scoped read-only lookup and includes the result in the reviewer brief.
+
+Give each reviewer the session source or digest, the session map, and the matching template below. Instruct reviewers to return up to five findings, cite evidence, and make no writes or external mutations. A reviewer that finds nothing durable returns `No durable findings.`
 
 | Lens | Read this template | Focus |
 | --- | --- | --- |
@@ -53,7 +60,7 @@ Constrain optional context lookups to items explicitly cited by the session, suc
 
 ## 3. Synthesize and route
 
-Use a fourth independent, read-only pass with [`references/synthesizer.md`](references/synthesizer.md). Give it all reviewer output and require the exact Accepted, Rejected, and Backlog format from that template.
+Use a fourth independent, read-only pass with [`references/synthesizer.md`](references/synthesizer.md). Apply the same enforced tool allowlist to a headless fallback. Give it all reviewer output and require the exact Accepted, Rejected, and Backlog format from that template.
 
 Spot-check evidence for every Accepted item against the selected source. A finding is eligible only when it is durable, specific, and would change a future action. It must either:
 

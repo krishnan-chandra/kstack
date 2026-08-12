@@ -12,7 +12,7 @@ Review the supplied session source and map for:
 
 A body-edit finding must target a skill, playbook, extension, or tool that the session actually used. A missed trigger may instead route to `tune description: <path>`. Do not route unrelated improvements to a resource merely because it exists.
 
-Skip retries, typos, transient paths or versions, and advice already clear in a resource that the agent followed. Return 3–5 findings as a numbered list with exactly these fields:
+Skip retries, typos, transient paths or versions, and advice already clear in a resource that the agent followed. Return up to five findings as a numbered list with exactly these fields. When nothing clears the evidence bar, return `No durable findings.`
 
 - **Principle:** one sentence that states the general rule.
 - **Evidence:** a session entry ID, turn number, or short quote.
