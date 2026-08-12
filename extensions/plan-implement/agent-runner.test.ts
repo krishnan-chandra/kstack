@@ -40,10 +40,38 @@ describe("plan-implement child runner", () => {
 		assert.ok(!planner.includes("--no-skills"));
 		assert.ok(!planner.includes("--no-context-files"));
 		assert.deepEqual(planner.slice(planner.indexOf("--tools"), planner.indexOf("--tools") + 2), ["--tools", "read,grep,find,ls"]);
+		assert.match(planner.at(-1) ?? "", /single-PR/);
 
 		const implementer = buildChildArgs({ role: "implementer", model: "b/i", promptFile: "/p", taskFile: "/t", planFile: "/plan" });
 		assert.ok(!implementer.includes("--tools"));
 		assert.match(implementer.at(-1) ?? "", /approved plan at \/plan/);
+	});
+
+	it("stack mode disables skill discovery and re-adds every provided skill except arena", () => {
+		const skillPaths = ["/skills/create-skill", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
+		const planner = buildChildArgs({ role: "planner", model: "a/p", promptFile: "/p", taskFile: "/t", mode: "stack", skillPaths });
+		const noSkillsAt = planner.indexOf("--no-skills");
+		assert.ok(noSkillsAt !== -1, "planner disables skill discovery");
+		// Every skill path is re-added after --no-skills.
+		for (const path of skillPaths) {
+			const skillAt = planner.indexOf("--skill");
+			assert.ok(skillAt > noSkillsAt, "--skill comes after --no-skills");
+			assert.ok(planner.includes(path), `planner re-adds ${path}`);
+		}
+		// Order: --no-skills immediately followed by the first --skill.
+		assert.equal(planner[noSkillsAt + 1], "--skill");
+		assert.match(planner.at(-1) ?? "", /stacked-PR/);
+
+		const implementer = buildChildArgs({ role: "implementer", model: "b/i", promptFile: "/p", taskFile: "/t", planFile: "/plan", mode: "stack", skillPaths });
+		assert.ok(implementer.includes("--no-skills"));
+		for (const path of skillPaths) assert.ok(implementer.includes(path));
+		assert.match(implementer.at(-1) ?? "", /stacked-PR delivery/);
+	});
+
+	it("stack mode with no skill paths still disables discovery", () => {
+		const planner = buildChildArgs({ role: "planner", model: "a/p", promptFile: "/p", taskFile: "/t", mode: "stack" });
+		assert.ok(planner.includes("--no-skills"));
+		assert.ok(!planner.includes("--skill"));
 	});
 
 	it("parses JSON lines across chunks and ignores malformed lines", () => {

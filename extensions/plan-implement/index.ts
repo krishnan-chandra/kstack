@@ -4,15 +4,17 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { runAgent } from "./agent-runner.ts";
-import { buildPanelReviewArgs, validateTask } from "./command.ts";
+import { buildPanelReviewArgs, buildStackPanelReviewArgs, parseDeliveryMode, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
+import { preflightStack, type ExecFn } from "./delivery-mode.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 import { isChildModelAvailable } from "./model-availability.ts";
-import type { AgentRunResult } from "./types.ts";
+import { buildStackSkillPolicy } from "./skill-policy.ts";
+import type { AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
@@ -43,6 +45,17 @@ function sendPhaseMessage(pi: ExtensionAPI, result: AgentRunResult): void {
 		display: true,
 		details,
 	});
+}
+
+/** Map Pi's discovered Skill objects to the SkillRef shape the policy consumes. */
+function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[] } }): SkillRef[] {
+	const skills = ctx.getSystemPromptOptions().skills ?? [];
+	return skills.map((s) => ({ name: s.name, baseDir: s.baseDir }));
+}
+
+/** Exec wrapper forwarding the preflight's per-call cwd/timeout to pi.exec. */
+function makeExec(pi: ExtensionAPI): ExecFn {
+	return (command, args, options) => pi.exec(command, args, { cwd: options.cwd, timeout: options.timeout });
 }
 
 export default function planImplementExtension(pi: ExtensionAPI): void {
@@ -102,7 +115,26 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			let rawTask = args ?? "";
+			// Delivery mode: a leading --single/--stack flag selects it; the
+			// argument-less form asks before opening the task editor so stack
+			// mode can exclude Arena before any child starts.
+			const parsed = parseDeliveryMode(args ?? "");
+			if (!parsed.ok) {
+				notify(parsed.error, "warning");
+				return;
+			}
+			let mode: DeliveryMode = parsed.mode;
+			let rawTask = parsed.task;
+			if (!rawTask.trim() && !argsHasModeFlag(args ?? "")) {
+				const choice = await ctx.ui.select(
+					"Delivery mode",
+					["single", "stack"],
+					{},
+				);
+				if (!lifecycle.isSessionCurrent(commandSession)) return;
+				if (!choice) return;
+				mode = choice as DeliveryMode;
+			}
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			const taskResult = validateTask(rawTask);
@@ -128,14 +160,44 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			const plannerModel = modelCliId(roles.planner);
 			const implementerModel = modelCliId(roles.implementer);
 
+			// Stack-mode prerequisites, resolved before any model call.
+			let trunkSha: string | undefined;
+			let skillPaths: string[] = [];
+			if (mode === "stack") {
+				const exec = makeExec(pi);
+				const preflight = await preflightStack(ctx.cwd, exec, exec);
+				if (!lifecycle.isSessionCurrent(commandSession)) return;
+				if (!preflight.ok) {
+					notify(preflight.error, "error");
+					return;
+				}
+				trunkSha = preflight.trunkSha;
+				const skillRefs = discoveredSkillRefs(ctx);
+				const policy = buildStackSkillPolicy(skillRefs);
+				if (!policy.ok) {
+					notify(policy.error, "error");
+					return;
+				}
+				skillPaths = policy.skills.map((s) => s.baseDir);
+			}
+
 			const confirmed = await ctx.ui.confirm(
-				"Run plan → implement → panel review?",
-				`Planner (read-only): ${plannerModel}\n` +
-					`Implementer (can modify files): ${implementerModel}\n` +
-					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
-					"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
-					"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
-					"which may include pre-existing working-tree changes.",
+				mode === "stack" ? "Run plan → implement (stacked PRs) → panel review?" : "Run plan → implement → panel review?",
+				mode === "stack"
+					? `Planner (read-only): ${plannerModel}\n` +
+						`Implementer (creates local jj changes + bookmarks): ${implementerModel}\n` +
+						`Stack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\n` +
+						`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
+						"Stack mode disables skill discovery in children and re-adds every discovered skill except arena, " +
+						"so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. " +
+						"The implementer builds a LOCAL stack only — it does not push or create PRs. " +
+						"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base."
+					: `Planner (read-only): ${plannerModel}\n` +
+						`Implementer (can modify files): ${implementerModel}\n` +
+						`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
+						"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
+						"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
+						"which may include pre-existing working-tree changes.",
 			);
 			if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
 
@@ -175,6 +237,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 									signal: controller.signal,
 									deps: { timeoutMs },
 									onProgress: updateProgress,
+									mode,
+									skillPaths,
 								});
 							} finally {
 								lifecycle.endChild(token, controller);
@@ -208,6 +272,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 									signal: controller.signal,
 									deps: { timeoutMs },
 									onProgress: updateProgress,
+									mode,
+									skillPaths,
 								});
 							} finally {
 								lifecycle.endChild(token, controller);
@@ -231,7 +297,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								outcome.implementer.status === "aborted" ? "warning" : "error",
 							);
 						} else {
-							reviewArgs = buildPanelReviewArgs(task);
+							reviewArgs = mode === "stack" && trunkSha ? buildStackPanelReviewArgs(task, trunkSha) : buildPanelReviewArgs(task);
 						}
 					}
 				} finally {
@@ -248,7 +314,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				}
 
 				if (reviewArgs && lifecycle.isCurrent(token)) {
-					notify("Implementation complete; starting panel review.", "info");
+					notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : "Implementation complete; starting panel review.", "info");
 					try {
 						const request = await requestPanelReview(pi, reviewArgs, ctx);
 						if (!request.handled && lifecycle.isCurrent(token)) {
@@ -266,4 +332,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 		},
 	});
+}
+
+function argsHasModeFlag(args: string): boolean {
+	const first = args.trim().split(/\s+/)[0];
+	return first === "--single" || first === "--stack";
 }

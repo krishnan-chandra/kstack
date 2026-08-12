@@ -3,7 +3,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { LIMITS, type AgentRunResult, type UsageSummary } from "./types.ts";
+import { LIMITS, type AgentRunResult, type DeliveryMode, type UsageSummary } from "./types.ts";
 
 export interface SpawnedProcess {
 	stdout: { on(event: "data", cb: (data: Buffer) => void): void };
@@ -33,14 +33,35 @@ export interface BuildChildArgsOptions {
 	promptFile: string;
 	taskFile: string;
 	planFile?: string;
+	/** Delivery mode; defaults to "single" (current behavior). */
+	mode?: DeliveryMode;
+	/** Stack mode only: skill paths re-added after --no-skills (Arena excluded). */
+	skillPaths?: readonly string[];
 }
 
-/** Skills and context files deliberately remain enabled for workflow composition. */
+/**
+ * Skills and context files deliberately remain enabled in single-PR mode for
+ * workflow composition. In stack mode, Arena is deterministically excluded by
+ * disabling skill discovery (`--no-skills`) and re-adding every other skill
+ * with repeated `--skill`; this prevents parallel candidates from corrupting a
+ * shared jj operation log while preserving task-specific skills.
+ */
 export function buildChildArgs(options: BuildChildArgsOptions): string[] {
-	const target =
-		options.role === "planner"
-			? `Read the user task at ${options.taskFile}, inspect the repository, and produce the plan.`
-			: `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.`;
+	const mode: DeliveryMode = options.mode ?? "single";
+	const stackMode = mode === "stack";
+	const skillFlags = stackMode ? expandSkillPaths(options.skillPaths) : [];
+
+	let target: string;
+	if (options.role === "planner") {
+		const delivery = stackMode
+			? 'This is a stacked-PR delivery. Begin the plan with a line reading exactly "Delivery: stacked-prs", then a line "Stack base: trunk()", then ordered PR slices.'
+			: 'This is a single-PR delivery. Begin the plan with a line reading exactly "Delivery: single-pr".';
+		target = `Read the user task at ${options.taskFile}, inspect the repository, and produce the plan. ${delivery}`;
+	} else {
+		const stackNote = stackMode ? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and follow its local-stack policy." : "";
+		target = `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.${stackNote}`;
+	}
+
 	return [
 		"--mode",
 		"json",
@@ -48,6 +69,7 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 		"--no-session",
 		"--no-extensions",
 		"--no-prompt-templates",
+		...(stackMode ? ["--no-skills", ...skillFlags] : []),
 		...(options.role === "planner" ? ["--tools", "read,grep,find,ls"] : []),
 		"--model",
 		options.model,
@@ -55,6 +77,14 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 		options.promptFile,
 		target,
 	];
+}
+
+function expandSkillPaths(paths: readonly string[] | undefined): string[] {
+	const flags: string[] = [];
+	for (const path of paths ?? []) {
+		if (path) flags.push("--skill", path);
+	}
+	return flags;
 }
 
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {

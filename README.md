@@ -15,7 +15,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
-| [`plan-implement`](extensions/plan-implement/) | Plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review through an in-process extension API. Child agents retain normal skill discovery. |
+| [`plan-implement`](extensions/plan-implement/) | Plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review through an in-process extension API. Supports a `--stack` delivery mode that builds a local jj stack of PRs with Arena deterministically disabled. Child agents retain normal skill discovery. |
 
 ## Skills
 
@@ -26,6 +26,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
+| [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with `jst`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
 
 ## Configuration
 
@@ -114,7 +115,19 @@ Skills can then be invoked explicitly, for example:
 /skill:find-reviewers
 /skill:arena
 /skill:swarm
+/skill:jj-stacked-prs
 ```
+
+The two-model implementation workflow also has a stacked-PR delivery mode:
+
+```text
+/plan-implement --stack Split the auth rollout into a three-PR jj stack
+```
+
+In stack mode the planner and implementer build a **local** jj stack of
+bookmarks (one per PR) and deterministically exclude the `arena` skill; no PRs
+are created. Publishing the stack with `jst submit` is a separate, confirmed
+step guided by the [`jj-stacked-prs`](skills/jj-stacked-prs/) skill.
 
 To remove the package registration, run this from the same checkout:
 
@@ -164,7 +177,7 @@ node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, and `swarm` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, and `jj-stacked-prs` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 

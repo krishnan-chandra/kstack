@@ -3,6 +3,17 @@
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+/** How the approved plan is delivered. */
+export type DeliveryMode = "single" | "stack";
+
+/** A discovered skill we may pass to a child via --skill. */
+export interface SkillRef {
+	/** Skill name (frontmatter `name`), used for Arena exclusion. */
+	name: string;
+	/** Skill directory, the path `--skill` accepts. */
+	baseDir: string;
+}
+
 export interface RoleSpec {
 	model: string;
 	thinking?: ThinkingLevel;

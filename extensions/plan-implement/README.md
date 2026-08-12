@@ -6,10 +6,14 @@ existing panel review through an in-process extension API.
 
 ```text
 /plan-implement Add optimistic locking to the session archive writer
+/plan-implement --single Add optimistic locking to the session archive writer
+/plan-implement --stack Split the auth rollout into a three-PR jj stack
 /plan-implement
 ```
 
-The argument-less form opens an editor for the task.
+The argument-less form asks for the delivery mode (single PR or stacked PRs)
+before opening the task editor. `--single` is the default and is backward
+compatible with the original single-PR workflow.
 
 ## Behavior
 
@@ -24,10 +28,37 @@ The argument-less form opens an editor for the task.
    panel-review extension to run through Pi's in-process event bus. The panel
    keeps its own confirmation and verdict rendering.
 
-Both children use `--no-session --no-extensions --no-prompt-templates`, but
-skills and context files intentionally remain enabled. A task can therefore
+Both children use `--no-session --no-extensions --no-prompt-templates`.
+
+### Single-PR mode (default)
+
+Skills and context files intentionally remain enabled. A task can therefore
 compose with `create-pi-extension`, `create-skill`, `find-reviewers`, or any
 other matching installed/project skill without running recursive extensions.
+
+### Stacked-PR mode (`--stack`)
+
+Stacked-PR mode builds a **local** Jujutsu stack of changes and bookmarks, one
+bookmark per PR, and reviews it once. It does not publish anything.
+
+Stack mode adds a preflight before any model call:
+
+- `jj >= 0.44` is available and the directory is a Jujutsu workspace;
+- the workspace is colocated with a Git worktree;
+- the `trunk()` revset resolves to exactly one 40-hex Git-backed commit (used as
+  the immutable panel-review base);
+- the session's discovered skills include `jj-stacked-prs`.
+
+Arena is **deterministically disabled** for both children: skill discovery is
+turned off with `--no-skills` and every other discovered skill is re-added with
+repeated `--skill` (including `jj-stacked-prs`). This prevents parallel
+candidates from corrupting a shared jj operation log while preserving
+task-specific skills. The planner produces a `Delivery: stacked-prs` plan with
+ordered PR slices; the implementer consults `jj-stacked-prs`, creates the local
+stack, and never runs `jst submit`, `jj git push`, or `gh pr create`. After a
+successful implementation, panel review runs once against the immutable
+`trunk()` base. Publishing the stack to GitHub is a separate, later,
+confirmed `jst submit --dry-run` workflow owned by the `jj-stacked-prs` skill.
 
 The Planner and Implementer cards identify the model used. Expand a card with
 Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
@@ -98,6 +129,9 @@ changes that were already present before `/plan-implement` began.
 
 - Invalid config, unavailable models, missing Git/panel-review, and bad task
   input stop before model calls.
+- Stack-mode preflight failures (no jj, not a workspace, no colocated git, no
+  single `trunk()` commit, missing `jj-stacked-prs` skill, Arena not excludable)
+  stop before model calls.
 - Planner failure or plan rejection stops before the implementer.
 - Implementer failure is displayed and warns that partial edits may exist; it
   does not start panel review.
