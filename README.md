@@ -1,10 +1,8 @@
 # kstack
 
-kstack = "Krishnan's Stack"
+kstack = "Krishnan's Stack". Named as an homage to [`pstack`](https://github.com/cursor/plugins/tree/main/pstack), which it is heavily inspired by.
 
 Krishnan's personal extensions for [Pi](https://pi.dev).
-
-> Named as an homage to [`pstack`](https://github.com/cursor/plugins/tree/main/pstack), which it is heavily inspired by.
 
 > Pi extensions execute with your full user permissions. Review extension code before installing it.
 
@@ -31,6 +29,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |
+| [`reflect`](skills/reflect/) | Reviews a selected Pi session through independent judgment, tooling, and contrarian lenses, then proposes user-approved, durable workflow improvements. |
 
 ## Configuration
 
@@ -123,6 +122,7 @@ Skills can then be invoked explicitly, for example:
 /skill:unslop
 /skill:technical-writing
 /skill:blast-radius
+/skill:reflect
 ```
 
 The two-model implementation workflow also has a stacked-PR delivery mode:
@@ -183,6 +183,7 @@ node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
 node --test extensions/kstack-router/*.test.ts
+node --test skills/reflect/*.test.mjs
 ```
 
 The router also has a headless smoke test that registers the real extension
@@ -193,7 +194,7 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, and `blast-radius` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, or focused risk-review work matches their descriptions.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, and `reflect` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, focused risk-review, or session-retrospective work matches their descriptions.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
