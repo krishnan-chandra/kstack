@@ -15,6 +15,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
+| [`plan-implement`](extensions/plan-implement/) | Plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review through an in-process extension API. Child agents retain normal skill discovery. |
 
 ## Skills
 
@@ -28,8 +29,9 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 
 ## Configuration
 
-Model assignments for panel-review, arena, and swarm live in a single unified
-config file: `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
+Model assignments for panel-review, plan-implement, arena, and swarm live in a
+single unified config file: `$PI_CODING_AGENT_DIR/kstack.json` (default
+`~/.pi/agent/kstack.json`).
 
 Copy the starter and edit:
 
@@ -93,6 +95,17 @@ pi list
 pi config
 ```
 
+The two-model implementation workflow is available as an extension command:
+
+```text
+/plan-implement Add optimistic locking to the archive writer
+```
+
+It keeps skills enabled in both child agents, so each role can consult the
+original task-specific skills it needs. See
+[`extensions/plan-implement/README.md`](extensions/plan-implement/README.md)
+for model defaults, configuration, confirmations, and security boundaries.
+
 Skills can then be invoked explicitly, for example:
 
 ```text
@@ -148,6 +161,7 @@ node --test install.test.mjs
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
+node --test extensions/plan-implement/*.test.ts
 ```
 
 The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, and `swarm` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.

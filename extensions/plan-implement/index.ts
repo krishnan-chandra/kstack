@@ -1,0 +1,269 @@
+/** Two-model plan → approve → implement → panel-review orchestration. */
+
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
+import { requestPanelReview } from "../panel-review/api.ts";
+import { runAgent } from "./agent-runner.ts";
+import { buildPanelReviewArgs, validateTask } from "./command.ts";
+import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
+import { WorkflowLifecycle } from "./lifecycle.ts";
+import { isChildModelAvailable } from "./model-availability.ts";
+import type { AgentRunResult } from "./types.ts";
+import { runWorkflow } from "./workflow.ts";
+
+const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
+
+interface PhaseDetails {
+	schemaVersion: 1;
+	phase: "planner" | "implementer";
+	status: AgentRunResult["status"];
+	model: string;
+}
+
+function errorText(result: AgentRunResult): string {
+	if (result.status === "failed") return result.error;
+	if (result.status === "aborted") return `${result.role} was aborted.`;
+	return result.output;
+}
+
+function sendPhaseMessage(pi: ExtensionAPI, result: AgentRunResult): void {
+	const details: PhaseDetails = {
+		schemaVersion: 1,
+		phase: result.role,
+		status: result.status,
+		model: result.model,
+	};
+	pi.sendMessage({
+		customType: "plan-implement",
+		content: result.status === "completed" ? result.output : errorText(result),
+		display: true,
+		details,
+	});
+}
+
+export default function planImplementExtension(pi: ExtensionAPI): void {
+	const lifecycle = new WorkflowLifecycle();
+
+	pi.on("session_start", () => lifecycle.startSession());
+	pi.on("session_shutdown", () => lifecycle.shutdownSession());
+
+	pi.registerShortcut("ctrl+shift+i", {
+		description: "Abort the running plan/implement agent",
+		handler: async (ctx) => {
+			if (lifecycle.abortActiveChild()) {
+				ctx.ui.setStatus("plan-implement", "plan-implement: aborting child process…");
+			} else {
+				const suffix = lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
+				ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
+			}
+		},
+	});
+
+	pi.registerMessageRenderer("plan-implement", (message, { expanded, outputPad }, theme) => {
+		const details = message.details as PhaseDetails | undefined;
+		const phase = details?.phase === "planner" ? "Planner" : "Implementer";
+		const status = details?.status ?? "completed";
+		const icon = status === "completed" ? theme.fg("success", "■") : status === "aborted" ? theme.fg("warning", "■") : theme.fg("error", "■");
+		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
+		const header = `${icon} ${theme.fg("accent", phase)}${theme.fg("muted", ` — ${details?.model ?? "unknown model"} — ${status}`)}`;
+		box.addChild(new Text(expanded ? `${header}\n\n${message.content}` : `${header}${theme.fg("dim", " (Ctrl+O to expand)")}`, 0, 0));
+		return box;
+	});
+
+	pi.registerCommand("plan-implement", {
+		description: "Plan with a high-reason model, approve, implement with a small model, then run panel review",
+		handler: async (args, ctx) => {
+			const notify = ctx.ui.notify.bind(ctx.ui);
+			if (!ctx.hasUI) {
+				notify("plan-implement requires interactive TUI or RPC mode.", "error");
+				return;
+			}
+			if (lifecycle.isRunning()) {
+				notify("A plan/implement run is already active.", "warning");
+				return;
+			}
+			const commandSession = lifecycle.currentSessionToken();
+			if (!commandSession) return;
+			await ctx.waitForIdle();
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+
+			if (!pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")) {
+				notify("plan-implement requires the panel-review extension to be loaded.", "error");
+				return;
+			}
+			const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 5000 });
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			if (git.code !== 0) {
+				notify("plan-implement requires a Git working tree so the completed change can be panel-reviewed.", "error");
+				return;
+			}
+
+			let rawTask = args ?? "";
+			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			const taskResult = validateTask(rawTask);
+			if (!taskResult.ok) {
+				notify(taskResult.error, "warning");
+				return;
+			}
+			const task = taskResult.task;
+
+			const configLoad = loadConfig();
+			if (configLoad.status === "invalid") {
+				notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
+				return;
+			}
+			const roleResolution = resolveRoles(configLoad.status === "loaded" ? configLoad.config : null, {
+				available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
+			});
+			if (!roleResolution.ok) {
+				notify(roleResolution.error, "error");
+				return;
+			}
+			const roles = roleResolution.roles;
+			const plannerModel = modelCliId(roles.planner);
+			const implementerModel = modelCliId(roles.implementer);
+
+			const confirmed = await ctx.ui.confirm(
+				"Run plan → implement → panel review?",
+				`Planner (read-only): ${plannerModel}\n` +
+					`Implementer (can modify files): ${implementerModel}\n` +
+					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
+					"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
+					"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
+					"which may include pre-existing working-tree changes.",
+			);
+			if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
+
+			const token = lifecycle.beginWorkflow(commandSession);
+			if (!token) {
+				notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
+				return;
+			}
+
+			let tempDir: string | undefined;
+			let reviewArgs: string | undefined;
+			try {
+				try {
+					tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
+					const taskFile = join(tempDir, "task.md");
+					const planFile = join(tempDir, "approved-plan.md");
+					writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
+					const timeoutMs = roles.timeoutMinutes * 60_000;
+					const updateProgress = ({ role, turns, activity }: { role: "planner" | "implementer"; turns: number; activity: string }) => {
+						if (lifecycle.isCurrent(token)) {
+							ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+						}
+					};
+
+					const outcome = await runWorkflow({
+						runPlanner: async () => {
+							const controller = lifecycle.beginChild(token, "planning");
+							if (!controller) return { status: "aborted", role: "planner", model: plannerModel };
+							try {
+								ctx.ui.setStatus("plan-implement", `plan-implement: planner ${plannerModel}…`);
+								return await runAgent({
+									role: "planner",
+									model: plannerModel,
+									promptFile: join(PROMPTS_DIR, "planner.md"),
+									taskFile,
+									cwd: ctx.cwd,
+									signal: controller.signal,
+									deps: { timeoutMs },
+									onProgress: updateProgress,
+								});
+							} finally {
+								lifecycle.endChild(token, controller);
+							}
+						},
+						onPlan: (plan) => {
+							if (!lifecycle.isCurrent(token)) return;
+							writeFileSync(planFile, `# Approved implementation plan\n\n${plan.output}\n`, { encoding: "utf8", mode: 0o600 });
+							sendPhaseMessage(pi, plan);
+							ctx.ui.setStatus("plan-implement", undefined);
+						},
+						approvePlan: async () => {
+							if (!lifecycle.isCurrent(token)) return false;
+							return ctx.ui.confirm(
+								"Approve planner output?",
+								`Review the Planner card above. Continue with ${implementerModel}, which can modify the working tree?`,
+							);
+						},
+						runImplementer: async () => {
+							const controller = lifecycle.beginChild(token, "implementing");
+							if (!controller) return { status: "aborted", role: "implementer", model: implementerModel };
+							try {
+								ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
+								return await runAgent({
+									role: "implementer",
+									model: implementerModel,
+									promptFile: join(PROMPTS_DIR, "implementer.md"),
+									taskFile,
+									planFile,
+									cwd: ctx.cwd,
+									signal: controller.signal,
+									deps: { timeoutMs },
+									onProgress: updateProgress,
+								});
+							} finally {
+								lifecycle.endChild(token, controller);
+							}
+						},
+						onImplementation: (result) => {
+							if (!lifecycle.isCurrent(token)) return;
+							sendPhaseMessage(pi, result);
+							ctx.ui.setStatus("plan-implement", undefined);
+						},
+					});
+
+					if (lifecycle.isCurrent(token)) {
+						if (outcome.status === "planner-failed") {
+							notify(`Planner did not complete: ${errorText(outcome.planner)}`, outcome.planner.status === "aborted" ? "info" : "error");
+						} else if (outcome.status === "rejected") {
+							notify("Plan rejected; the implementer was not launched.", "info");
+						} else if (outcome.status === "implementer-failed") {
+							notify(
+								`Implementer did not complete: ${errorText(outcome.implementer)} Partial working-tree changes may exist; panel review was not started.`,
+								outcome.implementer.status === "aborted" ? "warning" : "error",
+							);
+						} else {
+							reviewArgs = buildPanelReviewArgs(task);
+						}
+					}
+				} finally {
+					if (lifecycle.isSessionCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
+					if (tempDir) {
+						try {
+							rmSync(tempDir, { recursive: true, force: true });
+						} catch {
+							const message = `Could not remove private plan/implement temp directory ${tempDir}; remove it manually.`;
+							if (lifecycle.isSessionCurrent(token)) notify(message, "warning");
+							else console.error(`plan-implement: ${message}`);
+						}
+					}
+				}
+
+				if (reviewArgs && lifecycle.isCurrent(token)) {
+					notify("Implementation complete; starting panel review.", "info");
+					try {
+						const request = await requestPanelReview(pi, reviewArgs, ctx);
+						if (!request.handled && lifecycle.isCurrent(token)) {
+							notify("panel-review did not accept the in-process review request.", "error");
+						}
+					} catch (error) {
+						if (lifecycle.isCurrent(token)) {
+							notify(`panel-review request failed: ${(error as Error).message}`, "error");
+						}
+					}
+				}
+			} finally {
+				if (lifecycle.isSessionCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
+				lifecycle.finishWorkflow(token);
+			}
+		},
+	});
+}

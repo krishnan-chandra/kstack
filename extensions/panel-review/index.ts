@@ -18,8 +18,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
 import { loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
@@ -98,9 +99,7 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 
-	pi.registerCommand("panel-review", {
-		description: "Review current changes with a panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
-		handler: async (args, ctx) => {
+	const runPanelReview = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {
 				notify("panel-review requires interactive (TUI/RPC) mode.", "error");
@@ -342,7 +341,20 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 			}
-		},
+	};
+
+	pi.registerCommand("panel-review", {
+		description: "Review current changes with a panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
+		handler: runPanelReview,
+	});
+
+	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => {
+		claimPanelReviewRequest(data, runPanelReview);
+	});
+
+	pi.on("session_shutdown", () => {
+		activeAbort?.abort();
+		activeAbort = undefined;
 	});
 }
 

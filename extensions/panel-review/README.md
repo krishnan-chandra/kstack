@@ -11,6 +11,13 @@ verdict.
 /panel-review --base origin/main --intent "Implement handoff and panel review extensions"
 ```
 
+Other trusted extensions can invoke the same command handler without turning a
+slash command into an LLM prompt. Import `requestPanelReview` from `api.ts` and
+pass the caller's current `ExtensionCommandContext`; panel-review claims the
+request synchronously on Pi's event bus and exposes a completion promise. The
+normal intent validation, confirmation, cancellation, and verdict path still
+runs.
+
 ## How it works
 
 1. Resolves the review base: explicit `--base`, else the branch upstream, else
