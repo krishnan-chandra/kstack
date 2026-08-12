@@ -165,4 +165,4 @@ node --test extensions/plan-implement/*.test.ts
 ```
 
 The full design and deferred boundaries are recorded in
-[`../../docs/plans/plan-implement.md`](../../docs/plans/plan-implement.md).
+[`../../plans/plan-implement.md`](../../plans/plan-implement.md).

@@ -42,13 +42,15 @@ JSONL artifacts, although an automated reindex command is future work.
 
 | Command | Effect |
 |---|---|
-| `/session-archive` | Confirm, then archive the current session and continue in a new empty session. |
-| `/session-archive-other` | Pick an inactive session (from the same list `/resume` uses) and archive it. |
-| `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
+| `/session-archive` | Require a name, confirm, then archive the current session and continue in a new empty session. Name an unnamed session first with Pi's built-in `/name <name>` command. |
+| `/session-archive-other` | Pick an inactive session by name and archive it. Unnamed sessions stay hidden until you rename them in `/resume` with Ctrl+R. Duplicate names show a modified timestamp. |
+| `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch. The command refuses to start if any candidate is unnamed. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
 | `/session-archives [filter]` | Read-only stats and archived-session listing; optional text filter. |
 
 Archiving is always explicit and confirmed. Nothing is archived automatically
-on shutdown, reload, or session switch.
+on shutdown, reload, or session switch. Name sessions with Pi's built-in
+`--name` startup option or `/name <name>` command. Archive commands reject or
+hide unnamed sessions instead of falling back to first-message text.
 
 ## Agent tools
 
@@ -89,7 +91,7 @@ policed. Treat these as accident guards, not a security boundary.
 The extension can identify only the session active in the current Pi process.
 It cannot determine whether another Pi process has the same JSONL open. Before
 using `/session-archive-other` or `/session-archive-all`, ensure the selected
-sessions are not open in any other Pi process. The same caution applies if multiple Pi processes were
+named sessions are not open in any other Pi process. The same caution applies if multiple Pi processes were
 explicitly started on one session file.
 
 SQLite transactions serialize catalog writes, but they do not solve this file
@@ -143,8 +145,9 @@ cross-process session-liveness detection described above.
 node --test ~/.pi/agent/extensions/session-archive/*.test.ts
 
 # Full end-to-end smoke test: drives a real pi RPC process with an isolated
-# PI_CODING_AGENT_DIR, archives a fixture session and the live session, has
-# the LLM call both tools and attempt a blocked write, then restarts Pi.
+# PI_CODING_AGENT_DIR, selects a fixture by name, archives a live session named
+# with Pi's built-in --name option, has the LLM call both tools and attempt a
+# blocked write, then restarts Pi.
 # Spends a small number of tokens on a few tiny prompts.
 python3 ~/.pi/agent/extensions/session-archive/scripts/e2e-smoke.py
 ```
@@ -152,6 +155,7 @@ python3 ~/.pi/agent/extensions/session-archive/scripts/e2e-smoke.py
 Structure:
 
 - `index.ts` — Pi registration and command/session lifecycle only
+- `session-choices.ts` — named-only picker labels and duplicate disambiguation
 - `archive-ops.ts` — testable archive orchestration (no Pi imports)
 - `archive-store.ts` — SQLite schema, transactions, queries, byte references
 - `session-jsonl.ts` — strict v3 parsing, text extraction, hashes, byte offsets

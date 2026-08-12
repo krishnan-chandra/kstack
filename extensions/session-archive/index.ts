@@ -21,6 +21,7 @@ import {
 	isArchiveWriteTarget,
 	readUtf8Ranges,
 } from "./archive-files.ts";
+import { buildNamedSessionChoices } from "./session-choices.ts";
 import { splitUtf8Chunks } from "./tool-output.ts";
 
 type ArchiveResult =
@@ -106,15 +107,21 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("session-archive", {
-		description: "Archive the current session (read-only, searchable) and start a new one",
+		description: "Archive the named current session (read-only, searchable) and start a new one",
 		handler: async (_args, ctx) => {
+			const sessionId = ctx.sessionManager.getSessionId();
+			const sessionName = ctx.sessionManager.getSessionName();
+			if (!sessionName) {
+				ctx.ui.notify("Name this session with /name <name>, then retry /session-archive.", "warning");
+				return;
+			}
 			await archiveCurrentSession({
 				deps: { dbPath, archiveRoot },
 				snapshot: {
 					sourcePath: ctx.sessionManager.getSessionFile(),
-					sessionId: ctx.sessionManager.getSessionId(),
+					sessionId,
 					sessionDir: ctx.sessionManager.getSessionDir(),
-					sessionName: ctx.sessionManager.getSessionName() ?? undefined,
+					sessionName,
 				},
 				waitForIdle: () => ctx.waitForIdle(),
 				confirm: (title, message) => ctx.ui.confirm(title, message),
@@ -185,7 +192,7 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("session-archive-other", {
-		description: "Pick an inactive session from /resume's list and archive it",
+		description: "Pick a named inactive session and archive it",
 		handler: async (_args, ctx) => {
 			await ctx.waitForIdle();
 			const currentFile = ctx.sessionManager.getSessionFile();
@@ -196,13 +203,19 @@ export default async function (pi: ExtensionAPI) {
 				ctx.ui.notify("No other sessions found for this directory.", "info");
 				return;
 			}
-			const candidatesByLabel = new Map(
-				candidates.map((session) => [
-					`${session.name ?? session.firstMessage?.slice(0, 60) ?? "(unnamed)"} — ${session.modified.toISOString()} — ${session.id}`,
-					session,
-				]),
-			);
-			const choice = await ctx.ui.select("Archive which session?", [...candidatesByLabel.keys()]);
+			const { choices, unnamedCount } = buildNamedSessionChoices(candidates);
+			if (choices.length === 0) {
+				ctx.ui.notify(
+					`No named inactive sessions found. Rename ${unnamedCount} session(s) in /resume with Ctrl+R, then retry.`,
+					"warning",
+				);
+				return;
+			}
+			const candidatesByLabel = new Map(choices.map(({ label, session }) => [label, session]));
+			const title = unnamedCount > 0
+				? `Archive which named session? (${unnamedCount} unnamed hidden)`
+				: "Archive which named session?";
+			const choice = await ctx.ui.select(title, [...candidatesByLabel.keys()]);
 			if (!choice) return;
 			const chosen = candidatesByLabel.get(choice);
 			if (!chosen) {
@@ -211,7 +224,7 @@ export default async function (pi: ExtensionAPI) {
 			}
 			const confirmed = await ctx.ui.confirm(
 				"Archive session?",
-				`Session: ${choice}\nFrom: ${chosen.path}\n\n` +
+				`Session: ${chosen.name}\nFrom: ${chosen.path}\n\n` +
 					"The session becomes read-only, leaves the /resume list, and stays searchable. " +
 					"Continue only if it is not open in another Pi process.",
 			);
@@ -227,7 +240,7 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("session-archive-all", {
-		description: "Archive every inactive session in this directory in one confirmed batch",
+		description: "Archive every named inactive session in this directory in one confirmed batch",
 		handler: async (_args, ctx) => {
 			await ctx.waitForIdle();
 			const currentFile = ctx.sessionManager.getSessionFile();
@@ -236,6 +249,14 @@ export default async function (pi: ExtensionAPI) {
 			const candidates = sessions.filter((s) => s.path !== currentFile);
 			if (candidates.length === 0) {
 				ctx.ui.notify("No other sessions found for this directory.", "info");
+				return;
+			}
+			const { unnamedCount } = buildNamedSessionChoices(candidates);
+			if (unnamedCount > 0) {
+				ctx.ui.notify(
+					`Archive cancelled: ${unnamedCount} inactive session(s) are unnamed. Rename them in /resume with Ctrl+R, then retry.`,
+					"warning",
+				);
 				return;
 			}
 			const confirmed = await ctx.ui.confirm(
