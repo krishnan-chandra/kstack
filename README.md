@@ -230,7 +230,7 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `how`, and `why` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension-, skill-development, writing, focused risk-review, or session-retrospective work matches their descriptions.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `how`, and `why` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` is explicit-only because it launches several design runs; invoke it with `/skill:architect`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
