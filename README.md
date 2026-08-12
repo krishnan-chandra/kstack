@@ -1,6 +1,10 @@
-# krishnan-pi-extensions
+# kstack
 
-Personal extensions for [Pi](https://pi.dev).
+kstack = "Krishnan's Stack"
+
+Krishnan's personal extensions for [Pi](https://pi.dev).
+
+> Named as an homage to [`pstack`](https://github.com/cursor/plugins/tree/main/pstack), which it is heavily inspired by.
 
 > Pi extensions execute with your full user permissions. Review extension code before installing it.
 
@@ -50,7 +54,7 @@ The extensions use TypeScript directly through Pi's loader. No build or dependen
 This repository follows Pi's conventional package layout: each directory under `extensions/` exposes an `index.ts`. Install the checkout as a local Pi package to load all extensions in the repository:
 
 ```bash
-pi install "$HOME/Code/krishnan-pi-extensions"
+pi install "$HOME/Code/krishnan-kstack"
 ```
 
 Pi records a reference to the local checkout in its user settings; it does not copy the repository. Pulling or editing the checkout therefore updates the installed code. Use `/reload` in a running Pi process, or restart Pi, after a change.
@@ -65,7 +69,7 @@ pi config
 Remove the package registration with:
 
 ```bash
-pi remove "$HOME/Code/krishnan-pi-extensions"
+pi remove "$HOME/Code/krishnan-kstack"
 ```
 
 ### Manual installation
@@ -73,7 +77,7 @@ pi remove "$HOME/Code/krishnan-pi-extensions"
 Pi also auto-discovers global extensions under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/`. To install only the session archive extension, either symlink it:
 
 ```bash
-cd ~/Code/krishnan-pi-extensions
+cd ~/Code/krishnan-kstack
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 mkdir -p "$PI_AGENT_DIR/extensions"
 ln -s "$PWD/extensions/session-archive" "$PI_AGENT_DIR/extensions/session-archive"
@@ -82,7 +86,7 @@ ln -s "$PWD/extensions/session-archive" "$PI_AGENT_DIR/extensions/session-archiv
 or copy it:
 
 ```bash
-cd ~/Code/krishnan-pi-extensions
+cd ~/Code/krishnan-kstack
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 mkdir -p "$PI_AGENT_DIR/extensions/session-archive"
 cp -R extensions/session-archive/. "$PI_AGENT_DIR/extensions/session-archive/"
@@ -93,7 +97,7 @@ The symlink destination must not already exist. If it does, move or remove the e
 For a one-off test without installing anything, run from any directory:
 
 ```bash
-pi -e "$HOME/Code/krishnan-pi-extensions/extensions/session-archive/index.ts"
+pi -e "$HOME/Code/krishnan-kstack/extensions/session-archive/index.ts"
 ```
 
 ## Development
