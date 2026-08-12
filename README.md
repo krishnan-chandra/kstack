@@ -19,6 +19,23 @@ Personal extensions for [Pi](https://pi.dev).
 | [`create-pi-extension`](skills/create-pi-extension/) | Designs and implements Pi extensions using the installed documentation, repository patterns, lifecycle/security ground rules, and an incremental verification checklist. |
 | [`create-skill`](skills/create-skill/) | Creates, tests, and improves Pi skills: draft, headless with-skill vs baseline eval runs, grading, benchmark aggregation, a static review page, and description/trigger optimization. |
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
+| [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
+| [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
+
+## Configuration
+
+Model assignments for panel-review, arena, and swarm live in a single unified
+config file: `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
+
+Copy the starter and edit:
+
+```bash
+cp kstack.example.json ~/.pi/agent/kstack.json
+```
+
+See [`kstack.example.json`](kstack.example.json) for the full schema. Each
+section is optional — missing sections use built-in defaults or prompt for
+models at runtime.
 
 ## Requirements
 
@@ -89,7 +106,7 @@ node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, and `find-reviewers` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, and `swarm` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 

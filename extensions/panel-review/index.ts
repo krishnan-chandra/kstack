@@ -11,7 +11,7 @@
  * mode-0600 temp bundle removed after the run.
  *
  * Command: /panel-review [--base <ref>] [--intent <text>]
- * Config:  $PI_CODING_AGENT_DIR/panel-review.json (see README.md)
+ * Config:  "panel-review" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
