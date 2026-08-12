@@ -49,55 +49,72 @@ models at runtime.
 
 The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
 
-## Install into local Pi
+## Install for the current user
 
-This repository follows Pi's conventional package layout: each directory under `extensions/` exposes an `index.ts`. Install the checkout as a local Pi package to load all extensions in the repository:
+This repository follows Pi's conventional package layout: extensions live under
+`extensions/` and skills live under `skills/`. The recommended installation is
+to register the whole checkout as a user-level Pi package:
 
 ```bash
-pi install "$HOME/Code/krishnan-kstack"
+cd /path/to/kstack
+pi install "$PWD"
 ```
 
-Pi records a reference to the local checkout in its user settings; it does not copy the repository. Pulling or editing the checkout therefore updates the installed code. Use `/reload` in a running Pi process, or restart Pi, after a change.
+By default, `pi install` writes to the current user's global settings. It loads
+all extensions and all skills in this repository across Pi projects; do not pass
+`-l`, which would create a project-local installation instead.
 
-Inspect or enable installed resources with:
+Pi records a reference to the checkout rather than copying it. Pulling or editing
+the repository updates the installed resources; use `/reload` in a running Pi
+process, or restart Pi, after changes.
+
+Inspect or enable the installed extensions and skills with:
 
 ```bash
 pi list
 pi config
 ```
 
-Remove the package registration with:
+Skills can then be invoked explicitly, for example:
 
-```bash
-pi remove "$HOME/Code/krishnan-kstack"
+```text
+/skill:create-pi-extension
+/skill:create-skill
+/skill:find-reviewers
+/skill:arena
+/skill:swarm
 ```
 
-### Manual installation
-
-Pi also auto-discovers global extensions under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/`. To install only the session archive extension, either symlink it:
+To remove the package registration, run this from the same checkout:
 
 ```bash
-cd ~/Code/krishnan-kstack
+pi remove "$PWD"
+```
+
+### Manual copy installation
+
+Package installation is preferred because it keeps extensions and skills tied to
+the checkout. To copy all resources into Pi's global user directories instead,
+run this from the repository root:
+
+```bash
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-mkdir -p "$PI_AGENT_DIR/extensions"
-ln -s "$PWD/extensions/session-archive" "$PI_AGENT_DIR/extensions/session-archive"
+mkdir -p "$PI_AGENT_DIR/extensions" "$PI_AGENT_DIR/skills"
+cp -R extensions/. "$PI_AGENT_DIR/extensions/"
+cp -R skills/. "$PI_AGENT_DIR/skills/"
 ```
 
-or copy it:
+Review existing destination directories before copying so that local changes are
+not overwritten. A copied installation is a snapshot; repeat the copy after
+repository updates. Pi discovers extension entry points under the global
+`extensions/` directory and skill `SKILL.md` files under the global `skills/`
+directory.
+
+For a one-off extension test without installing anything, run from the repository
+root:
 
 ```bash
-cd ~/Code/krishnan-kstack
-PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-mkdir -p "$PI_AGENT_DIR/extensions/session-archive"
-cp -R extensions/session-archive/. "$PI_AGENT_DIR/extensions/session-archive/"
-```
-
-The symlink destination must not already exist. If it does, move or remove the existing extension only after checking whether it contains changes you need to keep. Repeat a manual copy whenever the repository changes.
-
-For a one-off test without installing anything, run from any directory:
-
-```bash
-pi -e "$HOME/Code/krishnan-kstack/extensions/session-archive/index.ts"
+pi -e extensions/session-archive/index.ts
 ```
 
 ## Development
