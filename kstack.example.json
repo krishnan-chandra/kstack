@@ -13,6 +13,13 @@
 		"implementer": { "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" },
 		"timeoutMinutes": 30
 	},
+	"kstack-router": {
+		"classifier": {
+			"model": "openrouter/google/gemini-3.5-flash-lite",
+			"thinking": "low"
+		},
+		"timeoutSeconds": 90
+	},
 	"arena": {
 		"runners": [
 			{ "label": "sonnet", "model": "anthropic/claude-sonnet-4-5" },

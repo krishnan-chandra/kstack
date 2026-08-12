@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewArgs, buildStackPanelReviewArgs, parseDeliveryMode, validateTask } from "./command.ts";
@@ -87,6 +88,225 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
+	/** Core runner used by both the slash command and the in-process API. */
+	async function runPlanImplement(
+		task: string,
+		mode: DeliveryMode,
+		ctx: ExtensionCommandContext,
+	): Promise<void> {
+		const notify = ctx.ui.notify.bind(ctx.ui);
+		if (!ctx.hasUI) {
+			notify("plan-implement requires interactive TUI or RPC mode.", "error");
+			return;
+		}
+		if (lifecycle.isRunning()) {
+			notify("A plan/implement run is already active.", "warning");
+			return;
+		}
+		const commandSession = lifecycle.currentSessionToken();
+		if (!commandSession) return;
+		await ctx.waitForIdle();
+		if (!lifecycle.isSessionCurrent(commandSession)) return;
+
+		if (!pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")) {
+			notify("plan-implement requires the panel-review extension to be loaded.", "error");
+			return;
+		}
+		const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 5000 });
+		if (!lifecycle.isSessionCurrent(commandSession)) return;
+		if (git.code !== 0) {
+			notify("plan-implement requires a Git working tree so the completed change can be panel-reviewed.", "error");
+			return;
+		}
+
+		const configLoad = loadConfig();
+		if (configLoad.status === "invalid") {
+			notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
+			return;
+		}
+		const roleResolution = resolveRoles(configLoad.status === "loaded" ? configLoad.config : null, {
+			available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
+		});
+		if (!roleResolution.ok) {
+			notify(roleResolution.error, "error");
+			return;
+		}
+		const roles = roleResolution.roles;
+		const plannerModel = modelCliId(roles.planner);
+		const implementerModel = modelCliId(roles.implementer);
+
+		// Stack-mode prerequisites, resolved before any model call.
+		let trunkSha: string | undefined;
+		let skillPaths: string[] = [];
+		if (mode === "stack") {
+			const exec = makeExec(pi);
+			const preflight = await preflightStack(ctx.cwd, exec, exec);
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			if (!preflight.ok) {
+				notify(preflight.error, "error");
+				return;
+			}
+			trunkSha = preflight.trunkSha;
+			const skillRefs = discoveredSkillRefs(ctx);
+			const policy = buildStackSkillPolicy(skillRefs);
+			if (!policy.ok) {
+				notify(policy.error, "error");
+				return;
+			}
+			skillPaths = policy.skills.map((s) => s.baseDir);
+		}
+
+		const confirmed = await ctx.ui.confirm(
+			mode === "stack" ? "Run plan → implement (stacked PRs) → panel review?" : "Run plan → implement → panel review?",
+			mode === "stack"
+				? `Planner (read-only): ${plannerModel}\n` +
+					`Implementer (creates local jj changes + bookmarks): ${implementerModel}\n` +
+					`Stack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\n` +
+					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
+					"Stack mode disables skill discovery in children and re-adds every discovered skill except arena, " +
+					"so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. " +
+					"The implementer builds a LOCAL stack only — it does not push or create PRs. " +
+					"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base."
+				: `Planner (read-only): ${plannerModel}\n` +
+					`Implementer (can modify files): ${implementerModel}\n` +
+					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
+					"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
+					"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
+					"which may include pre-existing working-tree changes.",
+		);
+		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
+
+		const token = lifecycle.beginWorkflow(commandSession);
+		if (!token) {
+			notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
+			return;
+		}
+
+		let tempDir: string | undefined;
+		let reviewArgs: string | undefined;
+		try {
+			try {
+				tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
+				const taskFile = join(tempDir, "task.md");
+				const planFile = join(tempDir, "approved-plan.md");
+				writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
+				const timeoutMs = roles.timeoutMinutes * 60_000;
+				const updateProgress = ({ role, turns, activity }: { role: "planner" | "implementer"; turns: number; activity: string }) => {
+					if (lifecycle.isCurrent(token)) {
+						ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+					}
+				};
+
+				const outcome = await runWorkflow({
+					runPlanner: async () => {
+						const controller = lifecycle.beginChild(token, "planning");
+						if (!controller) return { status: "aborted", role: "planner", model: plannerModel };
+						try {
+							ctx.ui.setStatus("plan-implement", `plan-implement: planner ${plannerModel}…`);
+							return await runAgent({
+								role: "planner",
+								model: plannerModel,
+								promptFile: join(PROMPTS_DIR, "planner.md"),
+								taskFile,
+								cwd: ctx.cwd,
+								signal: controller.signal,
+								deps: { timeoutMs },
+								onProgress: updateProgress,
+								mode,
+								skillPaths,
+							});
+						} finally {
+							lifecycle.endChild(token, controller);
+						}
+					},
+					onPlan: (plan) => {
+						if (!lifecycle.isCurrent(token)) return;
+						writeFileSync(planFile, `# Approved implementation plan\n\n${plan.output}\n`, { encoding: "utf8", mode: 0o600 });
+						sendPhaseMessage(pi, plan);
+						ctx.ui.setStatus("plan-implement", undefined);
+					},
+					approvePlan: async () => {
+						if (!lifecycle.isCurrent(token)) return false;
+						return ctx.ui.confirm(
+							"Approve planner output?",
+							`Review the Planner card above. Continue with ${implementerModel}, which can modify the working tree?`,
+						);
+					},
+					runImplementer: async () => {
+						const controller = lifecycle.beginChild(token, "implementing");
+						if (!controller) return { status: "aborted", role: "implementer", model: implementerModel };
+						try {
+							ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
+							return await runAgent({
+								role: "implementer",
+								model: implementerModel,
+								promptFile: join(PROMPTS_DIR, "implementer.md"),
+								taskFile,
+								planFile,
+								cwd: ctx.cwd,
+								signal: controller.signal,
+								deps: { timeoutMs },
+								onProgress: updateProgress,
+								mode,
+								skillPaths,
+							});
+						} finally {
+							lifecycle.endChild(token, controller);
+						}
+					},
+					onImplementation: (result) => {
+						if (!lifecycle.isCurrent(token)) return;
+						sendPhaseMessage(pi, result);
+						ctx.ui.setStatus("plan-implement", undefined);
+					},
+				});
+
+				if (lifecycle.isCurrent(token)) {
+					if (outcome.status === "planner-failed") {
+						notify(`Planner did not complete: ${errorText(outcome.planner)}`, outcome.planner.status === "aborted" ? "info" : "error");
+					} else if (outcome.status === "rejected") {
+						notify("Plan rejected; the implementer was not launched.", "info");
+					} else if (outcome.status === "implementer-failed") {
+						notify(
+							`Implementer did not complete: ${errorText(outcome.implementer)} Partial working-tree changes may exist; panel review was not started.`,
+							outcome.implementer.status === "aborted" ? "warning" : "error",
+						);
+					} else {
+						reviewArgs = mode === "stack" && trunkSha ? buildStackPanelReviewArgs(task, trunkSha) : buildPanelReviewArgs(task);
+					}
+				}
+			} finally {
+				if (lifecycle.isSessionCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
+				if (tempDir) {
+					try {
+						rmSync(tempDir, { recursive: true, force: true });
+					} catch {
+						const message = `Could not remove private plan/implement temp directory ${tempDir}; remove it manually.`;
+						if (lifecycle.isSessionCurrent(token)) notify(message, "warning");
+						else console.error(`plan-implement: ${message}`);
+					}
+				}
+			}
+
+			if (reviewArgs && lifecycle.isCurrent(token)) {
+				notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : "Implementation complete; starting panel review.", "info");
+				try {
+					const request = await requestPanelReview(pi, reviewArgs, ctx);
+					if (!request.handled && lifecycle.isCurrent(token)) {
+						notify("panel-review did not accept the in-process review request.", "error");
+					}
+				} catch (error) {
+					if (lifecycle.isCurrent(token)) {
+						notify(`panel-review request failed: ${(error as Error).message}`, "error");
+					}
+				}
+			}
+		} finally {
+			if (lifecycle.isSessionCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
+			lifecycle.finishWorkflow(token);
+		}
+	}
+
 	pi.registerCommand("plan-implement", {
 		description: "Plan with a high-reason model, approve, implement with a small model, then run panel review",
 		handler: async (args, ctx) => {
@@ -103,17 +323,6 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			if (!commandSession) return;
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
-
-			if (!pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")) {
-				notify("plan-implement requires the panel-review extension to be loaded.", "error");
-				return;
-			}
-			const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 5000 });
-			if (!lifecycle.isSessionCurrent(commandSession)) return;
-			if (git.code !== 0) {
-				notify("plan-implement requires a Git working tree so the completed change can be panel-reviewed.", "error");
-				return;
-			}
 
 			// Delivery mode: a leading --single/--stack flag selects it; the
 			// argument-less form asks before opening the task editor so stack
@@ -142,195 +351,14 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				notify(taskResult.error, "warning");
 				return;
 			}
-			const task = taskResult.task;
 
-			const configLoad = loadConfig();
-			if (configLoad.status === "invalid") {
-				notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
-				return;
-			}
-			const roleResolution = resolveRoles(configLoad.status === "loaded" ? configLoad.config : null, {
-				available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
-			});
-			if (!roleResolution.ok) {
-				notify(roleResolution.error, "error");
-				return;
-			}
-			const roles = roleResolution.roles;
-			const plannerModel = modelCliId(roles.planner);
-			const implementerModel = modelCliId(roles.implementer);
-
-			// Stack-mode prerequisites, resolved before any model call.
-			let trunkSha: string | undefined;
-			let skillPaths: string[] = [];
-			if (mode === "stack") {
-				const exec = makeExec(pi);
-				const preflight = await preflightStack(ctx.cwd, exec, exec);
-				if (!lifecycle.isSessionCurrent(commandSession)) return;
-				if (!preflight.ok) {
-					notify(preflight.error, "error");
-					return;
-				}
-				trunkSha = preflight.trunkSha;
-				const skillRefs = discoveredSkillRefs(ctx);
-				const policy = buildStackSkillPolicy(skillRefs);
-				if (!policy.ok) {
-					notify(policy.error, "error");
-					return;
-				}
-				skillPaths = policy.skills.map((s) => s.baseDir);
-			}
-
-			const confirmed = await ctx.ui.confirm(
-				mode === "stack" ? "Run plan → implement (stacked PRs) → panel review?" : "Run plan → implement → panel review?",
-				mode === "stack"
-					? `Planner (read-only): ${plannerModel}\n` +
-						`Implementer (creates local jj changes + bookmarks): ${implementerModel}\n` +
-						`Stack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\n` +
-						`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
-						"Stack mode disables skill discovery in children and re-adds every discovered skill except arena, " +
-						"so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. " +
-						"The implementer builds a LOCAL stack only — it does not push or create PRs. " +
-						"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base."
-					: `Planner (read-only): ${plannerModel}\n` +
-						`Implementer (can modify files): ${implementerModel}\n` +
-						`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
-						"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
-						"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
-						"which may include pre-existing working-tree changes.",
-			);
-			if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
-
-			const token = lifecycle.beginWorkflow(commandSession);
-			if (!token) {
-				notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
-				return;
-			}
-
-			let tempDir: string | undefined;
-			let reviewArgs: string | undefined;
-			try {
-				try {
-					tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
-					const taskFile = join(tempDir, "task.md");
-					const planFile = join(tempDir, "approved-plan.md");
-					writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
-					const timeoutMs = roles.timeoutMinutes * 60_000;
-					const updateProgress = ({ role, turns, activity }: { role: "planner" | "implementer"; turns: number; activity: string }) => {
-						if (lifecycle.isCurrent(token)) {
-							ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
-						}
-					};
-
-					const outcome = await runWorkflow({
-						runPlanner: async () => {
-							const controller = lifecycle.beginChild(token, "planning");
-							if (!controller) return { status: "aborted", role: "planner", model: plannerModel };
-							try {
-								ctx.ui.setStatus("plan-implement", `plan-implement: planner ${plannerModel}…`);
-								return await runAgent({
-									role: "planner",
-									model: plannerModel,
-									promptFile: join(PROMPTS_DIR, "planner.md"),
-									taskFile,
-									cwd: ctx.cwd,
-									signal: controller.signal,
-									deps: { timeoutMs },
-									onProgress: updateProgress,
-									mode,
-									skillPaths,
-								});
-							} finally {
-								lifecycle.endChild(token, controller);
-							}
-						},
-						onPlan: (plan) => {
-							if (!lifecycle.isCurrent(token)) return;
-							writeFileSync(planFile, `# Approved implementation plan\n\n${plan.output}\n`, { encoding: "utf8", mode: 0o600 });
-							sendPhaseMessage(pi, plan);
-							ctx.ui.setStatus("plan-implement", undefined);
-						},
-						approvePlan: async () => {
-							if (!lifecycle.isCurrent(token)) return false;
-							return ctx.ui.confirm(
-								"Approve planner output?",
-								`Review the Planner card above. Continue with ${implementerModel}, which can modify the working tree?`,
-							);
-						},
-						runImplementer: async () => {
-							const controller = lifecycle.beginChild(token, "implementing");
-							if (!controller) return { status: "aborted", role: "implementer", model: implementerModel };
-							try {
-								ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
-								return await runAgent({
-									role: "implementer",
-									model: implementerModel,
-									promptFile: join(PROMPTS_DIR, "implementer.md"),
-									taskFile,
-									planFile,
-									cwd: ctx.cwd,
-									signal: controller.signal,
-									deps: { timeoutMs },
-									onProgress: updateProgress,
-									mode,
-									skillPaths,
-								});
-							} finally {
-								lifecycle.endChild(token, controller);
-							}
-						},
-						onImplementation: (result) => {
-							if (!lifecycle.isCurrent(token)) return;
-							sendPhaseMessage(pi, result);
-							ctx.ui.setStatus("plan-implement", undefined);
-						},
-					});
-
-					if (lifecycle.isCurrent(token)) {
-						if (outcome.status === "planner-failed") {
-							notify(`Planner did not complete: ${errorText(outcome.planner)}`, outcome.planner.status === "aborted" ? "info" : "error");
-						} else if (outcome.status === "rejected") {
-							notify("Plan rejected; the implementer was not launched.", "info");
-						} else if (outcome.status === "implementer-failed") {
-							notify(
-								`Implementer did not complete: ${errorText(outcome.implementer)} Partial working-tree changes may exist; panel review was not started.`,
-								outcome.implementer.status === "aborted" ? "warning" : "error",
-							);
-						} else {
-							reviewArgs = mode === "stack" && trunkSha ? buildStackPanelReviewArgs(task, trunkSha) : buildPanelReviewArgs(task);
-						}
-					}
-				} finally {
-					if (lifecycle.isSessionCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
-					if (tempDir) {
-						try {
-							rmSync(tempDir, { recursive: true, force: true });
-						} catch {
-							const message = `Could not remove private plan/implement temp directory ${tempDir}; remove it manually.`;
-							if (lifecycle.isSessionCurrent(token)) notify(message, "warning");
-							else console.error(`plan-implement: ${message}`);
-						}
-					}
-				}
-
-				if (reviewArgs && lifecycle.isCurrent(token)) {
-					notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : "Implementation complete; starting panel review.", "info");
-					try {
-						const request = await requestPanelReview(pi, reviewArgs, ctx);
-						if (!request.handled && lifecycle.isCurrent(token)) {
-							notify("panel-review did not accept the in-process review request.", "error");
-						}
-					} catch (error) {
-						if (lifecycle.isCurrent(token)) {
-							notify(`panel-review request failed: ${(error as Error).message}`, "error");
-						}
-					}
-				}
-			} finally {
-				if (lifecycle.isSessionCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
-				lifecycle.finishWorkflow(token);
-			}
+			await runPlanImplement(taskResult.task, mode, ctx);
 		},
+	});
+
+	// Listen for in-process API requests from the router or other extensions.
+	pi.events.on(PLAN_IMPLEMENT_REQUEST_EVENT, (data) => {
+		claimPlanImplementRequest(data, runPlanImplement);
 	});
 }
 

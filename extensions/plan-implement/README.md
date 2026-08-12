@@ -65,6 +65,20 @@ Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
 the plan-approval boundary the shortcut reports that no child is running and
 does not pre-abort the future implementer.
 
+## In-process API (composability)
+
+The extension exposes an in-process event-bus API (`kstack:plan-implement:request`)
+to allow other extensions (notably `kstack-router`) to invoke the workflow without
+synthesizing slash-command strings.
+
+The request carries a structured `{ task, mode, ctx }` payload with a synchronous
+`claimed` flag and an awaited completion promise. The slash command and the event
+listener call the same internal runner; only the slash command performs flag/editor
+collection. Both paths retain task validation, Git/panel/model preflight,
+confirmations, lifecycle checks, cleanup, and panel review.
+
+See `api.ts` for the full contract and `api.test.ts` for usage examples.
+
 ## Configuration
 
 Configuration is the `"plan-implement"` section of

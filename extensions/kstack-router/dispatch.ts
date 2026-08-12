@@ -1,0 +1,116 @@
+/** Deterministic dispatch for each route. */
+
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { requestPlanImplement } from "../../plan-implement/api.ts";
+import { requestPanelReview } from "../../panel-review/api.ts";
+import { buildPanelArgs } from "../../panel-review/format.ts";
+import { getRoutePlaybook } from "./catalog.ts";
+import { ALLOWED_READ_TOOLS, type DeliveryRecommendation, type RouteId, type RouterArgs } from "./types.ts";
+import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
+
+export type DispatchResult =
+	| { status: "dispatched" }
+	| { status: "failed"; error: string }
+	| { status: "aborted" };
+
+/**
+ * Dispatch the task to the appropriate handler based on the selected route.
+ *
+ * For `change` and `review`, this uses in-process event APIs to avoid
+ * synthesizing slash-command strings. For other routes, the caller handles
+ * active-session lifecycle (tool restriction, playbook attachment, etc.)
+ * before calling this function; those routes return here immediately.
+ */
+export async function dispatchRoute(
+	route: RouteId,
+	task: string,
+	delivery: DeliveryRecommendation,
+	dispatchToken: DispatchToken,
+	lifecycle: RouterLifecycle,
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+): Promise<DispatchResult> {
+	if (!lifecycle.isCurrentDispatch(dispatchToken)) {
+		return { status: "aborted" };
+	}
+
+	switch (route) {
+		case "change": {
+			const mode = delivery === "stack" ? "stack" : "single";
+			try {
+				const result = await requestPlanImplement(pi, task, mode, ctx);
+				if (!result.handled) {
+					return {
+						status: "failed",
+						error:
+							"plan-implement extension is not loaded or did not accept the request. " +
+							"Make sure it is installed: pi list | grep plan-implement",
+					};
+				}
+				return { status: "dispatched" };
+			} catch (err) {
+				return { status: "failed", error: `plan-implement dispatch failed: ${(err as Error).message}` };
+			}
+		}
+
+		case "review": {
+			const panelArgs = buildPanelArgs({ intent: task });
+			if (!panelArgs.ok) return { status: "failed", error: panelArgs.error };
+			try {
+				const result = await requestPanelReview(pi, panelArgs.args, ctx);
+				if (!result.handled) {
+					return {
+						status: "failed",
+						error:
+							"panel-review extension is not loaded or did not accept the request. " +
+							"Make sure it is installed: pi list | grep panel-review",
+					};
+				}
+				return { status: "dispatched" };
+			} catch (err) {
+				return { status: "failed", error: `panel-review dispatch failed: ${(err as Error).message}` };
+			}
+		}
+
+		case "investigate":
+		case "arena":
+		case "swarm":
+		case "skill-authoring":
+		case "session-pickup":
+			// These routes are handled in-session by the main handler,
+			// which restricts tools and attaches playbooks before calling
+			// pi.sendMessage. Dispatch confirms the route is ready.
+			return { status: "dispatched" };
+
+		case "unsupported":
+			return {
+				status: "failed",
+				error:
+					"This task does not fit a supported route. Kstack Router supports: " +
+					"investigate (read-only research), change (plan → implement → review), " +
+					"arena (parallel candidate comparison), swarm (parallel independent slices), " +
+					"skill-authoring (create/test skills), session-pickup (recover context), " +
+					"review (read-only panel review). Use --route to pick one explicitly.",
+			};
+
+		default: {
+			const _exhaustive: never = route;
+			return { status: "failed", error: `Unknown route: ${_exhaustive}` };
+		}
+	}
+}
+
+/**
+ * Get the read-only tool intersection for a route.
+ * Returns the intersection of ALLOWED_READ_TOOLS and the currently active tools.
+ */
+export function getRestrictedTools(currentTools: string[]): string[] {
+	return currentTools.filter((t) => ALLOWED_READ_TOOLS.has(t));
+}
+
+/**
+ * Get the playbook content for a route. Returns undefined when no playbook exists.
+ */
+export function getPlaybookForRoute(route: RouteId): string | undefined {
+	return getRoutePlaybook(route);
+}
