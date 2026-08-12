@@ -27,7 +27,7 @@ import { runPanel } from "./orchestrator.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { runReviewer } from "./reviewer-runner.ts";
 import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
-import type { ReviewerResult } from "./types.ts";
+import type { PanelArgs, ReviewerResult } from "./types.ts";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 
@@ -99,19 +99,13 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 
-	const runPanelReview = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<void> => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {
 				notify("panel-review requires interactive (TUI/RPC) mode.", "error");
 				return;
 			}
 			await ctx.waitForIdle();
-
-			const parsed = parseArgs(args ?? "");
-			if (!parsed.ok) {
-				notify(parsed.error, "error");
-				return;
-			}
 
 			// Git scope — before any model call.
 			let repoRoot: string;
@@ -123,14 +117,14 @@ export default function (pi: ExtensionAPI) {
 			}
 			let base;
 			try {
-				base = resolveBase(defaultGitExec, repoRoot, parsed.args.base);
+				base = resolveBase(defaultGitExec, repoRoot, options.base);
 			} catch (err) {
 				notify((err as Error).message, "error");
 				return;
 			}
 
 			// Intent: from --intent, or an editor prefilled with commit subjects.
-			let intent = parsed.args.intent?.trim() ?? "";
+			let intent = options.intent?.trim() ?? "";
 			if (!intent) {
 				const subjects = defaultGitExecSafe(["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], repoRoot);
 				const prefill = subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
@@ -357,7 +351,14 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("panel-review", {
 		description: "Review current changes with a panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
-		handler: runPanelReview,
+		handler: async (args, ctx) => {
+			const parsed = parseArgs(args ?? "");
+			if (!parsed.ok) {
+				ctx.ui.notify(parsed.error, "error");
+				return;
+			}
+			await runPanelReview(parsed.args, ctx);
+		},
 	});
 
 	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => {

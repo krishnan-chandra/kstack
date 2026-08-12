@@ -75,3 +75,39 @@ export interface RouterArgs {
 }
 
 export const ALLOWED_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+
+/**
+ * Read-only handoff/archive tools (already active in the session) that the
+ * session-pickup route may use in addition to ALLOWED_READ_TOOLS. The
+ * intersection logic in dispatch.ts means these are never enabled when the
+ * owning extension is not loaded.
+ */
+export const SESSION_PICKUP_EXTRA_READ_TOOLS = new Set([
+	"read_handoff_history",
+	"search_handoff_history",
+	"read_session_archive",
+	"search_session_archive",
+]);
+
+/** Routes dispatched in the active session behind a read-only tool gate. */
+export const ACTIVE_SESSION_ROUTES: ReadonlySet<RouteId> = new Set<RouteId>([
+	"investigate",
+	"arena",
+	"swarm",
+	"skill-authoring",
+	"session-pickup",
+]);
+
+export function isActiveSessionRoute(route: RouteId): boolean {
+	return ACTIVE_SESSION_ROUTES.has(route);
+}
+
+/** Read-only tool allowlist for a route. */
+export function allowedReadToolsForRoute(route: RouteId): ReadonlySet<string> {
+	return route === "session-pickup" ? SESSION_PICKUP_READ_TOOLS : ALLOWED_READ_TOOLS;
+}
+
+const SESSION_PICKUP_READ_TOOLS: ReadonlySet<string> = new Set([
+	...ALLOWED_READ_TOOLS,
+	...SESSION_PICKUP_EXTRA_READ_TOOLS,
+]);

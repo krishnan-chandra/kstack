@@ -14,6 +14,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import { LIMITS, type ReviewerResult, type ReviewerSpec, type UsageSummary } from "./types.ts";
 
 export interface SpawnedProcess {
@@ -90,57 +91,6 @@ function truncateHeadUtf8(text: string, maxBytes: number): string {
 /** Duration for error messages: exact ms below one second, rounded seconds above. */
 export function formatDuration(ms: number): string {
 	return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
-}
-
-interface ChildEvent {
-	type: string;
-	toolCallId?: string;
-	toolName?: string;
-	args?: Record<string, unknown>;
-	message?: {
-		role?: string;
-		model?: string;
-		stopReason?: string;
-		errorMessage?: string;
-		content?: { type: string; text?: string }[];
-		usage?: {
-			input?: number;
-			output?: number;
-			cacheRead?: number;
-			cacheWrite?: number;
-			cost?: { total?: number };
-		};
-	};
-}
-
-/** Incremental newline-delimited JSON parser; chunk-boundary safe. */
-export class JsonLineParser {
-	private buffer = "";
-	private readonly onEvent: (event: ChildEvent) => void;
-	constructor(onEvent: (event: ChildEvent) => void) {
-		this.onEvent = onEvent;
-	}
-
-	push(data: string): void {
-		this.buffer += data;
-		const lines = this.buffer.split("\n");
-		this.buffer = lines.pop() ?? "";
-		for (const line of lines) this.processLine(line);
-	}
-
-	flush(): void {
-		if (this.buffer.trim()) this.processLine(this.buffer);
-		this.buffer = "";
-	}
-
-	private processLine(line: string): void {
-		if (!line.trim()) return;
-		try {
-			this.onEvent(JSON.parse(line) as ChildEvent);
-		} catch {
-			// Ignore malformed lines; child diagnostics surface via stderr.
-		}
-	}
 }
 
 /** Short human-readable summary of a tool call, e.g. `read review-scope.ts`. */
@@ -261,7 +211,7 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 
 		proc.stdout.on("data", (data: Buffer) => {
 			armIdleTimer();
-			parser.push(data.toString("utf8"));
+			parser.push(data);
 		});
 		proc.stderr.on("data", (data: Buffer) => {
 			armIdleTimer();

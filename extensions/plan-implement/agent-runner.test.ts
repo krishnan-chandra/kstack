@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
-import { buildChildArgs, JsonLineParser, runAgent, truncateUtf8, type SpawnedProcess } from "./agent-runner.ts";
+import { JsonLineParser } from "../shared/pi-json-lines.ts";
+import { buildChildArgs, runAgent, truncateUtf8, type SpawnedProcess } from "./agent-runner.ts";
 
 class FakeProcess implements SpawnedProcess {
 	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
@@ -81,6 +82,18 @@ describe("plan-implement child runner", () => {
 		parser.push('"two"}\n');
 		parser.flush();
 		assert.deepEqual(seen, ["one", "two"]);
+	});
+
+	it("decodes UTF-8 split across buffer chunks", () => {
+		let text: string | undefined;
+		const parser = new JsonLineParser((event) => {
+			text = event.message?.content?.[0]?.text;
+		});
+		const line = Buffer.from('{"type":"message_end","message":{"content":[{"type":"text","text":"café"}]}}\n');
+		const split = line.indexOf(Buffer.from("é")) + 1;
+		parser.push(line.subarray(0, split));
+		parser.push(line.subarray(split));
+		assert.equal(text, "café");
 	});
 
 	it("bounds partial stdout lines and resynchronizes after the newline", () => {

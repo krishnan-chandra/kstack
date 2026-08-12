@@ -78,6 +78,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 export interface ClassifierModelResolution {
 	modelId: string;
 	source: "config" | "default" | "active";
+	/** Configured thinking level for the classifier child, if any. */
+	thinking?: string;
 	warning?: string;
 }
 
@@ -95,7 +97,7 @@ export function resolveClassifierModel(
 		if (!deps.available(config.classifier.model.slice(0, slash), config.classifier.model.slice(slash + 1))) {
 			return { ok: false, error: `Configured classifier model is unavailable: ${config.classifier.model}.` };
 		}
-		return { modelId: config.classifier.model, source: "config" };
+		return { modelId: config.classifier.model, source: "config", thinking: config.classifier.thinking };
 	}
 
 	// Try default.

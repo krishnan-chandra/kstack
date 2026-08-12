@@ -3,6 +3,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import { LIMITS, type AgentRunResult, type DeliveryMode, type UsageSummary } from "./types.ts";
 
 export interface SpawnedProcess {
@@ -106,93 +107,6 @@ export function truncateUtf8(text: string, maxBytes: number, label = "Output"): 
 	return `${content}\n\n[${label} truncated at ${maxBytes} bytes.]`;
 }
 
-interface ChildEvent {
-	type?: string;
-	toolName?: string;
-	args?: Record<string, unknown>;
-	message?: {
-		role?: string;
-		stopReason?: string;
-		errorMessage?: string;
-		content?: { type?: string; text?: string }[];
-		usage?: {
-			input?: number;
-			output?: number;
-			cacheRead?: number;
-			cacheWrite?: number;
-			cost?: { total?: number };
-		};
-	};
-}
-
-export interface JsonLineParserOptions {
-	maxLineBytes?: number;
-	onOverflow?: (maxLineBytes: number) => void;
-}
-
-export class JsonLineParser {
-	private buffer = "";
-	private bufferBytes = 0;
-	private discardingOversizedLine = false;
-	private readonly onEvent: (event: ChildEvent) => void;
-	private readonly maxLineBytes: number;
-	private readonly onOverflow?: (maxLineBytes: number) => void;
-
-	constructor(onEvent: (event: ChildEvent) => void, options: JsonLineParserOptions = {}) {
-		this.onEvent = onEvent;
-		this.maxLineBytes = options.maxLineBytes ?? LIMITS.stdoutLineBytes;
-		this.onOverflow = options.onOverflow;
-	}
-
-	push(chunk: string): void {
-		let offset = 0;
-		while (offset <= chunk.length) {
-			const newline = chunk.indexOf("\n", offset);
-			const complete = newline !== -1;
-			const segment = complete ? chunk.slice(offset, newline) : chunk.slice(offset);
-			this.appendSegment(segment);
-
-			if (!complete) return;
-			if (!this.discardingOversizedLine) this.process(this.buffer);
-			this.buffer = "";
-			this.bufferBytes = 0;
-			this.discardingOversizedLine = false;
-			offset = newline + 1;
-			if (offset === chunk.length) return;
-		}
-	}
-
-	flush(): void {
-		if (!this.discardingOversizedLine && this.buffer.trim()) this.process(this.buffer);
-		this.buffer = "";
-		this.bufferBytes = 0;
-		this.discardingOversizedLine = false;
-	}
-
-	private appendSegment(segment: string): void {
-		if (this.discardingOversizedLine || !segment) return;
-		const segmentBytes = Buffer.byteLength(segment, "utf8");
-		if (this.bufferBytes + segmentBytes > this.maxLineBytes) {
-			this.buffer = "";
-			this.bufferBytes = 0;
-			this.discardingOversizedLine = true;
-			this.onOverflow?.(this.maxLineBytes);
-			return;
-		}
-		this.buffer += segment;
-		this.bufferBytes += segmentBytes;
-	}
-
-	private process(line: string): void {
-		if (!line.trim()) return;
-		try {
-			this.onEvent(JSON.parse(line) as ChildEvent);
-		} catch {
-			// Malformed stdout is ignored; bounded stderr and exit status provide diagnostics.
-		}
-	}
-}
-
 function emptyUsage(): UsageSummary {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
@@ -280,7 +194,7 @@ export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
 		});
 
 		process.stdout.on("data", (data) => {
-			parser.push(data.toString("utf8"));
+			parser.push(data);
 			if (protocolError && !protocolKillStarted) {
 				protocolKillStarted = true;
 				killTree("SIGTERM");

@@ -15,23 +15,22 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { parseArgs } from "./args.ts";
-import { getRouteLabel, getRouteDescription, validateCatalog, checkDependencies, getRouteMetadata } from "./catalog.ts";
-import { parseClassifierOutput, formatRecommendation, buildRouteAlternatives } from "./classification.ts";
+import { getRouteLabel, getRouteDescription, validateCatalog, checkDependencies } from "./catalog.ts";
+import { formatRecommendation, buildRouteAlternatives } from "./classification.ts";
 import { runClassifier } from "./classifier-runner.ts";
 import { loadConfig, resolveClassifierModel } from "./config.ts";
-import { isChildModelAvailable } from "../../plan-implement/model-availability.ts";
+import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
 import { dispatchRoute, getRestrictedTools, getPlaybookForRoute } from "./dispatch.ts";
 import { RouterLifecycle, type DispatchToken } from "./lifecycle.ts";
 import {
-	ALL_ROUTES,
-	ALLOWED_READ_TOOLS,
+	allowedReadToolsForRoute,
+	isActiveSessionRoute,
 	type RouteId,
 	type DeliveryRecommendation,
 } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PLAYBOOKS_DIR = join(EXTENSION_DIR, "playbooks");
-const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 
 interface RouteCardDetails {
 	schemaVersion: 1;
@@ -44,14 +43,43 @@ interface RouteCardDetails {
 	dispatchStatus?: string;
 }
 
+/** One-shot correlation between a dispatched active-session route and the user turn it triggers. */
+interface PendingDispatch {
+	token: DispatchToken;
+	route: RouteId;
+}
+
 export default function (pi: ExtensionAPI): void {
 	const lifecycle = new RouterLifecycle();
 
-	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => lifecycle.shutdownSession());
-
 	// Store a pending dispatch token so before_agent_start can access it.
-	let pendingDispatch: { token: DispatchToken; route: RouteId; task: string } | undefined;
+	let pendingDispatch: PendingDispatch | undefined;
+
+	/** Restore the exact pre-dispatch tool snapshot, best effort. */
+	function restoreTools(tools: readonly string[]): void {
+		try {
+			pi.setActiveTools([...tools]);
+		} catch {
+			// Session may already be gone; the restricted set dies with it.
+		}
+	}
+
+	function endActiveDispatch(token: DispatchToken): void {
+		const snapshot = lifecycle.getToolSnapshot();
+		lifecycle.endDispatch(token);
+		pendingDispatch = undefined;
+		if (snapshot) restoreTools(snapshot.tools);
+	}
+
+	pi.on("session_start", () => lifecycle.startSession());
+	pi.on("session_shutdown", () => {
+		// Restore any restricted tools before the session goes away so a
+		// replacement session never inherits the read-only gate.
+		const snapshot = lifecycle.getToolSnapshot();
+		lifecycle.shutdownSession();
+		pendingDispatch = undefined;
+		if (snapshot) restoreTools(snapshot.tools);
+	});
 
 	// --- Message renderer for route cards ---
 	pi.registerMessageRenderer("kstack-route", (message, { expanded, outputPad }, theme) => {
@@ -101,29 +129,23 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	// --- before_agent_start: inject playbook for active-session routes ---
-	pi.on("before_agent_start", (correlation, ctx) => {
+	// --- before_agent_start: inject principles + playbook for the one pending active-session dispatch ---
+	pi.on("before_agent_start", (event) => {
 		if (!pendingDispatch) return;
-		const { token, route, task } = pendingDispatch;
+		const { token, route } = pendingDispatch;
+		// One-shot: consume regardless so ordinary turns never receive stale
+		// route instructions.
+		pendingDispatch = undefined;
 
-		if (!lifecycle.isCurrentDispatch(token)) {
-			pendingDispatch = undefined;
-			return;
+		if (!lifecycle.isCurrentDispatch(token) || !isActiveSessionRoute(route)) return;
+
+		const parts: string[] = [];
+		try {
+			parts.push(readPlaybook("principles.md"));
+		} catch {
+			// Principles absent is not fatal.
 		}
-
-		// Only active-session routes use before_agent_start.
-		const activeSessionRoutes: RouteId[] = ["investigate", "arena", "swarm", "skill-authoring", "session-pickup"];
-		if (!activeSessionRoutes.includes(route)) return;
-
-		// Restrict tools to read-only.
-		const currentTools = pi.getTools()?.map((t) => t.name) ?? [];
-		const restricted = getRestrictedTools(currentTools);
-		correlation.restrictTools(restricted.length > 0 ? restricted : []);
-
-		// Read and attach principles and playbook.
 		const playbookFile = getPlaybookForRoute(route);
-		const parts: string[] = [readPlaybook("principles.md")];
-
 		if (playbookFile) {
 			try {
 				parts.push(readPlaybook(playbookFile));
@@ -131,21 +153,17 @@ export default function (pi: ExtensionAPI): void {
 				// Playbook absent is not fatal.
 			}
 		}
+		if (parts.length === 0) return;
 
-		parts.push(`# User task\n\n${task}`);
-		correlation.addSystemPrompt(parts.join("\n\n---\n\n"));
-
-		// Clear the pending dispatch so ordinary turns don't get stale route data.
-		pendingDispatch = undefined;
+		return { systemPrompt: `${event.systemPrompt}\n\n---\n\n${parts.join("\n\n---\n\n")}` };
 	});
 
-	// --- agent_settled: restore tool snapshot ---
-	pi.on("agent_settled", () => {
-		const snapshot = lifecycle.getToolSnapshot();
-		if (snapshot) {
-			// Tools are restored by the lifecycle when the dispatch ends.
-			// We don't restore here to avoid interfering with normal tool state.
-		}
+	// --- agent_settled: end the active-session dispatch and restore tools ---
+	pi.on("agent_settled", (_event, ctx) => {
+		const active = lifecycle.getActiveDispatch();
+		if (!active || !isActiveSessionRoute(active.route)) return;
+		endActiveDispatch(active.token);
+		ctx.ui.setStatus("kstack-router", undefined);
 	});
 
 	// --- Command handler ---
@@ -197,6 +215,7 @@ export default function (pi: ExtensionAPI): void {
 			let delivery: DeliveryRecommendation = parsed.args.delivery;
 			let overrode = false;
 			let modelSource = "explicit --route";
+			let confidence: string | undefined;
 
 			if (!route) {
 				// Run the classifier.
@@ -205,14 +224,12 @@ export default function (pi: ExtensionAPI): void {
 					notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
 					return;
 				}
+				const routerConfig = configLoad.status === "loaded" ? configLoad.config : null;
 
-				const classifierResolution = resolveClassifierModel(
-					configLoad.status === "loaded" ? configLoad.config : null,
-					{
-						available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
-						activeModelId: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-					},
-				);
+				const classifierResolution = resolveClassifierModel(routerConfig, {
+					available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
+					activeModelId: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				});
 
 				if ("error" in classifierResolution) {
 					notify(classifierResolution.error, "warning");
@@ -239,11 +256,10 @@ export default function (pi: ExtensionAPI): void {
 					ctx.ui.setStatus("kstack-router", "kstack-router: classifying…");
 					const classifierResult = await runClassifier({
 						model: classifierResolution.modelId,
+						thinking: classifierResolution.thinking,
 						task,
 						signal: classifierController.signal,
-						timeoutSeconds: configLoad.status === "loaded" && configLoad.config.timeoutSeconds
-							? configLoad.config.timeoutSeconds
-							: undefined,
+						timeoutSeconds: routerConfig?.timeoutSeconds,
 					});
 					lifecycle.endClassifier(sessionToken);
 					ctx.ui.setStatus("kstack-router", undefined);
@@ -254,6 +270,7 @@ export default function (pi: ExtensionAPI): void {
 					}
 
 					if (classifierResult.status === "completed") {
+						confidence = classifierResult.envelope.confidence;
 						const recommendation = {
 							route: classifierResult.envelope.route,
 							confidence: classifierResult.envelope.confidence,
@@ -266,82 +283,53 @@ export default function (pi: ExtensionAPI): void {
 
 						// User may override.
 						const alternatives = buildRouteAlternatives(recommendation.route);
-						const choiceLabels = [
-							`✓ Accept: ${getRouteLabel(recommendation.route)}`,
-							...alternatives.map((a) => `${a.label}: ${a.description.slice(0, 60)}…`),
-							"Cancel",
-						];
-
-						const choice = await ctx.ui.select(
-							"Accept route or choose another?",
-							choiceLabels,
-							{},
-						);
+						const selected = await selectRoute(ctx, "Accept route or choose another?", [
+							{ route: recommendation.route, label: `✓ Accept: ${getRouteLabel(recommendation.route)}` },
+							...alternatives.map((alternative) => ({
+								route: alternative.id,
+								label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
+							})),
+						]);
 						if (!lifecycle.isSessionCurrent(sessionToken)) return;
-						if (!choice || choice === "Cancel") {
+						if (!selected) {
 							notify("Routing cancelled.", "info");
 							return;
 						}
-
-						if (choice === choiceLabels[0]) {
-							route = recommendation.route;
-							if (recommendation.delivery && !delivery) {
-								delivery = recommendation.delivery;
-							}
-						} else {
-							const idx = choiceLabels.indexOf(choice) - 1;
-							if (idx >= 0 && idx < alternatives.length) {
-								route = alternatives[idx].id;
-								overrode = true;
-							} else {
-								notify("Invalid selection.", "warning");
-								return;
-							}
+						route = selected;
+						overrode = route !== recommendation.route;
+						if (!overrode && recommendation.delivery && !delivery) {
+							delivery = recommendation.delivery;
 						}
 					} else {
 						// Classifier failed; offer manual selection.
 						notify(`Classifier did not produce a valid route (${classifierResult.status === "failed" ? classifierResult.error : "unknown error"}). Please pick a route manually.`, "warning");
 						const alternatives = buildRouteAlternatives();
-						const choiceLabels = [
-							...alternatives.map((a) => `${a.label}: ${a.description.slice(0, 60)}…`),
-							"Cancel",
-						];
-						const choice = await ctx.ui.select(
+						route = await selectRoute(
+							ctx,
 							"Select a route:",
-							choiceLabels,
-							{},
+							alternatives.map((alternative) => ({
+								route: alternative.id,
+								label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
+							})),
 						);
-						if (!lifecycle.isSessionCurrent(sessionToken)) return;
-						if (!choice || choice === "Cancel") return;
-						const idx = choiceLabels.indexOf(choice);
-						if (idx >= 0 && idx < alternatives.length) {
-							route = alternatives[idx].id;
-							overrode = true;
-						}
+						if (!lifecycle.isSessionCurrent(sessionToken) || !route) return;
+						overrode = true;
 					}
 				}
 
 				// If no classifier model and no manual selection resolved, fall back to manual.
 				if (!route) {
 					const alternatives = buildRouteAlternatives();
-					const choiceLabels = [
-						...alternatives.map((a) => `${a.label}: ${a.description.slice(0, 60)}…`),
-						"Cancel",
-					];
-					const choice = await ctx.ui.select(
+					route = await selectRoute(
+						ctx,
 						"No classifier available. Select a route:",
-						choiceLabels,
-						{},
+						alternatives.map((alternative) => ({
+							route: alternative.id,
+							label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
+						})),
 					);
-					if (!lifecycle.isSessionCurrent(sessionToken)) return;
-					if (!choice || choice === "Cancel") return;
-					const idx = choiceLabels.indexOf(choice);
-					if (idx >= 0 && idx < alternatives.length) {
-						route = alternatives[idx].id;
-						overrode = true;
-					} else {
-						return;
-					}
+					if (!lifecycle.isSessionCurrent(sessionToken) || !route) return;
+					overrode = true;
 				}
 			}
 
@@ -380,31 +368,83 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Begin dispatch.
-			const dispatchToken = lifecycle.beginDispatch(sessionToken, pi);
-			if (!dispatchToken) {
-				notify("A dispatch is already active.", "warning");
-				return;
-			}
-
-			// Set up pending dispatch for before_agent_start hook.
-			pendingDispatch = { token: dispatchToken, route, task };
-
-			// Send the route card.
 			const routeCard: RouteCardDetails = {
 				schemaVersion: 1,
 				route,
 				routeLabel: getRouteLabel(route),
 				delivery,
 				modelSource,
-				confidence: undefined,
+				confidence,
 				overrode,
 			};
-
 			const routeDescription = getRouteDescription(route);
 			const deliveryNote = delivery
 				? `\nDelivery: ${delivery === "stack" ? "stacked PRs" : "single PR"}`
 				: "";
+
+			// --- Active-session routes: restrict tools, inject playbook, trigger a turn ---
+			if (isActiveSessionRoute(route)) {
+				await ctx.waitForIdle();
+				if (!lifecycle.isSessionCurrent(sessionToken)) return;
+
+				const snapshot = pi.getActiveTools();
+				const dispatchToken = lifecycle.beginDispatch(sessionToken, { route, toolSnapshot: snapshot });
+				if (!dispatchToken) {
+					notify("A dispatch is already active.", "warning");
+					return;
+				}
+
+				const restricted = getRestrictedTools(route, snapshot);
+				if (restricted.length === 0) {
+					lifecycle.endDispatch(dispatchToken);
+					notify(
+						`Route "${getRouteLabel(route)}" needs at least one read-only tool active ` +
+							`(${[...allowedReadToolsForRoute(route)].join(", ")}). Enable one and try again.`,
+						"error",
+					);
+					return;
+				}
+
+				// Correlate the next agent turn to this dispatch so
+				// before_agent_start attaches principles + the route playbook.
+				pendingDispatch = { token: dispatchToken, route };
+
+				routeCard.dispatchStatus = "dispatched";
+				pi.sendMessage({
+					customType: "kstack-route",
+					content: `${routeDescription}${deliveryNote}\nRead-only gate: ${restricted.join(", ")}`,
+					display: true,
+					details: routeCard,
+				});
+
+				try {
+					pi.setActiveTools(restricted);
+					pi.sendUserMessage(task);
+				} catch (error) {
+					pendingDispatch = undefined;
+					restoreTools(snapshot);
+					lifecycle.endDispatch(dispatchToken);
+					notify(`Failed to start the routed turn: ${(error as Error).message}`, "error");
+					return;
+				}
+
+				ctx.ui.setStatus("kstack-router", `kstack-router: ${route} (read-only)`);
+				notify(
+					`Route "${getRouteLabel(route)}" dispatched with read-only tools until the turn settles. ` +
+						"Press Esc to cancel the turn; the full tool set is restored automatically.",
+					"info",
+				);
+				// The dispatch stays active; agent_settled restores tools and ends it.
+				return;
+			}
+
+			// --- Delegated routes: change / review / unsupported ---
+			const dispatchToken = lifecycle.beginDispatch(sessionToken, { route });
+			if (!dispatchToken) {
+				notify("A dispatch is already active.", "warning");
+				return;
+			}
+
 			pi.sendMessage({
 				customType: "kstack-route",
 				content: `${routeDescription}${deliveryNote}`,
@@ -412,7 +452,6 @@ export default function (pi: ExtensionAPI): void {
 				details: routeCard,
 			});
 
-			// Dispatch.
 			const result = await dispatchRoute(route, task, delivery, dispatchToken, lifecycle, pi, ctx);
 
 			// Update the route card with dispatch status.
@@ -428,29 +467,26 @@ export default function (pi: ExtensionAPI): void {
 			});
 
 			if (result.status === "failed") {
-				notify(result.error, "error");
-			}
-
-			// For active-session routes (investigate, arena, swarm, skill-authoring, session-pickup),
-			// we don't explicitly send a message — the before_agent_start hook and the user's
-			// normal agent turn handle it. The dispatch token keeps the lifecycle active.
-			const activeSessionRoutes: RouteId[] = ["investigate", "arena", "swarm", "skill-authoring", "session-pickup"];
-			if (activeSessionRoutes.includes(route)) {
-				// The before_agent_start hook will attach playbooks and restrict tools.
-				// No explicit message needed; the user's next turn picks up the pending dispatch.
-				if (result.status === "dispatched") {
-					notify(
-						`Route "investigate" selected. The next agent turn will use read-only tools. ` +
-							`Use Ctrl+Shift+I for plan/implement, Ctrl+Shift+X for panel review, or Ctrl+Shift+K to abort classification.`,
-						"info",
-					);
-				}
+				notify((result as { error?: string }).error ?? "Dispatch failed.", "error");
+			} else if (route === "change") {
+				notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
+			} else if (route === "review") {
+				notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
 			}
 
 			lifecycle.endDispatch(dispatchToken);
-			pendingDispatch = undefined;
 		},
 	});
+}
+
+async function selectRoute(
+	ctx: ExtensionCommandContext,
+	title: string,
+	options: Array<{ route: RouteId; label: string }>,
+): Promise<RouteId | undefined> {
+	const routesByLabel = new Map(options.map((option) => [option.label, option.route]));
+	const selected = await ctx.ui.select(title, [...routesByLabel.keys(), "Cancel"], {});
+	return selected && selected !== "Cancel" ? routesByLabel.get(selected) : undefined;
 }
 
 function readPlaybook(name: string): string {

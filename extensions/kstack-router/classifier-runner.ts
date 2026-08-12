@@ -1,18 +1,24 @@
 /**
  * Isolated classifier subprocess runner.
  *
- * Pipes the task through stdin, disables all tools/resources/context,
- * parses bounded Pi JSONL output, accumulates usage data, and implements
+ * Pipes the task through stdin (never argv), disables all
+ * tools/resources/context, parses the child's bounded JSONL event stream to
+ * recover the assistant's final text and usage, and implements
  * timeout/abort/process-tree escalation.
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename } from "node:path";
-import { DEFAULTS, CLASSIFIER_SENTINEL_START, CLASSIFIER_SENTINEL_END, type ClassifierEnvelope } from "./types.ts";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { JsonLineParser } from "../shared/pi-json-lines.ts";
+import { DEFAULTS, type ClassifierEnvelope } from "./types.ts";
 import { parseClassifierOutput } from "./classification.ts";
 
+const PROMPT_FILE = join(dirname(fileURLToPath(import.meta.url)), "prompts", "classifier.md");
+
 export interface SpawnedProcess {
+	stdin?: { write: (data: string) => boolean; end: () => void };
 	stdout: { on(event: "data", cb: (data: Buffer) => void): void };
 	stderr: { on(event: "data", cb: (data: Buffer) => void): void };
 	on(event: "close", cb: (code: number | null) => void): void;
@@ -41,18 +47,31 @@ export type ClassifierRunResult =
 export interface ClassifierRunnerOptions {
 	model: string;
 	task: string;
+	/** Optional thinking level passed to the classifier child (--thinking). */
+	thinking?: string;
 	signal?: AbortSignal;
 	timeoutSeconds?: number;
 	stderrCapBytes?: number;
+	/** Classifier system-prompt file; defaults to prompts/classifier.md. */
+	promptFile?: string;
+	/** Grace period between SIGTERM and SIGKILL escalation. */
+	killGraceMs?: number;
 	spawnImpl?: SpawnImpl;
 }
 
-const STDOUT_CAP_BYTES = 16 * 1024;
+const STDOUT_TAIL_BYTES = 4 * 1024;
+const STDOUT_LINE_CAP_BYTES = 1024 * 1024;
 const STDERR_CAP_BYTES = 4 * 1024;
 const KILL_GRACE_MS = 5000;
 
-/** Build the Pi child invocation args for the classifier. */
-export function buildClassifierChildArgs(model: string): string[] {
+/**
+ * Build the Pi child invocation args for the classifier. The task is never
+ * placed in argv; it is piped over stdin by runClassifier.
+ */
+export function buildClassifierChildArgs(
+	model: string,
+	options: { promptFile?: string; thinking?: string } = {},
+): string[] {
 	return [
 		"--mode",
 		"json",
@@ -66,8 +85,9 @@ export function buildClassifierChildArgs(model: string): string[] {
 		"--no-approve",
 		"--model",
 		model,
+		...(options.thinking ? ["--thinking", options.thinking] : []),
 		"--append-system-prompt",
-		"stdin",
+		options.promptFile ?? PROMPT_FILE,
 	];
 }
 
@@ -90,9 +110,11 @@ function processPlatformSupportsGroups(): boolean {
 /**
  * Run the classifier as an isolated Pi child process.
  *
- * The task is piped through stdin. The child has no tools, no extensions,
- * no skills, no prompt templates, and no context files. The output must be
- * a JSON envelope wrapped in sentinel markers.
+ * The task is piped through stdin and becomes the child's initial (and only)
+ * user message. The child has no tools, no extensions, no skills, no prompt
+ * templates, and no context files. With `--mode json` the child emits a
+ * JSONL event stream on stdout; the final assistant text must contain the
+ * sentinel-wrapped JSON envelope validated by parseClassifierOutput.
  */
 export async function runClassifier(options: ClassifierRunnerOptions): Promise<ClassifierRunResult> {
 	const model = options.model;
@@ -100,8 +122,9 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 	const spawnImpl = options.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
 	const timeoutSeconds = options.timeoutSeconds ?? DEFAULTS.timeoutSeconds;
 	const stderrCap = options.stderrCapBytes ?? STDERR_CAP_BYTES;
+	const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
 
-	const args = buildClassifierChildArgs(model);
+	const args = buildClassifierChildArgs(model, { promptFile: options.promptFile, thinking: options.thinking });
 	const invocation = getPiInvocation(args);
 
 	return new Promise<ClassifierRunResult>((resolve) => {
@@ -117,8 +140,12 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 			return;
 		}
 
-		let stdout = "";
+		let stdoutTail = "";
 		let stderr = "";
+		let finalText = "";
+		let modelError: string | undefined;
+		let protocolError: string | undefined;
+		let protocolKillStarted = false;
 		let aborted = false;
 		let timedOut = false;
 		let closed = false;
@@ -126,6 +153,31 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		const usage: ClassifierUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+
+		const parser = new JsonLineParser(
+			(event) => {
+				if (event.type !== "message_end" || event.message?.role !== "assistant") return;
+				const message = event.message;
+				usage.turns++;
+				usage.input += message.usage?.input ?? 0;
+				usage.output += message.usage?.output ?? 0;
+				usage.cacheRead += message.usage?.cacheRead ?? 0;
+				usage.cacheWrite += message.usage?.cacheWrite ?? 0;
+				usage.cost += message.usage?.cost?.total ?? 0;
+				if (message.errorMessage) modelError = message.errorMessage;
+				const text = (message.content ?? [])
+					.filter((part) => part.type === "text" && part.text)
+					.map((part) => part.text)
+					.join("\n");
+				if (text) finalText = text;
+			},
+			{
+				maxLineBytes: STDOUT_LINE_CAP_BYTES,
+				onOverflow: (maxBytes) => {
+					protocolError = `Classifier emitted a JSONL stdout line larger than ${maxBytes} bytes.`;
+				},
+			},
+		);
 
 		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
 			try {
@@ -144,7 +196,7 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 			if (graceTimer) return;
 			graceTimer = setTimeout(() => {
 				if (!closed) killTree("SIGKILL");
-			}, KILL_GRACE_MS);
+			}, killGraceMs);
 			graceTimer.unref?.();
 		};
 
@@ -175,41 +227,21 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 		}, timeoutSeconds * 1000);
 		timeoutTimer.unref?.();
 
-		// Write the task to stdin and close it.
-		const stdin = process as unknown as { stdin?: { write: (data: string) => boolean; end: () => void } };
-		if (stdin.stdin) {
-			// The classifier prompt is piped via the --append-system-prompt "stdin" approach.
-			// The stdin content is the system prompt for classification.
-			const prompt = buildClassifierPrompt(task);
-			stdin.stdin.write(prompt);
-			stdin.stdin.end();
+		// Pipe the task through stdin; it becomes the child's initial user
+		// message in print mode. The task is never present in argv.
+		if (process.stdin) {
+			process.stdin.write(task);
+			process.stdin.end();
 		}
 
 		process.stdout.on("data", (data: Buffer) => {
-			if (Buffer.byteLength(stdout, "utf8") < STDOUT_CAP_BYTES) {
-				const decoded = data.toString("utf8");
-				// Track usage from JSONL events.
-				try {
-					const line = decoded.trim();
-					if (line.startsWith("{")) {
-						const event = JSON.parse(line);
-						if (event.type === "message_end" && event.message?.usage) {
-							const u = event.message.usage;
-							usage.turns++;
-							usage.input += u.input ?? 0;
-							usage.output += u.output ?? 0;
-							usage.cacheRead += u.cacheRead ?? 0;
-							usage.cacheWrite += u.cacheWrite ?? 0;
-							usage.cost += u.cost?.total ?? 0;
-						}
-					}
-				} catch {
-					// Ignore parse errors in JSONL lines.
-				}
-				stdout += decoded;
-				if (Buffer.byteLength(stdout, "utf8") > STDOUT_CAP_BYTES) {
-					stdout = stdout.slice(0, STDOUT_CAP_BYTES);
-				}
+			const decoded = data.toString("utf8");
+			parser.push(data);
+			stdoutTail = (stdoutTail + decoded).slice(-STDOUT_TAIL_BYTES);
+			if (protocolError && !protocolKillStarted) {
+				protocolKillStarted = true;
+				killTree("SIGTERM");
+				startEscalation();
 			}
 		});
 
@@ -229,6 +261,7 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 
 		process.on("close", (code: number | null) => {
 			closed = true;
+			parser.flush();
 			if (aborted) {
 				finish({ status: "aborted" });
 				return;
@@ -237,52 +270,35 @@ export async function runClassifier(options: ClassifierRunnerOptions): Promise<C
 				finish({ status: "failed", error: `Classifier timed out after ${timeoutSeconds}s.`, stderr });
 				return;
 			}
+			if (protocolError) {
+				finish({ status: "failed", error: protocolError, stderr });
+				return;
+			}
+			if (modelError) {
+				finish({ status: "failed", error: `Classifier model error: ${modelError}`, stderr });
+				return;
+			}
 			if (code !== 0 && code !== null) {
 				finish({ status: "failed", error: `Classifier exited with code ${code}.`, stderr });
 				return;
 			}
+			if (!finalText.trim()) {
+				finish({
+					status: "failed",
+					error: "Classifier produced no assistant output.",
+					stderr: stderr || stdoutTail,
+				});
+				return;
+			}
 
-			// Parse the classifier envelope from stdout.
-			const result = parseClassifierOutput(stdout);
+			// Parse the classifier envelope from the final assistant text.
+			const result = parseClassifierOutput(finalText);
 			if (!result.ok) {
-				finish({ status: "failed", error: result.error, stderr });
+				finish({ status: "failed", error: result.error, stderr: stderr || stdoutTail });
 				return;
 			}
 
 			finish({ status: "completed", envelope: result.envelope, model, usage });
 		});
 	});
-}
-
-/**
- * Build the classifier system prompt. The task is incorporated into the prompt
- * that is passed via stdin.
- */
-function buildClassifierPrompt(task: string): string {
-	return [
-		`You are a routing classifier for the Kstack development assistant.`,
-		`Classify the following user task into exactly one route.`,
-		``,
-		`Available routes:`,
-		`- investigate: Explain, diagnose, research, or understand without requesting a fix. Read-only.`,
-		`- change: Features, fixes, refactors, prototypes, docs/config changes, Pi extensions. Requires plan → approve → implement → review.`,
-		`- arena: Spawn N parallel candidates at the same task, cross-judge, graft the best. Requires framing first.`,
-		`- swarm: Fan out parallel workers across independent slices, aggregate results. Requires framing first.`,
-		`- skill-authoring: Create, improve, debug, or evaluate a skill. Requires framing first.`,
-		`- session-pickup: Continue linked or archived work, recover prior decisions. Read-only.`,
-		`- review: Review existing working-tree or branch changes. Uses read-only panel review.`,
-		`- unsupported: Persistent loops, auto-deployment, destructive ops, or unclear requests.`,
-		``,
-		`For "change" tasks, you may optionally recommend a delivery mode: "single" or "stack".`,
-		`Ambiguous "figure it out" requests default to "investigate".`,
-		`Only return the JSON envelope between the sentinel markers.`,
-		``,
-		`User task:`,
-		task,
-		``,
-		`Respond with:`,
-		CLASSIFIER_SENTINEL_START,
-		`{"schemaVersion":1,"route":"...","confidence":"high|medium|low","rationale":"..."}`,
-		CLASSIFIER_SENTINEL_END,
-	].join("\n");
 }

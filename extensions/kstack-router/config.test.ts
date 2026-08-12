@@ -118,6 +118,25 @@ describe("resolveClassifierModel", () => {
 		if ("error" in result) assert.fail("should not error");
 		assert.equal(result.modelId, "available/model");
 		assert.equal(result.source, "config");
+		assert.equal(result.thinking, "low");
+	});
+
+	it("omits thinking for default and active fallback models", () => {
+		const fallback = resolveClassifierModel(null, {
+			available: () => true,
+			activeModelId: "active/mymodel",
+		});
+		if ("error" in fallback) assert.fail("should not error");
+		assert.equal(fallback.source, "default");
+		assert.equal(fallback.thinking, undefined);
+
+		const active = resolveClassifierModel(null, {
+			available: () => false,
+			activeModelId: "active/mymodel",
+		});
+		if ("error" in active) assert.fail("should not error");
+		assert.equal(active.source, "active");
+		assert.equal(active.thinking, undefined);
 	});
 
 	it("returns error when configured model is unavailable", () => {

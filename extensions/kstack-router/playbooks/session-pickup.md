@@ -5,10 +5,12 @@ replacing the current session.
 
 ## Constraints
 
-- **Read-only tools only**: read, grep, find, ls. No bash, write, edit, or
-  custom mutating tools.
+- **Read-only tools only**: read, grep, find, ls, plus the already-active
+  read-only handoff/archive tools. No bash, write, edit, or custom mutating
+  tools.
 - **Use existing handoff/archive tools**: read_handoff_history and
-  search_archived_sessions from the handoff and session-archive extensions.
+  search_handoff_history from the handoff extension; read_session_archive
+  and search_session_archive from the session-archive extension.
 - **Do not replace the session**: this is a retrieval and context operation.
   Use /handoff for session replacement.
 - **Identify durable context**: find the resume point, key decisions, and

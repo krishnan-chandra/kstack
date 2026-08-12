@@ -1,11 +1,10 @@
 /** Deterministic dispatch for each route. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { requestPlanImplement } from "../../plan-implement/api.ts";
-import { requestPanelReview } from "../../panel-review/api.ts";
-import { buildPanelArgs } from "../../panel-review/format.ts";
+import { requestPlanImplement } from "../plan-implement/api.ts";
+import { requestPanelReview } from "../panel-review/api.ts";
 import { getRoutePlaybook } from "./catalog.ts";
-import { ALLOWED_READ_TOOLS, type DeliveryRecommendation, type RouteId, type RouterArgs } from "./types.ts";
+import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 
 export type DispatchResult =
@@ -54,10 +53,8 @@ export async function dispatchRoute(
 		}
 
 		case "review": {
-			const panelArgs = buildPanelArgs({ intent: task });
-			if (!panelArgs.ok) return { status: "failed", error: panelArgs.error };
 			try {
-				const result = await requestPanelReview(pi, panelArgs.args, ctx);
+				const result = await requestPanelReview(pi, { intent: task }, ctx);
 				if (!result.handled) {
 					return {
 						status: "failed",
@@ -77,10 +74,14 @@ export async function dispatchRoute(
 		case "swarm":
 		case "skill-authoring":
 		case "session-pickup":
-			// These routes are handled in-session by the main handler,
-			// which restricts tools and attaches playbooks before calling
-			// pi.sendMessage. Dispatch confirms the route is ready.
-			return { status: "dispatched" };
+			// Active-session routes are dispatched by the command handler in
+			// index.ts (tool gate + playbook injection + sendUserMessage).
+			// Reaching this function with one of them is a programming error;
+			// fail closed rather than silently doing nothing.
+			return {
+				status: "failed",
+				error: `Route "${route}" is an active-session route and must be dispatched by the /kstack command handler.`,
+			};
 
 		case "unsupported":
 			return {
@@ -101,11 +102,13 @@ export async function dispatchRoute(
 }
 
 /**
- * Get the read-only tool intersection for a route.
- * Returns the intersection of ALLOWED_READ_TOOLS and the currently active tools.
+ * Get the read-only tool intersection for a route: the intersection of the
+ * route's read-only allowlist and the currently active tools. This never
+ * enables a tool the user had disabled.
  */
-export function getRestrictedTools(currentTools: string[]): string[] {
-	return currentTools.filter((t) => ALLOWED_READ_TOOLS.has(t));
+export function getRestrictedTools(route: RouteId, currentTools: string[]): string[] {
+	const allowed = allowedReadToolsForRoute(route);
+	return currentTools.filter((t) => allowed.has(t));
 }
 
 /**

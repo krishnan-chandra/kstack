@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { validateCatalog, getAllRoutes, getRouteMetadata, checkDependencies } from "./catalog.ts";
+import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
+
+const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
 describe("kstack-router catalog", () => {
 	it("validates without errors", () => {
@@ -86,5 +92,29 @@ describe("kstack-router catalog", () => {
 
 	it("returns undefined for unknown routes", () => {
 		assert.equal(getRouteMetadata("unknown" as never), undefined);
+	});
+
+	it("every playbookFile referenced by the catalog exists", () => {
+		for (const route of getAllRoutes()) {
+			if (!route.playbookFile) continue;
+			const path = join(EXTENSION_DIR, "playbooks", route.playbookFile);
+			assert.ok(existsSync(path), `Missing playbook for route ${route.id}: ${path}`);
+		}
+	});
+
+	it("principles.md exists for the shared active-session preamble", () => {
+		assert.ok(existsSync(join(EXTENSION_DIR, "playbooks", "principles.md")));
+	});
+
+	it("classifier prompt stays in sync with the catalog", () => {
+		const prompt = readFileSync(join(EXTENSION_DIR, "prompts", "classifier.md"), "utf8");
+		for (const route of getAllRoutes()) {
+			assert.ok(
+				prompt.includes(`**${route.id}**`),
+				`prompts/classifier.md must describe route "${route.id}" so prompt and catalog cannot drift`,
+			);
+		}
+		assert.ok(prompt.includes(CLASSIFIER_SENTINEL_START), "classifier prompt must include the start sentinel");
+		assert.ok(prompt.includes(CLASSIFIER_SENTINEL_END), "classifier prompt must include the end sentinel");
 	});
 });

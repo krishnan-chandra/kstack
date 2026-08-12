@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildChildArgs, JsonLineParser, runReviewer, summarizeToolCall, type SpawnImpl } from "./reviewer-runner.ts";
+import { JsonLineParser } from "../shared/pi-json-lines.ts";
+import { buildChildArgs, runReviewer, summarizeToolCall, type SpawnImpl } from "./reviewer-runner.ts";
 import type { ReviewerResult } from "./types.ts";
 
 describe("JsonLineParser", () => {

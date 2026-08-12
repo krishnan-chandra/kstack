@@ -27,7 +27,7 @@ explicit `--route` selection, then dispatches to the appropriate workflow.
 /kstack --route investigate What does the handoff extension do?
 /kstack --route change Refactor the config loader
 /kstack --route change --stack Split feature into three PRs
-/kstack --route review --intent "Review the latest changes"
+/kstack --route review Review the latest changes
 /kstack --route arena -- "Generate three alternative designs"
 /kstack --route skill-authoring -- "Create a linter skill"
 /kstack --route session-pickup -- "What was I working on?"
@@ -81,7 +81,10 @@ All fields are optional. Without configuration:
 - After dispatch, use the downstream cancellation mechanism:
   - `Ctrl+Shift+I`: abort plan/implement.
   - `Ctrl+Shift+X`: abort panel review.
-  - Normal agent cancellation for active-session routes.
+  - `Esc` (normal agent cancellation) for active-session routes.
+- The active-session read-only gate is lifted automatically when the routed
+  turn settles — including after cancellation — and on session shutdown, so
+  restricted tools never leak into ordinary prompts.
 
 ## Security
 
@@ -120,3 +123,14 @@ reload.
 **"Skill not found"**: The required skill (e.g. `arena`, `swarm`) is not
 discovered. Ensure this repository is installed as a Pi package: `pi install
 /path/to/kstack`.
+
+## Development
+
+```bash
+# Unit tests (pure modules: args, catalog, classification, config, runner, lifecycle, dispatch)
+node --test extensions/kstack-router/*.test.ts
+
+# Headless adapter smoke test: registers the real extension against a mock Pi
+# and drives tool gating, playbook injection, restoration, and delegation.
+node extensions/kstack-router/scripts/smoke-mock-pi.mjs
+```

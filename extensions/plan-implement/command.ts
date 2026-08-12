@@ -1,5 +1,6 @@
-/** Pure task validation, delivery-mode parsing, and panel-review request formatting. */
+/** Pure task validation, delivery-mode parsing, and panel-review options. */
 
+import type { PanelArgs } from "../panel-review/types.ts";
 import { LIMITS, type DeliveryMode } from "./types.ts";
 
 const DELIVERY_FLAGS = new Set(["--single", "--stack"]);
@@ -41,24 +42,19 @@ export function parseDeliveryMode(
 	return { ok: true, mode: "single", task: trimmed };
 }
 
-export function buildPanelReviewArgs(task: string): string {
-	// panel-review's tokenizer treats backslash-before-quote specially, so
-	// normalize backslashes before placing user text in one quoted argument.
-	const oneLine = task.replace(/\\/g, "∖").replace(/\s+/g, " ").trim();
-	const bounded = Array.from(oneLine).slice(0, LIMITS.panelIntentChars).join("");
-	const escaped = bounded.replace(/"/g, '\\"');
-	return `--intent "Plan/implement: ${escaped}"`;
+function boundedPanelIntent(task: string): string {
+	const oneLine = task.replace(/\s+/g, " ").trim();
+	return Array.from(oneLine).slice(0, LIMITS.panelIntentChars).join("");
 }
 
-/**
- * Build panel-review args for a stacked-PR run. The base is the immutable
- * trunk() SHA captured before implementation so the whole stack is reviewed
- * once against a stable baseline.
- */
-export function buildStackPanelReviewArgs(task: string, trunkSha: string): string {
-	const oneLine = task.replace(/\\/g, "∖").replace(/\s+/g, " ").trim();
-	const bounded = Array.from(oneLine).slice(0, LIMITS.panelIntentChars).join("");
-	const escaped = bounded.replace(/"/g, '\\"');
-	const sha = trunkSha.replace(/[^0-9a-f]/g, "");
-	return `--base ${sha} --intent "Plan/implement (stacked): ${escaped}"`;
+export function buildPanelReviewOptions(task: string): PanelArgs {
+	return { intent: `Plan/implement: ${boundedPanelIntent(task)}` };
+}
+
+/** Review a completed local stack against the immutable trunk SHA from preflight. */
+export function buildStackPanelReviewOptions(task: string, trunkSha: string): PanelArgs {
+	return {
+		base: trunkSha,
+		intent: `Plan/implement (stacked): ${boundedPanelIntent(task)}`,
+	};
 }

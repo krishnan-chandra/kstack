@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseArgs } from "../panel-review/args.ts";
-import { buildPanelReviewArgs, buildStackPanelReviewArgs, parseDeliveryMode, validateTask } from "./command.ts";
+import { buildPanelReviewOptions, buildStackPanelReviewOptions, parseDeliveryMode, validateTask } from "./command.ts";
 
 describe("plan-implement command helpers", () => {
 	it("validates empty and oversized tasks", () => {
@@ -10,21 +9,16 @@ describe("plan-implement command helpers", () => {
 		assert.equal(validateTask("x".repeat(32 * 1024 + 1)).ok, false);
 	});
 
-	it("quotes panel intent so task flags and quotes remain data", () => {
-		const args = buildPanelReviewArgs('add "safe" mode --base evil; /other \\ path\nnext');
-		const parsed = parseArgs(args);
-		assert.equal(parsed.ok, true);
-		if (parsed.ok) {
-			assert.equal(parsed.args.base, undefined);
-			assert.equal(parsed.args.intent, 'Plan/implement: add "safe" mode --base evil; /other ∖ path next');
-		}
+	it("keeps task text as structured panel intent", () => {
+		const options = buildPanelReviewOptions('add "safe" mode --base evil; /other \\ path\nnext');
+		assert.deepEqual(options, {
+			intent: 'Plan/implement: add "safe" mode --base evil; /other \\ path next',
+		});
 	});
 
 	it("bounds panel intent", () => {
-		const args = buildPanelReviewArgs("x".repeat(2000));
-		const parsed = parseArgs(args);
-		assert.equal(parsed.ok, true);
-		if (parsed.ok) assert.equal(parsed.args.intent?.length, "Plan/implement: ".length + 1000);
+		const options = buildPanelReviewOptions("x".repeat(2000));
+		assert.equal(options.intent?.length, "Plan/implement: ".length + 1000);
 	});
 });
 
@@ -77,28 +71,23 @@ describe("parseDeliveryMode", () => {
 	});
 });
 
-describe("buildStackPanelReviewArgs", () => {
-	it("passes the immutable trunk SHA as --base and tags the intent as stacked", () => {
-		const args = buildStackPanelReviewArgs('add "safe" mode; rm -rf /', "0123456789abcdef0123456789abcdef01234567");
-		const parsed = parseArgs(args);
-		assert.equal(parsed.ok, true);
-		if (parsed.ok) {
-			assert.equal(parsed.args.base, "0123456789abcdef0123456789abcdef01234567");
-			assert.match(parsed.args.intent ?? "", /^Plan\/implement \(stacked\): add "safe" mode; rm -rf \/$/);
-		}
-	});
-
-	it("strips non-hex characters from the base SHA", () => {
-		const args = buildStackPanelReviewArgs("task", "d.ead:beef!");
-		const parsed = parseArgs(args);
-		assert.equal(parsed.ok, true);
-		if (parsed.ok) assert.equal(parsed.args.base, "deadbeef");
+describe("buildStackPanelReviewOptions", () => {
+	it("passes the immutable trunk SHA and tags the intent as stacked", () => {
+		const options = buildStackPanelReviewOptions(
+			'add "safe" mode; rm -rf /',
+			"0123456789abcdef0123456789abcdef01234567",
+		);
+		assert.deepEqual(options, {
+			base: "0123456789abcdef0123456789abcdef01234567",
+			intent: 'Plan/implement (stacked): add "safe" mode; rm -rf /',
+		});
 	});
 
 	it("bounds the intent", () => {
-		const args = buildStackPanelReviewArgs("x".repeat(2000), "0123456789abcdef0123456789abcdef01234567");
-		const parsed = parseArgs(args);
-		assert.equal(parsed.ok, true);
-		if (parsed.ok) assert.equal(parsed.args.intent?.length, "Plan/implement (stacked): ".length + 1000);
+		const options = buildStackPanelReviewOptions(
+			"x".repeat(2000),
+			"0123456789abcdef0123456789abcdef01234567",
+		);
+		assert.equal(options.intent?.length, "Plan/implement (stacked): ".length + 1000);
 	});
 });

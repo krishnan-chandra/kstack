@@ -14,30 +14,30 @@ function fakeBus(listener?: (data: unknown) => void) {
 }
 
 describe("panel-review in-process API", () => {
-	it("claims synchronously and awaits the real panel handler", async () => {
-		const calls: string[] = [];
+	it("passes structured options and awaits the panel handler", async () => {
+		const calls: unknown[] = [];
 		const ctx = {} as ExtensionCommandContext;
 		const pi = {
 			events: fakeBus((data) => {
-				claimPanelReviewRequest(data, async (args, receivedCtx) => {
+				claimPanelReviewRequest(data, async (options, receivedCtx) => {
 					assert.equal(receivedCtx, ctx);
-					calls.push(args);
+					calls.push(options);
 				});
 			}),
 		} as unknown as ExtensionAPI;
-		const result = await requestPanelReview(pi, '--intent "done"', ctx);
+		const result = await requestPanelReview(pi, { intent: 'quoted "text" \\ path', base: "origin/main" }, ctx);
 		assert.deepEqual(result, { handled: true });
-		assert.deepEqual(calls, ['--intent "done"']);
+		assert.deepEqual(calls, [{ intent: 'quoted "text" \\ path', base: "origin/main" }]);
 	});
 
 	it("reports unavailable when panel-review has no listener", async () => {
 		const pi = { events: fakeBus() } as unknown as ExtensionAPI;
-		const result = await requestPanelReview(pi, "", {} as ExtensionCommandContext);
+		const result = await requestPanelReview(pi, {}, {} as ExtensionCommandContext);
 		assert.deepEqual(result, { handled: false });
 	});
 
 	it("allows only one listener to claim a request", () => {
-		const request = { schemaVersion: 1, args: "", ctx: {} as ExtensionCommandContext, claimed: false };
+		const request = { schemaVersion: 2, options: {}, ctx: {} as ExtensionCommandContext, claimed: false };
 		assert.equal(claimPanelReviewRequest(request, async () => {}), true);
 		assert.equal(claimPanelReviewRequest(request, async () => { throw new Error("should not run"); }), false);
 	});

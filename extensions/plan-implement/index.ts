@@ -9,12 +9,13 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { runAgent } from "./agent-runner.ts";
-import { buildPanelReviewArgs, buildStackPanelReviewArgs, parseDeliveryMode, validateTask } from "./command.ts";
+import { buildPanelReviewOptions, buildStackPanelReviewOptions, parseDeliveryMode, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { preflightStack, type ExecFn } from "./delivery-mode.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 import { isChildModelAvailable } from "./model-availability.ts";
 import { buildStackSkillPolicy } from "./skill-policy.ts";
+import type { PanelArgs } from "../panel-review/types.ts";
 import type { AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
@@ -88,9 +89,26 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
+	/**
+	 * Cheap preflights that must hold before a run starts: panel-review loaded
+	 * and a Git working tree present. Returns an error message, or undefined
+	 * when both hold. Used by runPlanImplement and (early) by the slash
+	 * command so users see failures before typing a task into the editor.
+	 */
+	async function checkBasicPreflights(ctx: ExtensionCommandContext): Promise<string | undefined> {
+		if (!pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")) {
+			return "plan-implement requires the panel-review extension to be loaded.";
+		}
+		const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 5000 });
+		if (git.code !== 0) {
+			return "plan-implement requires a Git working tree so the completed change can be panel-reviewed.";
+		}
+		return undefined;
+	}
+
 	/** Core runner used by both the slash command and the in-process API. */
 	async function runPlanImplement(
-		task: string,
+		rawTask: string,
 		mode: DeliveryMode,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
@@ -108,14 +126,19 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
 
-		if (!pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")) {
-			notify("plan-implement requires the panel-review extension to be loaded.", "error");
+		// Task validation applies to every entry point, including the
+		// in-process event API used by the router.
+		const taskResult = validateTask(rawTask);
+		if (!taskResult.ok) {
+			notify(taskResult.error, "warning");
 			return;
 		}
-		const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 5000 });
+		const task = taskResult.task;
+
+		const preflightError = await checkBasicPreflights(ctx);
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
-		if (git.code !== 0) {
-			notify("plan-implement requires a Git working tree so the completed change can be panel-reviewed.", "error");
+		if (preflightError) {
+			notify(preflightError, "error");
 			return;
 		}
 
@@ -183,7 +206,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 
 		let tempDir: string | undefined;
-		let reviewArgs: string | undefined;
+		let reviewOptions: PanelArgs | undefined;
 		try {
 			try {
 				tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
@@ -272,7 +295,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 							outcome.implementer.status === "aborted" ? "warning" : "error",
 						);
 					} else {
-						reviewArgs = mode === "stack" && trunkSha ? buildStackPanelReviewArgs(task, trunkSha) : buildPanelReviewArgs(task);
+						reviewOptions = mode === "stack" && trunkSha
+							? buildStackPanelReviewOptions(task, trunkSha)
+							: buildPanelReviewOptions(task);
 					}
 				}
 			} finally {
@@ -288,10 +313,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				}
 			}
 
-			if (reviewArgs && lifecycle.isCurrent(token)) {
+			if (reviewOptions && lifecycle.isCurrent(token)) {
 				notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : "Implementation complete; starting panel review.", "info");
 				try {
-					const request = await requestPanelReview(pi, reviewArgs, ctx);
+					const request = await requestPanelReview(pi, reviewOptions, ctx);
 					if (!request.handled && lifecycle.isCurrent(token)) {
 						notify("panel-review did not accept the in-process review request.", "error");
 					}
@@ -327,6 +352,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			// Delivery mode: a leading --single/--stack flag selects it; the
 			// argument-less form asks before opening the task editor so stack
 			// mode can exclude Arena before any child starts.
+			// Run the cheap preflights before any editor interaction so users
+			// see configuration failures before composing a task.
+			const preflightError = await checkBasicPreflights(ctx);
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			if (preflightError) {
+				notify(preflightError, "error");
+				return;
+			}
+
 			const parsed = parseDeliveryMode(args ?? "");
 			if (!parsed.ok) {
 				notify(parsed.error, "warning");
@@ -346,13 +380,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
-			const taskResult = validateTask(rawTask);
-			if (!taskResult.ok) {
-				notify(taskResult.error, "warning");
-				return;
-			}
 
-			await runPlanImplement(taskResult.task, mode, ctx);
+			await runPlanImplement(rawTask, mode, ctx);
 		},
 	});
 

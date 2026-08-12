@@ -28,6 +28,8 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
 | [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with `jst`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
+| [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
+| [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 
 ## Configuration
 
@@ -117,6 +119,8 @@ Skills can then be invoked explicitly, for example:
 /skill:arena
 /skill:swarm
 /skill:jj-stacked-prs
+/skill:unslop
+/skill:technical-writing
 ```
 
 The two-model implementation workflow also has a stacked-PR delivery mode:
@@ -176,6 +180,15 @@ node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
+node --test extensions/kstack-router/*.test.ts
+```
+
+The router also has a headless smoke test that registers the real extension
+against a mock Pi and drives the dispatch lifecycle (tool gating, playbook
+injection, restoration, delegation):
+
+```bash
+node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
 The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `swarm`, and `jj-stacked-prs` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.

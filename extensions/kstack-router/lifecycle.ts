@@ -1,10 +1,15 @@
-/** Session-aware lifecycle for one kstack-router dispatch. */
+/** Session-aware lifecycle for one kstack-router operation. */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { RouteId } from "./types.ts";
 
 export interface DispatchToken {
 	readonly generation: number;
 	readonly dispatchId: string;
+}
+
+export interface ActiveDispatch {
+	readonly token: DispatchToken;
+	readonly route: RouteId;
 }
 
 export interface ToolSnapshot {
@@ -16,27 +21,27 @@ export class RouterLifecycle {
 	private sessionActive = false;
 	private dispatchIdCounter = 0;
 	private currentDispatch: DispatchToken | undefined;
+	private currentRoute: RouteId | undefined;
 	private toolSnapshot: ToolSnapshot | undefined;
-	private abortController: AbortController | undefined;
-	private activeClassifier = false;
+	private classifier: AbortController | undefined;
 
 	startSession(): void {
 		this.generation++;
 		this.sessionActive = true;
 		this.currentDispatch = undefined;
+		this.currentRoute = undefined;
 		this.toolSnapshot = undefined;
-		this.abortController = undefined;
-		this.activeClassifier = false;
+		this.classifier = undefined;
 	}
 
 	shutdownSession(): void {
 		this.sessionActive = false;
 		this.generation++;
-		this.abortController?.abort();
-		this.abortController = undefined;
+		this.classifier?.abort();
+		this.classifier = undefined;
 		this.currentDispatch = undefined;
+		this.currentRoute = undefined;
 		this.toolSnapshot = undefined;
-		this.activeClassifier = false;
 	}
 
 	sessionToken(): { generation: number } | undefined {
@@ -47,70 +52,56 @@ export class RouterLifecycle {
 		return this.sessionActive && token.generation === this.generation;
 	}
 
-	/** Begin a classifier run. Returns an abort controller for Ctrl+Shift+K. */
 	beginClassifier(token: { generation: number }): AbortController | undefined {
-		if (!this.isSessionCurrent(token) || this.activeClassifier) return undefined;
-		this.activeClassifier = true;
-		const controller = new AbortController();
-		this.abortController = controller;
-		return controller;
+		if (!this.isSessionCurrent(token) || this.classifier || this.currentDispatch) return undefined;
+		this.classifier = new AbortController();
+		return this.classifier;
 	}
 
 	endClassifier(token: { generation: number }): void {
-		if (!this.isSessionCurrent(token)) return;
-		this.activeClassifier = false;
-		if (this.abortController && !this.abortController.signal.aborted) {
-			// Don't clear the controller if it's for a dispatch.
-		} else {
-			this.abortController = undefined;
-		}
+		if (this.isSessionCurrent(token)) this.classifier = undefined;
 	}
 
-	/** Abort the active classifier (Ctrl+Shift+K). */
 	abortClassifier(): boolean {
-		if (!this.activeClassifier || !this.abortController || this.abortController.signal.aborted) return false;
-		this.abortController.abort();
+		if (!this.classifier || this.classifier.signal.aborted) return false;
+		this.classifier.abort();
 		return true;
 	}
 
-	/** Begin a dispatch. Creates a unique dispatch ID and captures the current tools. */
 	beginDispatch(
 		token: { generation: number },
-		pi: ExtensionAPI,
+		options: { route: RouteId; toolSnapshot?: string[] },
 	): DispatchToken | undefined {
-		if (!this.isSessionCurrent(token) || this.currentDispatch) return undefined;
-		this.dispatchIdCounter++;
+		if (!this.isSessionCurrent(token) || this.currentDispatch || this.classifier) return undefined;
 		const dispatch: DispatchToken = {
 			generation: this.generation,
-			dispatchId: `dispatch-${this.dispatchIdCounter}`,
+			dispatchId: `dispatch-${++this.dispatchIdCounter}`,
 		};
 		this.currentDispatch = dispatch;
-
-		// Capture the current tool set.
-		this.toolSnapshot = { tools: pi.getTools()?.map((t) => t.name) ?? [] };
-		this.activeClassifier = false;
-		this.abortController = undefined;
-
+		this.currentRoute = options.route;
+		this.toolSnapshot = options.toolSnapshot ? { tools: [...options.toolSnapshot] } : undefined;
 		return dispatch;
 	}
 
-	/** Get the captured tool snapshot for the current dispatch. */
+	getActiveDispatch(): ActiveDispatch | undefined {
+		return this.currentDispatch && this.currentRoute
+			? { token: this.currentDispatch, route: this.currentRoute }
+			: undefined;
+	}
+
 	getToolSnapshot(): ToolSnapshot | undefined {
 		return this.toolSnapshot;
 	}
 
 	isCurrentDispatch(dispatch: DispatchToken): boolean {
-		return (
-			this.currentDispatch !== undefined &&
-			this.currentDispatch.dispatchId === dispatch.dispatchId &&
-			this.currentDispatch.generation === dispatch.generation
-		);
+		const current = this.currentDispatch;
+		return current?.dispatchId === dispatch.dispatchId && current.generation === dispatch.generation;
 	}
 
 	endDispatch(dispatch: DispatchToken): void {
 		if (!this.isCurrentDispatch(dispatch)) return;
 		this.currentDispatch = undefined;
+		this.currentRoute = undefined;
 		this.toolSnapshot = undefined;
-		this.abortController = undefined;
 	}
 }
