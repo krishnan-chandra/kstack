@@ -89,7 +89,7 @@ describe("validateConfig", () => {
 	it("accepts multi-segment model ids like openrouter/moonshotai/kimi-k3", () => {
 		const r = validateConfig({
 			reviewers: [
-				{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
+				{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 				{ label: "sol", model: "openai/gpt-5.6-sol" },
 			],
 			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
@@ -199,7 +199,7 @@ describe("resolveReviewers", () => {
 			r.reviewers.map((x) => x.model),
 			available,
 		);
-		assert.equal(r.reviewers.length, 3);
+		assert.equal(r.reviewers.length, DEFAULT_PANEL.length);
 		assert.equal(r.warnings.length, 0);
 		// Thinking levels ride along for the CLI model id.
 		assert.ok(r.reviewers.every((x) => x.thinking));

@@ -87,7 +87,7 @@ the `"panel-review"` section:
   "panel-review": {
     "reviewers": [
       { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "medium" },
-      { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
+      { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" },
     ],
     "maxConcurrency": 4,
     "timeoutMinutes": 10,
@@ -114,7 +114,8 @@ the `"panel-review"` section:
   the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
   (`openrouter/qwen/qwen3.8-max`, medium), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
-  high), and **GPT-5.6 Sol** (`openai/gpt-5.6-sol`, low). Defaults that are
+  medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), and **GPT-5.6 Sol**
+  (`openai/gpt-5.6-sol`, low). Defaults that are
   unavailable or unauthenticated are skipped with a warning; write a config to
   override the panel.
 - If fewer than two default models are available, up to four distinct models

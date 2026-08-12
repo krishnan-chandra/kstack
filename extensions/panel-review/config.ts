@@ -8,7 +8,7 @@
  *     "panel-review": {
  *       "reviewers": [
  *         { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "medium" },
- *         { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
+ *         { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" }
  *       ],
  *       "maxConcurrency": 4,
  *       "timeoutMinutes": 10,
@@ -57,7 +57,10 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	// Qwen at high thinking repeatedly exceeded the child timeout on large
 	// bundles; medium keeps it inside budget at similar review quality.
 	{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "medium" },
-	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "high" },
+	// Kimi K3 at high thinking repeatedly produced no output for 20+ minutes;
+	// medium responds promptly at similar review quality.
+	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
+	{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
 	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
 ];
 
