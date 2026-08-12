@@ -87,7 +87,7 @@ the `"panel-review"` section:
   "panel-review": {
     "reviewers": [
       { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "medium" },
-      { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" },
+      { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-pro", "thinking": "medium" },
     ],
     "maxConcurrency": 4,
     "timeoutMinutes": 10,
@@ -113,9 +113,9 @@ the `"panel-review"` section:
   built-in default `openrouter/google/gemini-3.5-flash-lite`, falling back to
   the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
-  (`openrouter/qwen/qwen3.8-max`, medium), **Kimi K3** (`openrouter/moonshotai/kimi-k3`,
-  medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), and **GPT-5.6 Sol**
-  (`openai/gpt-5.6-sol`, low). Defaults that are
+  (`openrouter/qwen/qwen3.8-max`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
+  medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), and **GPT-5.6 Terra**
+  (`openai/gpt-5.6-terra`, max). Defaults that are
   unavailable or unauthenticated are skipped with a warning; write a config to
   override the panel.
 - If fewer than two default models are available, up to four distinct models

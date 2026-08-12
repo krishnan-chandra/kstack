@@ -8,7 +8,7 @@
  *     "panel-review": {
  *       "reviewers": [
  *         { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "medium" },
- *         { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" }
+ *         { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-pro", "thinking": "medium" }
  *       ],
  *       "maxConcurrency": 4,
  *       "timeoutMinutes": 10,
@@ -45,7 +45,7 @@ export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
 /** Thinking levels Pi understands; used to validate config entries. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** "provider/model"; extra path segments allowed (e.g. openrouter/moonshotai/kimi-k3). */
+/** "provider/model"; extra path segments allowed (e.g. openrouter/deepseek/deepseek-v4-pro). */
 const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
 /**
@@ -57,11 +57,11 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	// Qwen at high thinking repeatedly exceeded the child timeout on large
 	// bundles; medium keeps it inside budget at similar review quality.
 	{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "medium" },
-	// Kimi K3 at high thinking repeatedly produced no output for 20+ minutes;
+	// DeepSeek V4 Pro at high thinking repeatedly produced no output for 20+ minutes;
 	// medium responds promptly at similar review quality.
-	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
+	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
-	{ label: "sol", model: "openai/gpt-5.6-sol", thinking: "low" },
+	{ label: "terra", model: "openai/gpt-5.6-terra", thinking: "max" },
 ];
 
 /**
@@ -114,7 +114,7 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 		if (typeof r.model !== "string" || !MODEL_ID_RE.test(r.model)) {
 			return {
 				ok: false,
-				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/moonshotai/kimi-k3").`,
+				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/deepseek/deepseek-v4-pro").`,
 			};
 		}
 		if (

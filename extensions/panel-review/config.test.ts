@@ -86,16 +86,16 @@ describe("validateConfig", () => {
 			}).ok,
 		);
 	});
-	it("accepts multi-segment model ids like openrouter/moonshotai/kimi-k3", () => {
+	it("accepts multi-segment model ids like openrouter/deepseek/deepseek-v4-pro", () => {
 		const r = validateConfig({
 			reviewers: [
-				{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
+				{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 				{ label: "sol", model: "openai/gpt-5.6-sol" },
 			],
 			synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
 		});
 		assert.ok(r.ok);
-		assert.equal(r.config.reviewers[0].model, "openrouter/moonshotai/kimi-k3");
+		assert.equal(r.config.reviewers[0].model, "openrouter/deepseek/deepseek-v4-pro");
 		assert.equal(r.config.synthesis.model, "openrouter/google/gemini-3.5-flash-lite");
 	});
 

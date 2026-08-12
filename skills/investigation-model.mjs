@@ -11,7 +11,7 @@ const FAST_MODELS = [
 	{ model: "openai/gpt-5.6-luna", thinking: "medium" },
 	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
 	{ model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
-	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
+	{ model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ model: "openrouter/google/gemini-3.5-flash-lite", thinking: "medium" },
 	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "medium" },
 ];
