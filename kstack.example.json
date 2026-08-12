@@ -22,6 +22,14 @@
 		},
 		"timeoutSeconds": 90
 	},
+	"investigation": {
+		"allowedModels": [
+			{ "model": "anthropic/claude-haiku-4", "thinking": "low" },
+			{ "model": "openrouter/google/gemini-3.5-flash-lite", "thinking": "low" },
+			{ "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" }
+		],
+		"defaultModel": "anthropic/claude-haiku-4"
+	},
 	"arena": {
 		"runners": [
 			{ "label": "sonnet", "model": "anthropic/claude-sonnet-4-5" },

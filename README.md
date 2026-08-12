@@ -30,12 +30,14 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |
 | [`reflect`](skills/reflect/) | Reviews a selected Pi session through independent judgment, tooling, and contrarian lenses, then proposes user-approved, durable workflow improvements. |
+| [`how`](skills/how/) | Explains code structure, ownership, and runtime flow through fast, allowlisted exploration models. |
+| [`why`](skills/why/) | Investigates design rationale through fast, allowlisted evidence gathering and reports direct evidence separately from inference. |
 
 ## Configuration
 
-Model assignments for panel-review, plan-implement, arena, and swarm live in a
-single unified config file: `$PI_CODING_AGENT_DIR/kstack.json` (default
-`~/.pi/agent/kstack.json`).
+Model assignments for panel-review, plan-implement, arena, swarm, and the
+`how` and `why` investigation skills live in a single unified config file:
+`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
 
 Copy the starter and edit:
 
@@ -46,6 +48,11 @@ cp kstack.example.json ~/.pi/agent/kstack.json
 See [`kstack.example.json`](kstack.example.json) for the full schema. Each
 section is optional — missing sections use built-in defaults or prompt for
 models at runtime.
+
+`how` and `why` use only models in `investigation.allowedModels`. Their bundled
+resolver rejects a requested model outside that list and rejects Sol, Fable,
+and Opus in the list itself. Keep this section limited to small, fast models.
+Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Requirements
 
