@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { DEFAULT_PANEL, DEFAULT_SYNTHESIS, getKstackPath, getLegacyConfigPath, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel, validateConfig } from "./config.ts";
+import { DEFAULT_PANEL, DEFAULT_SYNTHESIS, getKstackPath, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel, validateConfig } from "./config.ts";
 
 describe("validateConfig", () => {
 	it("accepts a valid config", () => {
@@ -283,7 +283,7 @@ describe("resolveSynthesisModel", () => {
 	});
 });
 
-describe("loadConfig — kstack.json / legacy fallback", () => {
+describe("loadConfig — kstack.json", () => {
 	let tmpDir: string;
 
 	beforeEach(() => {
@@ -303,7 +303,7 @@ describe("loadConfig — kstack.json / legacy fallback", () => {
 		synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
 	};
 
-	it("returns missing when neither file exists", () => {
+	it("returns missing when kstack.json does not exist", () => {
 		const r = loadConfig(env());
 		assert.equal(r.status, "missing");
 		assert.equal(r.path, getKstackPath(env()));
@@ -320,26 +320,11 @@ describe("loadConfig — kstack.json / legacy fallback", () => {
 		}
 	});
 
-	it("falls back to legacy panel-review.json when kstack.json is absent", () => {
+	it("ignores legacy panel-review.json even when present", () => {
 		writeFileSync(join(tmpDir, "panel-review.json"), JSON.stringify(validPanelReview));
 		const r = loadConfig(env());
-		assert.equal(r.status, "loaded");
-		assert.equal(r.path, getLegacyConfigPath(env()));
-	});
-
-	it("prefers kstack.json over legacy panel-review.json", () => {
-		writeFileSync(join(tmpDir, "kstack.json"), JSON.stringify({ "panel-review": validPanelReview }));
-		writeFileSync(join(tmpDir, "panel-review.json"), JSON.stringify({
-			reviewers: [
-				{ label: "X", model: "x/y" },
-				{ label: "Z", model: "z/w" },
-			],
-			synthesis: { model: "a/b" },
-		}));
-		const r = loadConfig(env());
-		assert.equal(r.status, "loaded");
+		assert.equal(r.status, "missing");
 		assert.equal(r.path, getKstackPath(env()));
-		if (r.status === "loaded") assert.equal(r.config.reviewers[0].label, "A");
 	});
 
 	it("returns missing when kstack.json exists but has no panel-review section", () => {

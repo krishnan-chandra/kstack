@@ -11,7 +11,6 @@ Personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
-| [`queue-by-default`](extensions/queue-by-default/) | Makes messages queue (follow-up) instead of steering by default when the agent is working. |
 
 ## Skills
 
@@ -36,8 +35,7 @@ cp kstack.example.json ~/.pi/agent/kstack.json
 
 See [`kstack.example.json`](kstack.example.json) for the full schema. Each
 section is optional — missing sections use built-in defaults or prompt for
-models at runtime. Panel-review also accepts the legacy standalone
-`panel-review.json` as a fallback.
+models at runtime.
 
 ## Requirements
 
@@ -106,7 +104,6 @@ Run the extension tests from the repository root:
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
-node --test extensions/queue-by-default/*.test.ts
 ```
 
 The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, and `swarm` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.

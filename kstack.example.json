@@ -14,7 +14,7 @@
 			{ "label": "gemini", "model": "google/gemini-2.5-pro" },
 			{ "label": "gpt", "model": "openai/gpt-5.4" }
 		],
-		"crossJudge": { "model": "anthropic/claude-sonnet-4-5", "thinking": "high" },
+		"crossJudge": { "model": "openai/gpt-5.4", "thinking": "high" },
 		"maxConcurrency": 4
 	},
 	"swarm": {

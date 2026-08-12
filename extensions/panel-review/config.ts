@@ -1,16 +1,18 @@
 /**
  * Panel reviewer configuration: discovery, validation, and model resolution.
  *
- * Config lives at `$PI_CODING_AGENT_DIR/panel-review.json`
- * (fallback: `~/.pi/agent/panel-review.json`):
+ * Config lives in the `"panel-review"` section of
+ * `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
  *
  *   {
- *     "reviewers": [
- *       { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
- *       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
- *     ],
- *     "maxConcurrency": 4,
- *     "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
+ *     "panel-review": {
+ *       "reviewers": [
+ *         { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "high" },
+ *         { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
+ *       ],
+ *       "maxConcurrency": 4,
+ *       "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
+ *     }
  *   }
  *
  * "synthesis" is required: it picks the model that merges the reviewer
@@ -39,7 +41,7 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
 const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
 /**
- * Built-in low-cost default panel, used when no panel-review.json exists.
+ * Built-in low-cost default panel, used when no kstack.json exists.
  * Entries are filtered against the model registry at resolution time; at
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
@@ -64,10 +66,6 @@ export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 
 export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
 	return join(getAgentDir(env), "kstack.json");
-}
-
-export function getLegacyConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-	return join(getAgentDir(env), "panel-review.json");
 }
 
 export type ConfigLoad =
@@ -161,42 +159,27 @@ function validateSynthesis(obj: Record<string, unknown>): { ok: true; spec: { mo
 }
 
 /**
- * Load panel-review config. Checks `kstack.json` first (under the
- * "panel-review" key), then falls back to the legacy `panel-review.json`.
- * Returns the first that exists; if neither exists, returns "missing" for
- * the kstack path.
+ * Load panel-review config from the `"panel-review"` section of
+ * `kstack.json`. Returns "missing" when the file is absent or has no
+ * `"panel-review"` key.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	const kstackFile = getKstackPath(env);
-	if (existsSync(kstackFile)) {
-		try {
-			const raw = JSON.parse(readFileSync(kstackFile, "utf8"));
-			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-				return { status: "invalid", path: kstackFile, error: "kstack.json must be a JSON object." };
-			}
-			const section = (raw as Record<string, unknown>)["panel-review"];
-			if (section === undefined) {
-				// kstack.json exists but has no panel-review section — treat as missing.
-				return { status: "missing", path: kstackFile };
-			}
-			const result = validateConfig(section);
-			if (!result.ok) return { status: "invalid", path: kstackFile, error: result.error };
-			return { status: "loaded", config: result.config, path: kstackFile };
-		} catch (err) {
-			return { status: "invalid", path: kstackFile, error: `Unreadable config: ${(err as Error).message}` };
-		}
-	}
-
-	// Fall back to legacy panel-review.json.
-	const legacyFile = getLegacyConfigPath(env);
-	if (!existsSync(legacyFile)) return { status: "missing", path: kstackFile };
+	if (!existsSync(kstackFile)) return { status: "missing", path: kstackFile };
 	try {
-		const raw = JSON.parse(readFileSync(legacyFile, "utf8"));
-		const result = validateConfig(raw);
-		if (!result.ok) return { status: "invalid", path: legacyFile, error: result.error };
-		return { status: "loaded", config: result.config, path: legacyFile };
+		const raw = JSON.parse(readFileSync(kstackFile, "utf8"));
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+			return { status: "invalid", path: kstackFile, error: "kstack.json must be a JSON object." };
+		}
+		const section = (raw as Record<string, unknown>)["panel-review"];
+		if (section === undefined) {
+			return { status: "missing", path: kstackFile };
+		}
+		const result = validateConfig(section);
+		if (!result.ok) return { status: "invalid", path: kstackFile, error: result.error };
+		return { status: "loaded", config: result.config, path: kstackFile };
 	} catch (err) {
-		return { status: "invalid", path: legacyFile, error: `Unreadable config: ${(err as Error).message}` };
+		return { status: "invalid", path: kstackFile, error: `Unreadable config: ${(err as Error).message}` };
 	}
 }
 
@@ -242,7 +225,7 @@ export function resolveSynthesisModel(config: PanelConfig | null, deps: ResolveD
 				ok: false,
 				error:
 					`Configured synthesis model is unavailable or unauthenticated: ${config.synthesis.model}\n` +
-					"Fix panel-review.json or authenticate the provider.",
+					"Fix the panel-review section in kstack.json or authenticate the provider.",
 			};
 		}
 		return { ok: true, model: config.synthesis.model, thinking: config.synthesis.thinking, source: "config", warnings };
@@ -284,7 +267,7 @@ export function resolveReviewers(config: PanelConfig | null, deps: ResolveDeps):
 				error:
 					"Configured reviewer models are unavailable or unauthenticated:\n  " +
 					unavailable.join("\n  ") +
-					"\nFix panel-review.json or authenticate the providers.",
+					"\nFix the panel-review section in kstack.json or authenticate the providers.",
 			};
 		}
 		return { ok: true, reviewers: config.reviewers, maxConcurrency: config.maxConcurrency, warnings };
@@ -353,7 +336,7 @@ export function resolveReviewers(config: PanelConfig | null, deps: ResolveDeps):
 		return {
 			ok: false,
 			error:
-				"No models available for panel review. Configure reviewers in panel-review.json " +
+				"No models available for panel review. Configure reviewers in kstack.json " +
 				"or authenticate at least one provider.",
 		};
 	}

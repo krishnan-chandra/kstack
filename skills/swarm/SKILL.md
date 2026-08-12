@@ -47,7 +47,7 @@ When `kstack.json` is absent or has no `swarm` section, ask the user which model
 
 ## Phase B: Fan out
 
-Spawn all N workers in parallel using the `subagent` tool's parallel mode:
+Spawn all N workers in parallel. When the `subagent` tool is available and all workers use the same default model:
 
 ```
 subagent({
@@ -59,7 +59,13 @@ subagent({
 })
 ```
 
-If the `subagent` tool is not available, spawn workers by running `pi -p --no-session` subprocesses via bash, one per worker, backgrounded and waited on.
+When a specific worker model is configured (via `kstack.json` or user request), or for a model race with different models per arm, spawn each worker as a separate `pi` subprocess so the model can be set per worker:
+
+```bash
+pi -p --no-session --model <provider/model[:thinking]> "<brief>" &
+```
+
+Run all workers concurrently (backgrounded) and wait for all to complete.
 
 **Every brief stands alone.** Include:
 - The goal and scope

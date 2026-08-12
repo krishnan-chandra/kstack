@@ -30,7 +30,7 @@ Read `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`) for 
       { "label": "gemini", "model": "google/gemini-2.5-pro" },
       { "label": "gpt", "model": "openai/gpt-5.4" }
     ],
-    "crossJudge": { "model": "anthropic/claude-sonnet-4-5", "thinking": "high" },
+    "crossJudge": { "model": "openai/gpt-5.4", "thinking": "high" },
     "maxConcurrency": 4
   }
 }
@@ -53,7 +53,7 @@ The N candidates will receive the same prompt, so the prompt is the contract. Ge
 
 ## Phase B: Fan out
 
-Spawn all N candidates in parallel using the `subagent` tool's parallel mode:
+Spawn all N candidates in parallel. When the `subagent` tool is available:
 
 ```
 subagent({
@@ -65,7 +65,13 @@ subagent({
 })
 ```
 
-If the `subagent` tool is not available, spawn candidates by running `pi -p --no-session` subprocesses via bash, one per candidate, backgrounded and waited on.
+When specific models are configured (via `kstack.json` or user request), spawn each candidate as a separate `pi` subprocess so the model can be set per runner:
+
+```bash
+pi -p --no-session --model <provider/model[:thinking]> "<task>" &
+```
+
+Run all candidates concurrently (backgrounded) and wait for all to complete.
 
 Each candidate receives:
 - The full task description
@@ -84,7 +90,13 @@ After all candidates complete, spawn one read-only judge on a different model fr
 
 The judge scores each criterion and recommends a base with rationale.
 
-Use the `subagent` tool in single mode with a read-only agent (tools: `read, grep, find, ls`) and the `crossJudge` model from `kstack.json`. If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
+Spawn one read-only judge subprocess with the `crossJudge` model from `kstack.json`:
+
+```bash
+pi -p --no-session --tools read,grep,find,ls --model <crossJudge model[:thinking]> "<judge task>"
+```
+
+If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
 
 ## Phase D: Pick a base
 

@@ -47,7 +47,7 @@ verdict.
    abort: children get SIGTERM, then SIGKILL after a 5 s grace. Any child also
    stops on its own after a 10-minute wall-clock timeout.
 5. Synthesizes the successful reports with the configured synthesis model
-   (required in `panel-review.json`; a small, fast model like
+   (required in `kstack.json`; a small, fast model like
    `openrouter/google/gemini-3.5-flash-lite` by convention) in an isolated child, using
    the lead-judgment framework: deduplication, consensus mapping, and
    **Act On / Consider / Noted / Dismissed** dispositions.
@@ -62,9 +62,7 @@ the raw reviewer reports are preserved instead.
 ## Configuration
 
 Panel-review reads its config from the `"panel-review"` section of
-`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`). If
-`kstack.json` is absent or has no `"panel-review"` key, the legacy standalone
-`panel-review.json` in the same directory is tried as a fallback.
+`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
 
 Copy the starter: `cp kstack.example.json ~/.pi/agent/kstack.json` and edit
 the `"panel-review"` section:
