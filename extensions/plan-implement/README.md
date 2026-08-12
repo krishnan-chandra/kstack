@@ -28,6 +28,13 @@ compatible with the original single-PR workflow.
    panel-review extension to run through Pi's in-process event bus. The panel
    keeps its own confirmation and verdict rendering.
 
+When `kstack-router` dispatches a change, it supplies a selected change kind.
+The confirmation displays it and a non-generic playbook is appended to both
+roles: bug fixes require a before/after reproduction, refactors pin behavior,
+performance work compares matching measurements, features prove observable
+behavior, and prototypes stay isolated and produce a decision. Direct
+`/plan-implement` invocations use the existing `generic` workflow.
+
 Both children use `--no-session --no-extensions --no-prompt-templates`.
 
 ### Single-PR mode (default)

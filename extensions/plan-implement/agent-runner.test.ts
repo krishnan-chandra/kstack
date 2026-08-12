@@ -48,6 +48,23 @@ describe("plan-implement child runner", () => {
 		assert.match(implementer.at(-1) ?? "", /approved plan at \/plan/);
 	});
 
+	it("appends the selected proof-obligation playbook to each child role", () => {
+		const prompt = "# Bug-fix proof obligations\nReproduce first.";
+		for (const role of ["planner", "implementer"] as const) {
+			const args = buildChildArgs({
+				role,
+				model: "a/model",
+				promptFile: "/role.md",
+				taskFile: "/task.md",
+				planFile: role === "implementer" ? "/plan.md" : undefined,
+				playbookPrompt: prompt,
+			});
+			const promptFlags = args.reduce<number[]>((indices, value, index) => value === "--append-system-prompt" ? [...indices, index] : indices, []);
+			assert.equal(promptFlags.length, 2);
+			assert.equal(args[promptFlags[1] + 1], prompt);
+		}
+	});
+
 	it("stack mode disables skill discovery and re-adds every provided skill except arena", () => {
 		const skillPaths = ["/skills/create-skill", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
 		const planner = buildChildArgs({ role: "planner", model: "a/p", promptFile: "/p", taskFile: "/t", mode: "stack", skillPaths });

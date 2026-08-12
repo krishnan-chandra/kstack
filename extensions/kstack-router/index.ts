@@ -20,6 +20,7 @@ import { formatRecommendation, buildRouteAlternatives } from "./classification.t
 import { runClassifier } from "./classifier-runner.ts";
 import { loadConfig, resolveClassifierModel } from "./config.ts";
 import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
+import { changeKindLabel, type ChangeKind } from "../plan-implement/change-kind.ts";
 import { dispatchRoute, getRestrictedTools, getPlaybookForRoute } from "./dispatch.ts";
 import { RouterLifecycle, type DispatchToken } from "./lifecycle.ts";
 import {
@@ -37,6 +38,7 @@ interface RouteCardDetails {
 	route: RouteId;
 	routeLabel: string;
 	delivery: DeliveryRecommendation;
+	changeKind?: ChangeKind;
 	modelSource?: string;
 	confidence?: string;
 	overrode: boolean;
@@ -106,6 +108,7 @@ export default function (pi: ExtensionAPI): void {
 			"",
 			`Route: ${details?.routeLabel ?? "unknown"} (${details?.route ?? "?"})`,
 			...(details?.delivery ? [`Delivery: ${details.delivery === "stack" ? "stacked PRs" : "single PR"}`] : []),
+			...(details?.changeKind ? [`Change kind: ${changeKindLabel(details.changeKind)}`] : []),
 			...(details?.modelSource ? [`Classifier: ${details.modelSource}`] : []),
 			...(details?.confidence ? [`Confidence: ${details.confidence}`] : []),
 			...(details?.overrode ? [theme.fg("warning", "User overrode recommendation")] : []),
@@ -169,7 +172,7 @@ export default function (pi: ExtensionAPI): void {
 	// --- Command handler ---
 	pi.registerCommand("kstack", {
 		description:
-			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--] <task>. " +
+			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>. " +
 			"Prompts for classification when no --route is given.",
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
@@ -213,6 +216,7 @@ export default function (pi: ExtensionAPI): void {
 			// Resolve route.
 			let route: RouteId | undefined = parsed.args.route;
 			let delivery: DeliveryRecommendation = parsed.args.delivery;
+			let changeKind: ChangeKind = parsed.args.changeKind ?? "generic";
 			let overrode = false;
 			let modelSource = "explicit --route";
 			let confidence: string | undefined;
@@ -276,6 +280,7 @@ export default function (pi: ExtensionAPI): void {
 							confidence: classifierResult.envelope.confidence,
 							rationale: classifierResult.envelope.rationale,
 							delivery: classifierResult.envelope.delivery,
+							changeKind: classifierResult.envelope.changeKind,
 						};
 
 						// Show the recommendation.
@@ -299,6 +304,9 @@ export default function (pi: ExtensionAPI): void {
 						overrode = route !== recommendation.route;
 						if (!overrode && recommendation.delivery && !delivery) {
 							delivery = recommendation.delivery;
+						}
+						if (!overrode && recommendation.changeKind && !parsed.args.changeKind) {
+							changeKind = recommendation.changeKind;
 						}
 					} else {
 						// Classifier failed; offer manual selection.
@@ -334,6 +342,11 @@ export default function (pi: ExtensionAPI): void {
 			}
 
 			if (!route) return; // User cancelled.
+
+			if (parsed.args.changeKind && route !== "change") {
+				notify("--change-kind is only valid with --route change.", "warning");
+				return;
+			}
 
 			// For "change" route without explicit delivery: use classifier recommendation
 			// or default to single.
@@ -373,6 +386,7 @@ export default function (pi: ExtensionAPI): void {
 				route,
 				routeLabel: getRouteLabel(route),
 				delivery,
+				...(route === "change" ? { changeKind } : {}),
 				modelSource,
 				confidence,
 				overrode,
@@ -452,7 +466,7 @@ export default function (pi: ExtensionAPI): void {
 				details: routeCard,
 			});
 
-			const result = await dispatchRoute(route, task, delivery, dispatchToken, lifecycle, pi, ctx);
+			const result = await dispatchRoute(route, task, delivery, changeKind, dispatchToken, lifecycle, pi, ctx);
 
 			// Update the route card with dispatch status.
 			routeCard.dispatchStatus = result.status;

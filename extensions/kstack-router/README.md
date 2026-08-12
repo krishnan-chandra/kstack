@@ -4,7 +4,7 @@ The package's front door. Routes tasks through a lightweight classifier or
 explicit `--route` selection, then dispatches to the appropriate workflow.
 
 ```
-/kstack [--route <id>] [--single|--stack] [--] <task>
+/kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>
 ```
 
 ## Route table
@@ -25,13 +25,31 @@ explicit `--route` selection, then dispatches to the appropriate workflow.
 ```bash
 /kstack Explain the archive indexing strategy
 /kstack --route investigate What does the handoff extension do?
-/kstack --route change Refactor the config loader
-/kstack --route change --stack Split feature into three PRs
+/kstack --route change --change-kind refactor Refactor the config loader
+/kstack --route change --stack --change-kind feature Split feature into three PRs
 /kstack --route review Review the latest changes
 /kstack --route arena -- "Generate three alternative designs"
 /kstack --route skill-authoring -- "Create a linter skill"
 /kstack --route session-pickup -- "What was I working on?"
 ```
+
+## Change-kind playbooks
+
+For the `change` route, the classifier recommends one of `bug-fix`, `feature`,
+`refactor`, `performance`, `prototype`, or `generic`. The selected kind appears
+in the route card and plan-implement confirmation. Override it explicitly when
+the classifier has insufficient context:
+
+```text
+/kstack --route change --change-kind performance Reduce archive-index latency
+```
+
+Non-generic kinds attach a concise proof-obligation playbook to both child
+roles. Bug fixes reproduce and rerun the same regression check; refactors pin
+and preserve behavior; performance work records matching baseline and
+post-change measurements; features exercise observable user behavior; and
+prototypes remain isolated and answer a decision question. `generic` retains
+the existing general workflow without an added specialized playbook.
 
 ## Configuration
 

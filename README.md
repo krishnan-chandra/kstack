@@ -10,7 +10,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 
 | Extension | Description |
 | --- | --- |
-| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--] <task>` routes tasks through a classifier to the appropriate workflow. |
+| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
 | [`session-archive`](extensions/session-archive/) | Moves named, completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |

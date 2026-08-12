@@ -2,6 +2,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { requestPlanImplement } from "../plan-implement/api.ts";
+import type { ChangeKind } from "../plan-implement/change-kind.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { getRoutePlaybook } from "./catalog.ts";
 import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
@@ -24,6 +25,7 @@ export async function dispatchRoute(
 	route: RouteId,
 	task: string,
 	delivery: DeliveryRecommendation,
+	changeKind: ChangeKind,
 	dispatchToken: DispatchToken,
 	lifecycle: RouterLifecycle,
 	pi: ExtensionAPI,
@@ -37,7 +39,7 @@ export async function dispatchRoute(
 		case "change": {
 			const mode = delivery === "stack" ? "stack" : "single";
 			try {
-				const result = await requestPlanImplement(pi, task, mode, ctx);
+				const result = await requestPlanImplement(pi, task, mode, changeKind, ctx);
 				if (!result.handled) {
 					return {
 						status: "failed",

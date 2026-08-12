@@ -1,9 +1,6 @@
 /** Pure argument parser for the /kstack command. */
 
-import { DEFAULTS, isRouteId, type DeliveryRecommendation, type RouterArgs } from "./types.ts";
-
-const DELIVERY_OPTIONS = new Set(["--single", "--stack"]);
-const KNOWN_FLAGS = new Set(["--route", "--single", "--stack"]);
+import { DEFAULTS, isChangeKind, isRouteId, type ChangeKind, type DeliveryRecommendation, type RouterArgs } from "./types.ts";
 
 export type ArgsParse =
 	| { ok: true; args: RouterArgs }
@@ -14,7 +11,7 @@ export type ArgsParse =
  *   /kstack --route investigate Refactor the widget
  *   /kstack --single Refactor the widget
  *   /kstack --route change --stack Implement CI pipeline
- *   /kstack --route change --single "Add feature X"
+ *   /kstack --route change --change-kind feature "Add feature X"
  *   /kstack --route change --single -- "Add feature X"
  *   /kstack investigate (flag-less task with no leading --)
  *
@@ -29,6 +26,7 @@ export function parseArgs(input: string): ArgsParse {
 
 	let route: string | undefined;
 	let delivery: DeliveryRecommendation;
+	let changeKind: ChangeKind | undefined;
 	let postDash = false;
 	let i = 0;
 
@@ -58,7 +56,18 @@ export function parseArgs(input: string): ArgsParse {
 			continue;
 		}
 
-		return { ok: false, error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack.` };
+		if (token === "--change-kind") {
+			if (changeKind !== undefined) return { ok: false, error: "Duplicate --change-kind flag." };
+			i++;
+			const value = tokens[i];
+			if (!value || value.startsWith("--") || !isChangeKind(value)) {
+				return { ok: false, error: "--change-kind requires one of: bug-fix, feature, refactor, performance, prototype, generic." };
+			}
+			changeKind = value;
+			continue;
+		}
+
+		return { ok: false, error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack, --change-kind <kind>.` };
 	}
 
 	// Validate route if provided.
@@ -86,6 +95,7 @@ export function parseArgs(input: string): ArgsParse {
 		args: {
 			route: route ? (route as RouterArgs["route"]) : undefined,
 			delivery,
+			changeKind,
 			task: task.trim(),
 		},
 	};

@@ -45,14 +45,14 @@ describe("dispatchRoute", () => {
 
 	it("fails closed for active-session routes (handled by the command handler)", async () => {
 		const { lifecycle, token } = setup();
-		const result = await dispatchRoute("investigate", "task", undefined, token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("investigate", "task", undefined, "generic", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /active-session route/);
 	});
 
 	it("unsupported explains the bounded routes without dispatching", async () => {
 		const { lifecycle, token } = setup();
-		const result = await dispatchRoute("unsupported", "task", undefined, token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("unsupported", "task", undefined, "generic", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /does not fit a supported route/);
 	});
@@ -60,7 +60,7 @@ describe("dispatchRoute", () => {
 	it("aborts when the dispatch token is stale", async () => {
 		const { lifecycle, token } = setup();
 		lifecycle.endDispatch(token);
-		const result = await dispatchRoute("review", "task", undefined, token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("review", "task", undefined, "generic", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "aborted");
 	});
 });

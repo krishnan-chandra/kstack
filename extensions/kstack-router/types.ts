@@ -1,5 +1,8 @@
 /** Canonical route catalog IDs and shared types for the kstack-router. */
 
+import { isChangeKind, type ChangeKind } from "../plan-implement/change-kind.ts";
+export { isChangeKind, type ChangeKind } from "../plan-implement/change-kind.ts";
+
 export type RouteId =
 	| "investigate"
 	| "change"
@@ -36,6 +39,8 @@ export interface ClassifierEnvelope {
 	rationale: string;
 	/** Optional delivery mode recommendation (only meaningful for "change"). */
 	delivery?: DeliveryRecommendation;
+	/** Optional proof-obligation category (only meaningful for "change"). */
+	changeKind?: ChangeKind;
 }
 
 /** Sentinel that must wrap classifier JSON output. */
@@ -71,6 +76,7 @@ export interface RouteMetadata {
 export interface RouterArgs {
 	route?: RouteId;
 	delivery?: DeliveryRecommendation;
+	changeKind?: ChangeKind;
 	task: string;
 }
 
