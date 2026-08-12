@@ -1,6 +1,7 @@
-/** Pure task validation, delivery-mode parsing, and panel-review options. */
+/** Pure task validation, command parsing, and panel-review options. */
 
 import type { PanelArgs } from "../panel-review/types.ts";
+import { isChangeKind, type ChangeKind } from "./change-kind.ts";
 import { LIMITS, type DeliveryMode } from "./types.ts";
 
 const DELIVERY_FLAGS = new Set(["--single", "--stack"]);
@@ -16,30 +17,57 @@ export function validateTask(task: string): { ok: true; task: string } | { ok: f
 }
 
 /**
- * Parse a leading `--single` / `--stack` delivery flag from the command args.
- * The flag is optional and may appear at most once, at the front of the string.
- * Everything after the flag (or the whole string when no flag is present) is the
- * task text. Unknown leading `--` flags are rejected so a typo does not silently
- * become the task.
+ * Parse leading delivery and change-kind options. `--` terminates option
+ * parsing so tasks may start with dashes. A direct command defaults to single
+ * delivery, but leaves changeKind undefined so the adapter can ask the user.
  */
-export function parseDeliveryMode(
+export function parsePlanImplementArgs(
 	args: string,
-): { ok: true; mode: DeliveryMode; task: string } | { ok: false; error: string } {
+): { ok: true; mode: DeliveryMode; changeKind?: ChangeKind; task: string } | { ok: false; error: string } {
 	const trimmed = args.trim();
 	if (!trimmed) return { ok: true, mode: "single", task: "" };
+
 	const tokens = trimmed.split(/\s+/);
-	if (tokens[0].startsWith("--") && !DELIVERY_FLAGS.has(tokens[0])) {
-		return { ok: false, error: `Unknown plan-implement flag: ${tokens[0]}. Use --single or --stack.` };
-	}
-	if (DELIVERY_FLAGS.has(tokens[0])) {
-		const mode: DeliveryMode = tokens[0] === "--stack" ? "stack" : "single";
-		const rest = tokens.slice(1).join(" ");
-		if (rest.trim() && DELIVERY_FLAGS.has(rest.split(/\s+/)[0])) {
-			return { ok: false, error: "Specify at most one of --single or --stack." };
+	let mode: DeliveryMode = "single";
+	let deliverySeen = false;
+	let changeKind: ChangeKind | undefined;
+	let i = 0;
+
+	for (; i < tokens.length; i++) {
+		const token = tokens[i];
+		if (token === "--") {
+			i++;
+			break;
 		}
-		return { ok: true, mode, task: rest };
+		if (!token.startsWith("--")) break;
+
+		if (DELIVERY_FLAGS.has(token)) {
+			if (deliverySeen) return { ok: false, error: "Specify at most one of --single or --stack." };
+			deliverySeen = true;
+			mode = token === "--stack" ? "stack" : "single";
+			continue;
+		}
+
+		if (token === "--change-kind") {
+			if (changeKind !== undefined) return { ok: false, error: "Duplicate --change-kind flag." };
+			const value = tokens[++i];
+			if (!value || value.startsWith("--") || !isChangeKind(value)) {
+				return {
+					ok: false,
+					error: "--change-kind requires one of: bug-fix, feature, refactor, performance, prototype, generic.",
+				};
+			}
+			changeKind = value;
+			continue;
+		}
+
+		return {
+			ok: false,
+			error: `Unknown plan-implement flag: ${token}. Use --single, --stack, or --change-kind <kind>.`,
+		};
 	}
-	return { ok: true, mode: "single", task: trimmed };
+
+	return { ok: true, mode, changeKind, task: tokens.slice(i).join(" ") };
 }
 
 function boundedPanelIntent(task: string): string {

@@ -14,7 +14,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves named, completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
-| [`plan-implement`](extensions/plan-implement/) | Plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review through an in-process extension API. Supports a `--stack` delivery mode that builds a local jj stack of PRs with Arena deterministically disabled. Child agents retain normal skill discovery. |
+| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review. Supports a `--stack` delivery mode that builds a local jj stack with Arena disabled. |
 
 ## Skills
 
@@ -126,9 +126,11 @@ The two-model implementation workflow is available as an extension command:
 
 ```text
 /plan-implement Add optimistic locking to the archive writer
+/plan-implement --change-kind bug-fix Fix the archive race
 ```
 
-It keeps skills enabled in both child agents, so each role can consult the
+Without `--change-kind`, the command asks you to select one before planning. It
+keeps skills enabled in both child agents, so each role can consult the
 original task-specific skills it needs. See
 [`extensions/plan-implement/README.md`](extensions/plan-implement/README.md)
 for model defaults, configuration, confirmations, and security boundaries.

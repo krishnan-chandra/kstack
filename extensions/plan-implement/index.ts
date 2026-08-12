@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
-import { changeKindLabel, changeKindPlaybookFile, type ChangeKind } from "./change-kind.ts";
+import { CHANGE_KINDS, changeKindLabel, changeKindPlaybookFile, isChangeKind, type ChangeKind } from "./change-kind.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { runAgent } from "./agent-runner.ts";
-import { buildPanelReviewOptions, buildStackPanelReviewOptions, parseDeliveryMode, validateTask } from "./command.ts";
+import { buildPanelReviewOptions, buildStackPanelReviewOptions, parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { preflightStack, type ExecFn } from "./delivery-mode.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
@@ -343,7 +343,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("plan-implement", {
-		description: "Plan with a high-reason model, approve, implement with a small model, then run panel review",
+		description: "Select a change kind, plan, approve, implement, then run panel review",
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {
@@ -371,14 +371,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const parsed = parseDeliveryMode(args ?? "");
+			const parsed = parsePlanImplementArgs(args ?? "");
 			if (!parsed.ok) {
 				notify(parsed.error, "warning");
 				return;
 			}
 			let mode: DeliveryMode = parsed.mode;
+			let changeKind = parsed.changeKind;
 			let rawTask = parsed.task;
-			if (!rawTask.trim() && !argsHasModeFlag(args ?? "")) {
+			if (!rawTask.trim() && !(args ?? "").trim()) {
 				const choice = await ctx.ui.select(
 					"Delivery mode",
 					["single", "stack"],
@@ -388,10 +389,20 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				if (!choice) return;
 				mode = choice as DeliveryMode;
 			}
+			if (!changeKind) {
+				const choice = await ctx.ui.select("Change kind", [...CHANGE_KINDS], {});
+				if (!lifecycle.isSessionCurrent(commandSession)) return;
+				if (!choice) return;
+				if (!isChangeKind(choice)) {
+					notify(`Invalid change kind selected: ${choice}.`, "error");
+					return;
+				}
+				changeKind = choice;
+			}
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 
-			await runPlanImplement(rawTask, mode, "generic", ctx);
+			await runPlanImplement(rawTask, mode, changeKind, ctx);
 		},
 	});
 
@@ -399,9 +410,4 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	pi.events.on(PLAN_IMPLEMENT_REQUEST_EVENT, (data) => {
 		claimPlanImplementRequest(data, runPlanImplement);
 	});
-}
-
-function argsHasModeFlag(args: string): boolean {
-	const first = args.trim().split(/\s+/)[0];
-	return first === "--single" || first === "--stack";
 }
