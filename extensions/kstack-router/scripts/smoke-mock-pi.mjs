@@ -244,20 +244,28 @@ await scenario("tools are restored when starting the turn fails", async () => {
 	assert.ok(env.state.notifications.some((n) => n.level === "error" && /agent busy/.test(n.message)));
 });
 
-await scenario("change route delegates the exact task and mode to plan-implement", async () => {
+await scenario("change route delegates the exact task, mode, and change kind to plan-implement", async () => {
 	const env = setup();
 	const seen = [];
 	env.state.busListeners.set(PLAN_IMPLEMENT_REQUEST_EVENT, [
 		(request) => {
-			seen.push({ task: request.task, mode: request.mode });
+			seen.push({ task: request.task, mode: request.mode, changeKind: request.changeKind });
 			request.claimed = true;
 			request.completion = Promise.resolve();
 		},
 	]);
 	const handler = env.state.commands.get("kstack").handler;
-	await handler('--route change --stack "Split the feature into PRs"', env.ctx);
-	assert.deepEqual(seen, [{ task: "Split the feature into PRs", mode: "stack" }]);
+	await handler('--route change --stack --change-kind feature "Split the feature into PRs"', env.ctx);
+	assert.deepEqual(seen, [{ task: "Split the feature into PRs", mode: "stack", changeKind: "feature" }]);
 	assert.ok(env.state.messages.some((m) => m.details?.dispatchStatus === "dispatched"));
+});
+
+await scenario("rejects a change-kind override when the final route is not change", async () => {
+	const env = setup();
+	const handler = env.state.commands.get("kstack").handler;
+	await handler("--route investigate --change-kind feature Explain the archive", env.ctx);
+	assert.ok(env.state.notifications.some((n) => n.level === "warning" && /only valid with --route change/.test(n.message)));
+	assert.equal(env.state.messages.length, 0);
 });
 
 await scenario("review route passes the exact intent through the typed event API", async () => {

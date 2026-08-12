@@ -5,7 +5,9 @@ import {
 	CLASSIFIER_SENTINEL_END,
 	CLASSIFIER_SENTINEL_START,
 	DEFAULTS,
+	isChangeKind,
 	isRouteId,
+	type ChangeKind,
 	type ClassifierEnvelope,
 	type DeliveryRecommendation,
 	type RouteId,
@@ -79,8 +81,20 @@ export function parseClassifierOutput(output: string): { ok: true; envelope: Cla
 		return { ok: false, error: `Rationale exceeds ${DEFAULTS.maxRationaleChars} characters.` };
 	}
 
+	// Validate optional change kind.
+	let changeKind: ChangeKind | undefined;
+	if (envelope.changeKind !== undefined) {
+		if (typeof envelope.changeKind !== "string" || !isChangeKind(envelope.changeKind)) {
+			return { ok: false, error: `Invalid changeKind: ${JSON.stringify(envelope.changeKind)}.` };
+		}
+		// Fast classifiers sometimes fill every field shown in the output
+		// template. A valid non-change route should not be discarded because
+		// its inapplicable, otherwise-valid changeKind was echoed.
+		if (envelope.route === "change") changeKind = envelope.changeKind;
+	}
+
 	// Reject unknown keys.
-	const allowedKeys = new Set(["schemaVersion", "route", "confidence", "rationale", "delivery"]);
+	const allowedKeys = new Set(["schemaVersion", "route", "confidence", "rationale", "delivery", "changeKind"]);
 	for (const key of Object.keys(envelope)) {
 		if (!allowedKeys.has(key)) {
 			return { ok: false, error: `Unknown key in classifier envelope: "${key}".` };
@@ -110,6 +124,7 @@ export function parseClassifierOutput(output: string): { ok: true; envelope: Cla
 			confidence: envelope.confidence as ClassifierEnvelope["confidence"],
 			rationale: envelope.rationale as string,
 			delivery,
+			changeKind,
 		},
 	};
 }
@@ -119,6 +134,7 @@ export interface RouteRecommendation {
 	confidence: ClassifierEnvelope["confidence"];
 	rationale: string;
 	delivery?: DeliveryRecommendation;
+	changeKind?: ChangeKind;
 }
 
 /**
@@ -139,12 +155,13 @@ export function formatRecommendation(
 	const deliveryLine = recommendation.delivery
 		? `\nDelivery: ${recommendation.delivery === "stack" ? "stacked PRs" : "single PR"}`
 		: "";
+	const kindLine = recommendation.changeKind ? `\nChange kind: ${recommendation.changeKind}` : "";
 
 	return (
 		`Recommended route: ${routeLabel}\n` +
 		`${confidenceMap[recommendation.confidence] ?? recommendation.confidence}\n` +
 		`Model: ${modelSource}\n` +
-		`${routeDesc}${deliveryLine}\n\n` +
+		`${routeDesc}${deliveryLine}${kindLine}\n\n` +
 		`Rationale: ${recommendation.rationale}`
 	);
 }

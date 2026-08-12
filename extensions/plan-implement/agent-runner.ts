@@ -38,6 +38,8 @@ export interface BuildChildArgsOptions {
 	mode?: DeliveryMode;
 	/** Stack mode only: skill paths re-added after --no-skills (Arena excluded). */
 	skillPaths?: readonly string[];
+	/** Specialized proof-obligation instructions appended to the role prompt. */
+	playbookPrompt?: string;
 }
 
 /**
@@ -76,6 +78,7 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 		options.model,
 		"--append-system-prompt",
 		options.promptFile,
+		...(options.playbookPrompt ? ["--append-system-prompt", options.playbookPrompt] : []),
 		target,
 	];
 }

@@ -1,12 +1,13 @@
 /** Two-model plan → approve → implement → panel-review orchestration. */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
+import { changeKindLabel, changeKindPlaybookFile, type ChangeKind } from "./change-kind.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions, parseDeliveryMode, validateTask } from "./command.ts";
@@ -19,7 +20,9 @@ import type { PanelArgs } from "../panel-review/types.ts";
 import type { AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
-const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
+const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
+const PLAYBOOKS_DIR = join(EXTENSION_DIR, "playbooks");
 
 interface PhaseDetails {
 	schemaVersion: 1;
@@ -110,6 +113,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	async function runPlanImplement(
 		rawTask: string,
 		mode: DeliveryMode,
+		changeKind: ChangeKind,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
 		const notify = ctx.ui.notify.bind(ctx.ui);
@@ -134,6 +138,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const task = taskResult.task;
+		const playbookFile = changeKindPlaybookFile(changeKind);
+		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
 
 		const preflightError = await checkBasicPreflights(ctx);
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
@@ -184,6 +190,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			mode === "stack"
 				? `Planner (read-only): ${plannerModel}\n` +
 					`Implementer (creates local jj changes + bookmarks): ${implementerModel}\n` +
+					`Change kind: ${changeKindLabel(changeKind)}\n` +
 					`Stack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\n` +
 					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
 					"Stack mode disables skill discovery in children and re-adds every discovered skill except arena, " +
@@ -192,6 +199,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base."
 				: `Planner (read-only): ${plannerModel}\n` +
 					`Implementer (can modify files): ${implementerModel}\n` +
+					`Change kind: ${changeKindLabel(changeKind)}\n` +
 					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
 					"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
 					"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
@@ -237,6 +245,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								onProgress: updateProgress,
 								mode,
 								skillPaths,
+								playbookPrompt,
 							});
 						} finally {
 							lifecycle.endChild(token, controller);
@@ -272,6 +281,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								onProgress: updateProgress,
 								mode,
 								skillPaths,
+								playbookPrompt,
 							});
 						} finally {
 							lifecycle.endChild(token, controller);
@@ -381,7 +391,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 
-			await runPlanImplement(rawTask, mode, ctx);
+			await runPlanImplement(rawTask, mode, "generic", ctx);
 		},
 	});
 

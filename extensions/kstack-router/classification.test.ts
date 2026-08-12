@@ -40,6 +40,32 @@ describe("parseClassifierOutput", () => {
 		}
 	});
 
+	it("parses a change-kind for change work", () => {
+		const output = buildEnvelope(JSON.stringify({
+			schemaVersion: 1,
+			route: "change",
+			confidence: "high",
+			rationale: "Regression in the parser.",
+			changeKind: "bug-fix",
+		}));
+		const result = parseClassifierOutput(output);
+		assert.ok(result.ok);
+		if (result.ok) assert.equal(result.envelope.changeKind, "bug-fix");
+	});
+
+	it("ignores an echoed change-kind outside the change route", () => {
+		const output = buildEnvelope(JSON.stringify({
+			schemaVersion: 1,
+			route: "investigate",
+			confidence: "high",
+			rationale: "Research.",
+			changeKind: "feature",
+		}));
+		const result = parseClassifierOutput(output);
+		assert.ok(result.ok);
+		if (result.ok) assert.equal(result.envelope.changeKind, undefined);
+	});
+
 	it("parses envelope with stack delivery", () => {
 		const output = buildEnvelope(JSON.stringify({
 			schemaVersion: 1,

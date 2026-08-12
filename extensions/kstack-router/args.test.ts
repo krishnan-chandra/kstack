@@ -46,6 +46,17 @@ describe("kstack-router args parser", () => {
 		assert.equal(r.args.task, "Implement CI pipeline");
 	});
 
+	it("parses an explicit change-kind override", () => {
+		const r = parseArgs("--route change --change-kind refactor Simplify the loader");
+		assert.ok(r.ok);
+		assert.equal(r.args.changeKind, "refactor");
+		assert.equal(r.args.task, "Simplify the loader");
+	});
+
+	it("rejects an invalid change-kind override", () => {
+		assert.ok(!parseArgs("--change-kind rewrite Update the loader").ok);
+	});
+
 	it("uses -- to terminate flag parsing", () => {
 		const r = parseArgs("--route change --single -- --task-with-dashes");
 		assert.ok(r.ok);

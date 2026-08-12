@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT, requestPlanImplement } from "./api.ts";
+import type { ChangeKind } from "./change-kind.ts";
 import type { DeliveryMode } from "./types.ts";
 
 function fakeBus(listener?: (data: unknown) => void) {
@@ -18,24 +19,24 @@ function fakeBus(listener?: (data: unknown) => void) {
 
 describe("plan-implement in-process API", () => {
 	it("claims synchronously and awaits completion", async () => {
-		const calls: { task: string; mode: DeliveryMode; ctx: ExtensionCommandContext }[] = [];
+		const calls: { task: string; mode: DeliveryMode; changeKind: ChangeKind; ctx: ExtensionCommandContext }[] = [];
 		const ctx = {} as ExtensionCommandContext;
 		const pi = {
 			events: fakeBus((data) => {
-				claimPlanImplementRequest(data, async (task, mode, receivedCtx) => {
+				claimPlanImplementRequest(data, async (task, mode, changeKind, receivedCtx) => {
 					assert.equal(receivedCtx, ctx);
-					calls.push({ task, mode, ctx });
+					calls.push({ task, mode, changeKind, ctx });
 				});
 			}),
 		} as unknown as ExtensionAPI;
-		const result = await requestPlanImplement(pi, "Add feature X", "single", ctx);
+		const result = await requestPlanImplement(pi, "Add feature X", "single", "feature", ctx);
 		assert.deepEqual(result, { handled: true });
-		assert.deepEqual(calls, [{ task: "Add feature X", mode: "single", ctx }]);
+		assert.deepEqual(calls, [{ task: "Add feature X", mode: "single", changeKind: "feature", ctx }]);
 	});
 
 	it("reports unavailable when plan-implement has no listener", async () => {
 		const pi = { events: fakeBus() } as unknown as ExtensionAPI;
-		const result = await requestPlanImplement(pi, "", "single", {} as ExtensionCommandContext);
+		const result = await requestPlanImplement(pi, "", "single", "generic", {} as ExtensionCommandContext);
 		assert.deepEqual(result, { handled: false });
 	});
 
@@ -44,6 +45,7 @@ describe("plan-implement in-process API", () => {
 			schemaVersion: 1 as const,
 			task: "test",
 			mode: "single" as DeliveryMode,
+			changeKind: "generic" as ChangeKind,
 			ctx: {} as ExtensionCommandContext,
 			claimed: false,
 		};

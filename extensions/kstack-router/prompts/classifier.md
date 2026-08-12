@@ -12,12 +12,18 @@ Available routes:
 - **unsupported**: Persistent autonomous loops, auto-deployment, destructive operations, or unclear. No dispatch.
 
 Rules:
+- For "change" tasks, recommend a `changeKind`: `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. Use `generic` when the task does not establish a specific kind.
 - For "change" tasks, optionally recommend "single" or "stack" delivery.
 - Ambiguous "figure it out" requests → investigate.
 - Code implementation that isn't explicitly Arena → change.
 - Only return the JSON envelope between sentinel markers.
 
-Output format:
+Output format — for a **change** route, include the two optional fields:
 ---KSTACK-ROUTE-START---
-{"schemaVersion":1,"route":"...","confidence":"high|medium|low","rationale":"..."}
+{"schemaVersion":1,"route":"change","confidence":"high|medium|low","rationale":"...","delivery":"single|stack","changeKind":"bug-fix|feature|refactor|performance|prototype|generic"}
+---KSTACK-ROUTE-END---
+
+For every other route, omit `delivery` and `changeKind`:
+---KSTACK-ROUTE-START---
+{"schemaVersion":1,"route":"investigate|arena|swarm|skill-authoring|session-pickup|review|unsupported","confidence":"high|medium|low","rationale":"..."}
 ---KSTACK-ROUTE-END---
