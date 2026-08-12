@@ -45,7 +45,7 @@ Session ID: <uuid>  CWD: /path/to/project
 Lookup: use the active path above; if it is later archived, use read_session_archive with the exact session ID (or search_session_archive with session_id to search within it)
 ```
 
-Edit or cancel this prompt before any session replacement occurs. After the switch, submit it when ready.
+Edit or cancel this prompt before any session replacement occurs. The replacement session is named from the goal before the switch. With no explicit goal, `/handoff` appends `— continued` to the parent session name. After the switch, submit the prompt when ready.
 
 ## Read-only history tools
 
@@ -56,6 +56,7 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 
 ## Behavior notes
 
+- **Named replacement:** the new session receives a `session_info` entry during setup. An explicit goal becomes its name; the default continuation reuses the parent name with `— continued`.
 - **Reference-only:** no conversation serialization, synthesis call, generated summary, or inherited conversation payload.
 - **On-demand history:** the replacement agent retrieves normalized recent entries or targeted matches through the handoff-specific tools.
 - **Model selection:** `--model` switches to the requested model right before the replacement session is created; without it, the parent session's active model is pinned so the new session starts on it. Both paths use `pi.setModel()` before `ctx.newSession()`, because a brand-new session resolves its model from the configured default. An unknown or ambiguous model reference fails before the editor opens; a requested model without an API key cancels the handoff. Choosing a model also persists it as the configured default, the same as `/model` or `Ctrl+P`.
@@ -71,4 +72,4 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 node --test extensions/handoff/*.test.ts
 ```
 
-The tests verify the deterministic prompt, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, cancellation paths, stale-context safety, model flag parsing, model resolution, inheritance, explicit model switching, model restoration on cancelled or failed handoffs, scoped-model validation, and override detection without making any model calls.
+The tests verify the deterministic prompt, replacement session name, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, cancellation paths, stale-context safety, model flag parsing, model resolution, inheritance, explicit model switching, model restoration on cancelled or failed handoffs, scoped-model validation, and override detection without making any model calls.

@@ -3,12 +3,12 @@
 
 Drives a real `pi --mode rpc` process with an isolated PI_CODING_AGENT_DIR:
   1. archives an inactive fixture session via /session-archive-other,
-  2. archives the live session via /session-archive after a real prompt,
+  2. names a live session before its first real prompt and archives it,
   3. has the LLM call search_session_archive and read_session_archive,
   4. restarts Pi and verifies startup reconciliation and /session-archives.
 
 Requires: `pi` on PATH, valid provider auth in ~/.pi/agent/auth.json,
-Node 22+. Spends a small number of tokens on two tiny prompts.
+Node 22+. Spends a small number of tokens on a few tiny prompts.
 
 Usage: python3 scripts/e2e-smoke.py
 """
@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 
 EXTENSION = Path(__file__).resolve().parent.parent / "index.ts"
+NAMING_EXTENSION = EXTENSION.parent.parent / "session-naming" / "index.ts"
 SESSION_ID = "019ff001-deb2-7696-997e-8684026835d1"
 
 FIXTURE_ENTRIES = [
@@ -53,7 +54,7 @@ class Rpc:
         cwd = cwd or os.path.realpath("/tmp")
         env = dict(os.environ, PI_CODING_AGENT_DIR=agent_dir)
         self.proc = subprocess.Popen(
-            ["pi", "--mode", "rpc", "-e", str(EXTENSION)],
+            ["pi", "--mode", "rpc", "-e", str(NAMING_EXTENSION), "-e", str(EXTENSION)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd=cwd, env=env,
         )
@@ -202,9 +203,15 @@ def main():
         check(any(r[0] == "b1" for r in fts), "FTS indexes the bash entry")
         db.close()
 
-        # --- real prompt creates a live session, then /session-archive ------
+        # --- naming runs before a real prompt, then /session-archive --------
+        def answer_naming(msg):
+            if msg.get("method") == "input":
+                return {"value": "e2e live session"}
+            return None
+
         rpc.send({"id": "p2", "type": "prompt", "message": "Reply with exactly: ok"})
-        rpc.wait_for(lambda m: m.get("id") == "p2" and m.get("type") == "response", timeout=120)
+        rpc.wait_for(lambda m: m.get("id") == "p2" and m.get("type") == "response",
+                     timeout=120, respond=answer_naming)
         # The prompt response arrives while the agent is still streaming; wait
         # for the turn to settle so the session file is flushed to disk.
         live_file = live_id = None
@@ -217,6 +224,9 @@ def main():
                 break
             time.sleep(0.5)
         check(live_file and Path(live_file).exists(), f"live session persisted at {live_file}")
+        live_entries = [json.loads(line) for line in Path(live_file).read_text().splitlines()]
+        check(any(e.get("type") == "session_info" and e.get("name") == "e2e live session" for e in live_entries),
+              "session-naming persisted the chosen name before work")
 
         def answer_confirm(msg):
             if msg.get("method") == "confirm":
@@ -238,7 +248,9 @@ def main():
         # --- the LLM calls the read-only tools ------------------------------
         rpc.send({"id": "p4", "type": "prompt",
                   "message": "Use the search_session_archive tool with query \"archive-marker\", then report the session id of the hit."})
-        rpc.wait_for(lambda m: m.get("id") == "p4" and m.get("type") == "response", timeout=180)
+        rpc.wait_for(lambda m: m.get("id") == "p4" and m.get("type") == "response",
+                     timeout=180, respond=lambda msg: {"value": "archive tool smoke"}
+                     if msg.get("method") == "input" else None)
         rpc.wait_idle()
         tool_events = [m for m in rpc.log if "tool_execution" in str(m.get("type", ""))]
         used_search = [m for m in tool_events if "search_session_archive" in json.dumps(m)]

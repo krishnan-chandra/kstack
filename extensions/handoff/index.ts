@@ -30,6 +30,7 @@ import {
 	searchHandoffHistory,
 	type HandoffSource,
 } from "./history-reader.ts";
+import { handoffSessionName } from "../session-naming/names.ts";
 import { formatModelRef, parseHandoffArgs, resolveModelReference, type HandoffModel } from "./model-selection.ts";
 
 /**
@@ -100,6 +101,8 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 		// Capture only plain strings before replacement. The old command context
 		// becomes stale after newSession succeeds.
 		const oldId = ctx.sessionManager.getSessionId();
+		const parentName = ctx.sessionManager.getSessionName();
+		const replacementName = handoffSessionName(goal, DEFAULT_HANDOFF_GOAL, parentName, oldId);
 		const cwd = ctx.cwd;
 		const historyRef = formatHistoryReference(oldFile, oldId, cwd);
 		const source: HandoffSource = { version: 1, sessionFile: oldFile, sessionId: oldId, cwd };
@@ -173,6 +176,7 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 			result = await ctx.newSession({
 				parentSession: oldFile,
 				setup: async (sm) => {
+					sm.appendSessionInfo(replacementName);
 					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
 				},
 				withSession: async (fresh) => {
