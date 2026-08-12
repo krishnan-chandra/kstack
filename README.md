@@ -11,6 +11,7 @@ Personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
+| [`queue-by-default`](extensions/queue-by-default/) | Makes messages queue (follow-up) instead of steering by default when the agent is working. |
 
 ## Skills
 
@@ -21,6 +22,22 @@ Personal extensions for [Pi](https://pi.dev).
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
+
+## Configuration
+
+Model assignments for panel-review, arena, and swarm live in a single unified
+config file: `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
+
+Copy the starter and edit:
+
+```bash
+cp kstack.example.json ~/.pi/agent/kstack.json
+```
+
+See [`kstack.example.json`](kstack.example.json) for the full schema. Each
+section is optional — missing sections use built-in defaults or prompt for
+models at runtime. Panel-review also accepts the legacy standalone
+`panel-review.json` as a fallback.
 
 ## Requirements
 
@@ -89,6 +106,7 @@ Run the extension tests from the repository root:
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
+node --test extensions/queue-by-default/*.test.ts
 ```
 
 The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, and `swarm` skills. They are discovered when this repository is installed with `pi install`; invoke them explicitly with `/skill:create-pi-extension` or `/skill:create-skill`, or let Pi load them when extension- or skill-development work matches their descriptions.

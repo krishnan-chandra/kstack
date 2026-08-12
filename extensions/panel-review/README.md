@@ -61,17 +61,24 @@ the raw reviewer reports are preserved instead.
 
 ## Configuration
 
-`$PI_CODING_AGENT_DIR/panel-review.json` (fallback `~/.pi/agent/panel-review.json`).
-Copy the starter with `cp extensions/panel-review/panel-review.example.json ~/.pi/agent/panel-review.json`:
+Panel-review reads its config from the `"panel-review"` section of
+`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`). If
+`kstack.json` is absent or has no `"panel-review"` key, the legacy standalone
+`panel-review.json` in the same directory is tried as a fallback.
+
+Copy the starter: `cp kstack.example.json ~/.pi/agent/kstack.json` and edit
+the `"panel-review"` section:
 
 ```json
 {
-  "reviewers": [
-    { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "high" },
-    { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
-  ],
-  "maxConcurrency": 4,
-  "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
+  "panel-review": {
+    "reviewers": [
+      { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "high" },
+      { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
+    ],
+    "maxConcurrency": 4,
+    "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
+  }
 }
 ```
 

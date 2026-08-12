@@ -16,6 +16,24 @@ Open a todolist with one entry per phase before launching anything.
 3. Aggregate
 4. Report
 
+## Configuration
+
+Read `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`) for model assignments. The `swarm` section:
+
+```json
+{
+  "swarm": {
+    "worker": { "model": "anthropic/claude-haiku-4", "thinking": "low" },
+    "maxConcurrency": 4
+  }
+}
+```
+
+- `worker` — default model for swarm workers (`model` in `provider/model` form, optional `thinking` level).
+- `maxConcurrency` — max parallel workers (default 4).
+
+When `kstack.json` is absent or has no `swarm` section, ask the user which model to use or default to a fast available model.
+
 ## Phase A: Frame
 
 1. **State the done predicate** and the artifact or report the swarm must return.
@@ -24,7 +42,7 @@ Open a todolist with one entry per phase before launching anything.
    - **Race** — N workers run identical briefs. Declare the selection rule up front: `first pass` (take the first success), `rank all` (score every result), or `best-of` (pick the single best).
    - **Mix** — partition some slices and race others.
 3. **Set N** from the user request or derive it from the shape (e.g. one worker per package directory).
-4. **Pick the worker model.** Default to a fast model for coverage work. For a model race, name each arm's model up front.
+4. **Pick the worker model.** Use `worker` from `kstack.json` when present. Otherwise default to a fast available model for coverage work. For a model race, name each arm’s model up front.
 5. **Give each worker its own writable output** when it writes. Use a branch, directory under `/tmp/swarm-<slug>/worker-<n>/`, or a subdirectory of the workspace. Workers must not share a write target.
 
 ## Phase B: Fan out

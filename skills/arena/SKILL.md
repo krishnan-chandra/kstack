@@ -18,13 +18,37 @@ Open a todolist with one entry per phase before launching anything. The arena ru
 5. Graft
 6. Verify
 
+## Configuration
+
+Read `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`) for model assignments. The `arena` section:
+
+```json
+{
+  "arena": {
+    "runners": [
+      { "label": "sonnet", "model": "anthropic/claude-sonnet-4-5" },
+      { "label": "gemini", "model": "google/gemini-2.5-pro" },
+      { "label": "gpt", "model": "openai/gpt-5.4" }
+    ],
+    "crossJudge": { "model": "anthropic/claude-sonnet-4-5", "thinking": "high" },
+    "maxConcurrency": 4
+  }
+}
+```
+
+- `runners` — models to use as candidates. Each gets `label` and `model` (in `provider/model` form). Optional `thinking` level.
+- `crossJudge` — model for the independent cross-judge in Phase C. Prefer a different model family from the runners.
+- `maxConcurrency` — max parallel candidates (default 4).
+
+When `kstack.json` is absent or has no `arena` section, ask the user which models to use or default to 3 candidates on distinct available models.
+
 ## Phase A: Frame
 
 The N candidates will receive the same prompt, so the prompt is the contract. Get it right before spawning anything.
 
 1. **State the artifact** each candidate is producing.
-2. **Derive the rubric.** State what success looks like for *this* task, then turn it into 3–6 concrete gradeable criteria. Concrete: `Adds a --dry-run flag that skips writes`. Vague: `code is correct`. The rubric is the picker's tool in Phase D; candidates only see the task.
-3. **Pick the runners.** Default to 3–4 candidates across different models when available (e.g. one each on Claude Sonnet, Gemini, GPT). Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
+2. **Derive the rubric.** State what success looks like for *this* task, then turn it into 3–6 concrete gradeable criteria. Concrete: `Adds a --dry-run flag that skips writes`. Vague: `code is correct`. The rubric is the picker’s tool in Phase D; candidates only see the task.
+3. **Pick the runners.** Use `runners` from `kstack.json` when present. Otherwise default to 3–4 candidates across different available models. Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
 4. **Assign output paths.** Each candidate writes to its own location. Use `/tmp/arena-<slug>/candidate-<n>/` or separate directories under the working tree. N candidates writing to the same path is shared mutable state and will produce corrupt results.
 
 ## Phase B: Fan out
@@ -60,7 +84,7 @@ After all candidates complete, spawn one read-only judge on a different model fr
 
 The judge scores each criterion and recommends a base with rationale.
 
-Use the `subagent` tool in single mode with a read-only agent (tools: `read, grep, find, ls`) and a model different from the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
+Use the `subagent` tool in single mode with a read-only agent (tools: `read, grep, find, ls`) and the `crossJudge` model from `kstack.json`. If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
 
 ## Phase D: Pick a base
 

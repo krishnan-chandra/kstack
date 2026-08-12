@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { DEFAULT_PANEL, DEFAULT_SYNTHESIS, modelCliId, resolveReviewers, resolveSynthesisModel, validateConfig } from "./config.ts";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { DEFAULT_PANEL, DEFAULT_SYNTHESIS, getKstackPath, getLegacyConfigPath, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel, validateConfig } from "./config.ts";
 
 describe("validateConfig", () => {
 	it("accepts a valid config", () => {
@@ -277,5 +280,84 @@ describe("resolveSynthesisModel", () => {
 	it("errors when neither the default nor an active model exists", () => {
 		const r = resolveSynthesisModel(null, { find: find([]), scopedModels: [] });
 		assert.ok(!r.ok);
+	});
+});
+
+describe("loadConfig — kstack.json / legacy fallback", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "pi-config-test-"));
+	});
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	const env = () => ({ PI_CODING_AGENT_DIR: tmpDir });
+
+	const validPanelReview = {
+		reviewers: [
+			{ label: "A", model: "anthropic/claude-sonnet-4-5" },
+			{ label: "B", model: "openai/gpt-5.4" },
+		],
+		synthesis: { model: "openrouter/google/gemini-3.5-flash-lite" },
+	};
+
+	it("returns missing when neither file exists", () => {
+		const r = loadConfig(env());
+		assert.equal(r.status, "missing");
+		assert.equal(r.path, getKstackPath(env()));
+	});
+
+	it("loads from kstack.json panel-review section", () => {
+		writeFileSync(join(tmpDir, "kstack.json"), JSON.stringify({ "panel-review": validPanelReview }));
+		const r = loadConfig(env());
+		assert.equal(r.status, "loaded");
+		assert.equal(r.path, getKstackPath(env()));
+		if (r.status === "loaded") {
+			assert.equal(r.config.reviewers.length, 2);
+			assert.equal(r.config.synthesis.model, "openrouter/google/gemini-3.5-flash-lite");
+		}
+	});
+
+	it("falls back to legacy panel-review.json when kstack.json is absent", () => {
+		writeFileSync(join(tmpDir, "panel-review.json"), JSON.stringify(validPanelReview));
+		const r = loadConfig(env());
+		assert.equal(r.status, "loaded");
+		assert.equal(r.path, getLegacyConfigPath(env()));
+	});
+
+	it("prefers kstack.json over legacy panel-review.json", () => {
+		writeFileSync(join(tmpDir, "kstack.json"), JSON.stringify({ "panel-review": validPanelReview }));
+		writeFileSync(join(tmpDir, "panel-review.json"), JSON.stringify({
+			reviewers: [
+				{ label: "X", model: "x/y" },
+				{ label: "Z", model: "z/w" },
+			],
+			synthesis: { model: "a/b" },
+		}));
+		const r = loadConfig(env());
+		assert.equal(r.status, "loaded");
+		assert.equal(r.path, getKstackPath(env()));
+		if (r.status === "loaded") assert.equal(r.config.reviewers[0].label, "A");
+	});
+
+	it("returns missing when kstack.json exists but has no panel-review section", () => {
+		writeFileSync(join(tmpDir, "kstack.json"), JSON.stringify({ arena: {} }));
+		const r = loadConfig(env());
+		assert.equal(r.status, "missing");
+	});
+
+	it("returns invalid when kstack.json panel-review section is malformed", () => {
+		writeFileSync(join(tmpDir, "kstack.json"), JSON.stringify({ "panel-review": { reviewers: "bad" } }));
+		const r = loadConfig(env());
+		assert.equal(r.status, "invalid");
+		assert.equal(r.path, getKstackPath(env()));
+	});
+
+	it("returns invalid when kstack.json is not valid JSON", () => {
+		writeFileSync(join(tmpDir, "kstack.json"), "not json");
+		const r = loadConfig(env());
+		assert.equal(r.status, "invalid");
 	});
 });

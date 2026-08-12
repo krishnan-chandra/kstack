@@ -62,7 +62,11 @@ export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 	return join(homedir(), ".pi", "agent");
 }
 
-export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
+	return join(getAgentDir(env), "kstack.json");
+}
+
+export function getLegacyConfigPath(env: NodeJS.ProcessEnv = process.env): string {
 	return join(getAgentDir(env), "panel-review.json");
 }
 
@@ -156,16 +160,43 @@ function validateSynthesis(obj: Record<string, unknown>): { ok: true; spec: { mo
 	return { ok: true, spec: { model: s.model, thinking: s.thinking as string | undefined } };
 }
 
+/**
+ * Load panel-review config. Checks `kstack.json` first (under the
+ * "panel-review" key), then falls back to the legacy `panel-review.json`.
+ * Returns the first that exists; if neither exists, returns "missing" for
+ * the kstack path.
+ */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const path = getConfigPath(env);
-	if (!existsSync(path)) return { status: "missing", path };
+	const kstackFile = getKstackPath(env);
+	if (existsSync(kstackFile)) {
+		try {
+			const raw = JSON.parse(readFileSync(kstackFile, "utf8"));
+			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+				return { status: "invalid", path: kstackFile, error: "kstack.json must be a JSON object." };
+			}
+			const section = (raw as Record<string, unknown>)["panel-review"];
+			if (section === undefined) {
+				// kstack.json exists but has no panel-review section — treat as missing.
+				return { status: "missing", path: kstackFile };
+			}
+			const result = validateConfig(section);
+			if (!result.ok) return { status: "invalid", path: kstackFile, error: result.error };
+			return { status: "loaded", config: result.config, path: kstackFile };
+		} catch (err) {
+			return { status: "invalid", path: kstackFile, error: `Unreadable config: ${(err as Error).message}` };
+		}
+	}
+
+	// Fall back to legacy panel-review.json.
+	const legacyFile = getLegacyConfigPath(env);
+	if (!existsSync(legacyFile)) return { status: "missing", path: kstackFile };
 	try {
-		const raw = JSON.parse(readFileSync(path, "utf8"));
+		const raw = JSON.parse(readFileSync(legacyFile, "utf8"));
 		const result = validateConfig(raw);
-		if (!result.ok) return { status: "invalid", path, error: result.error };
-		return { status: "loaded", config: result.config, path };
+		if (!result.ok) return { status: "invalid", path: legacyFile, error: result.error };
+		return { status: "loaded", config: result.config, path: legacyFile };
 	} catch (err) {
-		return { status: "invalid", path, error: `Unreadable config: ${(err as Error).message}` };
+		return { status: "invalid", path: legacyFile, error: `Unreadable config: ${(err as Error).message}` };
 	}
 }
 
