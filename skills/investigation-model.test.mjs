@@ -2,48 +2,70 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { resolveInvestigationModel, validateInvestigationConfig } from "./investigation-model.mjs";
+
+const luna = { model: "openai/gpt-5.6-luna", thinking: "low" };
+const terra = { model: "openai/gpt-5.6-terra", thinking: "low" };
+const script = fileURLToPath(new URL("./investigation-model.mjs", import.meta.url));
 
 describe("investigation model allowlist", () => {
 	it("uses a built-in fast default when no section is configured", () => {
 		const result = resolveInvestigationModel(undefined, { PI_CODING_AGENT_DIR: "/definitely/missing-kstack-config" });
 		assert.ok(result.ok);
-		assert.equal(result.model, "openai/gpt-5.6-luna");
-		assert.equal(result.thinking, "low");
+		if (result.ok) {
+			assert.equal(result.model, luna.model);
+			assert.equal(result.thinking, luna.thinking);
+			assert.equal(result.spec, "openai/gpt-5.6-luna:low");
+		}
 	});
 
-	it("accepts only an allowlisted configured model", () => {
-		const result = validateInvestigationConfig({
-			allowedModels: [{ model: "fast/model", thinking: "low" }],
-			defaultModel: "fast/model",
-		});
+	it("accepts only a configured fast investigation model", () => {
+		const result = validateInvestigationConfig({ allowedModels: [luna], defaultModel: luna.model });
 		assert.ok(result.ok);
-		if (result.ok) assert.equal(result.config.defaultModel, "fast/model");
+		if (result.ok) assert.equal(result.config.defaultModel, luna.model);
 
 		const dir = mkdtempSync(join(tmpdir(), "kstack-investigation-"));
 		try {
 			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ investigation: result.ok ? result.config : {} }));
-			assert.ok(resolveInvestigationModel("fast/model", { PI_CODING_AGENT_DIR: dir }).ok);
-			assert.ok(!resolveInvestigationModel("other/model", { PI_CODING_AGENT_DIR: dir }).ok);
+			assert.ok(resolveInvestigationModel(luna.model, { PI_CODING_AGENT_DIR: dir }).ok);
+			assert.ok(!resolveInvestigationModel(terra.model, { PI_CODING_AGENT_DIR: dir }).ok);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
-	it("rejects a default that is outside the allowlist", () => {
-		const result = validateInvestigationConfig({
-			allowedModels: [{ model: "fast/model" }],
-			defaultModel: "slow/model",
-		});
-		assert.ok(!result.ok);
+	it("rejects a default or allowlist entry outside the fast model set", () => {
+		assert.ok(!validateInvestigationConfig({ allowedModels: [luna], defaultModel: terra.model }).ok);
+		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "openai/gpt-5.6-sol" }] }).ok);
+		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "fast/model" }] }).ok);
 	});
 
-	it("rejects duplicate, malformed, and heavyweight allowlist entries", () => {
-		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "fast/model" }, { model: "fast/model" }] }).ok);
+	it("rejects duplicate and malformed allowlist entries", () => {
+		assert.ok(!validateInvestigationConfig({ allowedModels: [luna, luna] }).ok);
 		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "not-a-model" }] }).ok);
-		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "openai/gpt-5.6-sol" }] }).ok);
-		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "anthropic/claude-fable-5" }] }).ok);
-		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "anthropic/claude-opus-5" }] }).ok);
+	});
+
+	it("prints the resolved model spec and rejects bad CLI arguments", () => {
+		const dir = mkdtempSync(join(tmpdir(), "kstack-investigation-cli-"));
+		try {
+			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ investigation: { allowedModels: [luna], defaultModel: luna.model } }));
+			const env = { ...process.env, PI_CODING_AGENT_DIR: dir };
+			const defaultRun = spawnSync(process.execPath, [script], { encoding: "utf8", env });
+			assert.equal(defaultRun.status, 0);
+			assert.equal(defaultRun.stdout, "openai/gpt-5.6-luna:low\n");
+
+			const rejected = spawnSync(process.execPath, [script, "--model", terra.model], { encoding: "utf8", env });
+			assert.equal(rejected.status, 2);
+			assert.match(rejected.stderr, /not in investigation\.allowedModels/);
+
+			const missing = spawnSync(process.execPath, [script, "--model"], { encoding: "utf8", env });
+			assert.equal(missing.status, 2);
+			assert.match(missing.stderr, /--model requires/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

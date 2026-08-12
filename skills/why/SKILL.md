@@ -51,7 +51,7 @@ Use the resolved model in every child command. A typical source-control run is:
 
 ```bash
 MODEL="$(node ../investigation-model.mjs)"
-pi -p --no-session --no-skills --no-context-files --model "$MODEL" "
+pi -p --no-session --no-extensions --no-skills --no-context-files --model "$MODEL" "
 Investigate why <target> exists. Read only. Use this code anchor: <paths, symbols,
 commits>. Search source-control and linked PR or issue evidence for <question>.
 Return direct quotes or precise citations, null searches, contradictions, and clearly

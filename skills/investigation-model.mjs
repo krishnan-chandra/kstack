@@ -2,12 +2,12 @@
 /** Resolve an allowlisted small/fast investigation model from kstack.json. */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
 const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
-const HEAVY_MODEL_RE = /(?:^|[-_/])(sol|fable|opus)(?:$|[-_/.])/i;
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-const DEFAULT_MODELS = [
+const FAST_MODELS = [
 	{ model: "openai/gpt-5.6-luna", thinking: "low" },
 	{ model: "openai/gpt-5.6-terra", thinking: "low" },
 	{ model: "openrouter/z-ai/glm-5.2" },
@@ -15,6 +15,7 @@ const DEFAULT_MODELS = [
 	{ model: "openrouter/google/gemini-3.5-flash-lite", thinking: "low" },
 	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
 ];
+const FAST_MODEL_IDS = new Set(FAST_MODELS.map(({ model }) => model));
 
 function agentDir(env = process.env) {
 	const configured = env.PI_CODING_AGENT_DIR;
@@ -23,7 +24,7 @@ function agentDir(env = process.env) {
 }
 
 export function validateInvestigationConfig(raw) {
-	if (raw === undefined) return { ok: true, config: { allowedModels: DEFAULT_MODELS, defaultModel: DEFAULT_MODELS[0].model }, source: "built-in defaults" };
+	if (raw === undefined) return { ok: true, config: { allowedModels: FAST_MODELS, defaultModel: FAST_MODELS[0].model }, source: "built-in defaults" };
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: '"investigation" must be an object.' };
 	}
@@ -37,8 +38,8 @@ export function validateInvestigationConfig(raw) {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry) || typeof entry.model !== "string" || !MODEL_ID_RE.test(entry.model)) {
 			return { ok: false, error: 'Each "investigation.allowedModels" entry must be {"model":"provider/model", "thinking"?}.' };
 		}
-		if (HEAVY_MODEL_RE.test(entry.model)) {
-			return { ok: false, error: `"investigation.allowedModels" cannot contain heavyweight model ${entry.model}.` };
+		if (!FAST_MODEL_IDS.has(entry.model)) {
+			return { ok: false, error: `"investigation.allowedModels" can contain only kstack's fast investigation models; ${entry.model} is unsupported.` };
 		}
 		if (entry.thinking !== undefined && (typeof entry.thinking !== "string" || !THINKING_LEVELS.has(entry.thinking))) {
 			return { ok: false, error: '"investigation.allowedModels[].thinking" must be a valid Pi thinking level.' };
@@ -77,7 +78,7 @@ export function resolveInvestigationModel(requested, env = process.env) {
 	return { ok: true, model, thinking: allowed.thinking, spec: allowed.thinking ? `${model}:${allowed.thinking}` : model, source: loaded.source };
 }
 
-if (import.meta.main) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const args = process.argv.slice(2);
 	const index = args.indexOf("--model");
 	const requested = index === -1 ? undefined : args[index + 1];
