@@ -31,6 +31,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |
+| [`reflect`](skills/reflect/) | Reviews a selected Pi session through independent judgment, tooling, and contrarian lenses, then proposes user-approved, durable workflow improvements. |
 
 ## Configuration
 
@@ -123,6 +124,7 @@ Skills can then be invoked explicitly, for example:
 /skill:unslop
 /skill:technical-writing
 /skill:blast-radius
+/skill:reflect
 ```
 
 The two-model implementation workflow also has a stacked-PR delivery mode:
