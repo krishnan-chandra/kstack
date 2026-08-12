@@ -27,7 +27,7 @@ import { runPanel } from "./orchestrator.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { runReviewer } from "./reviewer-runner.ts";
 import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
-import type { PanelArgs, ReviewerResult } from "./types.ts";
+import type { PanelArgs, PanelReviewOutcome, ReviewerResult } from "./types.ts";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 
@@ -99,11 +99,11 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 
-	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<void> => {
+	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {
 				notify("panel-review requires interactive (TUI/RPC) mode.", "error");
-				return;
+				return { status: "failed", error: "panel-review requires interactive (TUI/RPC) mode." };
 			}
 			await ctx.waitForIdle();
 
@@ -113,14 +113,14 @@ export default function (pi: ExtensionAPI) {
 				repoRoot = requireWorkTree(defaultGitExec, ctx.cwd);
 			} catch (err) {
 				notify((err as Error).message, "error");
-				return;
+				return { status: "failed", error: (err as Error).message };
 			}
 			let base;
 			try {
 				base = resolveBase(defaultGitExec, repoRoot, options.base);
 			} catch (err) {
 				notify((err as Error).message, "error");
-				return;
+				return { status: "failed", error: (err as Error).message };
 			}
 
 			// Intent: from --intent, or an editor prefilled with commit subjects.
@@ -133,14 +133,14 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (!intent) {
 				notify("panel-review requires a non-empty intent.", "warning");
-				return;
+				return { status: "failed", error: "panel-review requires a non-empty intent." };
 			}
 
 			// Reviewer panel.
 			const configLoad = loadConfig();
 			if (configLoad.status === "invalid") {
 				notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
-				return;
+				return { status: "failed", error: `Invalid ${configLoad.path}: ${configLoad.error}` };
 			}
 			const modelDeps = {
 				find: (provider: string, modelId: string) => {
@@ -155,7 +155,7 @@ export default function (pi: ExtensionAPI) {
 			const resolution = resolveReviewers(configLoad.status === "loaded" ? configLoad.config : null, modelDeps);
 			if (!resolution.ok) {
 				notify(resolution.error, "error");
-				return;
+				return { status: "failed", error: resolution.error };
 			}
 			for (const warning of resolution.warnings) notify(warning, "warning");
 
@@ -165,7 +165,7 @@ export default function (pi: ExtensionAPI) {
 			if (!synthResolution.ok) {
 				if (configLoad.status === "loaded") {
 					notify(synthResolution.error, "error");
-					return;
+					return { status: "failed", error: synthResolution.error };
 				}
 				notify(`${synthResolution.error} Using the first reviewer model instead.`, "warning");
 			}
@@ -190,7 +190,7 @@ export default function (pi: ExtensionAPI) {
 							"Commit, stage, or modify files first — or pass --base for a wider range.",
 						"info",
 					);
-					return;
+					return { status: "no-changes" };
 				}
 
 				const reviewerList = resolution.reviewers.map((r) => `  ${r.label}: ${modelCliId(r)}`).join("\n");
@@ -210,7 +210,7 @@ export default function (pi: ExtensionAPI) {
 								"--no-context-files to keep the reviewed content out of their instructions."
 							: ""),
 				);
-				if (!confirmed) return;
+				if (!confirmed) return { status: "declined" };
 
 				promptDir = mkdtempSync(join(tmpdir(), "pi-panel-review-prompt-"));
 				const reviewerPromptFile = join(promptDir, "reviewer-prompt.md");
@@ -264,14 +264,14 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.setStatus("panel-review", undefined);
 				if (panel.aborted > 0 && panel.completed === 0 && panel.failed === 0) {
 					notify("Panel review aborted.", "info");
-					return;
+					return { status: "aborted" };
 				}
 				if (panel.completed === 0) {
 					const diag = panel.results
 						.map((r) => `  ${r.label} (${r.model}): ${r.status}${r.status === "failed" ? ` — ${r.error}` : ""}`)
 						.join("\n");
 					notify(`All reviewers failed; nothing to synthesize.\n${diag}`, "error");
-					return;
+					return { status: "failed", error: `All reviewers failed.\n${diag}` };
 				}
 
 				// Synthesize with the configured synthesis model in an isolated child process.
@@ -328,6 +328,13 @@ export default function (pi: ExtensionAPI) {
 				};
 				await ctx.waitForIdle();
 				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });
+				return {
+					status: "completed",
+					verdict,
+					synthesized,
+					baseSha: scope.baseSha,
+					headSha: scope.headSha,
+				};
 			} finally {
 				if (ticker) clearInterval(ticker);
 				if (runAbort && activeAbort === runAbort) activeAbort = undefined;

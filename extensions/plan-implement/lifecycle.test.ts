@@ -22,6 +22,16 @@ describe("WorkflowLifecycle", () => {
 		const implementer = lifecycle.beginChild(token, "implementing");
 		assert.ok(implementer);
 		assert.equal(implementer?.signal.aborted, false);
+		if (implementer) lifecycle.endChild(token, implementer);
+
+		const fixer = lifecycle.beginChild(token, "fixing");
+		assert.ok(fixer);
+		assert.equal(lifecycle.currentPhase(), "fixing");
+		if (fixer) lifecycle.endChild(token, fixer);
+
+		const publisher = lifecycle.beginChild(token, "publishing");
+		assert.ok(publisher);
+		assert.equal(lifecycle.currentPhase(), "publishing");
 	});
 
 	it("invalidates stale callbacks and aborts the active child on shutdown", () => {

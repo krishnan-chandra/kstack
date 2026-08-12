@@ -54,6 +54,25 @@ export interface PanelArgs {
 	intent?: string;
 }
 
+/**
+ * Structured result of a panel-review run, returned through the in-process
+ * API so callers (plan-implement) can chain follow-up phases. The slash
+ * command ignores it.
+ */
+export type PanelReviewOutcome =
+	| {
+			status: "completed";
+			/** Lead verdict, or raw reviewer reports when synthesis failed. */
+			verdict: string;
+			synthesized: boolean;
+			baseSha: string;
+			headSha: string;
+	  }
+	| { status: "no-changes" }
+	| { status: "declined" }
+	| { status: "aborted" }
+	| { status: "failed"; error: string };
+
 export type BaseStrategy = "explicit" | "upstream" | "remote-default" | "main" | "master" | "head";
 
 export interface BaseResolution {

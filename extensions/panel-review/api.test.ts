@@ -14,19 +14,27 @@ function fakeBus(listener?: (data: unknown) => void) {
 }
 
 describe("panel-review in-process API", () => {
-	it("passes structured options and awaits the panel handler", async () => {
+	it("passes structured options and awaits the panel handler's outcome", async () => {
 		const calls: unknown[] = [];
 		const ctx = {} as ExtensionCommandContext;
+		const outcome = {
+			status: "completed" as const,
+			verdict: "Act On: one finding",
+			synthesized: true,
+			baseSha: "a".repeat(40),
+			headSha: "b".repeat(40),
+		};
 		const pi = {
 			events: fakeBus((data) => {
 				claimPanelReviewRequest(data, async (options, receivedCtx) => {
 					assert.equal(receivedCtx, ctx);
 					calls.push(options);
+					return outcome;
 				});
 			}),
 		} as unknown as ExtensionAPI;
 		const result = await requestPanelReview(pi, { intent: 'quoted "text" \\ path', base: "origin/main" }, ctx);
-		assert.deepEqual(result, { handled: true });
+		assert.deepEqual(result, { handled: true, outcome });
 		assert.deepEqual(calls, [{ intent: 'quoted "text" \\ path', base: "origin/main" }]);
 	});
 
@@ -38,7 +46,7 @@ describe("panel-review in-process API", () => {
 
 	it("allows only one listener to claim a request", () => {
 		const request = { schemaVersion: 2, options: {}, ctx: {} as ExtensionCommandContext, claimed: false };
-		assert.equal(claimPanelReviewRequest(request, async () => {}), true);
+		assert.equal(claimPanelReviewRequest(request, async () => ({ status: "declined" as const })), true);
 		assert.equal(claimPanelReviewRequest(request, async () => { throw new Error("should not run"); }), false);
 	});
 });

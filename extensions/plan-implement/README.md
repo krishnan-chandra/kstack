@@ -2,7 +2,10 @@
 
 Run a high-reason planner and a distinct small/fast implementer in isolated Pi
 processes, with explicit plan approval between them, then invoke kstack's
-existing panel review through an in-process extension API.
+existing panel review through an in-process extension API, address the
+verdict's findings with a review-fixer child, and finish with a publisher
+child that creates or updates a **draft** PR (`write-pr`) and recommends
+reviewers (`find-reviewers`).
 
 ```text
 /plan-implement Add optimistic locking to the session archive writer
@@ -23,8 +26,9 @@ another option. Put `--` before a task that starts with dashes.
 
 ## Behavior
 
-1. Requires TUI or RPC mode, a Git working tree, and the `panel-review`
-   extension.
+1. Requires TUI or RPC mode, a Git working tree, the `panel-review`
+   extension, and the `write-pr` and `find-reviewers` skills in the session's
+   discovered skill set (the publish phase consults both).
 2. Names an unnamed parent session from the task before any child model call.
    An explicit or previously assigned session name is preserved.
 3. Resolves authenticated planner and implementer models and confirms the
@@ -34,7 +38,19 @@ another option. Put `--` before a task that starts with dashes.
 6. Runs the implementer with Pi's normal built-in tools.
 7. Displays the implementer's final report and, on success, asks the loaded
    panel-review extension to run through Pi's in-process event bus. The panel
-   keeps its own confirmation and verdict rendering.
+   keeps its own confirmation and verdict rendering and returns a structured
+   outcome to the loop.
+8. On a completed verdict, asks whether to address the findings, then runs
+   the review fixer (implementer model, full tools) with the task and the
+   verdict passed through mode-`0600` temp files. The fixer addresses Act On
+   findings, verifies each against the repository, and re-runs focused tests.
+9. Asks whether to publish, then runs the publisher (implementer model): it
+   follows `write-pr` to push the branch and create a draft PR (or update an
+   existing PR's title/body), then follows `find-reviewers` to recommend 2–5
+   reviewers with evidence and a review order. Its final report — PR URL,
+   title, and the full reviewer recommendation — is displayed as the run's
+   terminal output. The publisher never marks PRs ready, merges, or
+   force-pushes.
 
 Both `kstack-router` and direct `/plan-implement` calls supply a selected
 change kind. The confirmation displays it, and the extension appends the
@@ -43,7 +59,11 @@ reproduction, refactors pin behavior, performance work compares matching
 measurements, features prove observable behavior, and prototypes stay isolated
 and produce a decision.
 
-Both children use `--no-session --no-extensions --no-prompt-templates`.
+Both children use `--no-session --no-extensions --no-prompt-templates`. The
+review-fixer and publisher phases reuse the implementer model and tools; the
+publisher's skills (`write-pr`, `find-reviewers`, and in stack mode the
+re-added skill set) reach the child through normal skill discovery or explicit
+`--skill` flags.
 
 ### Single-PR mode (default)
 
@@ -54,7 +74,8 @@ other matching installed/project skill without running recursive extensions.
 ### Stacked-PR mode (`--stack`)
 
 Stacked-PR mode builds a **local** Jujutsu stack of changes and bookmarks, one
-bookmark per PR, and reviews it once. It does not publish anything.
+bookmark per PR, and reviews it once. The implementer never publishes; the
+final publish phase owns publication.
 
 Stack mode adds a preflight before any model call:
 
@@ -72,11 +93,14 @@ task-specific skills. The planner produces a `Delivery: stacked-prs` plan with
 ordered PR slices; the implementer consults `jj-stacked-prs`, creates the local
 stack, and never runs `jst submit`, `jj git push`, or `gh pr create`. After a
 successful implementation, panel review runs once against the immutable
-`trunk()` base. Publishing the stack to GitHub is a separate, later,
-confirmed `jst submit --dry-run` workflow owned by the `jj-stacked-prs` skill.
+`trunk()` base. The review fixer amends findings into the correct slices of
+the local stack (per `jj-stacked-prs`), and the publisher — after its own
+confirmation — submits the stack as draft PRs via the `jj-stacked-prs`
+publishing workflow (`jst submit`), applies `write-pr` title/body discipline
+to each slice, and recommends reviewers across the full stack range.
 
-The Planner and Implementer cards identify the model used. Expand a card with
-Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
+The Planner, Implementer, Review fixer, and Publisher cards identify the
+model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
 the plan-approval boundary the shortcut reports that no child is running and
 does not pre-abort the future implementer.
 
@@ -142,8 +166,9 @@ cost separation is part of its contract.
 | Panel intent | 1,000 characters |
 | Abort grace | 5 s before SIGKILL |
 
-Task and plan content are passed through mode-`0600` files in a private temp
-directory, not in child argv. The directory is removed after the run.
+Task, plan, and panel-verdict content are passed through mode-`0600` files
+in a private temp directory, not in child argv. The directory is removed after
+the run.
 
 This is process isolation, not a sandbox. The implementer runs with the user's
 Pi/OS permissions and can modify the repository after approval. Skills,
@@ -153,12 +178,16 @@ and the explicit user task. The planner's Pi tool set is read-only, but OS file
 permissions are unchanged.
 
 Panel review uses its existing scope resolution, so its verdict may include
-changes that were already present before `/plan-implement` began.
+changes that were already present before `/plan-implement` began. The
+review-fixer and publisher children run with the user's Pi/OS permissions; the
+publisher's confirmation is the only gate before it pushes a branch and opens
+a draft PR on the user's GitHub account.
 
 ## Failure policy
 
-- Invalid config, unavailable models, missing Git/panel-review, and bad task
-  input stop before model calls.
+- Invalid config, unavailable models, missing Git/panel-review, missing
+  `write-pr`/`find-reviewers` skills, and bad task input stop before model
+  calls.
 - Stack-mode preflight failures (no jj, not a workspace, no colocated git, no
   single `trunk()` commit, missing `jj-stacked-prs` skill, Arena not excludable)
   stop before model calls.
@@ -168,7 +197,14 @@ changes that were already present before `/plan-implement` began.
 - Successful implementation invokes panel-review directly through its claimed
   event-bus request. Missing listeners and request failures are reported.
   Panel confirmation, partial reviewer failures, and synthesis behavior remain
-  owned by panel-review.
+  owned by panel-review. A verdict is required to continue: `no-changes`,
+  `declined`, `aborted`, and `failed` outcomes skip the fix and publish
+  phases with a notice.
+- Review-fixer failure is displayed; the publish phase is still offered
+  afterwards (the PR ships the implementation plus whatever fixes landed).
+- Publisher failure (including `gh` auth/network errors) is displayed; the PR
+  may exist partially (e.g. pushed branch without a PR). Re-run `/plan-implement`
+  or finish publishing manually with the `write-pr` skill.
 - Abort sends SIGTERM to the child process group and SIGKILL after five seconds.
   Session shutdown invalidates stale callbacks and uses the same cleanup path.
 

@@ -15,8 +15,11 @@ Other trusted extensions can invoke the same workflow without serializing
 values into slash-command text. Import `requestPanelReview` from `api.ts` and
 pass structured `{ intent, base? }` options plus the caller's current
 `ExtensionCommandContext`; panel-review claims the request synchronously on
-Pi's event bus and exposes a completion promise. The normal confirmation,
-cancellation, and verdict path still runs.
+Pi's event bus and exposes a completion promise that resolves a structured
+`PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
+base/head SHAs), `no-changes`, `declined`, `aborted`, or `failed`. The normal
+confirmation, cancellation, and verdict path still runs; the slash command
+ignores the outcome.
 
 ## How it works
 

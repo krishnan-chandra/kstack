@@ -4,6 +4,8 @@ import type { SkillRef } from "./types.ts";
 
 export const ARENA_SKILL_NAME = "arena";
 export const STACKED_PRS_SKILL_NAME = "jj-stacked-prs";
+export const WRITE_PR_SKILL_NAME = "write-pr";
+export const FIND_REVIEWERS_SKILL_NAME = "find-reviewers";
 
 export interface SkillPolicyResult {
 	ok: true;
@@ -54,4 +56,15 @@ export function buildStackSkillPolicy(skills: SkillRef[]): SkillPolicyResult | S
 /** True when the discovered skills include a skill named `jj-stacked-prs`. */
 export function hasStackedPrsSkill(skills: SkillRef[]): boolean {
 	return skills.some((s) => s.name === STACKED_PRS_SKILL_NAME);
+}
+
+/**
+ * The publish phase needs both `write-pr` (draft PR title/body) and
+ * `find-reviewers` (reviewer recommendations). Both must be discovered skills
+ * so the publisher child can consult them; in stack mode they are re-added
+ * via --skill, in single mode the child discovers them itself.
+ */
+export function missingPublishSkills(skills: SkillRef[]): string[] {
+	const names = new Set(skills.map((s) => s.name));
+	return [WRITE_PR_SKILL_NAME, FIND_REVIEWERS_SKILL_NAME].filter((name) => !names.has(name));
 }

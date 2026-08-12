@@ -15,9 +15,9 @@ import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { preflightStack, type ExecFn } from "./delivery-mode.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 import { isChildModelAvailable } from "./model-availability.ts";
-import { buildStackSkillPolicy } from "./skill-policy.ts";
+import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import type { PanelArgs } from "../panel-review/types.ts";
-import type { AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
+import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 
@@ -27,10 +27,17 @@ const PLAYBOOKS_DIR = join(EXTENSION_DIR, "playbooks");
 
 interface PhaseDetails {
 	schemaVersion: 1;
-	phase: "planner" | "implementer";
+	phase: AgentRole;
 	status: AgentRunResult["status"];
 	model: string;
 }
+
+const PHASE_LABELS: Record<AgentRole, string> = {
+	planner: "Planner",
+	implementer: "Implementer",
+	fixer: "Review fixer",
+	publisher: "Publisher",
+};
 
 function errorText(result: AgentRunResult): string {
 	if (result.status === "failed") return result.error;
@@ -84,7 +91,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 
 	pi.registerMessageRenderer("plan-implement", (message, { expanded, outputPad }, theme) => {
 		const details = message.details as PhaseDetails | undefined;
-		const phase = details?.phase === "planner" ? "Planner" : "Implementer";
+		const phase = details ? PHASE_LABELS[details.phase] : "Implementer";
 		const status = details?.status ?? "completed";
 		const icon = status === "completed" ? theme.fg("success", "■") : status === "aborted" ? theme.fg("warning", "■") : theme.fg("error", "■");
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
@@ -150,6 +157,19 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
+		// The publish phase consults write-pr and find-reviewers in the child;
+		// require both up front so the loop cannot silently drop its last step.
+		const discoveredSkills = discoveredSkillRefs(ctx);
+		const missingPublish = missingPublishSkills(discoveredSkills);
+		if (missingPublish.length > 0) {
+			notify(
+				`plan-implement requires the ${missingPublish.map((s) => `"${s}"`).join(" and ")} skill(s) for its publish phase; ` +
+					"they were not found in the session's discovered skill set.",
+				"error",
+			);
+			return;
+		}
+
 		const configLoad = loadConfig();
 		if (configLoad.status === "invalid") {
 			notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
@@ -178,8 +198,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			trunkSha = preflight.trunkSha;
-			const skillRefs = discoveredSkillRefs(ctx);
-			const policy = buildStackSkillPolicy(skillRefs);
+			const policy = buildStackSkillPolicy(discoveredSkills);
 			if (!policy.ok) {
 				notify(policy.error, "error");
 				return;
@@ -188,7 +207,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 
 		const confirmed = await ctx.ui.confirm(
-			mode === "stack" ? "Run plan → implement (stacked PRs) → panel review?" : "Run plan → implement → panel review?",
+			mode === "stack" ? "Run plan → implement (stacked PRs) → panel review → fix → publish?" : "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
 				? `Planner (read-only): ${plannerModel}\n` +
 					`Implementer (creates local jj changes + bookmarks): ${implementerModel}\n` +
@@ -198,14 +217,16 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					"Stack mode disables skill discovery in children and re-adds every discovered skill except arena, " +
 					"so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. " +
 					"The implementer builds a LOCAL stack only — it does not push or create PRs. " +
-					"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base."
+					"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. " +
+					"After the verdict you approve addressing its findings, then publishing the stack as draft PRs with reviewer recommendations."
 				: `Planner (read-only): ${plannerModel}\n` +
 					`Implementer (can modify files): ${implementerModel}\n` +
 					`Change kind: ${changeKindLabel(changeKind)}\n` +
 					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
 					"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
 					"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
-					"which may include pre-existing working-tree changes.",
+					"which may include pre-existing working-tree changes. After the verdict you approve addressing its findings, " +
+					"then publishing a draft PR (write-pr) with reviewer recommendations (find-reviewers).",
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
 
@@ -215,6 +236,123 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
+		const timeoutMs = roles.timeoutMinutes * 60_000;
+		const updateProgress = ({ role, turns, activity }: { role: AgentRole; turns: number; activity: string }) => {
+			if (lifecycle.isCurrent(token)) {
+				ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+			}
+		};
+
+		/**
+		 * Post-review phases: address the verdict's findings with the fixer,
+		 * then publish a draft PR and reviewer recommendations with the
+		 * publisher. Each phase is independently confirmed; the verdict travels
+		 * through a private mode-0600 temp file, never child argv.
+		 */
+		const runFixAndPublish = async (verdict: string): Promise<void> => {
+			let reviewDir: string | undefined;
+			try {
+				reviewDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-review-"));
+				const reviewTaskFile = join(reviewDir, "task.md");
+				const verdictFile = join(reviewDir, "panel-verdict.md");
+				writeFileSync(reviewTaskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
+				writeFileSync(verdictFile, `# Panel-review verdict\n\n${verdict}\n`, { encoding: "utf8", mode: 0o600 });
+
+				const fixConfirmed = await ctx.ui.confirm(
+					"Address panel-review findings?",
+					`Review fixer (can modify files): ${implementerModel}\n` +
+						`Timeout: ${roles.timeoutMinutes} min\n\n` +
+						"The fixer addresses the verdict's Act On findings (and small, clearly-correct Consider items), " +
+						"verifies each against the repository, and re-runs focused tests. It does not commit or publish.",
+				);
+				if (lifecycle.isCurrent(token) && fixConfirmed) {
+					const controller = lifecycle.beginChild(token, "fixing");
+					if (controller) {
+						try {
+							ctx.ui.setStatus("plan-implement", `plan-implement: fixer ${implementerModel}…`);
+							const fixer = await runAgent({
+								role: "fixer",
+								model: implementerModel,
+								promptFile: join(PROMPTS_DIR, "review-fixer.md"),
+								taskFile: reviewTaskFile,
+								verdictFile,
+								cwd: ctx.cwd,
+								signal: controller.signal,
+								deps: { timeoutMs },
+								onProgress: updateProgress,
+								mode,
+								skillPaths,
+								playbookPrompt,
+							});
+							if (lifecycle.isCurrent(token)) {
+								sendPhaseMessage(pi, fixer);
+								if (fixer.status !== "completed") {
+									notify(`Review fixer did not complete: ${errorText(fixer)}`, fixer.status === "aborted" ? "info" : "error");
+								}
+							}
+						} finally {
+							lifecycle.endChild(token, controller);
+							if (lifecycle.isCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
+						}
+					}
+				}
+
+				if (!lifecycle.isCurrent(token)) return;
+				const publishConfirmed = await ctx.ui.confirm(
+					mode === "stack" ? "Publish the stack as draft PRs and find reviewers?" : "Create a draft PR and find reviewers?",
+					`Publisher: ${implementerModel}\n` +
+						`Timeout: ${roles.timeoutMinutes} min\n\n` +
+						(mode === "stack"
+							? "The publisher consults jj-stacked-prs to submit the local stack as draft PRs (jst submit) and write-pr " +
+								"for each slice's title/body, then find-reviewers for 2–5 reviewer recommendations over the full stack. "
+							: "The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's " +
+								"title/body), then find-reviewers for 2–5 reviewer recommendations. ") +
+						"It never marks PRs ready, merges, or force-pushes; creating a PR grants the necessary push. " +
+						"Reviewer recommendations are printed to the session as the run's final output.",
+				);
+				if (!lifecycle.isCurrent(token) || !publishConfirmed) return;
+				const controller = lifecycle.beginChild(token, "publishing");
+				if (!controller) return;
+				try {
+					ctx.ui.setStatus("plan-implement", `plan-implement: publisher ${implementerModel}…`);
+					const publisher = await runAgent({
+						role: "publisher",
+						model: implementerModel,
+						promptFile: join(PROMPTS_DIR, "publisher.md"),
+						taskFile: reviewTaskFile,
+						verdictFile,
+						cwd: ctx.cwd,
+						signal: controller.signal,
+						deps: { timeoutMs },
+						onProgress: updateProgress,
+						mode,
+						skillPaths,
+					});
+					if (lifecycle.isCurrent(token)) {
+						sendPhaseMessage(pi, publisher);
+						if (publisher.status === "completed") {
+							notify("Publish phase complete; the draft PR and reviewer recommendations are in the Publisher card above.", "info");
+						} else {
+							notify(`Publisher did not complete: ${errorText(publisher)}`, publisher.status === "aborted" ? "info" : "error");
+						}
+					}
+				} finally {
+					lifecycle.endChild(token, controller);
+					if (lifecycle.isCurrent(token)) ctx.ui.setStatus("plan-implement", undefined);
+				}
+			} finally {
+				if (reviewDir) {
+					try {
+						rmSync(reviewDir, { recursive: true, force: true });
+					} catch {
+						const message = `Could not remove private review-phase temp directory ${reviewDir}; remove it manually.`;
+						if (lifecycle.isSessionCurrent(token)) notify(message, "warning");
+						else console.error(`plan-implement: ${message}`);
+					}
+				}
+			}
+		};
+
 		let tempDir: string | undefined;
 		let reviewOptions: PanelArgs | undefined;
 		try {
@@ -223,12 +361,6 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				const taskFile = join(tempDir, "task.md");
 				const planFile = join(tempDir, "approved-plan.md");
 				writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
-				const timeoutMs = roles.timeoutMinutes * 60_000;
-				const updateProgress = ({ role, turns, activity }: { role: "planner" | "implementer"; turns: number; activity: string }) => {
-					if (lifecycle.isCurrent(token)) {
-						ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
-					}
-				};
 
 				const outcome = await runWorkflow({
 					runPlanner: async () => {
@@ -329,8 +461,17 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : "Implementation complete; starting panel review.", "info");
 				try {
 					const request = await requestPanelReview(pi, reviewOptions, ctx);
-					if (!request.handled && lifecycle.isCurrent(token)) {
-						notify("panel-review did not accept the in-process review request.", "error");
+					if (!request.handled) {
+						if (lifecycle.isCurrent(token)) {
+							notify("panel-review did not accept the in-process review request.", "error");
+						}
+					} else if (request.outcome.status === "completed") {
+						if (lifecycle.isCurrent(token)) await runFixAndPublish(request.outcome.verdict);
+					} else if (lifecycle.isCurrent(token)) {
+						notify(
+							`Panel review ended without a verdict (${request.outcome.status}); skipping the fix and publish phases.`,
+							request.outcome.status === "failed" ? "warning" : "info",
+						);
 					}
 				} catch (error) {
 					if (lifecycle.isCurrent(token)) {
@@ -345,7 +486,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("plan-implement", {
-		description: "Select a change kind, plan, approve, implement, then run panel review",
+		description: "Select a change kind, plan, approve, implement, panel-review, fix findings, then publish a draft PR with reviewers",
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {

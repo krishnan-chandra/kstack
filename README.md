@@ -14,7 +14,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including unnamed inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
-| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, then invokes panel review. Supports a `--stack` delivery mode that builds a local jj stack with Arena disabled. |
+| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, runs panel review, addresses the verdict's findings, then publishes a draft PR (write-pr) with reviewer recommendations (find-reviewers). Supports a `--stack` delivery mode that builds a local jj stack with Arena disabled. |
 
 ## Skills
 

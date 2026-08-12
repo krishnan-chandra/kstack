@@ -92,6 +92,31 @@ describe("plan-implement child runner", () => {
 		assert.ok(!planner.includes("--skill"));
 	});
 
+	it("fixer and publisher reference the verdict file and keep full tools", () => {
+		const fixer = buildChildArgs({ role: "fixer", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v" });
+		assert.ok(!fixer.includes("--tools"));
+		assert.match(fixer.at(-1) ?? "", /panel-review verdict at \/v/);
+		assert.match(fixer.at(-1) ?? "", /address the actionable findings/);
+		assert.ok(!fixer.includes("/plan"));
+
+		const publisher = buildChildArgs({ role: "publisher", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v" });
+		assert.ok(!publisher.includes("--tools"));
+		assert.match(publisher.at(-1) ?? "", /panel-review verdict at \/v/);
+		assert.match(publisher.at(-1) ?? "", /draft pull request/);
+		assert.match(publisher.at(-1) ?? "", /write-pr and find-reviewers/);
+	});
+
+	it("fixer and publisher get stack-mode notes and re-added skills in stack mode", () => {
+		const skillPaths = ["/skills/write-pr", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
+		const fixer = buildChildArgs({ role: "fixer", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v", mode: "stack", skillPaths });
+		assert.ok(fixer.includes("--no-skills"));
+		for (const path of skillPaths) assert.ok(fixer.includes(path));
+		assert.match(fixer.at(-1) ?? "", /amend the local stack/);
+
+		const publisher = buildChildArgs({ role: "publisher", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v", mode: "stack", skillPaths });
+		assert.match(publisher.at(-1) ?? "", /jj-stacked-prs skill for publishing the local stack/);
+	});
+
 	it("parses JSON lines across chunks and ignores malformed lines", () => {
 		const seen: string[] = [];
 		const parser = new JsonLineParser((event) => seen.push(event.type ?? ""));

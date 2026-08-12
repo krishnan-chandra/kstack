@@ -1,6 +1,6 @@
 /** Session-aware, phase-aware state for one plan/implement workflow. */
 
-export type WorkflowPhase = "idle" | "planning" | "approval" | "implementing";
+export type WorkflowPhase = "idle" | "planning" | "approval" | "implementing" | "fixing" | "publishing";
 export interface WorkflowToken { readonly generation: number; }
 
 export class WorkflowLifecycle {
@@ -51,7 +51,7 @@ export class WorkflowLifecycle {
 		return this.running && this.isSessionCurrent(token);
 	}
 
-	beginChild(token: WorkflowToken, phase: "planning" | "implementing"): AbortController | undefined {
+	beginChild(token: WorkflowToken, phase: "planning" | "implementing" | "fixing" | "publishing"): AbortController | undefined {
 		if (!this.isCurrent(token) || this.childAbort) return undefined;
 		const controller = new AbortController();
 		this.childAbort = controller;

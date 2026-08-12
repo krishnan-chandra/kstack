@@ -38,10 +38,13 @@ export interface UsageSummary {
 	turns: number;
 }
 
+/** Child roles in the plan → implement → review-fix → publish loop. */
+export type AgentRole = "planner" | "implementer" | "fixer" | "publisher";
+
 export type AgentRunResult =
-	| { status: "completed"; role: "planner" | "implementer"; model: string; output: string; usage: UsageSummary }
-	| { status: "failed"; role: "planner" | "implementer"; model: string; error: string }
-	| { status: "aborted"; role: "planner" | "implementer"; model: string };
+	| { status: "completed"; role: AgentRole; model: string; output: string; usage: UsageSummary }
+	| { status: "failed"; role: AgentRole; model: string; error: string }
+	| { status: "aborted"; role: AgentRole; model: string };
 
 export const LIMITS = {
 	taskBytes: 32 * 1024,

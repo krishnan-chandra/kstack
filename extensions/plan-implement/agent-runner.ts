@@ -4,7 +4,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
-import { LIMITS, type AgentRunResult, type DeliveryMode, type UsageSummary } from "./types.ts";
+import { LIMITS, type AgentRole, type AgentRunResult, type DeliveryMode, type UsageSummary } from "./types.ts";
 
 export interface SpawnedProcess {
 	stdout: { on(event: "data", cb: (data: Buffer) => void): void };
@@ -29,11 +29,13 @@ export interface RunnerDeps {
 }
 
 export interface BuildChildArgsOptions {
-	role: "planner" | "implementer";
+	role: AgentRole;
 	model: string;
 	promptFile: string;
 	taskFile: string;
 	planFile?: string;
+	/** Panel-review verdict file, passed to the fixer and publisher roles. */
+	verdictFile?: string;
 	/** Delivery mode; defaults to "single" (current behavior). */
 	mode?: DeliveryMode;
 	/** Stack mode only: skill paths re-added after --no-skills (Arena excluded). */
@@ -60,9 +62,15 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 			? 'This is a stacked-PR delivery. Begin the plan with a line reading exactly "Delivery: stacked-prs", then a line "Stack base: trunk()", then ordered PR slices.'
 			: 'This is a single-PR delivery. Begin the plan with a line reading exactly "Delivery: single-pr".';
 		target = `Read the user task at ${options.taskFile}, inspect the repository, and produce the plan. ${delivery}`;
-	} else {
+	} else if (options.role === "implementer") {
 		const stackNote = stackMode ? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and follow its local-stack policy." : "";
 		target = `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.${stackNote}`;
+	} else if (options.role === "fixer") {
+		const stackNote = stackMode ? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and amend the local stack instead of creating new commits." : "";
+		target = `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then address the actionable findings and verify your fixes.${stackNote}`;
+	} else {
+		const stackNote = stackMode ? " This is a stacked-PR delivery; consult the jj-stacked-prs skill for publishing the local stack." : "";
+		target = `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then publish the change as a draft pull request and recommend reviewers. Consult the write-pr and find-reviewers skills.${stackNote}`;
 	}
 
 	return [
@@ -125,7 +133,7 @@ export interface RunAgentOptions extends BuildChildArgsOptions {
 	cwd: string;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
-	onProgress?: (progress: { role: "planner" | "implementer"; turns: number; activity: string }) => void;
+	onProgress?: (progress: { role: AgentRole; turns: number; activity: string }) => void;
 }
 
 export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
@@ -134,8 +142,7 @@ export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
 	const invocation = (deps.piInvocation ?? getPiInvocation)(buildChildArgs(options));
 	const outputCap =
 		deps.outputCapBytes ??
-		(options.role === "planner" ? LIMITS.plannerOutputBytes : LIMITS.implementerOutputBytes);
-	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
+		(options.role === "planner" ? LIMITS.plannerOutputBytes : LIMITS.implementerOutputBytes);	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
 	const stdoutLineCap = deps.stdoutLineCapBytes ?? LIMITS.stdoutLineBytes;
 	const timeoutMs = deps.timeoutMs ?? LIMITS.defaultTimeoutMinutes * 60_000;
 	const killGraceMs = deps.killGraceMs ?? LIMITS.killGraceMs;

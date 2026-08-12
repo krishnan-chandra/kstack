@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ARENA_SKILL_NAME, buildStackSkillPolicy, hasStackedPrsSkill, STACKED_PRS_SKILL_NAME } from "./skill-policy.ts";
+import { ARENA_SKILL_NAME, buildStackSkillPolicy, hasStackedPrsSkill, missingPublishSkills, STACKED_PRS_SKILL_NAME } from "./skill-policy.ts";
 
 function skill(name: string, baseDir = `/skills/${name}`) {
 	return { name, baseDir };
@@ -63,5 +63,12 @@ describe("buildStackSkillPolicy", () => {
 		assert.equal(hasStackedPrsSkill([skill("arena")]), false);
 		assert.equal(STACKED_PRS_SKILL_NAME, "jj-stacked-prs");
 		assert.equal(ARENA_SKILL_NAME, "arena");
+	});
+
+	it("missingPublishSkills requires both write-pr and find-reviewers", () => {
+		assert.deepEqual(missingPublishSkills([skill("write-pr"), skill("find-reviewers")]), []);
+		assert.deepEqual(missingPublishSkills([skill("write-pr")]), ["find-reviewers"]);
+		assert.deepEqual(missingPublishSkills([]), ["write-pr", "find-reviewers"]);
+		assert.deepEqual(missingPublishSkills([skill("write-pr-extra"), skill("arena")]), ["write-pr", "find-reviewers"]);
 	});
 });

@@ -1,7 +1,7 @@
 /** Typed in-process contract for invoking panel-review from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { PanelArgs } from "./types.ts";
+import type { PanelArgs, PanelReviewOutcome } from "./types.ts";
 
 export const PANEL_REVIEW_REQUEST_EVENT = "kstack:panel-review:request";
 
@@ -10,7 +10,7 @@ export interface PanelReviewRequest {
 	options: PanelArgs;
 	ctx: ExtensionCommandContext;
 	claimed: boolean;
-	completion?: Promise<void>;
+	completion?: Promise<PanelReviewOutcome>;
 }
 
 export function isPanelReviewRequest(value: unknown): value is PanelReviewRequest {
@@ -31,7 +31,7 @@ export function isPanelReviewRequest(value: unknown): value is PanelReviewReques
 
 export function claimPanelReviewRequest(
 	value: unknown,
-	run: (options: PanelArgs, ctx: ExtensionCommandContext) => Promise<void>,
+	run: (options: PanelArgs, ctx: ExtensionCommandContext) => Promise<PanelReviewOutcome>,
 ): boolean {
 	if (!isPanelReviewRequest(value) || value.claimed) return false;
 	value.claimed = true;
@@ -44,10 +44,10 @@ export async function requestPanelReview(
 	pi: ExtensionAPI,
 	options: PanelArgs,
 	ctx: ExtensionCommandContext,
-): Promise<{ handled: true } | { handled: false }> {
+): Promise<{ handled: true; outcome: PanelReviewOutcome } | { handled: false }> {
 	const request: PanelReviewRequest = { schemaVersion: 2, options, ctx, claimed: false };
 	pi.events.emit(PANEL_REVIEW_REQUEST_EVENT, request);
 	if (!request.claimed || !request.completion) return { handled: false };
-	await request.completion;
-	return { handled: true };
+	const outcome = await request.completion;
+	return { handled: true, outcome };
 }
