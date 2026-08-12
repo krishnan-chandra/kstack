@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildPanelReviewOptions, buildStackPanelReviewOptions, parseDeliveryMode, validateTask } from "./command.ts";
+import { buildPanelReviewOptions, buildStackPanelReviewOptions, parsePlanImplementArgs, validateTask } from "./command.ts";
 
 describe("plan-implement command helpers", () => {
 	it("validates empty and oversized tasks", () => {
@@ -22,52 +22,65 @@ describe("plan-implement command helpers", () => {
 	});
 });
 
-describe("parseDeliveryMode", () => {
-	it("defaults to single with the whole string as task when no flag is present", () => {
-		const r = parseDeliveryMode("add caching layer");
+describe("parsePlanImplementArgs", () => {
+	it("defaults to single and leaves change kind for the UI to select", () => {
+		const r = parsePlanImplementArgs("add caching layer");
 		assert.equal(r.ok, true);
 		if (r.ok) {
 			assert.equal(r.mode, "single");
+			assert.equal(r.changeKind, undefined);
 			assert.equal(r.task, "add caching layer");
 		}
 	});
 
-	it("parses --stack and --single and strips the flag from the task", () => {
-		const stack = parseDeliveryMode("--stack build a three-PR stack");
+	it("accepts delivery and change-kind flags in either order", () => {
+		const stack = parsePlanImplementArgs("--change-kind feature --stack build a three-PR stack");
 		assert.equal(stack.ok, true);
 		if (stack.ok) {
 			assert.equal(stack.mode, "stack");
+			assert.equal(stack.changeKind, "feature");
 			assert.equal(stack.task, "build a three-PR stack");
 		}
-		const single = parseDeliveryMode("--single just one PR");
+		const single = parsePlanImplementArgs("--single --change-kind bug-fix fix the crash");
 		assert.equal(single.ok, true);
 		if (single.ok) {
 			assert.equal(single.mode, "single");
-			assert.equal(single.task, "just one PR");
+			assert.equal(single.changeKind, "bug-fix");
+			assert.equal(single.task, "fix the crash");
 		}
 	});
 
-	it("treats an empty argument string as a single run with no task", () => {
-		const r = parseDeliveryMode("");
+	it("treats empty arguments as a single run needing change-kind and task input", () => {
+		const r = parsePlanImplementArgs("");
 		assert.equal(r.ok, true);
 		if (r.ok) {
 			assert.equal(r.mode, "single");
+			assert.equal(r.changeKind, undefined);
 			assert.equal(r.task, "");
 		}
 	});
 
-	it("rejects a stack flag with no task as a stack run needing the editor", () => {
-		const r = parseDeliveryMode("--stack");
+	it("accepts explicit options without a task for the editor flow", () => {
+		const r = parsePlanImplementArgs("--stack --change-kind refactor");
 		assert.equal(r.ok, true);
 		if (r.ok) {
 			assert.equal(r.mode, "stack");
+			assert.equal(r.changeKind, "refactor");
 			assert.equal(r.task, "");
 		}
 	});
 
-	it("rejects both flags and unknown leading flags", () => {
-		assert.equal(parseDeliveryMode("--stack --single thing").ok, false);
-		assert.equal(parseDeliveryMode("--bogus thing").ok, false);
+	it("uses -- to allow a task that starts with dashes", () => {
+		const r = parsePlanImplementArgs("--change-kind generic -- --task-with-dashes");
+		assert.equal(r.ok, true);
+		if (r.ok) assert.equal(r.task, "--task-with-dashes");
+	});
+
+	it("rejects conflicting, duplicate, invalid, and unknown flags", () => {
+		assert.equal(parsePlanImplementArgs("--stack --single thing").ok, false);
+		assert.equal(parsePlanImplementArgs("--change-kind feature --change-kind refactor thing").ok, false);
+		assert.equal(parsePlanImplementArgs("--change-kind rewrite thing").ok, false);
+		assert.equal(parsePlanImplementArgs("--bogus thing").ok, false);
 	});
 });
 

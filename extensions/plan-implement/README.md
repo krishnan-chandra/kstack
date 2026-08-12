@@ -6,14 +6,20 @@ existing panel review through an in-process extension API.
 
 ```text
 /plan-implement Add optimistic locking to the session archive writer
-/plan-implement --single Add optimistic locking to the session archive writer
-/plan-implement --stack Split the auth rollout into a three-PR jj stack
+/plan-implement --change-kind bug-fix Fix the archive race
+/plan-implement --single --change-kind feature Add archive search
+/plan-implement --stack --change-kind refactor Split the auth rollout into a three-PR jj stack
 /plan-implement
 ```
 
-The argument-less form asks for the delivery mode (single PR or stacked PRs)
-before opening the task editor. `--single` is the default and is backward
-compatible with the original single-PR workflow.
+Use `--change-kind` with `bug-fix`, `feature`, `refactor`, `performance`,
+`prototype`, or `generic`. If you omit the flag, the command asks you to select
+a change kind. Use `generic` as the explicit escape hatch when no specialized
+proof obligations apply.
+
+The argument-less form also asks for the delivery mode before opening the task
+editor. `--single` remains the default when the command includes a task or
+another option. Put `--` before a task that starts with dashes.
 
 ## Behavior
 
@@ -28,12 +34,12 @@ compatible with the original single-PR workflow.
    panel-review extension to run through Pi's in-process event bus. The panel
    keeps its own confirmation and verdict rendering.
 
-When `kstack-router` dispatches a change, it supplies a selected change kind.
-The confirmation displays it and a non-generic playbook is appended to both
-roles: bug fixes require a before/after reproduction, refactors pin behavior,
-performance work compares matching measurements, features prove observable
-behavior, and prototypes stay isolated and produce a decision. Direct
-`/plan-implement` invocations use the existing `generic` workflow.
+Both `kstack-router` and direct `/plan-implement` calls supply a selected
+change kind. The confirmation displays it, and the extension appends the
+matching non-generic playbook to both roles. Bug fixes require a before-and-after
+reproduction, refactors pin behavior, performance work compares matching
+measurements, features prove observable behavior, and prototypes stay isolated
+and produce a decision.
 
 Both children use `--no-session --no-extensions --no-prompt-templates`.
 
@@ -78,11 +84,12 @@ The extension exposes an in-process event-bus API (`kstack:plan-implement:reques
 to allow other extensions (notably `kstack-router`) to invoke the workflow without
 synthesizing slash-command strings.
 
-The request carries a structured `{ task, mode, ctx }` payload with a synchronous
-`claimed` flag and an awaited completion promise. The slash command and the event
-listener call the same internal runner; only the slash command performs flag/editor
-collection. Both paths retain task validation, Git/panel/model preflight,
-confirmations, lifecycle checks, cleanup, and panel review.
+The request carries a structured `{ task, mode, changeKind, ctx }` payload with a
+synchronous `claimed` flag and an awaited completion promise. The slash command
+and the event listener call the same internal runner. Only the slash command
+collects flags and editor input. Both paths retain task validation,
+Git/panel/model preflight, confirmations, lifecycle checks, cleanup, and panel
+review.
 
 See `api.ts` for the full contract and `api.test.ts` for usage examples.
 
