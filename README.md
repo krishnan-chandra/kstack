@@ -52,17 +52,35 @@ The extensions use TypeScript directly through Pi's loader. No build or dependen
 ## Install for the current user
 
 This repository follows Pi's conventional package layout: extensions live under
-`extensions/` and skills live under `skills/`. The recommended installation is
-to register the whole checkout as a user-level Pi package:
+`extensions/` and skills live under `skills/`. Pi packages cannot provide
+`settings.json` or `keybindings.json`, so the recommended installer both
+registers the checkout as a user-level Pi package and applies kstack's tracked
+Pi defaults:
 
 ```bash
 cd /path/to/kstack
-pi install "$PWD"
+./install.mjs
 ```
 
+The installer runs `pi install` and merges
+[`config/pi-defaults/settings.json`](config/pi-defaults/settings.json) and
+[`config/pi-defaults/keybindings.json`](config/pi-defaults/keybindings.json)
+into `$PI_CODING_AGENT_DIR` (default `~/.pi/agent`). It preserves unrelated
+settings and keybindings while making the tracked values authoritative:
+
+- Thinking blocks are hidden.
+- All queued steering and follow-up messages are delivered together.
+- Enter queues follow-up messages while Pi is working.
+- Alt+Enter sends steering messages while Pi is working.
+
+Rerunning the installer is safe and reapplies these defaults. It refuses to
+modify either config file if existing JSON is malformed.
+
 By default, `pi install` writes to the current user's global settings. It loads
-all extensions and all skills in this repository across Pi projects; do not pass
-`-l`, which would create a project-local installation instead.
+all extensions and all skills in this repository across Pi projects; the
+installer intentionally does not pass `-l`, which would create a project-local
+installation instead. To register only the package without applying kstack's Pi
+preferences, use `pi install "$PWD"` directly.
 
 Pi records a reference to the checkout rather than copying it. Pulling or editing
 the repository updates the installed resources; use `/reload` in a running Pi
@@ -90,6 +108,10 @@ To remove the package registration, run this from the same checkout:
 ```bash
 pi remove "$PWD"
 ```
+
+Removal does not revert the merged Pi preferences; delete those managed keys
+from `settings.json` and `keybindings.json` manually if they are no longer
+wanted.
 
 ### Manual copy installation
 
@@ -122,6 +144,7 @@ pi -e extensions/session-archive/index.ts
 Run the extension tests from the repository root:
 
 ```bash
+node --test install.test.mjs
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
