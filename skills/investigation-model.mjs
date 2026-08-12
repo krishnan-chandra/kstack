@@ -8,7 +8,10 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const HEAVY_MODEL_RE = /(?:^|[-_/])(sol|fable|opus)(?:$|[-_/.])/i;
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const DEFAULT_MODELS = [
-	{ model: "anthropic/claude-haiku-4", thinking: "low" },
+	{ model: "openai/gpt-5.6-luna", thinking: "low" },
+	{ model: "openai/gpt-5.6-terra", thinking: "low" },
+	{ model: "openrouter/z-ai/glm-5.2" },
+	{ model: "openrouter/moonshotai/kimi-k3", thinking: "low" },
 	{ model: "openrouter/google/gemini-3.5-flash-lite", thinking: "low" },
 	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
 ];

@@ -9,7 +9,7 @@ describe("investigation model allowlist", () => {
 	it("uses a built-in fast default when no section is configured", () => {
 		const result = resolveInvestigationModel(undefined, { PI_CODING_AGENT_DIR: "/definitely/missing-kstack-config" });
 		assert.ok(result.ok);
-		assert.equal(result.model, "anthropic/claude-haiku-4");
+		assert.equal(result.model, "openai/gpt-5.6-luna");
 		assert.equal(result.thinking, "low");
 	});
 
