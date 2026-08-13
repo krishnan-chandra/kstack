@@ -15,7 +15,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally on a chosen or inherited model and effort, then gives read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated branch with incremental local commits, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations. Supports local jj stacks and isolated managed Git worktrees. |
-| [`pr-babysit`](extensions/pr-babysit/) | Bounded post-PR babysitter using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through check → triage → fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
+| [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 
 Writable workstreams start on a dedicated `kstack/<task-slug>` branch and commit
 coherent increments as work proceeds. They stop on a dirty current working tree
@@ -196,21 +196,22 @@ bookmarks (one per PR) and deterministically exclude the `arena` skill; no PRs
 are created. Publishing the stack with the bundled `publish_stack.py` is a separate, confirmed
 step guided by the [`jj-stacked-prs`](skills/jj-stacked-prs/) skill.
 
-After a draft PR is published, hand it to the bounded PR babysitter to drive
+After a draft PR is published, hand it to the bounded PR autopilot to drive
 the review/fix/CI loop with only tiny models:
 
 ```text
-/pr-babysit --mode drive            # check → fix → push → recheck until merge-ready
-/pr-babysit --mode check            # one status pass, report, stop
-/pr-babysit --mode threads          # address review comments only, then push
-/pr-babysit --mode cleanup          # after merge: remove managed worktree and branch
-/pr-babysit --mode drive --pr 42    # babysit a specific PR instead of auto-detecting
+/pr-autopilot --mode drive            # comments → watch CI → fix → push until merge-ready
+/pr-autopilot --mode watch            # same loop with more cycles, watching pending checks
+/pr-autopilot --mode check            # one status pass, report, stop
+/pr-autopilot --mode threads          # address review comments only, then push
+/pr-autopilot --mode cleanup          # after merge: remove managed worktree and branch
+/pr-autopilot --mode drive --pr 42    # run on a specific PR instead of auto-detecting
 ```
 
-`pr-babysit` uses only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek
-V4 Flash) recorded in the `pr-babysit` section of `kstack.example.json`. It stops at
+`pr-autopilot` uses only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek
+V4 Flash) recorded in the `pr-autopilot` section of `kstack.example.json`. It stops at
 merge-ready — it never auto-merges or rebases shared history. See
-[`extensions/pr-babysit/README.md`](extensions/pr-babysit/README.md) for details.
+[`extensions/pr-autopilot/README.md`](extensions/pr-autopilot/README.md) for details.
 
 To remove the package registration, run this from the same checkout:
 
@@ -259,7 +260,7 @@ node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
 node --test extensions/kstack-router/*.test.ts
-node --test extensions/pr-babysit/*.test.ts
+node --test extensions/pr-autopilot/*.test.ts
 node --test extensions/shared/*.test.ts
 node --test skills/reflect/*.test.mjs
 node --test skills/architect/*.test.mjs

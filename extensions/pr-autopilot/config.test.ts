@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { DEFAULT_TINY_MODELS, loadConfig, modelCliId, resolveModels, validateConfig } from "./config.ts";
 
-describe("pr-babysit config", () => {
+describe("pr-autopilot config", () => {
 	it("defaults to the three tiny models", () => {
 		assert.equal(DEFAULT_TINY_MODELS.length, 3);
 		assert.equal(DEFAULT_TINY_MODELS[0].model, "openai/gpt-5.6-luna");
@@ -100,7 +100,7 @@ describe("pr-babysit config", () => {
 	});
 
 	it("falls back to defaults filtered to available", () => {
-		const dir = mkdtempSync(join(tmpdir(), "pr-babysit-config-"));
+		const dir = mkdtempSync(join(tmpdir(), "pr-autopilot-config-"));
 		try {
 			const result = resolveModels({ status: "missing", path: dir }, {
 				available: (provider, modelId) =>
@@ -123,13 +123,34 @@ describe("pr-babysit config", () => {
 		assert.equal(modelCliId({ label: "x", model: "a/b" }), "a/b");
 	});
 
-	it("loads only the pr-babysit section from unified kstack.json", () => {
-		const dir = mkdtempSync(join(tmpdir(), "pr-babysit-config-"));
+	it("loads only the pr-autopilot section from unified kstack.json", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pr-autopilot-config-"));
 		try {
 			writeFileSync(
 				join(dir, "kstack.json"),
 				JSON.stringify({
 					"panel-review": { reviewers: [] },
+					"pr-autopilot": {
+						models: [
+							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
+							{ label: "lite", model: "openrouter/google/gemini-3.7-flash", thinking: "low" },
+						],
+					},
+				}),
+			);
+			const result = loadConfig({ PI_CODING_AGENT_DIR: dir });
+			assert.equal(result.status, "loaded");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("still loads a legacy pr-babysit section and warns to rename it", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pr-autopilot-legacy-"));
+		try {
+			writeFileSync(
+				join(dir, "kstack.json"),
+				JSON.stringify({
 					"pr-babysit": {
 						models: [
 							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
@@ -140,6 +161,10 @@ describe("pr-babysit config", () => {
 			);
 			const result = loadConfig({ PI_CODING_AGENT_DIR: dir });
 			assert.equal(result.status, "loaded");
+			if (result.status === "loaded") {
+				assert.match(result.config.warnings.join("\n"), /pr-babysit/);
+				assert.equal(result.config.models.length, 2);
+			}
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

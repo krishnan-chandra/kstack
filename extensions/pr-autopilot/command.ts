@@ -1,16 +1,16 @@
-/** Argument parser for the /pr-babysit command. */
+/** Argument parser for the /pr-autopilot command. */
 
-import type { BabysitMode } from "./types.ts";
+import type { AutopilotMode } from "./types.ts";
 
 export type ArgsParse = { ok: true; args: ParsedArgs } | { ok: false; error: string };
 
 export interface ParsedArgs {
-	mode: BabysitMode;
+	mode: AutopilotMode;
 	/** Explicit PR number, or undefined to auto-detect the lowest unmerged. */
 	pr?: number;
 }
 
-const MODES: ReadonlySet<string> = new Set(["check", "threads", "drive", "cleanup"]);
+const MODES: ReadonlySet<string> = new Set(["check", "threads", "drive", "watch", "cleanup"]);
 
 /** Split a command argument string into tokens, honoring single/double quotes. */
 function tokenize(input: string): string[] | { error: string } {
@@ -70,11 +70,11 @@ export function parseArgs(input: string): ArgsParse {
 			if (modeSeen) return { ok: false, error: "Duplicate --mode flag." };
 			modeSeen = true;
 			const value = inlineValue ?? tokens[++i];
-			if (!value) return { ok: false, error: "--mode requires a value (check, threads, drive, cleanup)." };
+			if (!value) return { ok: false, error: "--mode requires a value (check, threads, drive, watch, cleanup)." };
 			if (!MODES.has(value)) {
-				return { ok: false, error: `--mode must be one of: check, threads, drive, cleanup (got "${value}").` };
+				return { ok: false, error: `--mode must be one of: check, threads, drive, watch, cleanup (got "${value}").` };
 			}
-			parsed.mode = value as BabysitMode;
+			parsed.mode = value as AutopilotMode;
 			continue;
 		}
 

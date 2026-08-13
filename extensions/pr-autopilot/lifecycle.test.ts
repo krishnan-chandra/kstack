@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { BabysitLifecycle } from "./lifecycle.ts";
+import { AutopilotLifecycle } from "./lifecycle.ts";
 
-describe("pr-babysit lifecycle", () => {
+describe("pr-autopilot lifecycle", () => {
 	it("starts as not running", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		assert.equal(lc.isRunning(), false);
 		assert.equal(lc.currentSessionToken(), undefined);
 	});
 
 	it("starts a session and issues tokens", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		assert.equal(lc.isRunning(), false);
 		const token = lc.currentSessionToken();
@@ -19,7 +19,7 @@ describe("pr-babysit lifecycle", () => {
 	});
 
 	it("beginRun returns a token and sets running", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		const sessionToken = lc.currentSessionToken()!;
 		const runToken = lc.beginRun(sessionToken);
@@ -29,7 +29,7 @@ describe("pr-babysit lifecycle", () => {
 	});
 
 	it("beginRun fails when a run is already active", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		const sessionToken = lc.currentSessionToken()!;
 		lc.beginRun(sessionToken);
@@ -39,14 +39,14 @@ describe("pr-babysit lifecycle", () => {
 	});
 
 	it("beginRun fails with a stale session token", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		const staleToken = { generation: 999 };
 		assert.equal(lc.beginRun(staleToken), undefined);
 	});
 
 	it("endRun clears the running flag", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		const sessionToken = lc.currentSessionToken()!;
 		const runToken = lc.beginRun(sessionToken)!;
@@ -55,7 +55,7 @@ describe("pr-babysit lifecycle", () => {
 	});
 
 	it("shutdownSession invalidates tokens", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		const sessionToken = lc.currentSessionToken()!;
 		lc.shutdownSession();
@@ -63,8 +63,19 @@ describe("pr-babysit lifecycle", () => {
 		assert.equal(lc.currentSessionToken(), undefined);
 	});
 
+	it("isCurrent is true only while a run is active on this session", () => {
+		const lc = new AutopilotLifecycle();
+		lc.startSession();
+		const sessionToken = lc.currentSessionToken()!;
+		assert.equal(lc.isCurrent(sessionToken), false);
+		const runToken = lc.beginRun(sessionToken)!;
+		assert.equal(lc.isCurrent(runToken), true);
+		lc.endRun(runToken);
+		assert.equal(lc.isCurrent(runToken), false);
+	});
+
 	it("setPhase updates the current phase", () => {
-		const lc = new BabysitLifecycle();
+		const lc = new AutopilotLifecycle();
 		lc.startSession();
 		const sessionToken = lc.currentSessionToken()!;
 		lc.beginRun(sessionToken);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseArgs } from "./command.ts";
 
-describe("pr-babysit command parser", () => {
+describe("pr-autopilot command parser", () => {
 	it("defaults to check mode with no arguments", () => {
 		const result = parseArgs("");
 		assert.equal(result.ok, true);
@@ -13,10 +13,19 @@ describe("pr-babysit command parser", () => {
 	});
 
 	it("accepts explicit --mode", () => {
-		for (const mode of ["check", "threads", "drive", "cleanup"]) {
+		for (const mode of ["check", "threads", "drive", "watch", "cleanup"]) {
 			const result = parseArgs(`--mode ${mode}`);
 			assert.equal(result.ok, true, `mode ${mode} should parse`);
 			if (result.ok) assert.equal(result.args.mode, mode);
+		}
+	});
+
+	it("accepts --mode watch", () => {
+		const result = parseArgs("--mode watch --pr 7");
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.args.mode, "watch");
+			assert.equal(result.args.pr, 7);
 		}
 	});
 
@@ -43,7 +52,7 @@ describe("pr-babysit command parser", () => {
 	it("rejects invalid modes", () => {
 		const result = parseArgs("--mode invalid");
 		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /check, threads, drive, cleanup/);
+		if (!result.ok) assert.match(result.error, /check, threads, drive, watch, cleanup/);
 	});
 
 	it("rejects non-integer and zero PR numbers", () => {

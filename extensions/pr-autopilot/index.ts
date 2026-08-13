@@ -1,5 +1,5 @@
 /**
- * Bounded PR Babysit extension for Pi.
+ * Bounded PR Autopilot extension for Pi.
  *
  * Watches over an open PR frontier using only tiny models (GPT-5.6 Luna,
  * Gemini 3.7 Flash, DeepSeek V4 Flash) recorded in kstack.json. Spawns
@@ -7,8 +7,8 @@
  * review threads, generates fixes, commits, and pushes — stopping at
  * merge-ready. Never auto-merges, never re-stacks shared history.
  *
- * Command: /pr-babysit [--mode check|threads|drive|cleanup] [--pr <number>]
- * Config:  "pr-babysit" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
+ * Command: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]
+ * Config:  "pr-autopilot" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,17 +17,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { BabysitLifecycle } from "./lifecycle.ts";
+import { AutopilotLifecycle } from "./lifecycle.ts";
 import { resolveModels, loadConfig, modelCliId } from "./config.ts";
 import { parseArgs } from "./command.ts";
-import { runBabysit, type LifecyclePhase } from "./babysit.ts";
+import { runAutopilot, type LifecyclePhase } from "./autopilot.ts";
 import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
-import type { BabysitMode, ExecFn, ExecFnResult } from "./types.ts";
+import type { AutopilotMode, ExecFn, ExecFnResult } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 
-/** Tiny models the babysitter is allowed to use — the exclusive child agent set. */
+/** Tiny models the autopilot is allowed to use — the exclusive child agent set. */
 export { DEFAULT_TINY_MODELS } from "./config.ts";
 
 function readPrompt(name: string): string {
@@ -42,13 +42,13 @@ interface PhaseDetails {
 	models: string[];
 }
 
-/** Exec wrapper forwarding the babysitter's per-call cwd/timeout to pi.exec. */
+/** Exec wrapper forwarding the autopilot's per-call cwd/timeout to pi.exec. */
 function makeExec(pi: ExtensionAPI): ExecFn {
 	return (command, args, options) => pi.exec(command, args, { cwd: options.cwd, timeout: options.timeout }) as Promise<ExecFnResult>;
 }
 
-export default function prBabysitExtension(pi: ExtensionAPI): void {
-	const lifecycle = new BabysitLifecycle();
+export default function prAutopilotExtension(pi: ExtensionAPI): void {
+	const lifecycle = new AutopilotLifecycle();
 	let abortController: AbortController | undefined;
 
 	pi.on("session_start", () => lifecycle.startSession());
@@ -59,28 +59,28 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerShortcut("ctrl+shift+b", {
-		description: "Abort the running pr-babysit child agent",
+		description: "Abort the running pr-autopilot child agent",
 		handler: async (ctx) => {
 			if (abortController && !abortController.signal.aborted) {
 				abortController.abort();
-				ctx.ui.setStatus("pr-babysit", "pr-babysit: aborting child agent…");
+				ctx.ui.setStatus("pr-autopilot", "pr-autopilot: aborting child agent…");
 			} else {
-				ctx.ui.notify("No pr-babysit child agent is running.", "info");
+				ctx.ui.notify("No pr-autopilot child agent is running.", "info");
 			}
 		},
 	});
 
-	pi.registerMessageRenderer("pr-babysit", (message, { expanded, outputPad }, theme) => {
+	pi.registerMessageRenderer("pr-autopilot", (message, { expanded, outputPad }, theme) => {
 		const details = message.details as PhaseDetails | undefined;
 		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		const icon = theme.fg("success", "▢");
-		const header = `${icon} ${theme.fg("accent", "PR Babysit")} ${theme.fg("muted", `— mode: ${details?.mode ?? "check"} — ${details?.status ?? "running"} — cycles: ${details?.cycles ?? 0}`)}`;
+		const header = `${icon} ${theme.fg("accent", "PR Autopilot")} ${theme.fg("muted", `— mode: ${details?.mode ?? "check"} — ${details?.status ?? "running"} — cycles: ${details?.cycles ?? 0}`)}`;
 		if (!expanded) {
 			box.addChild(new Text(`${header}${theme.fg("dim", " (Ctrl+O to expand)")}`, 0, 0));
 			return box;
 		}
 		const lines = [
-			`${icon} PR Babysit — ${details?.mode ?? "check"}`,
+			`${icon} PR Autopilot — ${details?.mode ?? "check"}`,
 			"",
 			`Status: ${details?.status ?? "running"}`,
 			`Cycles: ${details?.cycles ?? 0}`,
@@ -102,26 +102,26 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 			models,
 		};
 		pi.sendMessage({
-			customType: "pr-babysit",
+			customType: "pr-autopilot",
 			content,
 			display: true,
 			details,
 		});
 	}
 
-	/** Core runner for a babysit request that has crossed validation/naming. */
-	async function runBabysitCommand(
+	/** Core runner for an autopilot request that has crossed validation/naming. */
+	async function runAutopilotCommand(
 		mode: string,
 		prNumber: number | undefined,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
 		const notify = ctx.ui.notify.bind(ctx.ui);
 		if (!ctx.hasUI) {
-			notify("pr-babysit requires interactive (TUI/RPC) mode.", "error");
+			notify("pr-autopilot requires interactive (TUI/RPC) mode.", "error");
 			return;
 		}
 		if (lifecycle.isRunning()) {
-			notify("A pr-babysit run is already active. Press Ctrl+Shift+B to abort it.", "warning");
+			notify("A pr-autopilot run is already active. Press Ctrl+Shift+B to abort it.", "warning");
 			return;
 		}
 
@@ -150,15 +150,15 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 		// Confirm the run before starting.
 		const modelsDisplay = config.models.map((m) => `  ${m.label}: ${modelCliId(m)}`).join("\n");
 		const confirmed = await ctx.ui.confirm(
-			`Run pr-babysit (${mode} mode)?`,
+			`Run pr-autopilot (${mode} mode)?`,
 			`PR: ${prNumber ? `#${prNumber}` : "lowest unmerged (auto-detected)"}\n` +
 				`Models (tiny only):\n${modelsDisplay}\n\n` +
 				`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
 				"Bounded invariants:\n" +
 				"- Works the lowest unmerged PR first\n" +
+				"- Conflicts/behind: merge origin/<base> into the frontier (never rebase)\n" +
+				"- Comments before CI; watch pending checks instead of inventing work\n" +
 				"- Stops at merge-ready (never auto-merges)\n" +
-				"- Never rebases or force-pushes shared history\n" +
-				"- Classifies CI failures before retrying\n" +
 				"- Only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash)",
 		);
 		if (!lifecycle.isSessionCurrent(sessionToken) || !confirmed) return;
@@ -176,7 +176,7 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 		const modelList = config.models.map((m) => m.label);
 
 		try {
-			tempDir = mkdtempSync(join(tmpdir(), "pi-pr-babysit-"));
+			tempDir = mkdtempSync(join(tmpdir(), "pi-pr-autopilot-"));
 			const triagerPromptFile = join(tempDir, "triager-prompt.md");
 			const fixerPromptFile = join(tempDir, "fixer-prompt.md");
 			writeFileSync(triagerPromptFile, readPrompt("triager.md"), { encoding: "utf8", mode: 0o600 });
@@ -184,13 +184,13 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 
 			const updateStatus = (phase: LifecyclePhase) => {
 				if (lifecycle.isCurrent(runToken)) {
-					ctx.ui.setStatus("pr-babysit", `pr-babysit: ${phase}`);
+					ctx.ui.setStatus("pr-autopilot", `pr-autopilot: ${phase}`);
 					sendPhaseMessage(pi, mode, phase, 0, modelList, phase);
 				}
 			};
 
-			const result = await runBabysit(
-				mode as BabysitMode,
+			const result = await runAutopilot(
+				mode as AutopilotMode,
 				{
 					config,
 					exec: makeExec(pi),
@@ -209,26 +209,26 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 			);
 
 			if (lifecycle.isCurrent(runToken)) {
-				ctx.ui.setStatus("pr-babysit", undefined);
+				ctx.ui.setStatus("pr-autopilot", undefined);
 				if (result.status === "merge-ready") {
 					notify(
-						`PR babysit complete — PR #${result.prState?.number ?? "?"} is merge-ready. ` +
+						`PR autopilot complete — PR #${result.prState?.number ?? "?"} looks merge-ready. ` +
 							"Stop at merge-ready; no merge performed. Use /session-archive to archive this session.",
 						"info",
 					);
-					sendPhaseMessage(pi, mode, "idle", result.cyclesCompleted, modelList, "Merge-ready — stopped, not merged.");
+					sendPhaseMessage(pi, mode, "idle", result.cyclesCompleted, modelList, "Looks merge-ready — stopped, not merged.");
 				} else if (result.status === "cleaned") {
-					notify("PR babysit cleanup complete. Managed worktree removed; session archive is manual.", "info");
+					notify("PR autopilot cleanup complete. Managed worktree removed; session archive is manual.", "info");
 				} else if (result.status === "blocked") {
 					notify(
-						`PR babysit blocked: ${result.blockedReasons.join("; ")}. ` +
-							"These require human intervention. Run /pr-babysit --mode check to reassess.",
+						`PR autopilot blocked: ${result.blockedReasons.join("; ")}. ` +
+							"These require human intervention. Run /pr-autopilot --mode check to reassess.",
 						"error",
 					);
 				} else if (result.status === "aborted") {
-					notify("PR babysit aborted.", "info");
+					notify("PR autopilot aborted.", "info");
 				} else {
-					notify(`PR babysit ended: ${result.status}. ${result.blockedReasons.join("; ") || ""}`, result.status === "failed" ? "error" : "warning");
+					notify(`PR autopilot ended: ${result.status}. ${result.blockedReasons.join("; ") || ""}`, result.status === "failed" ? "error" : "warning");
 				}
 			}
 		} finally {
@@ -238,16 +238,16 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 				try {
 					rmSync(tempDir, { recursive: true, force: true });
 				} catch {
-					notify(`pr-babysit: could not remove temp dir ${tempDir}. Remove it manually.`, "warning");
+					notify(`pr-autopilot: could not remove temp dir ${tempDir}. Remove it manually.`, "warning");
 				}
 			}
-			if (lifecycle.isCurrent(runToken)) ctx.ui.setStatus("pr-babysit", undefined);
+			if (lifecycle.isCurrent(runToken)) ctx.ui.setStatus("pr-autopilot", undefined);
 		}
 	}
 
-	pi.registerCommand("pr-babysit", {
+	pi.registerCommand("pr-autopilot", {
 		description:
-			"Babysit an open PR with tiny models only: /pr-babysit [--mode check|threads|drive|cleanup] [--pr <number>]. " +
+			"Keep an open PR merge-ready with tiny models only: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]. " +
 			"Stops at merge-ready; never auto-merges or rebases shared history.",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
@@ -256,21 +256,21 @@ export default function prBabysitExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			const mode = parsed.args.mode;
-			await runBabysitCommand(mode, parsed.args.pr, ctx);
+			await runAutopilotCommand(mode, parsed.args.pr, ctx);
 		},
 	});
 
 	// Listen for in-process API requests from the router or other extensions.
-	pi.events.on(PRBABYSIT_REQUEST_EVENT, (data) => {
-		claimRequest(data, (mode, prNumber, ctx) => runBabysitCommand(mode, prNumber, ctx));
+	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
+		claimRequest(data, (mode, prNumber, ctx) => runAutopilotCommand(mode, prNumber, ctx));
 	});
 }
 
 // --- In-process API request contract ---
 
-export const PRBABYSIT_REQUEST_EVENT = "kstack:pr-babysit:request";
+export const PRAUTOPILOT_REQUEST_EVENT = "kstack:pr-autopilot:request";
 
-export interface PrBabysitRequest {
+export interface PrAutopilotRequest {
 	schemaVersion: 1;
 	mode: string;
 	prNumber: number | undefined;
@@ -279,9 +279,9 @@ export interface PrBabysitRequest {
 	completion?: Promise<void>;
 }
 
-export function isPrBabysitRequest(value: unknown): value is PrBabysitRequest {
+export function isPrAutopilotRequest(value: unknown): value is PrAutopilotRequest {
 	if (typeof value !== "object" || value === null) return false;
-	const r = value as Partial<PrBabysitRequest>;
+	const r = value as Partial<PrAutopilotRequest>;
 	return (
 		r.schemaVersion === 1 &&
 		typeof r.ctx === "object" &&
@@ -295,7 +295,7 @@ export function claimRequest(
 	value: unknown,
 	run: (mode: string, prNumber: number | undefined, ctx: ExtensionCommandContext) => Promise<void>,
 ): boolean {
-	if (!isPrBabysitRequest(value) || value.claimed) return false;
+	if (!isPrAutopilotRequest(value) || value.claimed) return false;
 	value.claimed = true;
 	value.completion = run(value.mode, value.prNumber, value.ctx);
 	return true;

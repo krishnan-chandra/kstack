@@ -1,13 +1,13 @@
 /**
- * Isolated tiny-model child agent lifecycle for the pr-babysit extension.
+ * Isolated tiny-model child agent lifecycle for the pr-autopilot extension.
  *
  * Spawns `pi --mode json -p --no-session` with the tiny models from kstack.json,
  * a role-specific system prompt, and a mode-0600 task file. Parses JSONL exactly
  * like plan-implement and panel-review, bounding stderr and output while
  * streaming progress. On abort: SIGTERM → grace → SIGKILL of the process group.
  *
- * Children never discover extensions or skills — the babysitter owns the
- * workflow entirely — and run with the tool set the babysitter grants per role.
+ * Children never discover extensions or skills — the autopilot owns the
+ * workflow entirely — and run with the tool set the autopilot grants per role.
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
-import { LIMITS, type BabysitAgentRole, type BabysitModelSpec, type ExecFnResult, type UsageSummary } from "./types.ts";
+import { LIMITS, type AutopilotAgentRole, type AutopilotModelSpec, type ExecFnResult, type UsageSummary } from "./types.ts";
 
 export interface SpawnedProcess {
 	stdout: { on(event: "data", cb: (data: Buffer) => void): void };
@@ -40,7 +40,7 @@ export interface RunnerDeps {
 	stdoutLineCapBytes?: number;
 }
 
-/** Build the CLI argument list for a tiny-model babysit child agent. */
+/** Build the CLI argument list for a tiny-model autopilot child agent. */
 export function buildChildArgs(opts: {
 	model: string;
 	promptFile: string;
@@ -94,7 +94,7 @@ function assistantText(message: { content?: { type?: string; text?: string }[] }
 }
 
 interface AgentRunResultBase {
-	role: BabysitAgentRole;
+	role: AutopilotAgentRole;
 	model: string;
 	usage: UsageSummary;
 }
@@ -123,15 +123,15 @@ function summarizeToolCall(toolName: string, args: Record<string, unknown> | und
 }
 
 export interface RunAgentOptions {
-	role: BabysitAgentRole;
-	spec: BabysitModelSpec;
+	role: AutopilotAgentRole;
+	spec: AutopilotModelSpec;
 	promptFile: string;
 	taskFile: string;
 	cwd: string;
 	tools?: string;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
-	onProgress?: (info: { role: BabysitAgentRole; turns: number; activity?: string; preview?: string }) => void;
+	onProgress?: (info: { role: AutopilotAgentRole; turns: number; activity?: string; preview?: string }) => void;
 }
 
 export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {

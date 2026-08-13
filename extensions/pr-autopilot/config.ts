@@ -1,11 +1,11 @@
 /**
- * pr-babysit configuration: discovery, validation, and tiny-model resolution.
+ * pr-autopilot configuration: discovery, validation, and tiny-model resolution.
  *
- * Config lives in the `"pr-babysit"` section of
+ * Config lives in the `"pr-autopilot"` section of
  * `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
  *
  *   {
- *     "pr-babysit": {
+ *     "pr-autopilot": {
  *       "models": [
  *         { "label": "luna",     "model": "openai/gpt-5.6-luna", "thinking": "low" },
  *         { "label": "gemini",   "model": "openrouter/google/gemini-3.7-flash", "thinking": "low" },
@@ -17,7 +17,7 @@
  *     }
  *   }
  *
- * The babysitter is tiny-model-only by construction: the validator rejects any
+ * The autopilot is tiny-model-only by construction: the validator rejects any
  * thinking level above "low" and the resolver only considers the configured
  * tiny set. When no config file exists the built-in DEFAULT_TINY_MODELS
  * (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash) are used.
@@ -26,13 +26,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { BabysitModelSpec, ResolvedBabysitConfig } from "./types.ts";
+import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
 const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export type ConfigLoad =
-	| { status: "loaded"; config: ResolvedBabysitConfig; path: string }
+	| { status: "loaded"; config: ResolvedAutopilotConfig; path: string }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
 
@@ -47,11 +47,11 @@ export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * Built-in tiny model set, used when no pr-babysit config section exists.
- * These are the only models the babysitter is ever allowed to spawn children
+ * Built-in tiny model set, used when no pr-autopilot config section exists.
+ * These are the only models the autopilot is ever allowed to spawn children
  * with — they are small, fast, and cheap enough for repeated triage loops.
  */
-export const DEFAULT_TINY_MODELS: readonly BabysitModelSpec[] = [
+export const DEFAULT_TINY_MODELS: readonly AutopilotModelSpec[] = [
 	{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
 	{ label: "gemini", model: "openrouter/google/gemini-3.7-flash", thinking: "low" },
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
@@ -61,7 +61,7 @@ export const DEFAULT_TINY_MODELS: readonly BabysitModelSpec[] = [
  * Validate a single model spec. Enforces the tiny-model invariant: thinking
  * must be at most "low" (or absent, which defaults to "low").
  */
-function validateModelSpec(raw: unknown, index: number): { ok: true; spec: BabysitModelSpec } | { ok: false; error: string } {
+function validateModelSpec(raw: unknown, index: number): { ok: true; spec: AutopilotModelSpec } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: `Model entry ${index} must be an object {label, model, thinking?}.` };
 	}
@@ -81,7 +81,7 @@ function validateModelSpec(raw: unknown, index: number): { ok: true; spec: Babys
 		if (!allowed.includes(value.thinking)) {
 			return {
 				ok: false,
-				error: `Model entry ${index} (${value.label}): "thinking" must be "off", "minimal", or "low" — the babysitter is tiny-model-only.`,
+				error: `Model entry ${index} (${value.label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`,
 			};
 		}
 	}
@@ -90,7 +90,7 @@ function validateModelSpec(raw: unknown, index: number): { ok: true; spec: Babys
 
 export interface ValidateConfigResult {
 	ok: true;
-	config: Omit<ResolvedBabysitConfig, "source" | "warnings">;
+	config: Omit<ResolvedAutopilotConfig, "source" | "warnings">;
 }
 export interface ValidateConfigError {
 	ok: false;
@@ -99,7 +99,7 @@ export interface ValidateConfigError {
 
 export function validateConfig(raw: unknown): ValidateConfigResult | ValidateConfigError {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-		return { ok: false, error: "pr-babysit config must be a JSON object." };
+		return { ok: false, error: "pr-autopilot config must be a JSON object." };
 	}
 	const obj = raw as Record<string, unknown>;
 
@@ -114,7 +114,7 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 	}
 
 	const labels = new Set<string>();
-	const models: BabysitModelSpec[] = [];
+	const models: AutopilotModelSpec[] = [];
 	for (let i = 0; i < obj.models.length; i++) {
 		const result = validateModelSpec(obj.models[i], i);
 		if (!result.ok) return result;
@@ -182,11 +182,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 		if (typeof root !== "object" || root === null || Array.isArray(root)) {
 			return { status: "invalid", path, error: "kstack.json must be a JSON object." };
 		}
-		const section = (root as Record<string, unknown>)["pr-babysit"];
+		const rootObj = root as Record<string, unknown>;
+		const section = rootObj["pr-autopilot"] ?? rootObj["pr-babysit"];
 		if (section === undefined) return { status: "missing", path };
 		const result = validateConfig(section);
 		if (!result.ok) return { status: "invalid", path, error: result.error };
-		return { status: "loaded", config: { ...result.config, source: "config", warnings: [] }, path };
+		const warnings =
+			rootObj["pr-autopilot"] === undefined && rootObj["pr-babysit"] !== undefined
+				? ['kstack.json still has "pr-babysit"; rename that section to "pr-autopilot".']
+				: [];
+		return { status: "loaded", config: { ...result.config, source: "config", warnings }, path };
 	} catch (error) {
 		return { status: "invalid", path, error: `Unreadable config: ${(error as Error).message}` };
 	}
@@ -205,7 +210,7 @@ export interface ResolveDeps {
 export function resolveModels(
 	config: ConfigLoad,
 	deps: ResolveDeps,
-): { ok: true; config: ResolvedBabysitConfig } | { ok: false; error: string } {
+): { ok: true; config: ResolvedAutopilotConfig } | { ok: false; error: string } {
 	const warnings: string[] = [];
 
 	if (config.status === "invalid") {
@@ -224,16 +229,16 @@ export function resolveModels(
 			return {
 				ok: false,
 				error:
-					"Configured pr-babysit models are unavailable or unauthenticated:\n  " +
+					"Configured pr-autopilot models are unavailable or unauthenticated:\n  " +
 					unavailable.join("\n  ") +
-					"\nFix the pr-babysit section in kstack.json or authenticate the providers.",
+					"\nFix the pr-autopilot section in kstack.json or authenticate the providers.",
 			};
 		}
-		return { ok: true, config: { ...config.config, source: "config", warnings } };
+		return { ok: true, config: { ...config.config, source: "config", warnings: [...config.config.warnings, ...warnings] } };
 	}
 
 	// No config: fall back to the built-in tiny model defaults, filtered.
-	const available: BabysitModelSpec[] = [];
+	const available: AutopilotModelSpec[] = [];
 	const skipped: string[] = [];
 	for (const m of DEFAULT_TINY_MODELS) {
 		const slash = m.model.indexOf("/");
@@ -250,7 +255,7 @@ export function resolveModels(
 		return {
 			ok: false,
 			error:
-				"Fewer than 2 tiny models are available. Configure the pr-babysit " +
+				"Fewer than 2 tiny models are available. Configure the pr-autopilot " +
 				"section in kstack.json with at least 2 tiny-model entries (thinking ≤ low).",
 		};
 	}
@@ -268,6 +273,6 @@ export function resolveModels(
 }
 
 /** Format a model spec as a Pi CLI id (provider/model[:thinking]). */
-export function modelCliId(spec: BabysitModelSpec): string {
+export function modelCliId(spec: AutopilotModelSpec): string {
 	return spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
 }

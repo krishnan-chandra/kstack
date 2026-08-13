@@ -1,6 +1,6 @@
 ---
 name: setup-kstack
-description: Configure the models and thinking levels that K-Stack workflows use. Use for /setup-kstack, "set up kstack", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-babysit models", or when kstack.json contains stale, unavailable, or manually edited model assignments. Discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure the models and thinking levels that K-Stack workflows use. Use for /setup-kstack, "set up kstack", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited model assignments. Discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
 compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent).
 ---
@@ -83,7 +83,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
 | `swarm` | `worker`, `maxConcurrency` | Use a fast worker for broad coverage work. |
-| `pr-babysit` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Prefer cheap, fast models from distinct families. |
+| `pr-autopilot` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Prefer cheap, fast models from distinct families. |
 
 Keep the current timeouts and concurrency values unless the user asks to change
 them. Keep at least two distinct model families in a panel when available. Warn,
@@ -121,7 +121,7 @@ Before showing the preview, check all of these conditions:
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
   high-or-deeper thinking.
 - The investigation rules above hold.
-- `pr-babysit.models` contains 2–5 unique labels and model IDs, every thinking
+- `pr-autopilot.models` contains 2–5 unique labels and model IDs, every thinking
   level is `off`, `minimal`, or `low`, concurrency is 1–5, idle timeout is
   1–15 minutes, and max runtime is 2–60 minutes and not below idle timeout.
 

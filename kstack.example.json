@@ -47,7 +47,7 @@
 		"worker": { "model": "anthropic/claude-haiku-4", "thinking": "low" },
 		"maxConcurrency": 4
 	},
-	"pr-babysit": {
+	"pr-autopilot": {
 		"models": [
 			{ "label": "luna", "model": "openai/gpt-5.6-luna", "thinking": "low" },
 			{ "label": "gemini", "model": "openrouter/google/gemini-3.7-flash", "thinking": "low" },

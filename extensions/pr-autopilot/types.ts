@@ -1,7 +1,7 @@
 /**
- * Shared types for the pr-babysit extension.
+ * Shared types for the pr-autopilot extension.
  *
- * The PR babysitter is a bounded, tiny-model-only workflow: it owns a single
+ * The PR autopilot is a bounded, tiny-model-only workflow: it owns a single
  * PR frontier at a time (the lowest unmerged PR), classifies its state with
  * small child agents, addresses review threads and CI failures it can fix,
  * pushes, and re-checks — stopping at merge-ready. It never auto-merges, never
@@ -9,14 +9,14 @@
  * recorded in kstack.json.
  */
 
-/** Babysit modes — the explicit user-facing entry points. */
-export type BabysitMode = "check" | "threads" | "drive" | "cleanup";
+/** Autopilot modes — the explicit user-facing entry points. */
+export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
 
-/** Tiny-model child roles inside the babysit loop. */
-export type BabysitAgentRole = "triager" | "fixer";
+/** Tiny-model child roles inside the autopilot loop. */
+export type AutopilotAgentRole = "triager" | "fixer";
 
-/** A model entry in the pr-babysit config, with a short run label. */
-export interface BabysitModelSpec {
+/** A model entry in the pr-autopilot config, with a short run label. */
+export interface AutopilotModelSpec {
 	/** Short run label (e.g. "luna", "flash"). */
 	label: string;
 	/** Pi model id in "provider/model" form. */
@@ -25,9 +25,9 @@ export interface BabysitModelSpec {
 	thinking?: string;
 }
 
-/** Resolved pr-babysit configuration after availability checking. */
-export interface ResolvedBabysitConfig {
-	models: BabysitModelSpec[];
+/** Resolved pr-autopilot configuration after availability checking. */
+export interface ResolvedAutopilotConfig {
+	models: AutopilotModelSpec[];
 	maxConcurrency: number;
 	timeoutMinutes: number;
 	maxRuntimeMinutes: number;
@@ -35,41 +35,60 @@ export interface ResolvedBabysitConfig {
 	warnings: string[];
 }
 
-/** A GitHub check run / CI job as surfaced by `gh pr view`. */
+/** A GitHub check run / CI job as surfaced by `gh pr checks`. */
 export interface CheckRun {
 	name: string;
 	status: "success" | "failure" | "pending" | "neutral" | "skipped";
 	conclusion: "success" | "failure" | "pending" | "neutral" | "skipped" | null;
+	detailsUrl?: string;
+	/** GitHub Actions run id, when the details URL points at an Actions run. */
+	runId?: string;
+	/** Capped failed-log excerpt. Absent when the log could not be fetched. */
+	logExcerpt?: string;
 }
 
-/** A review thread extracted from the GitHub PR API. */
+/** Where a review item came from. */
+export type ThreadSource = "review-thread" | "issue-comment";
+
+/**
+ * An unresolved review thread or an issue comment that still needs a decision.
+ * Resolved GraphQL threads are dropped at fetch time, so this array is the
+ * actionable set.
+ */
 export interface ReviewThread {
 	id: string;
 	commenter: string;
 	body: string;
-	status: "COMMENTED" | "RESOLVED" | "DISMISSED";
 	path?: string;
 	line?: number;
+	url?: string;
+	/** databaseId of the last comment, for `in_reply_to` replies. */
+	replyToId?: number;
+	source: ThreadSource;
 }
+
+/** Triager decision for one review item. */
+export type ThreadDecision = "fix" | "dismiss" | "ask";
 
 /**
  * A check-run classification produced by the tiny-model triager: tells the
- * babysitter whether a failure is the diff's own code, a stale base, or
+ * autopilot whether a failure is the diff's own code, a stale base, or
  * infrastructure flakiness — before any retrigger is attempted.
  */
 export type FailureClass = "code" | "stale-base" | "flake" | "infra" | "unknown";
 
-/** Classification of a single review thread. */
-export interface ThreadClassification {
-	threadId: string;
-	failureClass: FailureClass;
-	/** Human-readable one-line summary of what to do with this thread. */
-	action: string;
-	/** Whether the thread can be addressed by a generated code change. */
-	fixable: boolean;
-}
+/** GitHub `mergeStateStatus` values from `gh pr view`. */
+export type MergeStateStatus =
+	| "CLEAN"
+	| "DIRTY"
+	| "BEHIND"
+	| "BLOCKED"
+	| "DRAFT"
+	| "UNKNOWN"
+	| "UNSTABLE"
+	| "HAS_HOOKS";
 
-/** Complete PR state snapshot that drives a babysit decision. */
+/** Complete PR state snapshot that drives an autopilot decision. */
 export interface PRState {
 	number: number;
 	title: string;
@@ -81,14 +100,15 @@ export interface PRState {
 	baseRef: string;
 	headRef: string;
 	mergeable: "mergeable" | "conflicting" | "unknown";
+	mergeStateStatus: MergeStateStatus;
 	checks: CheckRun[];
 	threads: ReviewThread[];
-	/** Whether the PR is blocked by unaddressed review threads. */
+	/** Whether the PR is blocked by unaddressed review items. */
 	hasUnresolvedThreads: boolean;
 }
 
 /**
- * Outcome of one babysit cycle iteration. The state machine keys off this to
+ * Outcome of one autopilot cycle iteration. The state machine keys off this to
  * decide whether to fix-and-push again, declare merge-ready, or report a
  * blocker.
  */
@@ -99,7 +119,7 @@ export interface CycleResult {
 	addressedThreads: string[];
 	/** Threads that remain after the cycle. */
 	pendingThreads: string[];
-	/** Failures classified but not fixable by the babysitter. */
+	/** Failures classified but not fixable by the autopilot. */
 	blockedFailures: { name: string; cls: FailureClass; reason: string }[];
 	/** Whether a push was performed this cycle. */
 	pushed: boolean;
@@ -107,13 +127,22 @@ export interface CycleResult {
 	headSha: string;
 }
 
-/** Lifecycle token to guard against overlapping babysit runs. */
-export interface BabysitToken {
+/** Persisted across ticks so a later drive/watch resume does not re-handle work. */
+export interface AutopilotPersistedState {
+	prNumber: number;
+	headSha: string;
+	handledThreadIds: string[];
+	/** Check name + SHA pairs already given one flake rerun. */
+	flakeRetried: string[];
+}
+
+/** Lifecycle token to guard against overlapping autopilot runs. */
+export interface AutopilotToken {
 	readonly generation: number;
 }
 
-/** One cycle of the babysit state machine's dependencies, for testability. */
-export interface BabysitDeps {
+/** One cycle of the autopilot state machine's dependencies, for testability. */
+export interface AutopilotDeps {
 	gh: (args: string[], cwd: string) => Promise<ExecFnResult>;
 }
 
@@ -135,11 +164,11 @@ export interface ExecFnOptions {
 
 export type ExecFn = (command: string, args: string[], options: ExecFnOptions) => Promise<ExecFnResult>;
 
-/** Config guardrails the babysitter enforces to stay "tiny-model-only". */
+/** Config guardrails the autopilot enforces to stay "tiny-model-only". */
 export const LIMITS = {
 	/** Maximum PRs traversed in the frontier sweep (always pick the lowest). */
 	maxFrontierPRs: 5,
-	/** BabysitMode default timeout (minutes) applied to tiny child agents. */
+	/** AutopilotMode default timeout (minutes) applied to tiny child agents. */
 	defaultTimeoutMinutes: 5,
 	minTimeoutMinutes: 1,
 	maxTimeoutMinutes: 15,
@@ -147,7 +176,7 @@ export const LIMITS = {
 	defaultMaxRuntimeMinutes: 15,
 	minRuntimeMinutes: 2,
 	maxRuntimeMinutes: 60,
-	/** Max concurrent tiny-model children. */
+	/** Max concurrent tiny-model children / log fetches. */
 	defaultMaxConcurrency: 3,
 	minConcurrency: 1,
 	maxConcurrency: 5,
@@ -158,6 +187,16 @@ export const LIMITS = {
 	stderrBytes: 8 * 1024,
 	stdoutLineBytes: 2 * 1024 * 1024,
 	killGraceMs: 5000,
+	/** Capped failed-log excerpt stored on a CheckRun. */
+	logExcerptBytes: 6 * 1024,
+	/** Body slice shown to the triager (full body still used for sensitivity). */
+	threadBodyChars: 400,
+	/** Drive mode: max fix/push cycles (watches do not count). */
+	maxDriveCycles: 3,
+	/** Watch mode: max fix/push cycles while waiting on GitHub. */
+	maxWatchCycles: 15,
+	/** Timeout for `gh pr checks --watch`. */
+	watchTimeoutMinutes: 20,
 } as const;
 
 export type ThinkingLevel = "off" | "minimal" | "low";
