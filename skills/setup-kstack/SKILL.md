@@ -1,0 +1,155 @@
+---
+name: setup-kstack
+description: Configure the models and thinking levels that K-Stack workflows use. Use for /setup-kstack, "set up kstack", "configure kstack models", "change panel reviewers", "change planner or implementer model", or when kstack.json contains stale, unavailable, or manually edited model assignments. Discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+license: MIT
+compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent).
+---
+
+# Set up K-Stack
+
+Configure K-Stack's per-role model assignments in the user-level
+`$PI_CODING_AGENT_DIR/kstack.json` file. Default to `~/.pi/agent/kstack.json`.
+This skill changes runtime configuration, not repository defaults. It preserves
+unknown top-level sections so that future K-Stack extensions keep their settings.
+
+A configuration is useful only when it can run. Discover Pi's catalog, confirm
+credentials for every selected provider, validate the complete proposed JSON,
+and show the diff before writing. Do not spend tokens on model test calls unless
+the user explicitly asks for one.
+
+## 1. Inspect the current state
+
+1. Resolve the target path from `PI_CODING_AGENT_DIR`. Expand a leading `~/` to
+   the home directory. Do not use the repository's `kstack.example.json` as the
+   write target.
+2. Read the target if it exists. Parse it as JSON. If it is malformed or its
+   root is not an object, stop without overwriting it. Show the parse error and
+   offer a separately named backup-and-repair operation.
+3. Read [`../../kstack.example.json`](../../kstack.example.json) and show a
+   compact current-state table. Mark missing sections as **built-in default**.
+   Do not silently replace a missing section: K-Stack extensions deliberately
+   have fallback behavior.
+
+## 2. Discover usable models
+
+Run:
+
+```bash
+pi --list-models
+```
+
+Use the `provider` and `model` columns together as the config identifier, for
+example `openai/gpt-5.6-sol` or `openrouter/z-ai/glm-5.2`. A row with `thinking`
+set to `yes` can take a thinking level. Omit `thinking` for a model that does
+not support it.
+
+The catalog says that Pi knows the identifier; it does not prove that the user
+can authenticate to every provider. After the user selects models, check each
+unique selection without printing credentials:
+
+```bash
+pi auth check --model <provider/model> --json
+```
+
+A result with `"status":"ready"` passes. If a provider is not ready, keep the
+existing assignment or ask for another catalog model. Do not write an unready
+selection. `pi --list-models` does not expose every provider's exact
+thinking-level map, so use the listed thinking capability as the available
+preflight and explain that Pi may clamp a provider-specific unsupported level.
+
+## 3. Choose the roles
+
+Start from the existing user configuration. For a missing section, start from
+that section in `kstack.example.json`. Ask whether to keep every assignment or
+change selected groups. Show the full proposed assignment before asking for
+approval.
+
+Use model IDs without a `:thinking` suffix in JSON. Store the effort separately
+as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
+`max`.
+
+| Workflow | Roles to configure | Constraints |
+| --- | --- | --- |
+| `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. |
+| `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
+| `kstack-router` | `classifier`, `timeoutSeconds` | `timeoutSeconds` is 1–600. |
+| `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
+| `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
+| `swarm` | `worker`, `maxConcurrency` | Use a fast worker for broad coverage work. |
+
+Keep the current timeouts and concurrency values unless the user asks to change
+them. Keep at least two distinct model families in a panel when available. Warn,
+but do not block, if synthesis uses the same model as a reviewer. A different
+synthesis model makes agreement and disagreement easier to interpret.
+
+The investigation list has a stricter allowlist than the other roles. Its valid
+model IDs are currently:
+
+```text
+openai/gpt-5.6-luna
+openai/gpt-5.6-terra
+openrouter/z-ai/glm-5.2
+openrouter/deepseek/deepseek-v4-pro
+openrouter/google/gemini-3.5-flash-lite
+openrouter/deepseek/deepseek-v4-flash
+```
+
+When the user requests a different investigator, explain that `how`, `why`,
+`recall`, and `decision-trail` enforce this shared allowlist. Keep the existing
+list or select from the list above.
+
+## 4. Validate the proposed document
+
+Before showing the preview, check all of these conditions:
+
+- Every selected `provider/model` appears in `pi --list-models` and every
+  selected provider passed `pi auth check`.
+- The proposed root remains a JSON object. Preserve unrelated top-level keys
+  byte-for-byte in meaning, including settings for extensions this skill does
+  not know.
+- Each configured section has the shape and constraints in the table above.
+- `panel-review.reviewers` contains 2–5 entries and has a `synthesis` entry.
+- `plan-implement.planner` and `implementer` are distinct, and the planner has
+  high-or-deeper thinking.
+- The investigation rules above hold.
+
+Use the existing extension validators as the source of truth when they are
+available. A validation error is a reason to revise the preview, not to delete
+an entire section and start over.
+
+## 5. Preview, then write atomically
+
+Render a unified diff from the current JSON to the complete proposed JSON. State
+all warnings, including duplicate reviewer/synthesis models and any model whose
+thinking support is not fully discoverable. Ask for explicit approval of this
+exact preview.
+
+After approval only:
+
+1. Create the target directory with mode `0700` if it does not exist.
+2. Write formatted JSON (two-space indentation and one trailing newline) to a
+   new private temporary file in the target directory.
+3. Re-read and parse the temporary file. Do not replace the target if parsing
+   fails.
+4. Rename the temporary file over `kstack.json`. A rename in the same directory
+   keeps readers from seeing a partial document.
+5. Read and parse the installed file once more. Report its path and the changed
+   role groups.
+
+Do not update `kstack.example.json`, commit anything, or change a project-local
+file as part of this workflow. If the user wants to change repository defaults,
+show a separate diff after the user-level update succeeds and wait for a second
+explicit approval.
+
+## 6. Verify and hand off
+
+Run `pi --list-models` once more only if the user changed authentication while
+configuring. Otherwise the successful credential checks and final JSON parse are
+the local verification.
+
+Tell the user that new child runs use the configuration immediately. An already
+running child process keeps the model it started with. If they changed installed
+skills or extensions too, remind them to run `/reload` or restart Pi.
+
+**Reply:** the target path, changed role groups, selected model IDs with
+thinking levels, validation warnings, and whether the write occurred.

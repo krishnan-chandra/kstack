@@ -44,6 +44,7 @@ create branches.
 | [`how`](skills/how/) | Explains code structure, ownership, and runtime flow through fast, allowlisted exploration models. |
 | [`why`](skills/why/) | Investigates design rationale through fast, allowlisted evidence gathering and reports direct evidence separately from inference. |
 | [`recall`](skills/recall/) | Reconstructs recent working context across Pi sessions, reconciles it with live Git/PR state, and returns a tight brief with thread statuses and a concrete resume point. Read-only. |
+| [`setup-kstack`](skills/setup-kstack/) | Interactively discovers and validates Pi model assignments, previews a user-level `kstack.json` update, and writes it only after approval. |
 | [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only; panel-review applies the same canonical lens to every reviewer and synthesis model. |
 
@@ -61,7 +62,15 @@ cp kstack.example.json ~/.pi/agent/kstack.json
 
 See [`kstack.example.json`](kstack.example.json) for the full schema. Each
 section is optional — missing sections use built-in defaults or prompt for
-models at runtime.
+models at runtime. To discover the local Pi model catalog, validate selected
+providers, preview the update, and write only the user configuration, run:
+
+```text
+/skill:setup-kstack
+```
+
+`setup-kstack` does not modify repository defaults unless you explicitly ask for
+a separate follow-up change.
 
 `how` and `why` use only models in `investigation.allowedModels`. The resolver
 requires every entry to come from kstack's curated fast-model set and to use at
@@ -238,6 +247,7 @@ node --test skills/reflect/*.test.mjs
 node --test skills/architect/*.test.mjs
 node --test skills/decision-trail/*.test.mjs
 node --test skills/recall/*.test.mjs
+node --test skills/setup-kstack/*.test.mjs
 node --test skills/investigation-model.test.mjs
 ```
 
@@ -249,7 +259,7 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `git-worktrees`, `simplify`, `unslop`, `technical-writing`, `typescript-best-practices`, `blast-radius`, `reflect`, `decision-trail`, `how`, and `why` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `git-worktrees`, `simplify`, `unslop`, `technical-writing`, `typescript-best-practices`, `blast-radius`, `reflect`, `decision-trail`, `how`, `why`, `recall`, `setup-kstack`, and `tdd` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 

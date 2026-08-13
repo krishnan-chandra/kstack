@@ -15,12 +15,10 @@ export const DEFAULT_PLANNERS: readonly RoleSpec[] = [
 ];
 
 export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [
-	{ model: "openrouter/x-ai/grok-4.6", thinking: "high" },
-	{ model: "openrouter/qwen/qwen3.6-flash", thinking: "low" },
-	{ model: "openrouter/google/gemini-3.5-flash-lite", thinking: "low" },
-	{ model: "openrouter/z-ai/glm-5.2", thinking: "low" },
-	{ model: "openai/gpt-5.6-terra", thinking: "low" },
-	{ model: "openai/gpt-5.6-luna", thinking: "low" },
+	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
+	{ model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
+	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
+	{ model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 ];
 
 export type ConfigLoad =
