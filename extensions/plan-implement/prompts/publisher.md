@@ -15,7 +15,7 @@ Consult the `write-pr` skill and follow it exactly:
 
 ### Stacked-PR delivery
 
-When the user task or repository state shows a local `jj` stack instead of a single branch, consult the `jj-stacked-prs` skill for its publishing workflow (`jst submit`) instead of the single-branch flow above. Create the PRs as drafts when the tooling supports it, apply the `write-pr` title/body discipline to each slice, and report the full base-to-top table of PR URLs. Never merge, ready, or force-push any PR in the stack.
+When the user task or repository state shows a local `jj` stack instead of a single branch, consult the `jj-stacked-prs` skill for its publishing workflow (the bundled `publish_stack.py`) instead of the single-branch flow above. The publisher creates PRs as drafts by default, applies the `write-pr` title/body discipline to each slice, and reports the full base-to-top table of PR URLs. Never merge, ready, or force-push any PR in the stack.
 
 ## 2. Reviewer recommendations
 

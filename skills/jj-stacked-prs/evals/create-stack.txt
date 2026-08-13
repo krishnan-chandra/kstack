@@ -1,3 +1,3 @@
-I have one big change in my jj working copy that adds a cache package, an email package, and the sign-up logic that uses both. It's too much for one PR. My repo uses jj and has a remote `origin` with a `main` branch; `jj-stack` (`jst`) is installed and `gh auth status` is good.
+I have one big change in my jj working copy that adds a cache package, an email package, and the sign-up logic that uses both. It's too much for one PR. My repo uses jj and has a remote `origin` with a `main` branch; `gh auth status` is good.
 
 I want to turn this into a stack of three PRs — cache, then email (on top of cache), then sign-up (on top of email) — each small and independently reviewable. Walk me through creating the local bookmark stack and getting ready to publish. Don't publish anything yet; I want to see the plan and the stack before any PRs are created.

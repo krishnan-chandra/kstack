@@ -8,6 +8,16 @@ Run the inspection helper before and after any history-changing step:
 python3 <skill-dir>/scripts/inspect_stack.py --top <top>
 ```
 
+Publishing uses the bundled two-phase publisher. `plan` is read-only; `apply` executes the confirmed plan:
+
+```bash
+# Read-only preview
+python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --remote <remote>
+
+# Apply with the plan ID from the preview output
+python3 <skill-dir>/scripts/publish_stack.py apply --repo <path> --top <top> --remote <remote> --plan-id <id>
+```
+
 ## 1. Start a stack
 
 From a clean working copy on top of trunk:
@@ -127,27 +137,27 @@ inspect_stack.py --top <top>
 
 Address any `(conflict)` entries (see [safety-and-recovery.md](safety-and-recovery.md)).
 
-## 6. Publish or update the stack through `jst`
+## 6. Publish or update the stack through the bundled publisher
 
-`jst` infers the bookmark stack from `<top>` down to trunk, pushes bookmarks, creates/updates PRs, sets each PR's base to the bookmark below it, and posts navigation comments. Always preview first:
-
-```bash
-jst submit <top> --remote <remote> --dry-run
-```
-
-Show the user the plan and get explicit approval, then run for real:
+The bundled `publish_stack.py` infers the bookmark stack from `<top>` down to trunk, pushes bookmarks, creates/updates PRs, sets each PR's base to the bookmark below it, and posts navigation comments. Always preview first:
 
 ```bash
-jst submit <top> --remote <remote>
+python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --remote <remote>
 ```
 
-`jst` uses each change's first description line as the PR title. If a title is wrong, fix the description first:
+Show the user the plan and get explicit approval, then apply using the plan ID from the plan output:
+
+```bash
+python3 <skill-dir>/scripts/publish_stack.py apply --repo <path> --top <top> --remote <remote> --plan-id <plan_id>
+```
+
+The publisher uses each change's first description line as the provisional PR title. If a title is wrong, fix the description first:
 
 ```bash
 jj describe -r <change-id> -m "feat: correct title"
 ```
 
-then re-submit. `jst` updates existing PRs (including their base) rather than recreating them.
+then re-plan and re-apply. The publisher updates existing PRs (including their base) rather than recreating them and creates missing PRs as drafts.
 
 ## 7. Process review feedback on a middle PR
 
@@ -158,7 +168,7 @@ jj edit <change-id>
 # ... address feedback ...
 jj absorb
 inspect_stack.py --top <top>
-jst submit <top> --remote <remote> --dry-run   # preview, then confirm and run
+python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --remote <remote>   # preview, then confirm and apply
 ```
 
 ## 8. Advance the stack after the bottom PR merges
@@ -177,7 +187,7 @@ Then fetch the updated trunk and rebase the remainder:
 jj git fetch --remote <remote>
 jj rebase -b <top> -o 'trunk()'
 inspect_stack.py --top <top>
-jst submit <top> --remote <remote> --dry-run   # repairs PR bases; preview, then confirm
+python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --remote <remote>   # repairs PR bases; preview, then confirm and apply
 ```
 
 If the remote branch was deleted on merge, the local bookmark is forgotten after fetch; that's expected.
@@ -190,4 +200,4 @@ If there's exactly one GitHub remote, use it. If there are several, ask the user
 git remote -v
 ```
 
-`jst` will reject a non-GitHub remote itself, but surface the choice to the user first.
+The publisher will reject a non-GitHub remote itself, but surface the choice to the user first.

@@ -328,7 +328,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					`Publisher: ${implementerModel}\n` +
 						`Timeout: ${roles.timeoutMinutes} min\n\n` +
 						(mode === "stack"
-							? "The publisher consults jj-stacked-prs to submit the local stack as draft PRs (jst submit) and write-pr " +
+							? "The publisher consults jj-stacked-prs to submit the local stack as draft PRs (publish_stack.py) and write-pr " +
 								"for each slice's title/body, then find-reviewers for 2–5 reviewer recommendations over the full stack. "
 							: "The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's " +
 								"title/body), then find-reviewers for 2–5 reviewer recommendations. ") +
