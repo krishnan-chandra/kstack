@@ -54,8 +54,23 @@ ignores the outcome.
    modifies one, in which case children run with `--no-context-files` so the
    content under review cannot become reviewer instructions (disclosed in the
    confirmation and the verdict details).
-   While a run is in flight, the footer shows each reviewer's live activity
-   (current tool call, turn count, elapsed time). Press **Ctrl+Shift+X** to
+   While a run is in flight in TUI mode, a live dashboard sits above the
+   editor: one compact card per child with its label/model, state (queued,
+   running, completed, failed, aborted), turn count, current tool or thinking
+   activity, and a bounded rolling line of recent visible assistant text
+   (thinking content is never displayed). Queued reviewers stay visible when
+   `maxConcurrency` is below the panel size, and after the reviewers finish a
+   distinct lead/synthesis row appears beneath them. The header shows summary
+   counts, elapsed time, and the abort hint. On narrow terminals the model
+   and activity columns drop first; labels and states always remain. All
+   displayed child text is untrusted: ANSI/OSC/APC sequences and control
+   characters are stripped before theming, and every line is truncated to the
+   terminal width. The dashboard is ephemeral — it disappears on success,
+   decline, abort, failure, or error, and is never written to the session.
+
+   Outside TUI mode (RPC), the compact footer status line remains the
+   fallback, showing each reviewer's live activity (current tool call, turn
+   count, elapsed time). Press **Ctrl+Shift+X** to
    abort: children get SIGTERM, then SIGKILL after a 5 s grace. A child that
    produces no output for the idle timeout (`timeoutMinutes`, default 10) is
    killed as stalled — any stdout/stderr output resets the timer, so
@@ -138,6 +153,7 @@ the `"panel-review"` section:
 | Child stderr retention | 8 KiB |
 | Child idle timeout | 10 min without output (SIGTERM, then SIGKILL after a 5 s grace) |
 | Child max runtime | 30 min absolute ceiling |
+| Dashboard live text preview | 240-byte rolling UTF-8 tail per child |
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes

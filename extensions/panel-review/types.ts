@@ -126,4 +126,6 @@ export const LIMITS = {
 	reviewerTimeoutMs: 10 * 60 * 1000,
 	/** Absolute wall-clock ceiling per child, regardless of activity. */
 	reviewerMaxRuntimeMs: 30 * 60 * 1000,
+	/** Rolling UTF-8 tail of live assistant text shown in the TUI dashboard. */
+	livePreviewBytes: 240,
 } as const;

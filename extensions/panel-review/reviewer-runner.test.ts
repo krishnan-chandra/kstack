@@ -385,3 +385,142 @@ describe("runReviewer stall detection", () => {
 		}
 	});
 });
+
+describe("runReviewer live text preview", () => {
+	it("reconciles preview and turns at message_end while preserving tool activity", async () => {
+		const seen: { turns: number; activity?: string; preview?: string }[] = [];
+		const r = await run(
+			{
+				events: [
+					{ type: "message_start", message: { role: "assistant" } },
+					{ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "/repo/x.ts" } },
+					{ type: "tool_execution_end", toolCallId: "c1", toolName: "read" },
+				],
+				finalText: "The change looks safe.",
+			},
+			{ onProgress: (info) => seen.push({ ...info }) },
+		);
+		assert.equal(r.status, "completed");
+		// message_start emits an initial progress event for the new turn.
+		assert.deepEqual(seen[0], { label: "A", turns: 0, activity: undefined });
+		// Tool activity then flows through as before.
+		assert.deepEqual(seen[1], { label: "A", turns: 0, activity: "read x.ts" });
+		assert.deepEqual(seen[2], { label: "A", turns: 0, activity: "thinking" });
+		// message_end reconciles the preview to the authoritative assistant text.
+		const last = seen.at(-1);
+		assert.equal(last?.preview, "The change looks safe.");
+		assert.equal(last?.turns, 1);
+	});
+
+	it("emits previews from raw split JSON chunks and ignores thinking deltas", async () => {
+		const seen: { preview?: string }[] = [];
+		const lines = [
+			JSON.stringify({ type: "message_start", message: { role: "assistant" } }),
+			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "secret reasoning" } }),
+			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hello " } }),
+			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } }),
+		];
+		// Split every JSON line across two chunks to exercise the streaming decoder.
+		const spawnImpl: SpawnImpl = () => {
+			const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
+			const handlers: Record<string, ((v: never) => void)[]> = {};
+			const proc = {
+				killed: false,
+				pid: undefined,
+				stdout: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stdout.push(cb) },
+				stderr: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stderr.push(cb) },
+				on(event: string, cb: (v: never) => void) {
+					(handlers[event] ??= []).push(cb);
+				},
+				kill() {
+					proc.killed = true;
+					queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+					return true;
+				},
+			};
+			queueMicrotask(() => {
+				for (const line of lines) {
+					const half = Math.floor(line.length / 2);
+					for (const cb of listeners.stdout) cb(Buffer.from(line.slice(0, half)));
+					for (const cb of listeners.stdout) cb(Buffer.from(line.slice(half) + "\n"));
+				}
+				const end = JSON.stringify({
+					type: "message_end",
+					message: { role: "assistant", content: [{ type: "text", text: "Hello world" }], usage: {} },
+				});
+				for (const cb of listeners.stdout) cb(Buffer.from(end + "\n"));
+				handlers.close?.forEach((cb) => (cb as (c: number) => void)(0));
+			});
+			return proc;
+		};
+		const r = await runReviewer({
+			spec: specA,
+			model: "a/b",
+			promptFile: "/tmp/p.md",
+			task: "t",
+			cwd: "/repo",
+			deps: { spawnImpl, killGraceMs: 1 },
+			onProgress: (info) => seen.push({ preview: info.preview }),
+		});
+		assert.equal(r.status, "completed");
+		const previews = seen.map((s) => s.preview).filter((p): p is string => p !== undefined);
+		assert.ok(previews.includes("Hello "), `growing previews: ${JSON.stringify(previews)}`);
+		assert.ok(previews.includes("Hello world"));
+		assert.ok(!previews.some((p) => p.includes("secret reasoning")), "thinking deltas must not leak");
+	});
+
+	it("resets the preview when a new assistant message starts", async () => {
+		const seen: { preview?: string }[] = [];
+		const r = await run(
+			{
+				events: [
+					{ type: "message_start", message: { role: "assistant" } },
+					{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "first draft " } },
+					{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "first draft" }], usage: {} } },
+					{ type: "message_start", message: { role: "assistant" } },
+					{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "second draft" } },
+				],
+				finalText: "second draft",
+			},
+			{ onProgress: (info) => seen.push({ preview: info.preview }) },
+		);
+		assert.equal(r.status, "completed");
+		if (r.status === "completed") assert.equal(r.output, "second draft");
+		const previews = seen.map((s) => s.preview).filter((p): p is string => p !== undefined);
+		assert.ok(previews.some((p) => p.startsWith("first draft")));
+		// After the second message_start the preview restarts from scratch.
+		const idx = previews.findIndex((p) => p === "second draft");
+		assert.ok(idx > 0, `previews: ${JSON.stringify(previews)}`);
+		assert.ok(!previews[idx].includes("first draft"));
+	});
+
+	it("bounds the preview within the live-preview budget and stays UTF-8 safe", async () => {
+		const { truncateTailUtf8 } = await import("./reviewer-runner.ts");
+		// 3-byte characters straddling the tail boundary must not split.
+		const text = `x${"語".repeat(200)}`; // 1 + 600 bytes
+		const tail = truncateTailUtf8(text, 100);
+		assert.ok(Buffer.byteLength(tail, "utf8") <= 100);
+		assert.ok(!tail.includes("�"));
+		assert.equal(tail, "語".repeat(33)); // 33 × 3 = 99 bytes
+
+		const previews: string[] = [];
+		const events = [];
+		for (let i = 0; i < 20; i++) {
+			events.push({
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", delta: `${i}:` + "語".repeat(30) },
+			});
+		}
+		const r = await run(
+			{ events, finalText: "done" },
+			{ onProgress: (info) => info.preview !== undefined && previews.push(info.preview) },
+		);
+		assert.equal(r.status, "completed");
+		const lastStreamed = previews.at(-1);
+		assert.ok(lastStreamed);
+		assert.ok(Buffer.byteLength(lastStreamed, "utf8") <= 240);
+		assert.ok(!lastStreamed.includes("�"));
+		// message_end reconciles to the final short text.
+		if (r.status === "completed") assert.equal(r.output, "done");
+	});
+});

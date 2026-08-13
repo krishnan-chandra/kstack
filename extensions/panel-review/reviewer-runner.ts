@@ -88,6 +88,26 @@ function truncateHeadUtf8(text: string, maxBytes: number): string {
 	return `${out}\n\n[Output truncated at ${maxBytes} bytes.]`;
 }
 
+/** Keep the last `maxBytes` of UTF-8 text without splitting a code point. */
+export function truncateTailUtf8(text: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
+	const buf = Buffer.from(text, "utf8");
+	if (buf.length <= maxBytes) return text;
+	let start = buf.length - maxBytes;
+	while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++;
+	let out = buf.subarray(start).toString("utf8");
+	while (out && Buffer.byteLength(out, "utf8") > maxBytes) out = out.slice(1);
+	return out;
+}
+
+function assistantTextFromMessage(message: { content?: { type?: string; text?: string }[] } | undefined): string {
+	let text = "";
+	for (const part of message?.content ?? []) {
+		if (part.type === "text" && part.text) text += part.text;
+	}
+	return text;
+}
+
 /** Duration for error messages: exact ms below one second, rounded seconds above. */
 export function formatDuration(ms: number): string {
 	return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
@@ -122,7 +142,7 @@ export interface RunReviewerOptions {
 	noContextFiles?: boolean;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
-	onProgress?: (info: { label: string; turns: number; activity?: string }) => void;
+	onProgress?: (info: { label: string; turns: number; activity?: string; preview?: string }) => void;
 }
 
 export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult> {
@@ -134,6 +154,7 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 	);
 	const outputCap = deps.outputCapBytes ?? LIMITS.reviewerOutputBytes;
 	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
+	const previewCap = LIMITS.livePreviewBytes;
 	const killGraceMs = deps.killGraceMs ?? 5000;
 	const timeoutMs = deps.timeoutMs ?? LIMITS.reviewerTimeoutMs;
 	const maxRuntimeMs = deps.maxRuntimeMs ?? LIMITS.reviewerMaxRuntimeMs;
@@ -163,18 +184,45 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 		let closed = false;
 		let settled = false;
 		let activity: string | undefined;
+		let streamingPreview = "";
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
+		const emitProgress = () => {
+			options.onProgress?.({
+				label: spec.label,
+				turns: usage.turns,
+				activity,
+				...(streamingPreview ? { preview: streamingPreview } : {}),
+			});
+		};
+
+		const setPreview = (text: string) => {
+			streamingPreview = truncateTailUtf8(text, previewCap);
+		};
+
 		const parser = new JsonLineParser((event) => {
+			if (event.type === "message_start" && event.message?.role === "assistant") {
+				streamingPreview = "";
+				emitProgress();
+				return;
+			}
+			if (event.type === "message_update") {
+				const delta = event.assistantMessageEvent;
+				if (delta?.type === "text_delta" && typeof delta.delta === "string" && delta.delta) {
+					setPreview(streamingPreview + delta.delta);
+					emitProgress();
+				}
+				return;
+			}
 			if (event.type === "tool_execution_start" && event.toolName) {
 				activity = summarizeToolCall(event.toolName, event.args);
-				options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
+				emitProgress();
 				return;
 			}
 			if (event.type === "tool_execution_end") {
 				activity = "thinking";
-				options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
+				emitProgress();
 				return;
 			}
 			if (event.type !== "message_end" || !event.message) return;
@@ -190,10 +238,12 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 			}
 			if (msg.stopReason) stopReason = msg.stopReason;
 			if (msg.errorMessage) errorMessage = msg.errorMessage;
-			for (const part of msg.content ?? []) {
-				if (part.type === "text" && part.text) finalText = part.text;
+			const authoritative = assistantTextFromMessage(msg);
+			if (authoritative) {
+				finalText = authoritative;
+				setPreview(authoritative);
 			}
-			options.onProgress?.({ label: spec.label, turns: usage.turns, activity });
+			emitProgress();
 		});
 
 		// Idle timeout: any child output (stdout events or stderr) re-arms the
