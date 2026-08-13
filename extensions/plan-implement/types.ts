@@ -6,6 +6,9 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 /** How the approved plan is delivered. */
 export type DeliveryMode = "single" | "stack";
 
+/** Where single-PR implementation and follow-up phases run. */
+export type WorkLocation = "current" | "worktree";
+
 /** A discovered skill we may pass to a child via --skill. */
 export interface SkillRef {
 	/** Skill name (frontmatter `name`), used for Arena exclusion. */

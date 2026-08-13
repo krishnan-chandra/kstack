@@ -6,7 +6,7 @@ names an unnamed session from the task before classification or dispatch and
 never overwrites an explicit session name.
 
 ```
-/kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>
+/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>
 ```
 
 ## Route table
@@ -28,6 +28,7 @@ never overwrites an explicit session name.
 /kstack Explain the archive indexing strategy
 /kstack --route investigate What does the handoff extension do?
 /kstack --route change --change-kind refactor Refactor the config loader
+/kstack --route change --worktree --change-kind feature Add isolated search
 /kstack --route change --stack --change-kind feature Split feature into three PRs
 /kstack --route review Review the latest changes
 /kstack --route arena -- "Generate three alternative designs"
@@ -45,6 +46,10 @@ the classifier has insufficient context:
 ```text
 /kstack --route change --change-kind performance Reduce archive-index latency
 ```
+
+`--worktree` is valid only for the change route and dispatches single-PR work
+to a managed Git linked worktree beneath `~/.pi/kstack/worktrees`. It cannot be
+combined with `--stack` in v1.
 
 Non-generic kinds attach a concise proof-obligation playbook to both child
 roles. Bug fixes reproduce and rerun the same regression check; refactors pin

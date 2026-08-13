@@ -33,9 +33,9 @@ describe("panel-review in-process API", () => {
 				});
 			}),
 		} as unknown as ExtensionAPI;
-		const result = await requestPanelReview(pi, { intent: 'quoted "text" \\ path', base: "origin/main" }, ctx);
+		const result = await requestPanelReview(pi, { intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" }, ctx);
 		assert.deepEqual(result, { handled: true, outcome });
-		assert.deepEqual(calls, [{ intent: 'quoted "text" \\ path', base: "origin/main" }]);
+		assert.deepEqual(calls, [{ intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" }]);
 	});
 
 	it("reports unavailable when panel-review has no listener", async () => {

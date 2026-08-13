@@ -26,6 +26,7 @@ export function parseArgs(input: string): ArgsParse {
 
 	let route: string | undefined;
 	let delivery: DeliveryRecommendation;
+	let worktree = false;
 	let changeKind: ChangeKind | undefined;
 	let postDash = false;
 	let i = 0;
@@ -56,6 +57,12 @@ export function parseArgs(input: string): ArgsParse {
 			continue;
 		}
 
+		if (token === "--worktree") {
+			if (worktree) return { ok: false, error: "Duplicate --worktree flag." };
+			worktree = true;
+			continue;
+		}
+
 		if (token === "--change-kind") {
 			if (changeKind !== undefined) return { ok: false, error: "Duplicate --change-kind flag." };
 			i++;
@@ -67,8 +74,13 @@ export function parseArgs(input: string): ArgsParse {
 			continue;
 		}
 
-		return { ok: false, error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack, --change-kind <kind>.` };
+		return { ok: false, error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack, --worktree, --change-kind <kind>.` };
 	}
+
+	if (delivery === "stack" && worktree) {
+		return { ok: false, error: "--stack and --worktree cannot currently be combined." };
+	}
+	if (worktree && !delivery) delivery = "single";
 
 	// Validate route if provided.
 	if (route !== undefined && !isRouteId(route)) {
@@ -95,6 +107,7 @@ export function parseArgs(input: string): ArgsParse {
 		args: {
 			route: route ? (route as RouterArgs["route"]) : undefined,
 			delivery,
+			worktree,
 			changeKind,
 			task: task.trim(),
 		},

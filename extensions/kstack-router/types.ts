@@ -76,6 +76,7 @@ export interface RouteMetadata {
 export interface RouterArgs {
 	route?: RouteId;
 	delivery?: DeliveryRecommendation;
+	worktree?: boolean;
 	changeKind?: ChangeKind;
 	task: string;
 }

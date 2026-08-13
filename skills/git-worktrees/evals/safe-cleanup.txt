@@ -1,0 +1,1 @@
+Clean up the managed worktree for branch kstack/archive-search. It may contain untracked files. Inspect it first, do not discard any state without my explicit approval, and show the exact safe cleanup and recovery commands.

@@ -1,0 +1,20 @@
+{
+  "skill": "git-worktrees",
+  "evals": [
+    {
+      "id": "create-managed-worktree",
+      "prompt_file": "create-managed-worktree.txt",
+      "description": "Create an isolated linked worktree from the remote default branch without touching the original checkout's files."
+    },
+    {
+      "id": "inspect-managed-worktrees",
+      "prompt_file": "inspect-managed-worktrees.txt",
+      "description": "List centrally managed worktrees and distinguish dirty, locked, orphaned, and base-reachable states."
+    },
+    {
+      "id": "safe-cleanup",
+      "prompt_file": "safe-cleanup.txt",
+      "description": "Refuse ordinary cleanup of a managed worktree with untracked files and explain the explicit recovery path."
+    }
+  ]
+}

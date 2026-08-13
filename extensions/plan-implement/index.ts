@@ -17,7 +17,8 @@ import { WorkflowLifecycle } from "./lifecycle.ts";
 import { isChildModelAvailable } from "./model-availability.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import type { PanelArgs } from "../panel-review/types.ts";
-import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef } from "./types.ts";
+import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
+import { createManagedWorktree, planManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
 import { runWorkflow } from "./workflow.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 
@@ -121,6 +122,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	async function runPlanImplement(
 		rawTask: string,
 		mode: DeliveryMode,
+		workLocation: WorkLocation,
 		changeKind: ChangeKind,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
@@ -146,6 +148,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const task = taskResult.task;
+		if (mode === "stack" && workLocation === "worktree") {
+			notify("--stack and --worktree cannot currently be combined.", "error");
+			return;
+		}
 		nameSessionIfUnnamed(pi, task);
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
@@ -189,6 +195,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		// Stack-mode prerequisites, resolved before any model call.
 		let trunkSha: string | undefined;
 		let skillPaths: string[] = [];
+		let worktreePlan: ManagedWorktreePlan | undefined;
 		if (mode === "stack") {
 			const exec = makeExec(pi);
 			const preflight = await preflightStack(ctx.cwd, exec, exec);
@@ -204,10 +211,22 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			skillPaths = policy.skills.map((s) => s.baseDir);
+		} else if (workLocation === "worktree") {
+			const planned = await planManagedWorktree(ctx.cwd, task, makeExec(pi));
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			if (!planned.ok) {
+				notify(planned.error, "error");
+				return;
+			}
+			worktreePlan = planned.plan;
 		}
 
 		const confirmed = await ctx.ui.confirm(
-			mode === "stack" ? "Run plan → implement (stacked PRs) → panel review → fix → publish?" : "Run plan → implement → panel review → fix → publish?",
+			mode === "stack"
+				? "Run plan → implement (stacked PRs) → panel review → fix → publish?"
+				: workLocation === "worktree"
+					? "Run plan → implement in managed worktree → panel review → fix → publish?"
+					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
 				? `Planner (read-only): ${plannerModel}\n` +
 					`Implementer (creates local jj changes + bookmarks): ${implementerModel}\n` +
@@ -222,11 +241,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				: `Planner (read-only): ${plannerModel}\n` +
 					`Implementer (can modify files): ${implementerModel}\n` +
 					`Change kind: ${changeKindLabel(changeKind)}\n` +
+					(worktreePlan
+						? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.branch}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n`
+						: "Location: current working tree\n") +
 					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
-					"Both children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
-					"You will approve the plan before implementation. Successful implementation invokes the existing panel review, " +
-					"which may include pre-existing working-tree changes. After the verdict you approve addressing its findings, " +
-					"then publishing a draft PR (write-pr) with reviewer recommendations (find-reviewers).",
+					"Children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
+					(worktreePlan
+						? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there; the worktree is retained for explicit cleanup. "
+						: "The review may include pre-existing working-tree changes. ") +
+					"After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.",
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
 
@@ -237,6 +260,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 
 		const timeoutMs = roles.timeoutMinutes * 60_000;
+		let workflowCwd = ctx.cwd;
 		const updateProgress = ({ role, turns, activity }: { role: AgentRole; turns: number; activity: string }) => {
 			if (lifecycle.isCurrent(token)) {
 				ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
@@ -276,11 +300,12 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								promptFile: join(PROMPTS_DIR, "review-fixer.md"),
 								taskFile: reviewTaskFile,
 								verdictFile,
-								cwd: ctx.cwd,
+								cwd: workflowCwd,
 								signal: controller.signal,
 								deps: { timeoutMs },
 								onProgress: updateProgress,
 								mode,
+								workLocation,
 								skillPaths,
 								playbookPrompt,
 							});
@@ -321,11 +346,12 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 						promptFile: join(PROMPTS_DIR, "publisher.md"),
 						taskFile: reviewTaskFile,
 						verdictFile,
-						cwd: ctx.cwd,
+						cwd: workflowCwd,
 						signal: controller.signal,
 						deps: { timeoutMs },
 						onProgress: updateProgress,
 						mode,
+						workLocation,
 						skillPaths,
 					});
 					if (lifecycle.isCurrent(token)) {
@@ -378,6 +404,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								deps: { timeoutMs },
 								onProgress: updateProgress,
 								mode,
+								workLocation,
 								skillPaths,
 								playbookPrompt,
 							});
@@ -402,6 +429,18 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 						const controller = lifecycle.beginChild(token, "implementing");
 						if (!controller) return { status: "aborted", role: "implementer", model: implementerModel };
 						try {
+							if (worktreePlan && workflowCwd === ctx.cwd) {
+								ctx.ui.setStatus("plan-implement", "plan-implement: creating managed worktree…");
+								const created = await createManagedWorktree(worktreePlan, makeExec(pi));
+								if (!created.ok) {
+									return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+								}
+								workflowCwd = created.plan.path;
+								if (!lifecycle.isCurrent(token) || controller.signal.aborted) {
+									return { status: "aborted", role: "implementer", model: implementerModel };
+								}
+								notify(`Managed worktree created and retained at ${workflowCwd} (${created.plan.branch}).`, "info");
+							}
 							ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
 							return await runAgent({
 								role: "implementer",
@@ -409,11 +448,12 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								promptFile: join(PROMPTS_DIR, "implementer.md"),
 								taskFile,
 								planFile,
-								cwd: ctx.cwd,
+								cwd: workflowCwd,
 								signal: controller.signal,
 								deps: { timeoutMs },
 								onProgress: updateProgress,
 								mode,
+								workLocation,
 								skillPaths,
 								playbookPrompt,
 							});
@@ -441,7 +481,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					} else {
 						reviewOptions = mode === "stack" && trunkSha
 							? buildStackPanelReviewOptions(task, trunkSha)
-							: buildPanelReviewOptions(task);
+							: { ...buildPanelReviewOptions(task), ...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: workflowCwd } : {}) };
 					}
 				}
 			} finally {
@@ -458,7 +498,14 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 
 			if (reviewOptions && lifecycle.isCurrent(token)) {
-				notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : "Implementation complete; starting panel review.", "info");
+				notify(
+					mode === "stack"
+						? "Local stack implemented; starting panel review against trunk() base."
+						: worktreePlan
+							? `Implementation complete in ${workflowCwd}; starting panel review against the pinned base.`
+							: "Implementation complete; starting panel review.",
+					"info",
+				);
 				try {
 					const request = await requestPanelReview(pi, reviewOptions, ctx);
 					if (!request.handled) {
@@ -486,7 +533,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("plan-implement", {
-		description: "Select a change kind, plan, approve, implement, panel-review, fix findings, then publish a draft PR with reviewers",
+		description: "Plan, approve, implement here or in --worktree, panel-review, fix findings, then publish a draft PR",
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {
@@ -520,6 +567,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			let mode: DeliveryMode = parsed.mode;
+			const workLocation: WorkLocation = parsed.workLocation;
 			let changeKind = parsed.changeKind;
 			let rawTask = parsed.task;
 			if (!rawTask.trim() && !(args ?? "").trim()) {
@@ -545,7 +593,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 
-			await runPlanImplement(rawTask, mode, changeKind, ctx);
+			await runPlanImplement(rawTask, mode, workLocation, changeKind, ctx);
 		},
 	});
 
