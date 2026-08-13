@@ -16,7 +16,7 @@ export interface PanelReviewRequest {
 export function isPanelReviewRequest(value: unknown): value is PanelReviewRequest {
 	if (typeof value !== "object" || value === null) return false;
 	const request = value as Partial<PanelReviewRequest>;
-	const options = request.options as Partial<PanelArgs> | undefined;
+	const options = request.options;
 	return (
 		request.schemaVersion === 2 &&
 		typeof options === "object" &&
@@ -25,7 +25,6 @@ export function isPanelReviewRequest(value: unknown): value is PanelReviewReques
 		(options.base === undefined || typeof options.base === "string") &&
 		(options.intent === undefined || typeof options.intent === "string") &&
 		(options.repositoryPath === undefined || typeof options.repositoryPath === "string") &&
-		(options.mode === undefined || options.mode === "standard" || options.mode === "thermo") &&
 		typeof request.ctx === "object" &&
 		request.ctx !== null
 	);

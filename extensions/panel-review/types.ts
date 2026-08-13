@@ -49,15 +49,11 @@ export type ReviewerResult =
 	  }
 	| { status: "aborted"; label: string; model: string };
 
-export type ReviewMode = "standard" | "thermo";
-
 export interface PanelArgs {
 	base?: string;
 	intent?: string;
 	/** Internal callers may select another validated Git working tree. */
 	repositoryPath?: string;
-	/** Review strictness. Standard is the current rubric; thermo adds the thermo-nuclear maintainability lens. */
-	mode?: ReviewMode;
 }
 
 /**

@@ -95,20 +95,18 @@ export function buildSynthesisInput(opts: {
 	return { input: header + parts.join("\n"), truncated };
 }
 
-/** Full system prompt for the synthesizer child process.
- * When `thermoAddendum` is provided the synthesizer promotes thermo's Approval Bar
- * blockers into Act On (structural regressions, missed code-judo moves, file-size
- * explosions, spaghetti growth, etc.). */
-export function buildSynthesisPrompt(leadJudgment: string, thermoAddendum?: string): string {
-	const thermoSection = thermoAddendum?.trim()
-		? [thermoAddendum.trim(), "", "---", ""]
-		: [];
+/** Full system prompt for the synthesizer child process, including the
+ * thermo-nuclear Approval Bar for structural maintainability blockers. */
+export function buildSynthesisPrompt(leadJudgment: string, thermoLens: string): string {
 	return [
 		leadJudgment.trim(),
 		"",
 		"---",
 		"",
-		...thermoSection,
+		thermoLens.trim(),
+		"",
+		"---",
+		"",
 		"# Synthesis Task",
 		"",
 		"You are the lead reviewer for a panel code review. The task file named in the user",
@@ -126,19 +124,11 @@ export function buildSynthesisPrompt(leadJudgment: string, thermoAddendum?: stri
 		"  signal, never proof; verify concrete evidence before promoting a finding.",
 		"- Preserve useful disagreement: put contested findings under Consider with both positions.",
 		"- Dismiss findings that lack concrete evidence in the actual changeset, and say why.",
-		...(thermoAddendum?.trim()
-			? [
-					"- In thermo-nuclear mode Act On also includes the thermo Approval Bar presumptive blockers:",
-					"  structural regressions, missed code-judo simplifications, unjustified file-size",
-					"  explosions (below-1k → above-1k), spaghetti branching, hacky/magical abstractions,",
-					"  wrapper/cast churn, boundary leaks, and canonical-helper duplication. Treat these as",
-					"  blockers unless the author clearly justifies them; keep the thermo output-priority",
-					"  order and do not dilute Act On with low-value nits.",
-				]
-				: [
-						"- Keep Act On limited to concrete blockers: correctness bugs, data-loss risks, security",
-						"  issues, and violations of the stated intent.",
-					]),
+		"- Act On includes the thermo Approval Bar presumptive blockers: structural regressions,",
+		"  missed code-judo simplifications, unjustified file-size explosions (below-1k → above-1k),",
+		"  spaghetti branching, hacky/magical abstractions, wrapper/cast churn, boundary leaks,",
+		"  and canonical-helper duplication. Treat these as blockers unless clearly justified;",
+		"  keep the thermo output-priority order and do not dilute Act On with low-value nits.",
 		"- Do not invent findings absent from reviewer evidence. If you add a lead-review finding,",
 		"  mark it explicitly as (lead) and cite the exact code path you inspected.",
 		"- Under Reviewers, list each reviewer label, model, and status (completed/failed/aborted).",
