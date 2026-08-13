@@ -131,7 +131,10 @@ export interface CycleResult {
 export interface AutopilotPersistedState {
 	prNumber: number;
 	headSha: string;
+	/** Review items whose reply and, when applicable, resolution both succeeded. */
 	handledThreadIds: string[];
+	/** Review threads already replied to but not yet resolved. */
+	repliedThreadIds: string[];
 	/** Check name + SHA pairs already given one flake rerun. */
 	flakeRetried: string[];
 }
@@ -160,6 +163,8 @@ export interface ExecFnResult {
 export interface ExecFnOptions {
 	cwd: string;
 	timeout: number;
+	/** Optional cancellation for long-running subprocesses. */
+	signal?: AbortSignal;
 }
 
 export type ExecFn = (command: string, args: string[], options: ExecFnOptions) => Promise<ExecFnResult>;

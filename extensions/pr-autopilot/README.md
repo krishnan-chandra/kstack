@@ -24,8 +24,7 @@ the lowest unmerged PR in a stack) to merge-ready with cheap, fast child agents.
 | `watch` | Same as `drive` with up to 15 fix cycles. Watches `gh pr checks --watch` when nothing is actionable and CI is still running. |
 | `cleanup` | Remove the current managed worktree and safely delete its branch after confirmation. Session archival remains a separate manual step. |
 
-If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR**
-in the current repository (sorted by number, not GitHub's default list order).
+If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR authored by the current GitHub user** in the repository (sorted by number, not GitHub's default list order). Before any mutation, the current checkout must be clean, on that PR's exact head branch, and at GitHub's exact head SHA.
 
 ## Tiny-model-only invariant
 

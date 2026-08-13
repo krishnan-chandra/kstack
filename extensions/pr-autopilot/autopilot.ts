@@ -23,6 +23,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
 	attachFailedLogs,
+	currentBranch,
+	currentHead,
 	findLowestUnmergedPR,
 	getCheckRuns,
 	getIssueComments,
@@ -142,6 +144,7 @@ export function isCodeReady(state: PRState): boolean {
 
 /** Code-ready, not a draft, GitHub merge box is CLEAN (or UNSTABLE with all observed checks green). */
 export function isMergeReady(state: PRState): boolean {
+	if (state.verifiedHeadSha !== state.headSha) return false;
 	if (state.isDraft || state.mergeStateStatus === "DRAFT") return false;
 	if (state.mergeStateStatus === "BLOCKED" || state.mergeStateStatus === "DIRTY" || state.mergeStateStatus === "BEHIND") {
 		return false;
@@ -151,6 +154,7 @@ export function isMergeReady(state: PRState): boolean {
 
 export function describeBlockers(state: PRState): string {
 	const issues: string[] = [];
+	if (state.verifiedHeadSha !== state.headSha) issues.push("head changed during verification");
 	if (state.isDraft || state.mergeStateStatus === "DRAFT") issues.push("draft");
 	if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY") issues.push("conflicts");
 	if (state.mergeStateStatus === "BEHIND") issues.push("behind base");
@@ -300,19 +304,21 @@ export async function loadPersistedState(prNumber: number): Promise<AutopilotPer
 	try {
 		const raw: unknown = JSON.parse(await readFile(persistPath(prNumber), "utf8"));
 		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-			return { prNumber, headSha: "", handledThreadIds: [], flakeRetried: [] };
+			return { prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
 		}
 		const obj = raw as Record<string, unknown>;
 		const handled = Array.isArray(obj.handledThreadIds) ? obj.handledThreadIds.filter((id): id is string => typeof id === "string") : [];
+		const replied = Array.isArray(obj.repliedThreadIds) ? obj.repliedThreadIds.filter((id): id is string => typeof id === "string") : [];
 		const flake = Array.isArray(obj.flakeRetried) ? obj.flakeRetried.filter((id): id is string => typeof id === "string") : [];
 		return {
 			prNumber,
 			headSha: typeof obj.headSha === "string" ? obj.headSha : "",
 			handledThreadIds: handled,
+			repliedThreadIds: replied,
 			flakeRetried: flake,
 		};
 	} catch {
-		return { prNumber, headSha: "", handledThreadIds: [], flakeRetried: [] };
+		return { prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
 	}
 }
 
@@ -340,6 +346,15 @@ export async function fetchPRState(
 		getIssueComments(exec, cwd, prNumber),
 		getCheckRuns(exec, cwd, prNumber),
 	]);
+
+	const failures = [
+		["review threads", threadsResult],
+		["issue comments", issueResult],
+		["checks", checksResult],
+	] as const;
+	for (const [label, result] of failures) {
+		if (result.code !== 0) return `Could not fetch ${label} for PR #${prNumber}: ${result.stderr.trim() || "unknown GitHub error"}`;
+	}
 
 	const checks = await attachFailedLogs(exec, cwd, checksResult.checks, opts.concurrency);
 	const threads = filterHandledThreads(
@@ -399,10 +414,45 @@ export async function runFixer(
 	};
 }
 
+export async function prepareMutationCheckout(exec: ExecFn, cwd: string, state: PRState): Promise<{ ok: true } | { ok: false; error: string }> {
+	const [branch, head, status] = await Promise.all([
+		currentBranch(exec, cwd),
+		currentHead(exec, cwd),
+		exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 }),
+	]);
+	if (branch.branch !== state.headRef) {
+		return { ok: false, error: `Selected PR #${state.number} uses ${state.headRef}, but the checkout is on ${branch.branch ?? "a detached HEAD"}. Open its managed worktree first.` };
+	}
+	if (head.sha !== state.headSha) {
+		return { ok: false, error: `Local HEAD ${head.sha ?? "could not be read"} does not match PR #${state.number} head ${state.headSha}. Synchronize the PR worktree first.` };
+	}
+	if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
+	if (status.stdout.trim()) return { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." };
+	const integrated = await integrateRemoteHead(exec, cwd, state.headRef);
+	if (!integrated.ok) return integrated;
+	const synchronizedHead = await currentHead(exec, cwd);
+	if (synchronizedHead.sha !== state.headSha) {
+		return { ok: false, error: `The remote PR head advanced to ${synchronizedHead.sha ?? "an unreadable SHA"}; refresh GitHub state before editing.` };
+	}
+	return { ok: true };
+}
+
+async function restoreForbiddenPaths(exec: ExecFn, cwd: string, paths: string[]): Promise<string | undefined> {
+	const errors: string[] = [];
+	for (const path of paths) {
+		const restore = await exec("git", ["restore", "--staged", "--worktree", "--", path], { cwd, timeout: 10_000 });
+		if (restore.code === 0) continue;
+		const clean = await exec("git", ["clean", "-f", "--", path], { cwd, timeout: 10_000 });
+		if (clean.code !== 0) errors.push(`${path}: ${restore.stderr.trim() || clean.stderr.trim()}`);
+	}
+	return errors.length > 0 ? errors.join("; ") : undefined;
+}
+
 export async function doCommitAndPush(
 	exec: ExecFn,
 	cwd: string,
 	headRef: string,
+	expectedHeadSha: string,
 	prNumber: number,
 	fixerOutput: string,
 ): Promise<PushResult> {
@@ -410,18 +460,25 @@ export async function doCommitAndPush(
 		return { ok: false, error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks." };
 	}
 
-	const integrated = await integrateRemoteHead(exec, cwd, headRef);
-	if (!integrated.ok) return { ok: false, error: integrated.error };
-
-	const status = await exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 });
+	const [branch, head, status] = await Promise.all([
+		currentBranch(exec, cwd),
+		currentHead(exec, cwd),
+		exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 }),
+	]);
+	if (branch.branch !== headRef || head.sha !== expectedHeadSha) {
+		return { ok: false, error: `The fixer changed checkout identity (expected ${headRef}@${expectedHeadSha}, found ${branch.branch ?? "detached"}@${head.sha ?? "unknown"}). Refusing to publish.` };
+	}
+	if (status.code !== 0) return { ok: false, error: `Could not inspect fixer changes: ${status.stderr.trim()}` };
 	const paths = parsePorcelainPaths(status.stdout);
 	if (paths.length === 0) return { ok: true, error: "no changes to commit" };
 
 	const forbidden = paths.filter(isForbiddenStagingPath);
 	const allowed = paths.filter((p) => !isForbiddenStagingPath(p));
-	if (allowed.length === 0) {
-		return { ok: false, error: `Refusing to stage forbidden paths: ${forbidden.join(", ")}.` };
+	if (forbidden.length > 0) {
+		const restoreError = await restoreForbiddenPaths(exec, cwd, forbidden);
+		return { ok: false, error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restoreError ? ` Automatic restoration failed: ${restoreError}` : " Those changes were restored."}` };
 	}
+	if (allowed.length === 0) return { ok: true, error: "no changes to commit" };
 
 	const add = await exec("git", ["add", "--", ...allowed], { cwd, timeout: 10_000 });
 	if (add.code !== 0) return { ok: false, error: `git add failed: ${add.stderr.trim()}` };
@@ -436,8 +493,8 @@ export async function doCommitAndPush(
 	const push = await exec("git", ["push", "origin", `HEAD:${headRef}`], { cwd, timeout: 30_000 });
 	if (push.code !== 0) return { ok: false, error: `git push failed: ${push.stderr.trim()}` };
 
-	const head = await exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 5_000 });
-	return { ok: true, headSha: head.stdout.trim() || undefined };
+	const committedHead = await exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 5_000 });
+	return { ok: true, headSha: committedHead.stdout.trim() || undefined };
 }
 
 export async function runCleanup(
@@ -536,11 +593,12 @@ function parseThreadEntry(raw: unknown): ParsedThread | undefined {
 	}
 }
 
-/** Parse a triage JSON blob, stripping markdown fence if present. */
+/** Parse a triage JSON blob or one explicit fenced JSON block. */
 export function parseTriage(triage: string): ParsedTriage | { error: string } {
-	let cleaned = triage.trim();
-	if (cleaned.startsWith("```json")) cleaned = cleaned.replace(/^```json\n/, "").replace(/\n```$/, "");
-	else if (cleaned.startsWith("```")) cleaned = cleaned.replace(/^```\n/, "").replace(/\n```$/, "");
+	const trimmed = triage.trim();
+	const fences = [...trimmed.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/gi)];
+	if (fences.length > 1) return { error: "Triage output contained multiple fenced blocks." };
+	const cleaned = fences.length === 1 ? fences[0][1].trim() : trimmed;
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(cleaned);
@@ -611,7 +669,7 @@ async function applyThreadReplies(
 	cwd: string,
 	state: PRState,
 	parsed: ParsedTriage,
-	opts: { resolveFix: boolean },
+	opts: { resolveFix: boolean; repliedThreadIds: string[] },
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 ): Promise<string[]> {
 	const handled: string[] = [];
@@ -626,12 +684,13 @@ async function applyThreadReplies(
 			? `Dismissing: ${thread.action}`
 			: `Addressed in a follow-up commit. ${thread.action}`);
 		if (source.source === "review-thread") {
-			if (source.replyToId !== undefined) {
+			if (source.replyToId !== undefined && !opts.repliedThreadIds.includes(thread.id)) {
 				const posted = await replyToReviewComment(exec, cwd, state.number, source.replyToId, body);
 				if (posted.code !== 0) {
 					notify(`Could not reply to thread ${thread.id}: ${posted.stderr.trim()}`, "warning");
 					continue;
 				}
+				opts.repliedThreadIds.push(thread.id);
 			}
 			const resolved = await resolveReviewThread(exec, cwd, thread.id);
 			if (resolved.code !== 0) {
@@ -722,13 +781,18 @@ export async function runAutopilot(
 			notify(state, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [state], usage };
 		}
-		const ready = isMergeReady(state);
+		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, { concurrency: config.maxConcurrency, handledThreadIds: persisted.handledThreadIds });
+		if (typeof verified === "string") {
+			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [verified], usage };
+		}
+		setPhase("idle");
+		const ready = isMergeReady(verified);
 		if (ready) {
 			notify(`PR #${prNumber} looks merge-ready after a fresh status read.`, "info");
 		} else {
-			notify(`PR #${prNumber} is not ready: ${describeBlockers(state)}.`, "warning");
+			notify(`PR #${prNumber} is not ready: ${describeBlockers(verified)}.`, "warning");
 		}
-		return { status: ready ? "merge-ready" : "incomplete", prState: state, mergeReady: ready, cyclesCompleted: 0, blockedReasons: ready ? [] : [describeBlockers(state)], usage };
+		return { status: ready ? "merge-ready" : "incomplete", prState: verified, mergeReady: ready, cyclesCompleted: 0, blockedReasons: ready ? [] : [describeBlockers(verified)], usage };
 	}
 
 	if (mode === "cleanup") {
@@ -778,6 +842,11 @@ export async function runAutopilot(
 			notify(settled, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [settled], usage };
 		}
+		if (settled.headSha !== snapshot.headSha) {
+			notify(`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} during verification; rechecking.`, "warning");
+			state = settled;
+			return undefined;
+		}
 		if (!isMergeReady(settled)) {
 			notify(`PR #${prNumber} looked ready, then the settle re-read showed: ${describeBlockers(settled)}.`, "warning");
 			state = settled;
@@ -808,14 +877,21 @@ export async function runAutopilot(
 		const ready = await declareReady(state);
 		if (ready) return ready;
 
+		const checkout = await prepareMutationCheckout(exec, cwd, state);
+		if (!checkout.ok) {
+			notify(checkout.error, "error");
+			return { status: "blocked", prState: state, mergeReady: false, cyclesCompleted: cycle, blockedReasons: [checkout.error], usage };
+		}
+
 		if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY" || state.mergeStateStatus === "BEHIND") {
 			setPhase("merging-base");
 			notify(`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging origin/${state.baseRef} (no rebase).`, "info");
 			const merged = await mergeBaseIntoHead(exec, cwd, state.baseRef);
 			switch (merged.kind) {
 				case "already-current":
-					notify(`origin/${state.baseRef} is already in HEAD.`, "info");
-					break;
+					notify(`origin/${state.baseRef} is already in HEAD; refreshing GitHub state.`, "info");
+					cycle++;
+					continue;
 				case "clean": {
 					const push = await exec("git", ["push", "origin", `HEAD:${state.headRef}`], { cwd, timeout: 30_000 });
 					if (push.code !== 0) {
@@ -848,7 +924,7 @@ export async function runAutopilot(
 		if (hasPendingChecks(state) && !hasFailingChecks(state) && !state.hasUnresolvedThreads) {
 			setPhase("watching");
 			notify(`PR #${prNumber}: nothing actionable and checks are still running. Watching CI instead of inventing work.`, "info");
-			const watched = await watchChecks(exec, cwd, prNumber, LIMITS.watchTimeoutMinutes * 60_000);
+			const watched = await watchChecks(exec, cwd, prNumber, LIMITS.watchTimeoutMinutes * 60_000, signal);
 			if (signal.aborted) {
 				return { status: "aborted", mergeReady: false, cyclesCompleted: cycle, blockedReasons: ["aborted by user"], usage };
 			}
@@ -989,7 +1065,7 @@ export async function runAutopilot(
 				notify("Push not confirmed. Stopping.", "info");
 				return { status: "incomplete", mergeReady: false, cyclesCompleted: cycle, blockedReasons: ["push not confirmed"], usage };
 			}
-			const pushResult = await doCommitAndPush(exec, cwd, state.headRef, prNumber, fixerOutput);
+			const pushResult = await doCommitAndPush(exec, cwd, state.headRef, state.headSha, prNumber, fixerOutput);
 			if (pushResult.ok && pushResult.error === "no changes to commit") {
 				notify("Fixer found nothing to commit. Skipping push.", "warning");
 			} else if (!pushResult.ok) {
@@ -1005,10 +1081,13 @@ export async function runAutopilot(
 		}
 
 		setPhase("replying");
-		const handled = await applyThreadReplies(exec, cwd, state, parsed, { resolveFix: pushedAFix }, notify);
+		const repliedThreadIds = [...persisted.repliedThreadIds];
+		const handled = await applyThreadReplies(exec, cwd, state, parsed, { resolveFix: pushedAFix, repliedThreadIds }, notify);
 		if (handled.length > 0) {
-			persisted = { ...persisted, handledThreadIds: [...persisted.handledThreadIds, ...handled] };
+			persisted = { ...persisted, handledThreadIds: [...persisted.handledThreadIds, ...handled], repliedThreadIds: repliedThreadIds.filter((id) => !handled.includes(id)) };
 			notify(`Replied and resolved ${handled.length} thread(s).`, "info");
+		} else {
+			persisted = { ...persisted, repliedThreadIds };
 		}
 		await savePersistedState(persisted);
 

@@ -149,6 +149,7 @@ export async function findLowestUnmergedPR(exec: ExecFn, cwd: string): Promise<E
 	const result = await gh(exec, cwd, [
 		"pr", "list",
 		"--state", "open",
+		"--author", "@me",
 		"--limit", "50",
 		"--json", "number",
 	]);
@@ -558,8 +559,13 @@ export async function watchChecks(
 	cwd: string,
 	prNumber: number,
 	timeoutMs: number,
+	signal?: AbortSignal,
 ): Promise<ExecFnResult> {
-	return gh(exec, cwd, ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], timeoutMs);
+	try {
+		return await exec("gh", ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], { cwd, timeout: timeoutMs, signal });
+	} catch (error) {
+		return { code: signal?.aborted ? 130 : 1, stdout: "", stderr: signal?.aborted ? "aborted" : (error as Error).message };
+	}
 }
 
 export async function rerunFailedRun(

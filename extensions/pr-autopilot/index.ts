@@ -44,11 +44,14 @@ interface PhaseDetails {
 
 /** Exec wrapper forwarding the autopilot's per-call cwd/timeout to pi.exec. */
 function makeExec(pi: ExtensionAPI): ExecFn {
-	return (command, args, options) => pi.exec(command, args, { cwd: options.cwd, timeout: options.timeout }) as Promise<ExecFnResult>;
+	return (command, args, options) => pi.exec(command, args, { cwd: options.cwd, timeout: options.timeout, signal: options.signal }) as Promise<ExecFnResult>;
 }
 
 export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	const lifecycle = new AutopilotLifecycle();
+	// Extensions normally load before session_start; eager activation also keeps
+	// commands usable when an extension is loaded into an existing session.
+	lifecycle.startSession();
 	let abortController: AbortController | undefined;
 
 	pi.on("session_start", () => lifecycle.startSession());

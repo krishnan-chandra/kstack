@@ -47,8 +47,6 @@ export function buildChildArgs(opts: {
 	taskFile: string;
 	/** Tools to grant (e.g. "read,grep,find,ls,bash" or "read,grep,find,ls"). */
 	tools?: string;
-	/** Disable AGENTS.md/CLAUDE.md injection. */
-	noContextFiles?: boolean;
 }): string[] {
 	return [
 		"--mode", "json",
@@ -57,7 +55,7 @@ export function buildChildArgs(opts: {
 		"--no-extensions",
 		"--no-skills",
 		"--no-prompt-templates",
-		...(opts.noContextFiles ? ["--no-context-files"] : []),
+		"--no-context-files",
 		...(opts.tools ? ["--tools", opts.tools] : []),
 		"--model", opts.model,
 		"--append-system-prompt", opts.promptFile,
@@ -177,11 +175,25 @@ export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
 		let idleTimedOut = false;
 		let runtimeExceeded = false;
 		let closed = false;
-		let settled = false;
+		let finished = false;
 		let activity: string | undefined;
 		let streamingPreview = "";
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		let idleTimer: ReturnType<typeof setTimeout> | undefined;
+		let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
+
+		const cleanup = () => {
+			if (idleTimer) clearTimeout(idleTimer);
+			if (runtimeTimer) clearTimeout(runtimeTimer);
+			if (graceTimer) clearTimeout(graceTimer);
+			options.signal?.removeEventListener("abort", killProc);
+		};
+		const finalize = (result: AgentRunResult) => {
+			if (finished) return;
+			finished = true;
+			cleanup();
+			resolve(result);
+		};
 
 		const emitProgress = () => {
 			options.onProgress?.({
@@ -280,7 +292,7 @@ export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
 
 		armIdleTimer();
 
-		const runtimeTimer = setTimeout(() => {
+		runtimeTimer = setTimeout(() => {
 			runtimeExceeded = true;
 			killTree("SIGTERM");
 			escalate();
@@ -288,59 +300,26 @@ export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
 		runtimeTimer.unref?.();
 
 		proc.on("error", (err) => {
-			resolve({ status: "failed", role: options.role, model: modelCliId, error: `Spawn failed: ${err.message}`, usage: emptyUsage() });
+			finalize({ status: "failed", role: options.role, model: modelCliId, error: `Spawn failed: ${err.message}`, usage: emptyUsage() });
 		});
 
 		proc.on("close", (code) => {
 			closed = true;
 			parser.flush();
-			if (wasAborted) {
-				resolve({ status: "aborted", role: options.role, model: modelCliId, usage });
-				return;
-			}
+			if (wasAborted) return finalize({ status: "aborted", role: options.role, model: modelCliId, usage });
 			if (idleTimedOut) {
-				resolve({
-					status: "failed",
-					role: options.role,
-					model: modelCliId,
-					error: `Timed out: child produced no output for ${Math.round(timeoutMs / 1000)}s (${usage.turns} turns).`,
-					usage,
-				});
-				return;
+				return finalize({ status: "failed", role: options.role, model: modelCliId, error: `Timed out: child produced no output for ${Math.round(timeoutMs / 1000)}s (${usage.turns} turns).`, usage });
 			}
 			if (runtimeExceeded) {
-				resolve({
-					status: "failed",
-					role: options.role,
-					model: modelCliId,
-					error: `Timed out: exceeded max runtime of ${Math.round(maxRuntimeMs / 1000)}s.`,
-					usage,
-				});
-				return;
+				return finalize({ status: "failed", role: options.role, model: modelCliId, error: `Timed out: exceeded max runtime of ${Math.round(maxRuntimeMs / 1000)}s.`, usage });
 			}
 			const output = truncateHeadUtf8(finalText.trim(), outputCap);
 			const exitCode = code ?? 1;
 			if (exitCode !== 0 || stopReason === "error" || stopReason === "aborted") {
-				resolve({
-					status: "failed",
-					role: options.role,
-					model: modelCliId,
-					error: errorMessage || stderr.trim() || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`),
-					usage,
-				});
-				return;
+				return finalize({ status: "failed", role: options.role, model: modelCliId, error: errorMessage || stderr.trim() || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`), usage });
 			}
-			if (!output) {
-				resolve({
-					status: "failed",
-					role: options.role,
-					model: modelCliId,
-					error: `Agent produced no output (${usage.turns} turns).`,
-					usage,
-				});
-				return;
-			}
-			resolve({ status: "completed", role: options.role, model: modelCliId, output, usage });
+			if (!output) return finalize({ status: "failed", role: options.role, model: modelCliId, error: `Agent produced no output (${usage.turns} turns).`, usage });
+			finalize({ status: "completed", role: options.role, model: modelCliId, output, usage });
 		});
 	});
 }

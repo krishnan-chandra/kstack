@@ -53,19 +53,6 @@ export class AutopilotLifecycle {
 		return this.running;
 	}
 
-	/** Current phase label for status display. */
-	currentPhase(): "idle" | "checking" | "watching" | "merging-base" | "triaging" | "fixing" | "replying" | "pushing" | "cleaning" {
-		if (!this.sessionActive) return "idle";
-		if (!this.running) return "idle";
-		return this.phase;
-	}
-
-	private phase: "idle" | "checking" | "watching" | "merging-base" | "triaging" | "fixing" | "replying" | "pushing" | "cleaning" = "idle";
-
-	setPhase(phase: "idle" | "checking" | "watching" | "merging-base" | "triaging" | "fixing" | "replying" | "pushing" | "cleaning"): void {
-		this.phase = phase;
-	}
-
 	isCurrent(token: AutopilotToken): boolean {
 		return this.running && this.isSessionCurrent(token);
 	}

@@ -9,12 +9,14 @@ import {
 	describeBlockers,
 	isCodeReady,
 	isMergeReady,
+	fetchPRState,
 	parseTriage,
 	pickModel,
+	prepareMutationCheckout,
 	summarizeTriage,
 } from "./autopilot.ts";
 import { DEFAULT_TINY_MODELS } from "./config.ts";
-import type { CheckRun, ReviewThread } from "./types.ts";
+import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
 import type { GHPrJson } from "./github.ts";
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
@@ -77,15 +79,22 @@ describe("pr-autopilot state machine", () => {
 	});
 
 	describe("isMergeReady / isCodeReady", () => {
-		it("returns true when green, no threads, CLEAN, not draft", () => {
+		it("returns true when green, no threads, CLEAN, not draft, and verified at the exact head", () => {
+			const sha = "0123456789abcdef0123456789abcdef01234567";
 			const state = buildPRState(
-				makePr({ isDraft: false, mergeable: "true", mergeStateStatus: "CLEAN" }),
+				makePr({ isDraft: false, mergeable: "true", mergeStateStatus: "CLEAN", headSha: sha }),
 				[],
 				[makeCheck("lint", "success"), makeCheck("test", "skipped")],
-				null,
+				sha,
 			);
 			assert.equal(isMergeReady(state), true);
 			assert.equal(isCodeReady(state), true);
+		});
+
+		it("does not declare an otherwise-ready unverified head merge-ready", () => {
+			const state = buildPRState(makePr(), [], [makeCheck("lint", "success")], null);
+			assert.equal(isCodeReady(state), true);
+			assert.equal(isMergeReady(state), false);
 		});
 
 		it("treats drafts as code-ready but not merge-ready", () => {
@@ -147,6 +156,47 @@ describe("pr-autopilot state machine", () => {
 		});
 	});
 
+	describe("mutation checkout boundary", () => {
+		it("rejects a checkout on a different branch", async () => {
+			const exec: ExecFn = async (command, args) => {
+				if (command === "git" && args[0] === "branch") return { code: 0, stdout: "kstack/other\n", stderr: "" };
+				if (command === "git" && args[0] === "rev-parse") return { code: 0, stdout: makePr().headSha + "\n", stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const state = buildPRState(makePr(), [], [], null);
+			const result = await prepareMutationCheckout(exec, "/repo", state);
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /different|checkout is on/);
+		});
+
+		it("rejects a dirty selected checkout before running a fixer", async () => {
+			const pr = makePr();
+			const exec: ExecFn = async (_command, args) => {
+				if (args[0] === "branch") return { code: 0, stdout: pr.headRefName + "\n", stderr: "" };
+				if (args[0] === "rev-parse") return { code: 0, stdout: pr.headSha + "\n", stderr: "" };
+				if (args[0] === "status") return { code: 0, stdout: " M user-work.ts\n", stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const result = await prepareMutationCheckout(exec, "/repo", buildPRState(pr, [], [], null));
+			assert.deepEqual(result, { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." });
+		});
+	});
+
+	describe("required GitHub state", () => {
+		it("does not turn failed auxiliary fetches into empty successful state", async () => {
+			const pr = makePr();
+			const exec: ExecFn = async (command, args) => {
+				if (command === "gh" && args[0] === "pr" && args[1] === "view") {
+					return { code: 0, stdout: JSON.stringify(pr), stderr: "" };
+				}
+				return { code: 1, stdout: "", stderr: "network unavailable" };
+			};
+			const result = await fetchPRState(exec, "/repo", 42, null, { concurrency: 1, handledThreadIds: [] });
+			assert.equal(typeof result, "string");
+			assert.match(String(result), /Could not fetch/);
+		});
+	});
+
 	describe("pickModel", () => {
 		it("round-robins across tiny models", () => {
 			const models = DEFAULT_TINY_MODELS;
@@ -196,8 +246,8 @@ describe("pr-autopilot state machine", () => {
 			if (!("error" in result)) assert.equal(result.threads[0].decision, "fix");
 		});
 
-		it("strips markdown fences before parsing", () => {
-			const fenced = "```json\n" + JSON.stringify(sampleTriage) + "\n```";
+		it("extracts one fenced JSON block despite a conversational prefix", () => {
+			const fenced = "Here is the result:\n```json\n" + JSON.stringify(sampleTriage) + "\n```\nDone.";
 			const result = parseTriage(fenced);
 			assert.equal("error" in result ? result.error : undefined, undefined);
 			if (!("error" in result)) assert.equal(result.checks.length, 2);

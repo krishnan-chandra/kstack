@@ -25,7 +25,6 @@ describe("pr-autopilot lifecycle", () => {
 		const runToken = lc.beginRun(sessionToken);
 		assert.ok(runToken);
 		assert.equal(lc.isRunning(), true);
-		assert.equal(lc.currentPhase(), "idle"); // phase starts idle; setPhase changes it
 	});
 
 	it("beginRun fails when a run is already active", () => {
@@ -74,16 +73,4 @@ describe("pr-autopilot lifecycle", () => {
 		assert.equal(lc.isCurrent(runToken), false);
 	});
 
-	it("setPhase updates the current phase", () => {
-		const lc = new AutopilotLifecycle();
-		lc.startSession();
-		const sessionToken = lc.currentSessionToken()!;
-		lc.beginRun(sessionToken);
-		lc.setPhase("checking");
-		assert.equal(lc.currentPhase(), "checking");
-		lc.setPhase("triaging");
-		assert.equal(lc.currentPhase(), "triaging");
-		lc.setPhase("idle");
-		assert.equal(lc.currentPhase(), "idle");
-	});
 });
