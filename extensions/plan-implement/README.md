@@ -30,8 +30,9 @@ another option. Put `--` before a task that starts with dashes.
 1. Requires TUI or RPC mode, a Git working tree, the `panel-review`
    extension, and the `write-pr` and `find-reviewers` skills in the session's
    discovered skill set (the publish phase consults both).
-2. Names an unnamed parent session from the task before any child model call.
-   An explicit or previously assigned session name is preserved.
+2. Names an unnamed parent session with a short task slug as soon as the task
+   is validated, before waiting, preflight, or any child model call. An
+   explicit or previously assigned session name is preserved.
 3. Resolves authenticated planner and implementer models and confirms the
    assignments before spending.
 4. Runs the planner with only `read,grep,find,ls`.

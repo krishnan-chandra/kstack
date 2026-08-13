@@ -186,8 +186,6 @@ export default function (pi: ExtensionAPI): void {
 
 			const sessionToken = lifecycle.sessionToken();
 			if (!sessionToken) return;
-			await ctx.waitForIdle();
-			if (!lifecycle.isSessionCurrent(sessionToken)) return;
 
 			// Validate the catalog (internal consistency check).
 			const catalogErrors = validateCatalog();
@@ -196,7 +194,8 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Parse arguments.
+			// Parse arguments before waiting so an inline task can name the session
+			// immediately when command execution begins.
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) {
 				notify(parsed.error, "warning");
@@ -206,6 +205,8 @@ export default function (pi: ExtensionAPI): void {
 			// Collect task via editor if empty.
 			let task = parsed.args.task;
 			if (!task.trim()) {
+				await ctx.waitForIdle();
+				if (!lifecycle.isSessionCurrent(sessionToken)) return;
 				const edited = await ctx.ui.editor("Kstack Router task:", "");
 				if (edited === undefined) return; // User cancelled.
 				if (!lifecycle.isSessionCurrent(sessionToken)) return;
@@ -216,10 +217,11 @@ export default function (pi: ExtensionAPI): void {
 				}
 			}
 
-			// Name the workflow session before classification or dispatch. The
-			// downstream plan-implement entry point uses the same name-if-unnamed
-			// rule, so routed changes never replace an explicit or router-set name.
+			// The downstream plan-implement entry point uses the same
+			// name-if-unnamed rule, so routed changes preserve this name.
 			nameSessionIfUnnamed(pi, task);
+			await ctx.waitForIdle();
+			if (!lifecycle.isSessionCurrent(sessionToken)) return;
 
 			// Resolve route.
 			let route: RouteId | undefined = parsed.args.route;

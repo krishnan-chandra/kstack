@@ -1,9 +1,10 @@
 # Kstack Router
 
 The package's front door. Routes tasks through a lightweight classifier or
-explicit `--route` selection, then dispatches to the appropriate workflow. It
-names an unnamed session from the task before classification or dispatch and
-never overwrites an explicit session name.
+explicit `--route` selection, then dispatches to the appropriate workflow. As
+soon as the task is known, it gives an unnamed session a short lowercase slug
+before waiting, classification, or dispatch. It never overwrites an explicit
+session name.
 
 ```
 /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>
@@ -135,7 +136,7 @@ Downstream routes have their own trust boundaries:
 ## RPC behavior
 
 - The router requires interactive TUI or RPC mode.
-- It persists the derived session name before classifier or downstream workflow model calls.
+- It persists the derived task slug before waiting, classifier work, or downstream workflow model calls.
 - Classification output is displayed via notifications; the user confirms or
   overrides the route.
 - The `kstack-route` message card records the selected route, delivery mode,

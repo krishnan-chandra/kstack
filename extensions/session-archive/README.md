@@ -43,13 +43,15 @@ JSONL artifacts, although an automated reindex command is future work.
 | Command | Effect |
 |---|---|
 | `/session-archive` | Confirm, then archive the current session and continue in a new empty session. Named sessions keep their name; unnamed sessions stay unnamed. |
-| `/session-archive-other` | Pick any inactive session and archive it. Named sessions use their compact name; unnamed sessions are labeled with a bounded first-message summary. Duplicate labels show a modified timestamp. |
+| `/session-archive-other` | Select any number of inactive sessions, confirm once, and archive the selection as one batch. In TUI mode, use arrows to navigate, Space to toggle, Enter to accept, and Escape to cancel. If nothing is checked, Enter accepts the focused session. RPC mode uses repeated selection with an explicit completion choice. Named sessions use their compact name; unnamed sessions use a bounded first-message summary. |
 | `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch, including unnamed sessions. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
 | `/session-archives [filter]` | Read-only stats and archived-session listing; optional text filter. |
 
 Archiving is always explicit and confirmed. Nothing is archived automatically
 on shutdown, reload, or session switch. Current and inactive sessions may be
-archived without names; their archive rows remain unnamed.
+archived without names; their archive rows remain unnamed. A selected batch is
+processed in picker order. One malformed, stale, or failed session does not
+roll back the sessions archived successfully before or after it.
 
 ## Agent tools
 
@@ -157,6 +159,8 @@ Structure:
 
 - `index.ts` — Pi registration and command/session lifecycle only
 - `session-choices.ts` — compact named/unnamed picker labels and duplicate disambiguation
+- `session-selection.ts` — deterministic multi-selection and RPC fallback state
+- `session-picker.ts` — bounded TUI multi-select adapter
 - `archive-ops.ts` — testable archive orchestration (no Pi imports)
 - `archive-store.ts` — SQLite schema, transactions, queries, byte references
 - `session-jsonl.ts` — strict v3 parsing, text extraction, hashes, byte offsets

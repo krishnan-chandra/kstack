@@ -119,9 +119,19 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
-	/** Core runner used by both the slash command and the in-process API. */
-	async function runPlanImplement(
-		rawTask: string,
+	function prepareTask(rawTask: string, notify: (message: string, level?: "info" | "warning" | "error") => void): string | undefined {
+		const result = validateTask(rawTask);
+		if (!result.ok) {
+			notify(result.error, "warning");
+			return undefined;
+		}
+		nameSessionIfUnnamed(pi, result.task);
+		return result.task;
+	}
+
+	/** Core runner for a task that has already crossed the validation and naming boundary. */
+	async function runPreparedPlanImplement(
+		task: string,
 		mode: DeliveryMode,
 		workLocation: WorkLocation,
 		changeKind: ChangeKind,
@@ -138,22 +148,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const commandSession = lifecycle.currentSessionToken();
 		if (!commandSession) return;
+
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
-
-		// Task validation applies to every entry point, including the
-		// in-process event API used by the router.
-		const taskResult = validateTask(rawTask);
-		if (!taskResult.ok) {
-			notify(taskResult.error, "warning");
-			return;
-		}
-		const task = taskResult.task;
 		if (mode === "stack" && workLocation === "worktree") {
 			notify("--stack and --worktree cannot currently be combined.", "error");
 			return;
 		}
-		nameSessionIfUnnamed(pi, task);
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
 
@@ -562,6 +563,19 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	/** Validate and name API-submitted tasks before entering the core runner. */
+	async function runPlanImplement(
+		rawTask: string,
+		mode: DeliveryMode,
+		workLocation: WorkLocation,
+		changeKind: ChangeKind,
+		ctx: ExtensionCommandContext,
+	): Promise<void> {
+		const task = prepareTask(rawTask, ctx.ui.notify.bind(ctx.ui));
+		if (!task) return;
+		await runPreparedPlanImplement(task, mode, workLocation, changeKind, ctx);
+	}
+
 	pi.registerCommand("plan-implement", {
 		description: "Plan, approve, implement here or in --worktree, panel-review, fix findings, then publish a draft PR",
 		handler: async (args, ctx) => {
@@ -576,6 +590,16 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			const commandSession = lifecycle.currentSessionToken();
 			if (!commandSession) return;
+
+			// Parse before waiting so an inline validated task can name the
+			// session as soon as command execution begins.
+			const parsed = parsePlanImplementArgs(args ?? "");
+			if (!parsed.ok) {
+				notify(parsed.error, "warning");
+				return;
+			}
+			let task = parsed.task.trim() ? prepareTask(parsed.task, notify) : undefined;
+			if (parsed.task.trim() && !task) return;
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 
@@ -591,11 +615,6 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const parsed = parsePlanImplementArgs(args ?? "");
-			if (!parsed.ok) {
-				notify(parsed.error, "warning");
-				return;
-			}
 			let mode: DeliveryMode = parsed.mode;
 			const workLocation: WorkLocation = parsed.workLocation;
 			let changeKind = parsed.changeKind;
@@ -622,8 +641,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			task ??= prepareTask(rawTask, notify);
+			if (!task) return;
 
-			await runPlanImplement(rawTask, mode, workLocation, changeKind, ctx);
+			await runPreparedPlanImplement(task, mode, workLocation, changeKind, ctx);
 		},
 	});
 

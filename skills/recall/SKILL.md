@@ -44,18 +44,36 @@ Never quietly turn "all" into "recent N". If the user said "everything", say wha
 
 Pi sessions live as JSONL in `$PI_CODING_AGENT_DIR/sessions/<slug>/` (active) and, once archived, under `$PI_CODING_AGENT_DIR/archive/sessions/YYYY/MM/<uuid>/session.jsonl`, searchable through the `search_session_archive` and `read_session_archive` tools.
 
-For one or two candidate sessions, search directly with `search_session_archive` and the built-in `grep` tool — no fan-out. For a broader recall, resolve one allowlisted model and launch up to three parallel miners, each with a slice (by time window or by topic keyword set):
+For one or two candidate sessions, search directly with `search_session_archive` and the built-in `grep` tool — no fan-out. For a broader recall, resolve one allowlisted model and launch up to three parallel miners, each with a slice by time window or topic keyword set.
 
-```bash
-MODEL="$(node ../investigation-model.mjs)"
-pi -p --no-session --no-skills --no-context-files --model "$MODEL" \
-  --tools read,grep,find,ls,search_session_archive,read_session_archive "
+Treat the topic, workspace, and window as data, never as shell source. For each miner:
+
+1. Create an owner-only temporary prompt file with fixed shell source:
+
+   ```bash
+   MODEL="$(node ../investigation-model.mjs)"
+   PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/kstack-recall.XXXXXX")"
+   chmod 600 "$PROMPT_FILE"
+   ```
+
+2. Use Pi's `write` tool to put the exact miner prompt into `$PROMPT_FILE`. Do not build the file with `echo`, `printf`, a here-document, or string interpolation in a shell command. Those forms can execute command substitutions from user-controlled scope values.
+3. Launch the miner with the prompt as a file argument, then remove the file after the process exits:
+
+   ```bash
+   pi -p --no-session --no-skills --no-context-files --model "$MODEL" \
+     --tools read,grep,find,ls,search_session_archive,read_session_archive @"$PROMPT_FILE"
+   rm -f -- "$PROMPT_FILE"
+   ```
+
+Use a separate prompt file for each parallel miner. Write this prompt into the file, replacing the angle-bracket fields as plain text:
+
+```text
 Read only. Mine Pi session history for work on <topic> in <cwd> during <window>.
-Search the archived index with search_session_archive (FTS5: words, \"quoted
-phrases\", AND/OR/NOT, prefix*) and grep active sessions under
-$PI_CODING_AGENT_DIR/sessions/--<cwd-slug>--/ with the grep tool. Order
-candidates by real modification time, never by UUID. Grep the topic first, then
-read only the matching sessions and only their relevant regions.
+Search the archived index with search_session_archive (FTS5: words, "quoted
+phrases", AND/OR/NOT, prefix*) and grep active sessions under the active session
+directory for <cwd> with the grep tool. Order candidates by real modification
+time, never by UUID. Grep the topic first, then read only matching sessions and
+their relevant regions.
 
 Two storage paths, two readers — never mix them:
 - Archived sessions: page entries with read_session_archive by exact session id.
@@ -70,7 +88,6 @@ Return one block per relevant session: session id, topic, the user's goal,
 decisions, open threads, struggles and corrections, and artifacts (commits,
 PRs, branches, worktrees). Cite the session id for every claim; report searched
 queries with no result.
-"
 ```
 
 The `--tools` allowlist is the read-only boundary, not the prompt: miners get `read`, `grep`, `find`, `ls`, and the two read-only archive tools — no `bash`, no `write`, no `edit`. This matters because miners consume untrusted historical transcript content, and the session-archive threat model states that an agent with shell access can modify or delete archive data despite the extension's accident guards. Extensions stay enabled so the archive tools exist; the raw transcripts stay in the miners and the main thread gets only their findings.
