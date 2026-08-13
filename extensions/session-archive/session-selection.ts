@@ -16,6 +16,10 @@ export class SessionSelectionModel<T extends SessionChoiceSource> {
 		this.currentIndex = next === 0 ? 0 : next < 0 ? next + this.choices.length : next;
 	}
 
+	movePage(delta: number): void {
+		this.currentIndex = Math.max(0, Math.min(this.currentIndex + delta, this.choices.length - 1));
+	}
+
 	toggleCurrent(): void {
 		const choice = this.choices[this.currentIndex];
 		if (!choice) return;
@@ -33,6 +37,13 @@ export class SessionSelectionModel<T extends SessionChoiceSource> {
 
 	selectedChoices(): Array<SessionChoice<T>> {
 		return this.choices.filter((choice) => this.isSelected(choice));
+	}
+
+	confirmedChoices(): Array<SessionChoice<T>> {
+		const selected = this.selectedChoices();
+		if (selected.length > 0) return selected;
+		const focused = this.choices[this.currentIndex];
+		return focused ? [focused] : [];
 	}
 }
 

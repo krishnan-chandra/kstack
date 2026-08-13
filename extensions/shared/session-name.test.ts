@@ -6,7 +6,8 @@ describe("workflow session naming", () => {
 	it("turns the first content line into a short slug", () => {
 		assert.equal(deriveSessionName("\n## Fix archive selection\nMore detail"), "fix-archive-selection");
 		assert.equal(deriveSessionName("- Investigate the timeout"), "investigate-the-timeout");
-		assert.equal(deriveSessionName("Crème brûlée: 日本語"), "creme-brulee");
+		assert.equal(deriveSessionName("Crème brûlée: 日本語"), "creme-brulee-日本語");
+		assert.equal(deriveSessionName("日本語のアーカイブを修正"), "日本語のアーカイブを修正");
 	});
 
 	it("bounds long slugs without leaving a trailing separator", () => {

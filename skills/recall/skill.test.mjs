@@ -48,6 +48,14 @@ test("recall separates active-session reading from archive reads", async () => {
 	assert.match(skill, /read the JSONL files directly/);
 });
 
+test("recall keeps user-controlled scope out of shell source", async () => {
+	const skill = await read("SKILL.md");
+
+	assert.match(skill, /\bwrite\b.*\btool\b/i);
+	assert.match(skill, /@"\$PROMPT_FILE"/);
+	assert.doesNotMatch(skill, /--model "\$MODEL" "/);
+});
+
 test("recall is read-only and reconciles against live state", async () => {
 	const skill = await read("SKILL.md");
 

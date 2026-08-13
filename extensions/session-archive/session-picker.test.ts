@@ -20,14 +20,32 @@ describe("SessionSelectionModel", () => {
 		assert.deepEqual(model.selectedChoices().map((choice) => choice.label), ["Gamma"]);
 	});
 
-	it("wraps navigation and exposes the current row", () => {
-		const model = new SessionSelectionModel(choices);
+	it("wraps one-row navigation and clamps page navigation", () => {
+		const manyChoices = Array.from({ length: 15 }, (_, index) => ({
+			label: `Session ${index}`,
+			session: { path: `/sessions/${index}.jsonl`, id: `${index}`, modified: new Date(0) },
+		}));
+		const model = new SessionSelectionModel(manyChoices);
 		model.move(-1);
-		assert.equal(model.currentIndex, 2);
+		assert.equal(model.currentIndex, 14);
 		model.move(1);
 		assert.equal(model.currentIndex, 0);
-		model.move(-12);
+		model.move(5);
+		model.movePage(-12);
 		assert.equal(model.currentIndex, 0);
+		model.movePage(12);
+		assert.equal(model.currentIndex, 12);
+		model.movePage(12);
+		assert.equal(model.currentIndex, 14);
+	});
+
+	it("uses the focused session when Enter confirms an empty selection", () => {
+		const model = new SessionSelectionModel(choices);
+		model.move(1);
+		assert.deepEqual(model.confirmedChoices().map((choice) => choice.label), ["Beta"]);
+		model.toggleCurrent();
+		model.move(1);
+		assert.deepEqual(model.confirmedChoices().map((choice) => choice.label), ["Beta"]);
 	});
 });
 

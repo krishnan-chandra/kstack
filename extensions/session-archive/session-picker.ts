@@ -69,12 +69,11 @@ class SessionMultiSelectComponent<T extends SessionChoiceSource> {
 		if (start > 0 || end < this.#model.choices.length) {
 			lines.push(this.#theme.fg("dim", `  (${this.#model.currentIndex + 1}/${this.#model.choices.length})`));
 		}
+		const confirmHint =
+			selectedCount === 0 ? "Enter archive focused session" : `Enter archive ${selectedCount} selected`;
 		lines.push(
 			"",
-			truncateToWidth(
-				this.#theme.fg("dim", `Space toggle · Enter archive ${selectedCount} selected · Esc cancel`),
-				safeWidth,
-			),
+			truncateToWidth(this.#theme.fg("dim", `Space toggle · ${confirmHint} · Esc cancel`), safeWidth),
 		);
 		return lines;
 	}
@@ -82,12 +81,11 @@ class SessionMultiSelectComponent<T extends SessionChoiceSource> {
 	handleInput(data: string): void {
 		if (this.#keybindings.matches(data, "tui.select.up")) this.#model.move(-1);
 		else if (this.#keybindings.matches(data, "tui.select.down")) this.#model.move(1);
-		else if (this.#keybindings.matches(data, "tui.select.pageUp")) this.#model.move(-this.#maxVisible);
-		else if (this.#keybindings.matches(data, "tui.select.pageDown")) this.#model.move(this.#maxVisible);
+		else if (this.#keybindings.matches(data, "tui.select.pageUp")) this.#model.movePage(-this.#maxVisible);
+		else if (this.#keybindings.matches(data, "tui.select.pageDown")) this.#model.movePage(this.#maxVisible);
 		else if (matchesKey(data, Key.space)) this.#model.toggleCurrent();
 		else if (this.#keybindings.matches(data, "tui.select.confirm")) {
-			const selected = this.#model.selectedChoices();
-			if (selected.length > 0) this.#done(selected);
+			this.#done(this.#model.confirmedChoices());
 			return;
 		} else if (this.#keybindings.matches(data, "tui.select.cancel")) {
 			this.#done(undefined);

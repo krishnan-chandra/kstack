@@ -14,13 +14,15 @@ export function deriveSessionName(task: string): string {
 	const slug = firstContentLine
 		.replace(/^(?:#{1,6}|[-*+]|>)\s+/, "")
 		.normalize("NFKD")
+		.replace(/(\p{Script=Latin})\p{Mark}+/gu, "$1")
 		.toLowerCase()
-		.replace(/\p{Mark}+/gu, "")
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
+		.replace(/[^\p{Letter}\p{Number}\p{Mark}]+/gu, "-")
+		.replace(/^-+|-+$/g, "")
+		.normalize("NFC");
 	if (!slug) return "development-task";
-	if (slug.length <= MAX_SESSION_NAME_LENGTH) return slug;
-	const candidate = slug.slice(0, MAX_SESSION_NAME_LENGTH).replace(/-+$/g, "");
+	const characters = [...slug];
+	if (characters.length <= MAX_SESSION_NAME_LENGTH) return slug;
+	const candidate = characters.slice(0, MAX_SESSION_NAME_LENGTH).join("").replace(/-+$/g, "");
 	const boundary = candidate.lastIndexOf("-");
 	return boundary >= MAX_SESSION_NAME_LENGTH / 2 ? candidate.slice(0, boundary) : candidate;
 }
