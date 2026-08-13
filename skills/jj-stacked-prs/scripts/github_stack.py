@@ -315,7 +315,11 @@ def find_kstack_comment(comments: list[dict[str, Any]], gh_user: str | None = No
         body = comment.get("body", "") or ""
         if KSTACK_COMMENT_MARKER not in body:
             continue
-        if gh_user is not None and comment.get("user") != gh_user:
+        # GitHub logins are case-insensitive, so compare casefolded values.
+        author = comment.get("user")
+        if gh_user is not None and (
+            not isinstance(author, str) or author.casefold() != gh_user.casefold()
+        ):
             continue
         metadata = parse_comment_metadata(body)
         if metadata is None or metadata.get("schema_version") not in (0, KSTACK_COMMENT_SCHEMA_VERSION):
