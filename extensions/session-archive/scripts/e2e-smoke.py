@@ -160,7 +160,8 @@ def main():
         # --- /session-archive-other: archive an unnamed fixture -------------
         def answer_picker(msg):
             if msg.get("method") == "select":
-                option = [o for o in msg["options"] if "(unnamed)" in o and "hello archive world" in o][0]
+                matching = [o for o in msg["options"] if "(unnamed)" in o and "hello archive world" in o]
+                option = matching[0] if matching else [o for o in msg["options"] if "Archive selected" in o][0]
                 return {"value": option}
             if msg.get("method") == "confirm":
                 return {"confirmed": True}

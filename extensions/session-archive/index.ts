@@ -21,14 +21,10 @@ import {
 	isArchiveWriteTarget,
 	readUtf8Ranges,
 } from "./archive-files.ts";
+import type { BulkArchiveOutcome } from "./archive-ops.ts";
 import { buildSessionChoices } from "./session-choices.ts";
+import { selectSessionChoices } from "./session-picker.ts";
 import { splitUtf8Chunks } from "./tool-output.ts";
-
-type ArchiveResult =
-	| { status: "archived"; message: string }
-	| { status: "cancelled"; message: string }
-	| { status: "rejected"; message: string }
-	| { status: "failed"; message: string };
 
 export default async function (pi: ExtensionAPI) {
 	let sqliteAvailable = true;
@@ -63,9 +59,7 @@ export default async function (pi: ExtensionAPI) {
 		readEntries,
 		searchArchive,
 	} = await import("./archive-store.ts");
-	const { archiveCurrentSession, archiveInactiveSession, archiveInactiveSessions } = await import(
-		"./archive-ops.ts"
-	);
+	const { archiveCurrentSession, archiveInactiveSessions } = await import("./archive-ops.ts");
 	const { inspectArchiveIntegrity, reconcileArchive } = await import("./reconcile.ts");
 
 	// Write/edit guard: archived content is read-only for agents.
@@ -188,8 +182,12 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("session-archive-other", {
-		description: "Pick an inactive session and archive it",
+		description: "Select one or more inactive sessions and archive them",
 		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("/session-archive-other requires interactive TUI or RPC mode.", "error");
+				return;
+			}
 			await ctx.waitForIdle();
 			const currentFile = ctx.sessionManager.getSessionFile();
 			const sessionDir = ctx.sessionManager.getSessionDir();
@@ -199,29 +197,25 @@ export default async function (pi: ExtensionAPI) {
 				ctx.ui.notify("No other sessions found for this directory.", "info");
 				return;
 			}
-			const choices = buildSessionChoices(candidates);
-			const candidatesByLabel = new Map(choices.map(({ label, session }) => [label, session]));
-			const choice = await ctx.ui.select("Archive which session?", [...candidatesByLabel.keys()]);
-			if (!choice) return;
-			const chosen = candidatesByLabel.get(choice);
-			if (!chosen) {
-				ctx.ui.notify("The selected session is no longer available; reopen the picker and retry.", "warning");
-				return;
-			}
+			const selected = await selectSessionChoices(ctx, buildSessionChoices(candidates));
+			if (!selected || selected.length === 0) return;
+			const labels = selected.slice(0, 10).map((choice) => `  • ${choice.label}`);
+			if (selected.length > labels.length) labels.push(`  …and ${selected.length - labels.length} more`);
 			const confirmed = await ctx.ui.confirm(
-				"Archive session?",
-				`Session: ${choice}\nFrom: ${chosen.path}\n\n` +
-					"The session becomes read-only, leaves the /resume list, and stays searchable. " +
-					"Continue only if it is not open in another Pi process.",
+				`Archive ${selected.length} session(s)?`,
+				`${labels.join("\n")}\n\n` +
+					"The selected sessions become read-only, leave the /resume list, and stay searchable. " +
+					"Continue only if none is open in another Pi process.",
 			);
 			if (!confirmed) return;
-			const result = await archiveInactiveSession({
+			ctx.ui.notify(`Archiving ${selected.length} session(s)…`, "info");
+			const outcomes = await archiveInactiveSessions({
 				deps: { dbPath, archiveRoot },
-				sourcePath: chosen.path,
+				sourcePaths: selected.map((choice) => choice.session.path),
 				currentSessionFile: currentFile,
 				sessionDir,
 			});
-			reportResult(ctx.ui.notify.bind(ctx.ui), result);
+			reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
 		},
 	});
 
@@ -251,23 +245,7 @@ export default async function (pi: ExtensionAPI) {
 				currentSessionFile: currentFile,
 				sessionDir,
 			});
-			const archived = outcomes.filter((o) => o.result.status === "archived");
-			const skipped = outcomes.filter((o) => o.result.status === "rejected");
-			const failed = outcomes.filter((o) => o.result.status === "failed");
-			const lines = [
-				`Bulk archive complete: ${archived.length} archived, ${skipped.length} skipped, ${failed.length} failed.`,
-			];
-			for (const group of [
-				["Skipped", skipped],
-				["Failed", failed],
-			] as const) {
-				const [label, list] = group;
-				for (const outcome of list.slice(0, 5)) {
-					lines.push(`${label}: ${outcome.sourcePath} — ${outcome.result.message}`);
-				}
-				if (list.length > 5) lines.push(`…and ${list.length - 5} more ${label.toLowerCase()}.`);
-			}
-			ctx.ui.notify(lines.join("\n"), failed.length > 0 ? "warning" : "info");
+			reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
 		},
 	});
 
@@ -409,19 +387,25 @@ export default async function (pi: ExtensionAPI) {
 
 const READ_BODY_CHUNK_BYTES = DEFAULT_MAX_BYTES - 8192;
 
-function reportResult(notify: (message: string, level: "info" | "warning" | "error") => void, result: ArchiveResult) {
-	switch (result.status) {
-		case "archived":
-			notify(result.message, "info");
-			break;
-		case "cancelled":
-			notify(result.message, "info");
-			break;
-		case "rejected":
-			notify(result.message, "warning");
-			break;
-		case "failed":
-			notify(result.message, "error");
-			break;
+function reportBatchResults(
+	notify: (message: string, level: "info" | "warning" | "error") => void,
+	outcomes: BulkArchiveOutcome[],
+): void {
+	const archived = outcomes.filter((outcome) => outcome.result.status === "archived");
+	const skipped = outcomes.filter((outcome) => outcome.result.status === "rejected");
+	const failed = outcomes.filter((outcome) => outcome.result.status === "failed");
+	const lines = [
+		`Bulk archive complete: ${archived.length} archived, ${skipped.length} skipped, ${failed.length} failed.`,
+	];
+	for (const group of [
+		["Skipped", skipped],
+		["Failed", failed],
+	] as const) {
+		const [label, list] = group;
+		for (const outcome of list.slice(0, 5)) {
+			lines.push(`${label}: ${outcome.sourcePath} — ${outcome.result.message}`);
+		}
+		if (list.length > 5) lines.push(`…and ${list.length - 5} more ${label.toLowerCase()}.`);
 	}
+	notify(lines.join("\n"), failed.length > 0 ? "warning" : "info");
 }

@@ -75,6 +75,7 @@ function makePi({ activeTools, sessionName } = {}) {
 		userMessages: [],
 		notifications: [],
 		statuses: [],
+		timeline: [],
 		commands: new Map(),
 		shortcuts: new Map(),
 		busListeners: new Map(),
@@ -95,6 +96,7 @@ function makePi({ activeTools, sessionName } = {}) {
 			return state.sessionName;
 		},
 		setSessionName(name) {
+			state.timeline.push(`name:${name}`);
 			state.sessionName = name;
 		},
 		getCommands() {
@@ -155,7 +157,9 @@ function makePi({ activeTools, sessionName } = {}) {
 				return true;
 			},
 		},
-		async waitForIdle() {},
+		async waitForIdle() {
+			state.timeline.push("wait");
+		},
 		getSystemPromptOptions() {
 			return { skills: [{ name: "arena" }, { name: "swarm" }, { name: "create-skill" }] };
 		},
@@ -207,7 +211,8 @@ await scenario("investigate gates tools, injects playbook once, restores on sett
 	// Restricted to the read-only intersection before the turn started.
 	assert.deepEqual(env.state.setActiveToolsCalls[0], ["read", "grep", "find", "ls"]);
 	// The session is named from the routed task before the first agent turn.
-	assert.equal(env.state.sessionName, "Explain the archive indexing");
+	assert.equal(env.state.sessionName, "explain-the-archive-indexing");
+	assert.deepEqual(env.state.timeline.slice(0, 2), ["name:explain-the-archive-indexing", "wait"]);
 	// The task was delivered as a user message (triggers the agent turn).
 	assert.deepEqual(env.state.userMessages, ["Explain the archive indexing"]);
 	// A route card was displayed without triggering a turn itself.
@@ -272,7 +277,7 @@ await scenario("change route delegates the exact task, mode, and change kind to 
 	]);
 	const handler = env.state.commands.get("kstack").handler;
 	await handler('--route change --stack --change-kind feature "Split the feature into PRs"', env.ctx);
-	assert.equal(env.state.sessionName, "Split the feature into PRs");
+	assert.equal(env.state.sessionName, "split-the-feature-into-prs");
 	assert.deepEqual(seen, [{ task: "Split the feature into PRs", mode: "stack", changeKind: "feature" }]);
 	assert.ok(env.state.messages.some((m) => m.details?.dispatchStatus === "dispatched"));
 });

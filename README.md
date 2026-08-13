@@ -11,7 +11,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
-| [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including unnamed current and inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
+| [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including a multi-selected batch of inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally on a chosen or inherited model and effort, then gives read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated branch with incremental local commits, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations. Supports local jj stacks and isolated managed Git worktrees. |
@@ -70,10 +70,12 @@ subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Session names in development workflows
 
-Kstack names an unnamed session from the first task when `/plan-implement` or
-`/kstack` starts. `/handoff` names its replacement session from the handoff goal
-before sending that session's first user message. Existing names are never overwritten.
-Keep names short and specific so `/resume` and archive selection stay readable.
+Kstack names an unnamed session as soon as `/plan-implement` or `/kstack` knows
+the task, before waiting, preflight, classification, or child-model work.
+Automatically derived names are short lowercase slugs, such as
+`archive-multiple-sessions`. `/handoff` gives its replacement session the same
+kind of slug before sending that session's first user message. Existing names
+are never overwritten.
 
 For workflows started outside those commands, use Pi's built-in naming support:
 

@@ -138,22 +138,23 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const commandSession = lifecycle.currentSessionToken();
 		if (!commandSession) return;
-		await ctx.waitForIdle();
-		if (!lifecycle.isSessionCurrent(commandSession)) return;
 
 		// Task validation applies to every entry point, including the
-		// in-process event API used by the router.
+		// in-process event API used by the router. Name the session as soon as
+		// that task is known, before waiting or running any preflight/model work.
 		const taskResult = validateTask(rawTask);
 		if (!taskResult.ok) {
 			notify(taskResult.error, "warning");
 			return;
 		}
 		const task = taskResult.task;
+		nameSessionIfUnnamed(pi, task);
+		await ctx.waitForIdle();
+		if (!lifecycle.isSessionCurrent(commandSession)) return;
 		if (mode === "stack" && workLocation === "worktree") {
 			notify("--stack and --worktree cannot currently be combined.", "error");
 			return;
 		}
-		nameSessionIfUnnamed(pi, task);
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
 
@@ -576,6 +577,22 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			const commandSession = lifecycle.currentSessionToken();
 			if (!commandSession) return;
+
+			// Parse before waiting so an inline validated task can name the
+			// session as soon as command execution begins.
+			const parsed = parsePlanImplementArgs(args ?? "");
+			if (!parsed.ok) {
+				notify(parsed.error, "warning");
+				return;
+			}
+			if (parsed.task.trim()) {
+				const initialTask = validateTask(parsed.task);
+				if (!initialTask.ok) {
+					notify(initialTask.error, "warning");
+					return;
+				}
+				nameSessionIfUnnamed(pi, initialTask.task);
+			}
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 
@@ -591,11 +608,6 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const parsed = parsePlanImplementArgs(args ?? "");
-			if (!parsed.ok) {
-				notify(parsed.error, "warning");
-				return;
-			}
 			let mode: DeliveryMode = parsed.mode;
 			const workLocation: WorkLocation = parsed.workLocation;
 			let changeKind = parsed.changeKind;

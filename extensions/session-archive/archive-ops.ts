@@ -28,7 +28,7 @@ interface ArchiveDeps {
 	move?: (source: string, dest: string, sha256: string, size: number) => void;
 }
 
-type ArchiveResult =
+export type ArchiveResult =
 	| { status: "archived"; message: string }
 	| { status: "cancelled"; message: string }
 	| { status: "rejected"; message: string }
