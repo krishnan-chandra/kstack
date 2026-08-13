@@ -43,6 +43,7 @@ create branches.
 | [`how`](skills/how/) | Explains code structure, ownership, and runtime flow through fast, allowlisted exploration models. |
 | [`why`](skills/why/) | Investigates design rationale through fast, allowlisted evidence gathering and reports direct evidence separately from inference. |
 | [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
+| [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only — `panel-review --mode thermo` inlines it for every reviewer/synthesis model. |
 
 ## Configuration
 

@@ -8,7 +8,9 @@
  *   /panel-review --base origin/main --intent "Implement handoff"
  */
 
-import type { PanelArgs } from "./types.ts";
+import type { PanelArgs, ReviewMode } from "./types.ts";
+
+const MODES: ReadonlySet<string> = new Set(["standard", "thermo"]);
 
 export type ArgsParse = { ok: true; args: PanelArgs } | { ok: false; error: string };
 
@@ -66,6 +68,25 @@ export function parseArgs(input: string): ArgsParse {
 			value = token.slice(eq + 1);
 		}
 		switch (flag) {
+			case "--thermo": {
+				if (value !== undefined && value.length > 0) {
+					return { ok: false, error: `--thermo does not take a value (got "${value}"). Use --mode thermo or plain --thermo.` };
+				}
+				args.mode = "thermo";
+				break;
+			}
+			case "--mode": {
+				if (value === undefined) {
+					value = tokens[++i];
+					if (value === undefined) return { ok: false, error: `${flag} requires a value.` };
+				}
+				if (value.length === 0) return { ok: false, error: `${flag} requires a non-empty value.` };
+				if (!MODES.has(value)) {
+					return { ok: false, error: `${flag} must be one of ${[...MODES].join(", ")}, got "${value}".` };
+				}
+				args.mode = value as ReviewMode;
+				break;
+			}
 			case "--base":
 			case "--intent": {
 				if (value === undefined) {
@@ -80,7 +101,7 @@ export function parseArgs(input: string): ArgsParse {
 			default:
 				return {
 					ok: false,
-					error: `Unknown argument "${token}". Usage: /panel-review [--base <ref>] [--intent <text>]`,
+					error: `Unknown argument "${token}". Usage: /panel-review [--base <ref>] [--intent <text>] [--mode <standard|thermo>] [--thermo]`,
 				};
 		}
 	}

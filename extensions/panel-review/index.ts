@@ -10,7 +10,7 @@
  * skills. The full diff is never passed on a command line; it lives in a
  * mode-0600 temp bundle removed after the run.
  *
- * Command: /panel-review [--base <ref>] [--intent <text>]
+ * Command: /panel-review [--base <ref>] [--intent <text>] [--mode <standard|thermo>] [--thermo]
  * Config:  "panel-review" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
  */
 
@@ -36,8 +36,8 @@ function readPrompt(name: string): string {
 	return readFileSync(join(PROMPTS_DIR, name), "utf8");
 }
 
-function assembleReviewerPrompt(): string {
-	return [
+function assembleReviewerPrompt(mode: "standard" | "thermo" = "standard"): string {
+	const parts = [
 		readPrompt("reviewer.md").trim(),
 		"",
 		"---",
@@ -47,7 +47,11 @@ function assembleReviewerPrompt(): string {
 		"---",
 		"",
 		readPrompt("code-quality.md").trim(),
-	].join("\n");
+	];
+	if (mode === "thermo") {
+		parts.push("", "---", "", readPrompt("thermo-nuclear.md").trim());
+	}
+	return parts.join("\n");
 }
 
 interface VerdictDetails {
@@ -62,6 +66,8 @@ interface VerdictDetails {
 	synthesized: boolean;
 	/** Children ran with --no-context-files because the changeset edits them. */
 	contextFilesDisabled: boolean;
+	/** Review strictness requested for this run. */
+	mode: "standard" | "thermo";
 }
 
 export default function (pi: ExtensionAPI) {
@@ -100,7 +106,9 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 
-	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
+	const runPanelReview = async (rawOptions: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
+			const options: PanelArgs & { mode?: "standard" | "thermo" } = rawOptions;
+			const mode = options.mode === "thermo" ? "thermo" : "standard";
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {
 				notify("panel-review requires interactive (TUI/RPC) mode.", "error");
@@ -200,6 +208,7 @@ export default function (pi: ExtensionAPI) {
 				const confirmed = await ctx.ui.confirm(
 					"Run panel review?",
 					`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
+						`Mode: ${mode === "thermo" ? "thermo (thermo-nuclear code quality)" : "standard"}\n` +
 						`Changes: ${scope.fileCount} file(s), ${(scope.diffBytes / 1024).toFixed(0)} KiB diff, ` +
 						`${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
 						`Reviewers:\n${reviewerList}\n` +
@@ -228,7 +237,7 @@ export default function (pi: ExtensionAPI) {
 
 				promptDir = mkdtempSync(join(tmpdir(), "pi-panel-review-prompt-"));
 				const reviewerPromptFile = join(promptDir, "reviewer-prompt.md");
-				writeFileSync(reviewerPromptFile, assembleReviewerPrompt(), { encoding: "utf8", mode: 0o600 });
+				writeFileSync(reviewerPromptFile, assembleReviewerPrompt(mode), { encoding: "utf8", mode: 0o600 });
 
 				const abort = new AbortController();
 				runAbort = abort;
@@ -310,7 +319,8 @@ export default function (pi: ExtensionAPI) {
 				const synthInputFile = join(promptDir, "synthesis-input.md");
 				writeFileSync(synthInputFile, input, { encoding: "utf8", mode: 0o600 });
 				const synthPromptFile = join(promptDir, "synthesis-prompt.md");
-				writeFileSync(synthPromptFile, buildSynthesisPrompt(readPrompt("lead-judgment.md")), {
+				const thermoAddendum = mode === "thermo" ? readPrompt("thermo-nuclear.md") : undefined;
+				writeFileSync(synthPromptFile, buildSynthesisPrompt(readPrompt("lead-judgment.md"), thermoAddendum), {
 					encoding: "utf8",
 					mode: 0o600,
 				});
@@ -359,6 +369,7 @@ export default function (pi: ExtensionAPI) {
 					truncated: scope.truncated || synthTruncated,
 					synthesized,
 					contextFilesDisabled: scope.contextFilesTouched,
+					mode,
 				};
 				await ctx.waitForIdle();
 				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });
@@ -394,7 +405,9 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	pi.registerCommand("panel-review", {
-		description: "Review current changes with a panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
+		description:
+			"Review current changes with a panel of isolated read-only reviewers: " +
+			"/panel-review [--base <ref>] [--intent <text>] [--mode <standard|thermo>] [--thermo]",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) {

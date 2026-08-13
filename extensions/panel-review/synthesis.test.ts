@@ -75,6 +75,23 @@ describe("buildSynthesisPrompt", () => {
 		assert.match(prompt, /Consensus is a/);
 		assert.match(prompt, /Do not invent findings/);
 	});
+
+	it("keeps Act On limited to blockers in standard mode", () => {
+		const prompt = buildSynthesisPrompt("# Lead\nrules");
+		assert.match(prompt, /Keep Act On limited to concrete blockers/);
+		assert.ok(!prompt.includes("thermo-nuclear mode"));
+	});
+
+	it("promotes thermo Approval Bar blockers into Act On when given an addendum", () => {
+		const thermo = "# Thermo\nApproval Bar: file over 1k lines is a presumptive blocker.";
+		const prompt = buildSynthesisPrompt("# Lead\nrules", thermo);
+		assert.ok(prompt.includes("thermo-nuclear mode Act On also includes"));
+		assert.ok(prompt.includes("thermo Approval Bar"));
+		assert.ok(prompt.includes(thermo));
+		for (const section of VERDICT_SECTIONS) {
+			assert.ok(prompt.includes(`### ${section}`), `missing ${section} in thermo mode`);
+		}
+	});
 });
 
 describe("renderRawReports", () => {

@@ -49,4 +49,27 @@ describe("panel-review in-process API", () => {
 		assert.equal(claimPanelReviewRequest(request, async () => ({ status: "declined" as const })), true);
 		assert.equal(claimPanelReviewRequest(request, async () => { throw new Error("should not run"); }), false);
 	});
+
+	it("passes mode through the in-process API", async () => {
+		const calls: unknown[] = [];
+		const ctx = {} as ExtensionCommandContext;
+		const outcome = { status: "completed" as const, verdict: "ok", synthesized: true, baseSha: "a".repeat(40), headSha: "b".repeat(40) };
+		const pi = {
+			events: fakeBus((data) => {
+				claimPanelReviewRequest(data, async (options) => {
+					calls.push(options);
+					return outcome;
+				});
+			}),
+		} as unknown as ExtensionAPI;
+		const result = await requestPanelReview(pi, { intent: "hello", mode: "thermo" }, ctx);
+		assert.deepEqual(result, { handled: true, outcome });
+		assert.deepEqual(calls, [{ intent: "hello", mode: "thermo" }]);
+	});
+
+	it("rejects an invalid mode on the event boundary", () => {
+		const bad = { schemaVersion: 2, options: { mode: "turbo" }, ctx: {} as ExtensionCommandContext, claimed: false };
+		assert.equal(claimPanelReviewRequest(bad, async () => ({ status: "declined" as const })), false);
+		assert.equal(bad.claimed, false);
+	});
 });

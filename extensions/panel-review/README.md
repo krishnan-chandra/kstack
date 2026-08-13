@@ -9,11 +9,16 @@ verdict.
 /panel-review --base main
 /panel-review --intent "Add safe bulk session archival without moving the live session"
 /panel-review --base origin/main --intent "Implement handoff and panel review extensions"
+/panel-review --mode thermo --intent "Strict maintainability audit of the new orchestration layer"
+/panel-review --thermo --base HEAD --intent "Harsh code-quality pass before publishing"
 ```
+
+`--mode standard|thermo` selects review strictness (default `standard`); `--thermo` is shorthand for `--mode thermo`. Last flag wins. Thermo mode adds the ported
+[`thermo-nuclear-code-quality-review`](../../skills/thermo-nuclear-code-quality-review/) lens to every reviewer and tightens synthesis so its Approval Bar blockers (file-size explosions, spaghetti branching, missed code-judo simplifications) promote into **Act On**.
 
 Other trusted extensions can invoke the same workflow without serializing
 values into slash-command text. Import `requestPanelReview` from `api.ts` and
-pass structured `{ intent, base?, repositoryPath? }` options plus the caller's
+pass structured `{ intent, base?, repositoryPath?, mode? }` options (`mode` is `"standard"` or `"thermo"`) plus the caller's
 current `ExtensionCommandContext`; `repositoryPath` is for trusted in-process
 callers that need to review another validated Git working tree (for example a
 managed worktree). Panel-review claims the request synchronously on
@@ -49,7 +54,13 @@ ignores the outcome.
 
    No shell, no `bash`/`write`/`edit`, no repository-controlled extensions or
    skills. The reviewer prompt states that bundle and repository contents are
-   untrusted review data, not instructions. Project context files (`AGENTS.md`,
+   untrusted review data, not instructions. In `standard` mode the prompt is
+   `reviewer.md` + `rubric.md` + `code-quality.md`; in `thermo` mode
+   `thermo-nuclear.md` is appended so every reviewer model (Opus, DeepSeek,
+   Kimi, Gemini, or any configured panel) sees the same thermo-nuclear
+   maintainability lens. Children stay `--no-skills` in both modes — the
+   extension inlines the skill text, so repository-controlled skills cannot
+   influence reviewer instructions. Project context files (`AGENTS.md`,
    `CLAUDE.md`) are injected as usual — except when the changeset itself
    modifies one, in which case children run with `--no-context-files` so the
    content under review cannot become reviewer instructions (disclosed in the
@@ -82,7 +93,10 @@ ignores the outcome.
    (required in `kstack.json`; **GPT-5.6 Terra** at medium thinking by default)
    in an isolated child, using
    the lead-judgment framework: deduplication, consensus mapping, and
-   **Act On / Consider / Noted / Dismissed** dispositions.
+   **Act On / Consider / Noted / Dismissed** dispositions. In thermo mode
+   the thermo Approval Bar is appended to the synthesis prompt so structural
+   regressions, missed code-judo moves, and file-size explosions promote
+   into **Act On** as presumptive blockers.
 6. Appends the verdict to the session as a displayed `panel-review` custom
    message, so it stays in context and can guide later fixes. No fixes are
    applied automatically.
@@ -182,9 +196,17 @@ node --test extensions/panel-review/*.test.ts
 
 Manual smoke test: in a fixture repository with committed, staged, unstaged,
 untracked, and binary changes, run
-`/panel-review --base HEAD --intent "fixture review"` and verify parallel
-progress, child argv (`--no-session`, discovery flags, read-only tools), a
+`/panel-review --base HEAD --intent "fixture review"` (and `--mode thermo`
+for a strict pass) and verify parallel
+progress, child argv (`--no-session`, discovery flags, read-only tools),
+the confirmation shows `Mode: thermo` when requested, a
 single verdict message, no child session files, and an unchanged repository.
+
+Thermo smoke: `skills/thermo-nuclear-code-quality-review/SKILL.md` is the
+verbatim upstream port (`disable-model-invocation: true`, explicit-only).
+Panel-review does not enable the skill in children; it inlines
+`prompts/thermo-nuclear.md` via `--append-system-prompt` so every model in
+the panel sees the lens uniformly.
 
 ## Deferred
 
