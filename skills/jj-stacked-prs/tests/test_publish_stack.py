@@ -39,6 +39,80 @@ def _make_fake_bin(commands: dict[str, str]) -> str:
 
 
 class PublishStackApplyUnitTest(unittest.TestCase):
+    def test_plan_and_apply_block_truncated_stack(self) -> None:
+        from publish_stack import cmd_apply, cmd_plan
+
+        args = SimpleNamespace(
+            repo=".", trunk="trunk()", top="feat1", max_stack=50,
+            timeout=20, remote="origin", plan_id="plan123",
+        )
+        model = {"blockers": [], "truncated": True, "top": "feat1", "stack": []}
+        for command in (cmd_plan, cmd_apply):
+            with self.subTest(command=command.__name__), patch(
+                "publish_stack.build_inspect_model", return_value=model
+            ):
+                result = command(args)
+            self.assertEqual(result["status"], "blocked")
+            self.assertTrue(any("truncated" in blocker for blocker in result["blockers"]))
+
+    def test_plan_and_apply_require_top_as_final_boundary(self) -> None:
+        from publish_stack import cmd_apply, cmd_plan
+        from stack_model import Slice
+
+        args = SimpleNamespace(
+            repo=".", trunk="trunk()", top="feat2", max_stack=50,
+            timeout=20, remote="origin", plan_id="plan123",
+        )
+        model = {"blockers": [], "truncated": False, "top": "feat2", "stack": []}
+        incomplete = [Slice("feat1", None, ["change1"], "First")]
+        for command in (cmd_plan, cmd_apply):
+            with (
+                self.subTest(command=command.__name__),
+                patch("publish_stack.build_inspect_model", return_value=model),
+                patch("publish_stack.derive_slices", return_value=incomplete),
+            ):
+                result = command(args)
+            self.assertEqual(result["status"], "blocked")
+            self.assertTrue(any("final PR boundary" in blocker for blocker in result["blockers"]))
+
+    def test_comment_reconciliation_skips_when_authenticated_user_is_unknown(self) -> None:
+        from github_stack import GitHubRepo, RemoteInfo, SliceAction, StackPlan
+        from publish_stack import cmd_apply
+        from stack_model import Slice
+
+        slices = [Slice("feat1", None, ["change1"], "First")]
+        plan = StackPlan(
+            "plan123", {"owner": "owner", "repo": "repo", "default_branch": "main"},
+            "origin", "main",
+            [SliceAction("feat1", 11, False, False, False, "main", "main")],
+            [{"pr_number": 11, "action": "create_or_update", "body_template": "navigation", "bookmark": "feat1"}],
+            [],
+        )
+        args = SimpleNamespace(
+            repo=".", trunk="trunk()", top="feat1", max_stack=50,
+            timeout=20, remote="origin", plan_id="plan123",
+        )
+        model = {"blockers": [], "truncated": False, "top": "feat1", "stack": []}
+        with (
+            patch("publish_stack.build_inspect_model", return_value=model),
+            patch("publish_stack.derive_slices", return_value=slices),
+            patch("publish_stack.get_remote_info", return_value=RemoteInfo("origin", "https://github.com/owner/repo", GitHubRepo("owner", "repo"))),
+            patch("publish_stack.get_default_branch", return_value="main"),
+            patch("publish_stack.list_open_prs", return_value=[]),
+            patch("publish_stack.list_bookmarks", return_value=[]),
+            patch("publish_stack.list_remote_bookmarks", return_value=[]),
+            patch("publish_stack.build_plan", return_value=plan),
+            patch("publish_stack.get_gh_user", return_value=""),
+            patch("publish_stack.get_pr_comments") as get_comments,
+            patch("publish_stack.create_or_update_comment") as write_comment,
+        ):
+            result = cmd_apply(args)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("could not determine", result["comment_errors"][0])
+        get_comments.assert_not_called()
+        write_comment.assert_not_called()
+
     def test_first_publish_comments_include_all_created_pr_numbers(self) -> None:
         from github_stack import GitHubRepo, PRInfo, RemoteInfo, SliceAction, StackPlan
         from publish_stack import cmd_apply

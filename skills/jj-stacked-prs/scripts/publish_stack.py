@@ -322,7 +322,15 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     # This happens even if some core actions failed (best-effort)
     comment_errors: list[str] = []
     gh_user = get_gh_user(cwd, args.timeout)
-    for slc_action in comment_actions:
+    if not gh_user:
+        # Updating without a verified author can claim another user's marker;
+        # creating without detecting the existing owned comment duplicates it.
+        # Preserve core publication and fail this best-effort phase closed.
+        comment_errors.append(
+            "Navigation comments skipped: could not determine the authenticated GitHub user."
+        )
+    eligible_comment_actions = comment_actions if gh_user else []
+    for slc_action in eligible_comment_actions:
         pr_num = slc_action.get("pr_number")
         if pr_num is None:
             continue

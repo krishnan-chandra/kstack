@@ -6,7 +6,9 @@ network access.
 
 import json
 import os
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -87,6 +89,30 @@ class GitHubStackUnitTest(unittest.TestCase):
             prs = list_open_prs(GitHubRepo("owner", "repo"), ".")
         self.assertEqual([pr.number for pr in prs], [1])
 
+    def test_list_open_prs_ignores_deleted_forks_and_decodes_concatenated_json(self) -> None:
+        from github_stack import GitHubRepo, list_open_prs
+        values = [
+            {
+                "number": 1,
+                "headRefName": "deleted",
+                "baseRefName": "main",
+                "headRepository": None,
+                "headRepositoryOwner": None,
+            },
+            {
+                "number": 2,
+                "headRefName": "feature",
+                "baseRefName": "main",
+                "headRepository": {"nameWithOwner": "owner/repo"},
+                "headRepositoryOwner": {"login": "owner"},
+            },
+        ]
+        payload = "\n".join(json.dumps(value, indent=2) for value in values)
+        with patch("github_stack.run_gh", return_value=CommandResult(payload, "", 0)):
+            prs = list_open_prs(GitHubRepo("owner", "repo"), ".")
+        self.assertEqual([pr.number for pr in prs], [2])
+        self.assertEqual(prs[0].head_owner, "owner")
+
     def test_push_bookmark_uses_supported_safe_jj_arguments(self) -> None:
         from github_stack import push_bookmark
         with patch("stack_model.run_jj", return_value=CommandResult("", "", 0)) as run_jj:
@@ -96,6 +122,44 @@ class GitHubStackUnitTest(unittest.TestCase):
             cwd=".",
             timeout=30,
         )
+
+    @unittest.skipUnless(shutil.which("jj") and shutil.which("git"), "jj and git are required")
+    def test_push_bookmark_creates_and_safely_rewrites_remote_bookmark(self) -> None:
+        from github_stack import push_bookmark
+
+        with tempfile.TemporaryDirectory(prefix="jj-push-test-") as root:
+            remote = os.path.join(root, "remote.git")
+            work = os.path.join(root, "work")
+
+            def run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True, timeout=30)
+
+            run("git", "init", "--bare", "--quiet", remote)
+            run("git", "init", "--quiet", "-b", "main", work)
+            run("git", "config", "user.name", "Test", cwd=work)
+            run("git", "config", "user.email", "test@example.com", cwd=work)
+            with open(os.path.join(work, "file"), "w", encoding="utf-8") as handle:
+                handle.write("base\n")
+            run("git", "add", "file", cwd=work)
+            run("git", "commit", "--quiet", "-m", "base", cwd=work)
+            run("git", "remote", "add", "origin", remote, cwd=work)
+            run("git", "push", "--quiet", "-u", "origin", "main", cwd=work)
+            run("jj", "git", "init", "--colocate", work)
+            run("jj", "-R", work, "new", "main", "-m", "feature")
+            with open(os.path.join(work, "file"), "a", encoding="utf-8") as handle:
+                handle.write("v1\n")
+            run("jj", "-R", work, "bookmark", "create", "feature", "-r", "@")
+
+            push_bookmark(work, "origin", "feature")
+            first = run("git", f"--git-dir={remote}", "rev-parse", "refs/heads/feature").stdout.strip()
+
+            with open(os.path.join(work, "file"), "a", encoding="utf-8") as handle:
+                handle.write("v2\n")
+            run("jj", "-R", work, "describe", "-m", "feature rewritten")
+            push_bookmark(work, "origin", "feature")
+            second = run("git", f"--git-dir={remote}", "rev-parse", "refs/heads/feature").stdout.strip()
+
+            self.assertNotEqual(first, second)
 
     def test_create_pr_stops_when_created_pr_cannot_be_resolved(self) -> None:
         from github_stack import GitHubRepo, create_pr
@@ -164,6 +228,11 @@ class GitHubStackUnitTest(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["id"], 2)
 
+    def test_find_kstack_comment_accepts_owned_legacy_marker(self) -> None:
+        from github_stack import KSTACK_COMMENT_MARKER, find_kstack_comment
+        comments = [{"id": 7, "body": f"{KSTACK_COMMENT_MARKER}\nlegacy nav", "user": "publisher"}]
+        self.assertEqual(find_kstack_comment(comments, gh_user="publisher")["id"], 7)
+
     def test_find_kstack_comment_rejects_wrong_author_or_schema(self) -> None:
         from github_stack import KSTACK_COMMENT_MARKER, find_kstack_comment
         comments = [
@@ -228,6 +297,30 @@ class GitHubStackUnitTest(unittest.TestCase):
         )
         self.assertFalse(plan.slices[0].push_required)
         self.assertTrue(plan.slices[1].push_required)
+
+    def test_build_plan_uses_unresolved_target_in_plan_id_state(self) -> None:
+        from github_stack import GitHubRepo, build_plan, compute_plan_id
+        from stack_model import Slice
+
+        plan = build_plan(
+            cwd=".", remote_name="origin", gh_repo=GitHubRepo("o", "r"),
+            default_branch="main", slices=[Slice("feature", None, ["a"], "Feature")],
+            local_bookmarks=[
+                {"name": "feature", "commit_id": "one"},
+                {"name": "feature", "commit_id": "two"},
+            ],
+            remote_bookmarks=[], open_prs=[],
+        )
+        expected = compute_plan_id("o/r", "main", [{
+            "bookmark": "feature",
+            "local_commit_id": None,
+            "remote_commit_id": None,
+            "existing_pr_number": None,
+            "existing_pr_base": None,
+            "target_base": "main",
+        }])
+        self.assertEqual(plan.plan_id, expected)
+        self.assertTrue(any("exactly one local target" in blocker for blocker in plan.blockers))
 
     def test_build_plan_blocks_conflicted_remote_bookmark(self) -> None:
         from github_stack import GitHubRepo, build_plan

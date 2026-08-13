@@ -209,31 +209,47 @@ def list_open_prs(
     items: list[dict[str, Any]] = []
     text = result.stdout.strip()
     if text:
+        decoder = json.JSONDecoder()
+        offset = 0
         try:
-            parsed = json.loads(text)
-            items = parsed if isinstance(parsed, list) else [parsed]
-        except json.JSONDecodeError:
-            try:
-                items = [json.loads(line) for line in text.splitlines() if line.strip()]
-            except json.JSONDecodeError as exc:
-                raise StackError(f"Could not parse open-PR response: {exc}", 1) from exc
+            while offset < len(text):
+                while offset < len(text) and text[offset].isspace():
+                    offset += 1
+                if offset >= len(text):
+                    break
+                parsed, offset = decoder.raw_decode(text, offset)
+                values = parsed if isinstance(parsed, list) else [parsed]
+                if not all(isinstance(value, dict) for value in values):
+                    raise StackError("Could not parse open-PR response: expected JSON objects.", 1)
+                items.extend(values)
+        except json.JSONDecodeError as exc:
+            raise StackError(f"Could not parse open-PR response: {exc}", 1) from exc
 
-    return [
-        PRInfo(
+    prs: list[PRInfo] = []
+    expected_repo = f"{gh_repo.owner}/{gh_repo.repo}".casefold()
+    for item in items:
+        # Deleted forks have null head repository and owner values. Ignore those
+        # unrelated PRs rather than aborting publication for the whole repository.
+        head_repository = item.get("headRepository") or {}
+        head_repository_owner = item.get("headRepositoryOwner") or {}
+        if not isinstance(head_repository, dict):
+            continue
+        if not isinstance(head_repository_owner, dict):
+            head_repository_owner = {}
+        name_with_owner = head_repository.get("nameWithOwner") or ""
+        if not isinstance(name_with_owner, str) or name_with_owner.casefold() != expected_repo:
+            continue
+        owner_login = head_repository_owner.get("login") or ""
+        prs.append(PRInfo(
             number=item["number"],
             head_ref=item["headRefName"],
             base_ref=item["baseRefName"],
-            title=item.get("title", ""),
-            is_draft=item.get("isDraft", False),
-            url=item.get("url", ""),
-            head_owner=item.get("headRepositoryOwner", {}).get("login", ""),
-        )
-        for item in items
-        # Match the exact repository receiving bookmark pushes. Owner-only
-        # filtering can select a same-owner fork with an identically named branch.
-        if item.get("headRepository", {}).get("nameWithOwner", "").casefold()
-        == f"{gh_repo.owner}/{gh_repo.repo}".casefold()
-    ]
+            title=item.get("title", "") or "",
+            is_draft=bool(item.get("isDraft", False)),
+            url=item.get("url", "") or "",
+            head_owner=owner_login if isinstance(owner_login, str) else "",
+        ))
+    return prs
 
 
 def find_pr_for_bookmark(
@@ -302,7 +318,7 @@ def find_kstack_comment(comments: list[dict[str, Any]], gh_user: str | None = No
         if gh_user is not None and comment.get("user") != gh_user:
             continue
         metadata = parse_comment_metadata(body)
-        if metadata is None or metadata.get("schema_version") != KSTACK_COMMENT_SCHEMA_VERSION:
+        if metadata is None or metadata.get("schema_version") not in (0, KSTACK_COMMENT_SCHEMA_VERSION):
             continue
         return comment
     return None
@@ -377,6 +393,7 @@ def build_plan(
     repo_key = f"{gh_repo.owner}/{gh_repo.repo}"
 
     slice_actions: list[SliceAction] = []
+    slices_state: list[dict[str, Any]] = []
     blockers: list[str] = []
     last_bookmark: str | None = None
 
@@ -424,27 +441,17 @@ def build_plan(
             current_base=current_base,
             target_base=target_base,
         ))
-        last_bookmark = slc.bookmark
-
-    # Build the slices_state for plan ID
-    slices_state = []
-    for i, (slc, action) in enumerate(zip(slices, slice_actions)):
-        target_base = slice_actions[i].target_base
-        bm_commit = next(
-            (b["commit_id"] for b in local_bookmarks if b["name"] == slc.bookmark),
-            None,
-        )
-        remote_commit = next(
-            (b["commit_id"] for b in remote_bookmarks if b["name"] == slc.bookmark),
-            None,
-        )
+        # Reuse the exact resolution that produced the action. Re-resolving with
+        # first-match semantics could make a blocked divergent bookmark hash a
+        # different target than the action itself.
         slices_state.append(compute_slice_state(
             bookmark=slc.bookmark,
-            local_commit_id=bm_commit,
+            local_commit_id=local_commit,
             remote_commit_id=remote_commit,
-            existing_pr=find_pr_for_bookmark(open_prs, slc.bookmark),
+            existing_pr=existing_pr,
             target_base=target_base,
         ))
+        last_bookmark = slc.bookmark
 
     plan_id = compute_plan_id(repo_key, default_branch, slices_state)
 
@@ -489,6 +496,9 @@ def push_bookmark(
     """
     from stack_model import run_jj
 
+    # On the supported jj >= 0.44, --bookmark automatically tracks a new
+    # remote bookmark and rewrites use jj's force-with-lease safety checks.
+    # There is no raw force push and --allow-new is not a 0.44 option.
     result = run_jj(
         ["git", "push", "--remote", remote, "--bookmark", bookmark],
         cwd=cwd,
