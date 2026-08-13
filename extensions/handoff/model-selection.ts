@@ -1,18 +1,25 @@
 /**
- * Argument parsing and model resolution for `/handoff --model`.
+ * Argument parsing and model/effort resolution for `/handoff --model`.
  *
- * The handoff command applies the chosen model through `pi.setModel()` before
- * calling `ctx.newSession()`. Pi resolves a brand-new session's model from the
- * configured default (settings), and `setModel` persists exactly that default,
- * so in the default configuration the replacement session starts on the model
- * selected here. Startup-level overrides — a `pi --model` CLI flag or model
- * scoping via `--models` / `enabledModels` — take precedence over this
- * mechanism; the handler compares the replacement session's actual model
- * against the expectation and reports any mismatch instead of claiming the
- * requested one. With no flag, the handler re-applies the parent session's
- * active model the same way (best effort), so inheritance holds whenever the
- * parent's model is usable and not overridden at startup.
+ * The handoff command applies the chosen model through `pi.setModel()` and the
+ * chosen or inherited effort through `pi.setThinkingLevel()` before calling
+ * `ctx.newSession()`. Pi resolves a brand-new session's model and thinking
+ * level from the configured defaults, and those setters persist exactly those
+ * defaults, so in the default configuration the replacement session starts on
+ * the model and effort selected here. Startup-level overrides — a `pi --model`
+ * CLI flag, `--thinking`, or model scoping via `--models` / `enabledModels` —
+ * take precedence over this mechanism; the handler compares the replacement
+ * session's actual model and effort against the expectation and reports any
+ * mismatch instead of claiming the requested ones. With no flag, the handler
+ * re-applies the parent session's active model and effort the same way (best
+ * effort), so inheritance holds whenever the parent's state is usable and not
+ * overridden at startup.
  */
+
+/** Canonical Pi thinking/effort levels accepted by `/handoff --model <ref>:<effort>`. */
+export const HANDOFF_EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type HandoffEffortLevel = (typeof HANDOFF_EFFORT_LEVELS)[number];
 
 /** Minimal structural view of a pi-ai Model, enough for resolution and setModel. */
 export interface HandoffModel {
@@ -29,9 +36,13 @@ export interface ParsedHandoffArgs {
 export type HandoffParseResult = { ok: true; goal: string; modelRef?: string } | { ok: false; error: string };
 
 export type ModelResolution =
-	| { status: "resolved"; model: HandoffModel }
+	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel }
 	| { status: "not-found" }
 	| { status: "ambiguous"; matches: HandoffModel[] };
+
+export function isHandoffEffortLevel(value: string): value is HandoffEffortLevel {
+	return (HANDOFF_EFFORT_LEVELS as readonly string[]).includes(value);
+}
 
 /**
  * Extract an optional `--model <ref>` (also `-m <ref>` or `--model=<ref>`)
@@ -78,11 +89,35 @@ export function parseHandoffArgs(raw: string): HandoffParseResult {
  * Resolve a user-supplied model reference against a model catalogue, mirroring
  * the matching order Pi uses for `/model`: canonical `provider/model-id`
  * first, then a unique bare model id, then unique partial matches.
+ *
+ * An optional `:<effort>` suffix is accepted only after the full reference
+ * fails to match. That preserves model IDs that themselves contain colons
+ * (OpenRouter `:exacto`, Ollama tags, etc.). Invalid suffixes stay part of
+ * the model reference rather than being silently dropped.
  */
 export function resolveModelReference(models: HandoffModel[], reference: string): ModelResolution {
 	const trimmed = reference.trim();
 	if (trimmed === "") return { status: "not-found" };
-	const lower = trimmed.toLowerCase();
+
+	const full = matchModelReference(models, trimmed);
+	if (full.status !== "not-found") return full;
+
+	const lastColon = trimmed.lastIndexOf(":");
+	if (lastColon === -1) return { status: "not-found" };
+
+	const prefix = trimmed.slice(0, lastColon).trim();
+	const suffix = trimmed.slice(lastColon + 1).trim().toLowerCase();
+	if (prefix === "" || !isHandoffEffortLevel(suffix)) return { status: "not-found" };
+
+	const prefixMatch = matchModelReference(models, prefix);
+	if (prefixMatch.status === "resolved") {
+		return { status: "resolved", model: prefixMatch.model, effort: suffix };
+	}
+	return prefixMatch;
+}
+
+function matchModelReference(models: HandoffModel[], reference: string): ModelResolution {
+	const lower = reference.toLowerCase();
 
 	// 1. Canonical provider/model-id, case-insensitive.
 	let matches = models.filter((m) => `${m.provider}/${m.id}`.toLowerCase() === lower);
@@ -95,10 +130,10 @@ export function resolveModelReference(models: HandoffModel[], reference: string)
 	if (matches.length > 1) return { status: "ambiguous", matches };
 
 	// 3. For slashed references, constrain partial matching to the provider.
-	const slashIndex = trimmed.indexOf("/");
+	const slashIndex = reference.indexOf("/");
 	if (slashIndex !== -1) {
-		const provider = trimmed.slice(0, slashIndex).trim().toLowerCase();
-		const pattern = trimmed.slice(slashIndex + 1).trim().toLowerCase();
+		const provider = reference.slice(0, slashIndex).trim().toLowerCase();
+		const pattern = reference.slice(slashIndex + 1).trim().toLowerCase();
 		if (provider !== "" && pattern !== "") {
 			const providerModels = models.filter((m) => m.provider.toLowerCase() === provider);
 			matches = providerModels.filter(
