@@ -2,11 +2,21 @@
 
 import { StringDecoder } from "node:string_decoder";
 
+/** Delta-only assistant stream event from JSON-mode `message_update`. */
+export interface PiAssistantMessageEvent {
+	type?: string;
+	contentIndex?: number;
+	delta?: string;
+	content?: string;
+}
+
 export interface PiJsonEvent {
 	type?: string;
 	toolCallId?: string;
 	toolName?: string;
 	args?: Record<string, unknown>;
+	/** Present on `message_update` events; JSON mode omits the cumulative message. */
+	assistantMessageEvent?: PiAssistantMessageEvent;
 	message?: {
 		role?: string;
 		model?: string;

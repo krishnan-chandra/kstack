@@ -19,11 +19,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
 import { DEFAULT_MAX_RUNTIME_MINUTES, DEFAULT_TIMEOUT_MINUTES, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
+import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { runReviewer } from "./reviewer-runner.ts";
 import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
@@ -182,6 +183,8 @@ export default function (pi: ExtensionAPI) {
 			let promptDir: string | undefined;
 			let ticker: ReturnType<typeof setInterval> | undefined;
 			let runAbort: AbortController | undefined;
+			let dashboard: PanelDashboardStore | undefined;
+			let disposeDashboard: (() => void) | undefined;
 			try {
 				scope = collectScope(repoRoot, base, intent);
 				if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
@@ -212,6 +215,17 @@ export default function (pi: ExtensionAPI) {
 				);
 				if (!confirmed) return { status: "declined" };
 
+				// Live dashboard: TUI-only above-editor widget; footer status stays as
+				// the RPC/compact fallback. Mounted only after confirmation.
+				if (ctx.mode === "tui") {
+					dashboard = new PanelDashboardStore();
+					for (const r of resolution.reviewers) dashboard.addReviewer(r.label, r.label, modelCliId(r));
+					disposeDashboard = mountPanelDashboard(ctx.ui, dashboard, {
+						stripTerminalSequences,
+						truncateToWidth: (text, width) => truncateToWidth(text, width),
+					});
+				}
+
 				promptDir = mkdtempSync(join(tmpdir(), "pi-panel-review-prompt-"));
 				const reviewerPromptFile = join(promptDir, "reviewer-prompt.md");
 				writeFileSync(reviewerPromptFile, assembleReviewerPrompt(), { encoding: "utf8", mode: 0o600 });
@@ -232,12 +246,16 @@ export default function (pi: ExtensionAPI) {
 					);
 				};
 				updateStatus();
-				ticker = setInterval(updateStatus, 1000);
+				ticker = setInterval(() => {
+					updateStatus();
+					dashboard?.tick();
+				}, 1000);
 				ticker.unref?.();
 
 				const panel = await runPanel(resolution.reviewers, resolution.maxConcurrency, (spec) => {
 					progress.set(spec.label, "running");
 					updateStatus();
+					dashboard?.markRunning(spec.label);
 					return runReviewer({
 						spec,
 						model: modelCliId(spec),
@@ -247,14 +265,20 @@ export default function (pi: ExtensionAPI) {
 						noContextFiles: scope!.contextFilesTouched,
 						signal: abort.signal,
 						deps: childDeps,
-						onProgress: ({ label, turns, activity }) => {
+						onProgress: ({ label, turns, activity, preview }) => {
 							progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
 							updateStatus();
+							dashboard?.progress(label, { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
 						},
 					}).then((result) => {
 						doneCount++;
 						progress.set(spec.label, result.status === "completed" ? "✓" : result.status === "failed" ? "✗" : "aborted");
 						updateStatus();
+						dashboard?.complete(spec.label, {
+							status: result.status,
+							turns: result.usage?.turns,
+							...(result.status === "failed" && result.error ? { error: result.error } : {}),
+						});
 						return result;
 					});
 				});
@@ -276,6 +300,8 @@ export default function (pi: ExtensionAPI) {
 
 				// Synthesize with the configured synthesis model in an isolated child process.
 				ctx.ui.setStatus("panel-review", `panel-review: synthesizing verdict with ${synthesisCliId}…`);
+				dashboard?.addLead("lead", "lead", synthesisCliId);
+				dashboard?.markRunning("lead");
 				const { input, truncated: synthTruncated } = buildSynthesisInput({
 					intent,
 					scope,
@@ -297,8 +323,16 @@ export default function (pi: ExtensionAPI) {
 					noContextFiles: scope.contextFilesTouched,
 					signal: abort.signal,
 					deps: childDeps,
+					onProgress: ({ turns, activity, preview }) => {
+						dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
+					},
 				});
 				ctx.ui.setStatus("panel-review", undefined);
+				dashboard?.complete("lead", {
+					status: synthResult.status,
+					turns: synthResult.usage?.turns,
+					...(synthResult.status === "failed" && synthResult.error ? { error: synthResult.error } : {}),
+				});
 
 				const synthesized = synthResult.status === "completed";
 				const verdict = synthesized ? synthResult.output : renderRawReports(panel.results);
@@ -338,6 +372,9 @@ export default function (pi: ExtensionAPI) {
 			} finally {
 				if (ticker) clearInterval(ticker);
 				if (runAbort && activeAbort === runAbort) activeAbort = undefined;
+				disposeDashboard?.();
+				disposeDashboard = undefined;
+				dashboard = undefined;
 				ctx.ui.setStatus("panel-review", undefined);
 				if (scope) {
 					try {
