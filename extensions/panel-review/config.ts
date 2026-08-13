@@ -7,13 +7,13 @@
  *   {
  *     "panel-review": {
  *       "reviewers": [
- *         { "label": "qwen", "model": "qwen/qwen3.8-max", "thinking": "medium" },
- *         { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-pro", "thinking": "medium" }
+ *         { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "medium" },
+ *         { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "medium" }
  *       ],
- *       "maxConcurrency": 4,
+ *       "maxConcurrency": 5,
  *       "timeoutMinutes": 10,
  *       "maxRuntimeMinutes": 30,
- *       "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
+ *       "synthesis": { "model": "openai/gpt-5.6-terra", "thinking": "medium" }
  *     }
  *   }
  *
@@ -37,8 +37,8 @@ import { join } from "node:path";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
 export const MIN_REVIEWERS = 2;
-export const MAX_REVIEWERS = 4;
-export const DEFAULT_MAX_CONCURRENCY = 4;
+export const MAX_REVIEWERS = 5;
+export const DEFAULT_MAX_CONCURRENCY = 5;
 export const DEFAULT_TIMEOUT_MINUTES = 10;
 export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
 
@@ -61,15 +61,15 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
-	{ label: "terra", model: "openai/gpt-5.6-terra", thinking: "max" },
+	{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "medium" },
+	{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "medium" },
 ];
 
 /**
- * Built-in synthesis model for the no-config path: synthesis merges bounded
- * reviewer reports, so a small, fast model is enough. Config files must name
+ * Built-in synthesis model for the no-config path. Config files must name
  * their synthesis model explicitly.
  */
-export const DEFAULT_SYNTHESIS = { model: "openrouter/google/gemini-3.5-flash-lite" } as const;
+export const DEFAULT_SYNTHESIS = { model: "openai/gpt-5.6-terra", thinking: "medium" } as const;
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 	const dir = env.PI_CODING_AGENT_DIR;
@@ -273,7 +273,13 @@ export function resolveSynthesisModel(config: PanelConfig | null, deps: ResolveD
 	}
 	const slash = DEFAULT_SYNTHESIS.model.indexOf("/");
 	if (deps.find(DEFAULT_SYNTHESIS.model.slice(0, slash), DEFAULT_SYNTHESIS.model.slice(slash + 1))) {
-		return { ok: true, model: DEFAULT_SYNTHESIS.model, source: "default", warnings };
+		return {
+			ok: true,
+			model: DEFAULT_SYNTHESIS.model,
+			thinking: DEFAULT_SYNTHESIS.thinking,
+			source: "default",
+			warnings,
+		};
 	}
 	if (deps.activeModel) {
 		warnings.push(`Default synthesis model ${DEFAULT_SYNTHESIS.model} unavailable; using the active model instead.`);
@@ -330,7 +336,7 @@ export function resolveReviewers(config: PanelConfig | null, deps: ResolveDeps):
 		return { ok: true, reviewers: defaultAvailable, maxConcurrency: DEFAULT_MAX_CONCURRENCY, warnings };
 	}
 
-	// Default panel unavailable: pick up to four distinct scoped models,
+	// Default panel unavailable: pick up to five distinct scoped models,
 	// preferring provider diversity.
 	const seen = new Set<string>();
 	const distinct: { model: ModelLike; thinkingLevel?: string }[] = [];

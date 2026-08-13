@@ -4,12 +4,13 @@
 			{ "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "medium" },
 			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-pro", "thinking": "medium" },
 			{ "label": "grok", "model": "openrouter/x-ai/grok-4.6", "thinking": "medium" },
-			{ "label": "terra", "model": "openai/gpt-5.6-terra", "thinking": "max" }
+			{ "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "medium" },
+			{ "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "medium" }
 		],
-		"maxConcurrency": 4,
+		"maxConcurrency": 5,
 		"timeoutMinutes": 10,
 		"maxRuntimeMinutes": 30,
-		"synthesis": { "model": "openrouter/google/gemini-3.6-flash" }
+		"synthesis": { "model": "openai/gpt-5.6-terra", "thinking": "medium" }
 	},
 	"plan-implement": {
 		"planner": { "model": "openai/gpt-5.6-sol", "thinking": "max" },

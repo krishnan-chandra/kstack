@@ -36,7 +36,7 @@ ignores the outcome.
    The diff is never passed on a command line.
 3. Asks for the review intent (from `--intent` or an editor prefilled with
    commit subjects) and confirms once before spending anything.
-4. Spawns 2–4 reviewers concurrently. Each is an ephemeral child process:
+4. Spawns 2–5 reviewers concurrently. Each is an ephemeral child process:
 
    ```
    pi --mode json -p --no-session \
@@ -64,8 +64,8 @@ ignores the outcome.
    activity. Timeout failures report the turns completed, last activity, and
    token usage observed before the kill.
 5. Synthesizes the successful reports with the configured synthesis model
-   (required in `kstack.json`; a small, fast model like
-   `openrouter/google/gemini-3.5-flash-lite` by convention) in an isolated child, using
+   (required in `kstack.json`; **GPT-5.6 Terra** at medium thinking by default)
+   in an isolated child, using
    the lead-judgment framework: deduplication, consensus mapping, and
    **Act On / Consider / Noted / Dismissed** dispositions.
 6. Appends the verdict to the session as a displayed `panel-review` custom
@@ -88,18 +88,18 @@ the `"panel-review"` section:
 {
   "panel-review": {
     "reviewers": [
-      { "label": "qwen", "model": "openrouter/qwen/qwen3.8-max", "thinking": "medium" },
-      { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-pro", "thinking": "medium" },
+      { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "medium" },
+      { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "medium" }
     ],
-    "maxConcurrency": 4,
+    "maxConcurrency": 5,
     "timeoutMinutes": 10,
     "maxRuntimeMinutes": 30,
-    "synthesis": { "model": "openrouter/google/gemini-3.5-flash-lite" }
+    "synthesis": { "model": "openai/gpt-5.6-terra", "thinking": "medium" }
   }
 }
 ```
 
-- 2–4 reviewers, unique labels, models resolved through Pi's model registry.
+- 2–5 reviewers, unique labels, models resolved through Pi's model registry.
   `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
   `xhigh`, `max`.
 - `timeoutMinutes` (default 10) is the per-child idle limit: any child output
@@ -112,15 +112,16 @@ the `"panel-review"` section:
   optional `thinking` level uses the same values as reviewers. A configured
   synthesis model that is unavailable or unauthenticated aborts the run
   before anything is launched. Without a config file, synthesis runs on the
-  built-in default `openrouter/google/gemini-3.5-flash-lite`, falling back to
-  the active model with a warning.
+  built-in default **GPT-5.6 Terra** (`openai/gpt-5.6-terra`, medium), falling
+  back to the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
   (`openrouter/qwen/qwen3.8-max`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
-  medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), and **GPT-5.6 Terra**
-  (`openai/gpt-5.6-terra`, max). Defaults that are
-  unavailable or unauthenticated are skipped with a warning; write a config to
-  override the panel.
-- If fewer than two default models are available, up to four distinct models
+  medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), **Gemini 3.6 Flash**
+  (`openrouter/google/gemini-3.6-flash`, medium), and **Muse Spark 1.2**
+  (`openrouter/meta/muse-spark-1.2`, medium). Defaults that are unavailable or
+  unauthenticated are skipped with a warning; write a config to override the
+  panel.
+- If fewer than two default models are available, up to five distinct models
   are picked from the session's scoped models, preferring different providers.
 - With only one model available, two independent reviewers run on it with a
   warning that model diversity is reduced.
