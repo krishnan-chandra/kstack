@@ -1,6 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatModelRef, parseHandoffArgs, resolveModelReference, type HandoffModel } from "./model-selection.ts";
+import {
+	formatModelEffort,
+	formatModelRef,
+	isHandoffEffortLevel,
+	parseHandoffArgs,
+	pinHandoffEffort,
+	resolveModelReference,
+	type HandoffEffortLevel,
+	type HandoffModel,
+} from "./model-selection.ts";
 
 const MODELS: HandoffModel[] = [
 	{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
@@ -8,7 +17,11 @@ const MODELS: HandoffModel[] = [
 	{ provider: "openai", id: "gpt-5.2", name: "GPT-5.2" },
 	{ provider: "openai", id: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
 	{ provider: "google", id: "gemini-3-pro", name: "Gemini 3 Pro" },
+	{ provider: "openrouter", id: "qwen/qwen3-coder:exacto", name: "Qwen3 Coder Exacto" },
+	{ provider: "ollama", id: "llama3:70b", name: "Llama 3 70B" },
 ];
+
+const ALL_EFFORTS: HandoffEffortLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 describe("parseHandoffArgs", () => {
 	it("returns the goal untouched when no model flag is present", () => {
@@ -52,6 +65,22 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "continue",
 			modelRef: "google/gemini-3-pro",
+		});
+	});
+
+	it("extracts --model=provider/model:high without interpreting the suffix", () => {
+		assert.deepEqual(parseHandoffArgs("--model=openai/gpt-5.2:high continue the work"), {
+			ok: true,
+			goal: "continue the work",
+			modelRef: "openai/gpt-5.2:high",
+		});
+	});
+
+	it("extracts -m provider/model:max without interpreting the suffix", () => {
+		assert.deepEqual(parseHandoffArgs("-m anthropic/claude-opus-4-6:max finish the refactor"), {
+			ok: true,
+			goal: "finish the refactor",
+			modelRef: "anthropic/claude-opus-4-6:max",
 		});
 	});
 
@@ -143,10 +172,143 @@ describe("resolveModelReference", () => {
 		assert.deepEqual(resolveModelReference(MODELS, "   "), { status: "not-found" });
 		assert.deepEqual(resolveModelReference([], "anthropic/claude-sonnet-4-5"), { status: "not-found" });
 	});
+
+	it("returns no explicit effort when the reference has no suffix", () => {
+		const result = resolveModelReference(MODELS, "anthropic/claude-sonnet-4-5");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[0] });
+		if (result.status === "resolved") assert.equal(result.effort, undefined);
+	});
+
+	it("resolves a canonical model with each valid effort suffix", () => {
+		for (const effort of ALL_EFFORTS) {
+			const result = resolveModelReference(MODELS, `openai/gpt-5.2:${effort}`);
+			assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort }, effort);
+		}
+	});
+
+	it("resolves a unique partial model with a representative effort", () => {
+		const result = resolveModelReference(MODELS, "codex:max");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[3], effort: "max" });
+	});
+
+	it("resolves a provider-scoped partial with an effort suffix", () => {
+		const result = resolveModelReference(MODELS, "anthropic/sonnet:high");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[0], effort: "high" });
+	});
+
+	it("prefers a full model id that already ends in a colon-bearing suffix", () => {
+		const result = resolveModelReference(MODELS, "openrouter/qwen/qwen3-coder:exacto");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[5] });
+		if (result.status === "resolved") assert.equal(result.effort, undefined);
+	});
+
+	it("still attaches effort after a colon-bearing model id", () => {
+		const result = resolveModelReference(MODELS, "openrouter/qwen/qwen3-coder:exacto:high");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[5], effort: "high" });
+	});
+
+	it("resolves a colon-bearing bare model id before treating the suffix as effort", () => {
+		const result = resolveModelReference(MODELS, "llama3:70b");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[6] });
+		if (result.status === "resolved") assert.equal(result.effort, undefined);
+	});
+
+	it("attaches effort to a colon-bearing bare model id", () => {
+		const result = resolveModelReference(MODELS, "llama3:70b:medium");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[6], effort: "medium" });
+	});
+
+	it("keeps a valid effort suffix with an unknown model as not-found", () => {
+		assert.deepEqual(resolveModelReference(MODELS, "nope/does-not-exist:high"), { status: "not-found" });
+	});
+
+	it("keeps a valid effort suffix with an ambiguous model prefix", () => {
+		const result = resolveModelReference(MODELS, "gpt:high");
+		assert.equal(result.status, "ambiguous");
+		if (result.status === "ambiguous") {
+			assert.deepEqual(
+				result.matches.map((m) => m.id),
+				["gpt-5.2", "gpt-5.2-codex"],
+			);
+		}
+	});
+
+	it("treats an invalid suffix as part of an unknown model reference", () => {
+		assert.deepEqual(resolveModelReference(MODELS, "openai/gpt-5.2:turbo"), { status: "not-found" });
+		assert.deepEqual(resolveModelReference(MODELS, "openai/gpt-5.2:"), { status: "not-found" });
+	});
+});
+
+describe("isHandoffEffortLevel", () => {
+	it("accepts every canonical Pi thinking level", () => {
+		for (const effort of ALL_EFFORTS) {
+			assert.equal(isHandoffEffortLevel(effort), true, effort);
+		}
+	});
+
+	it("rejects unknown suffixes", () => {
+		assert.equal(isHandoffEffortLevel("turbo"), false);
+		assert.equal(isHandoffEffortLevel("HIGH"), false);
+	});
 });
 
 describe("formatModelRef", () => {
 	it("formats the canonical reference", () => {
 		assert.equal(formatModelRef(MODELS[0]), "anthropic/claude-sonnet-4-5");
+	});
+});
+
+describe("formatModelEffort", () => {
+	it("omits the suffix when effort is absent", () => {
+		assert.equal(formatModelEffort(MODELS[0]), "anthropic/claude-sonnet-4-5");
+	});
+
+	it("appends the effort suffix when present", () => {
+		assert.equal(formatModelEffort(MODELS[0], "high"), "anthropic/claude-sonnet-4-5:high");
+	});
+});
+
+describe("pinHandoffEffort", () => {
+	function makeThinkingApi(initial: string, available: string[] = ALL_EFFORTS) {
+		let current = initial;
+		const sets: string[] = [];
+		return {
+			api: {
+				getThinkingLevel: () => current,
+				setThinkingLevel: (level: HandoffEffortLevel) => {
+					sets.push(level);
+					current = available.includes(level) ? level : (available.at(-1) ?? "off");
+				},
+			},
+			sets,
+			get current() {
+				return current;
+			},
+		};
+	}
+
+	it("sets a different effort once and returns the effective level", () => {
+		const { api, sets } = makeThinkingApi("medium");
+		assert.equal(pinHandoffEffort(api, "high"), "high");
+		assert.deepEqual(sets, ["high"]);
+	});
+
+	it("round-trips through another level when the desired effort is already current", () => {
+		const { api, sets } = makeThinkingApi("high");
+		assert.equal(pinHandoffEffort(api, "high"), "high");
+		assert.deepEqual(sets, ["high", "off", "high"]);
+	});
+
+	it("returns the clamped level without bouncing when the request is unsupported", () => {
+		const { api, sets } = makeThinkingApi("high", ["low", "medium", "high"]);
+		assert.equal(pinHandoffEffort(api, "max"), "high");
+		assert.deepEqual(sets, ["max"]);
+	});
+
+	it("skips the bounce when the model exposes only one effective level", () => {
+		const { api, sets } = makeThinkingApi("off", ["off"]);
+		assert.equal(pinHandoffEffort(api, "off"), "off");
+		assert.ok(sets.includes("off"));
+		assert.equal(api.getThinkingLevel(), "off");
 	});
 });

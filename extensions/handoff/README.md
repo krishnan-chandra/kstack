@@ -15,16 +15,22 @@ The sessions are linked twice:
 /handoff now implement this for teams as well
 /handoff execute phase one of the plan
 /handoff --model anthropic/claude-sonnet-4-5 execute phase one of the plan
-/handoff -m openai/gpt-5.2 fix the flaky test
+/handoff --model openai/gpt-5.2:high continue the work
+/handoff -m anthropic/claude-opus-4-6:max finish the refactor
 /handoff                          # continue from the prior resume point
 ```
 
-`--model` (also `-m` or `--model=provider/model-id`) selects the model for the
-replacement session. It accepts a canonical `provider/model-id`, a unique bare
-model id, or a unique partial id/name match (provider-scoped when the reference
-contains a slash). When model scoping is active (`--models` / `enabledModels`),
-only scoped models are accepted. Without the flag, the replacement session
-starts on the parent session's active model.
+`--model` (also `-m` or `--model=provider/model-id[:effort]`) selects the model
+and optional effort for the replacement session. It accepts a canonical
+`provider/model-id`, a unique bare model id, or a unique partial id/name match
+(provider-scoped when the reference contains a slash). Append `:<effort>` to
+request a Pi thinking level: `off`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, or `max`. The full model reference is tried first so IDs that already
+contain a colon (OpenRouter `:exacto`, Ollama tags) still resolve; only then is
+the final colon treated as an effort suffix. When model scoping is active
+(`--models` / `enabledModels`), only scoped models are accepted. Without a
+suffix, the parent session's effective effort is inherited. Without the flag,
+the replacement session starts on the parent session's active model and effort.
 
 The editor opens with a deterministic prompt like:
 
@@ -59,13 +65,13 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 - **Reference-only:** no conversation serialization, synthesis call, generated summary, or inherited conversation payload.
 - **Immediate naming:** the replacement session is named from the handoff goal during setup, before the confirmed prompt is sent.
 - **On-demand history:** the replacement agent retrieves normalized recent entries or targeted matches through the handoff-specific tools.
-- **Model selection:** `--model` switches to the requested model right before the replacement session is created; without it, the parent session's active model is pinned so the new session starts on it. Both paths use `pi.setModel()` before `ctx.newSession()`, because a brand-new session resolves its model from the configured default. An unknown or ambiguous model reference fails before the editor opens; a requested model without an API key cancels the handoff. Choosing a model also persists it as the configured default, the same as `/model` or `Ctrl+P`.
-- **Model selection limits:** this mechanism works in the default configuration. A startup `pi --model` flag or active model scoping (`--models` / `enabledModels`) takes precedence over it; when that happens the handoff warns about the model the replacement session actually started on instead of claiming the requested one. With scoping active, `--model` only accepts scoped models. Inheritance is best effort: if the parent model cannot be pinned (e.g. its credentials were removed), the handoff proceeds on the configured default and says so.
+- **Model and effort selection:** `--model` switches to the requested model right before the replacement session is created; an optional `:<effort>` suffix then sets that thinking level. Without a suffix, the parent session's effective effort is pinned. Without `--model`, both the parent model and its effort are pinned so the new session starts on them. Model is applied first so Pi clamps effort against the selected model's capabilities. Both paths use `pi.setModel()` and `pi.setThinkingLevel()` before `ctx.newSession()`, because a brand-new session resolves model and thinking from the configured defaults. An unknown or ambiguous model reference fails before the editor opens; a requested model without an API key cancels the handoff. If the requested effort is unsupported, the handoff warns and continues with the clamped effective level. Choosing a model or effort also persists it as the configured default, the same as `/model` or Shift+Tab. Pinning an already-current effort may briefly bounce through another supported level so Pi writes the default a fresh session can inherit; that can append a bounded thinking-level change to the outgoing session.
+- **Model and effort selection limits:** this mechanism works in the default configuration. A startup `pi --model` flag, `--thinking`, or active model scoping (`--models` / `enabledModels`) takes precedence over it; when that happens the handoff warns about the model and effort the replacement session actually started on instead of claiming the requested ones. With scoping active, `--model` only accepts scoped models. Inheritance is best effort: if the parent model cannot be pinned (e.g. its credentials were removed), the handoff proceeds on the configured default and says so.
 - **No model required to open the handoff:** `/handoff` itself still makes no model call. Before auto-start, the extension checks that the replacement session has a model and credentials. If that preflight fails, the confirmed prompt stays in the editor.
 - **Persisted sessions only:** ephemeral `--no-session` sessions are rejected because they have no durable history artifact for the next agent to inspect.
 - **Interactive only:** the command requires TUI mode so the user can edit the continuation prompt.
 - **One confirmation:** saving the editor both confirms the prompt and starts the replacement session. There is no second submit after the switch. If preflight finds no model or credentials, the confirmed prompt is left in the editor instead. Errors after message submission begins are surfaced without restoring the prompt because the message might already be recorded; this avoids creating a duplicate turn if the user retries.
-- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active. If an explicit `--model` switch was already applied, it is rolled back when replacement is cancelled or fails before the new session starts. Once the replacement-session callback begins, the old session API is stale and is not used for recovery.
+- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active. If an explicit `--model` or effort switch was already applied, both the parent model and effort are rolled back (model first, then effort) when replacement is cancelled or fails before the new session starts. If there was no previous model, the parent keeps the newly selected model and its effective effort. Once the replacement-session callback begins, the old session API is stale and is not used for recovery.
 
 ## Tests
 
@@ -73,4 +79,4 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 node --test extensions/handoff/*.test.ts
 ```
 
-The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model resolution, inheritance, explicit model switching, model restoration on cancelled or pre-replacement failures, scoped-model validation, and override detection without making any model calls.
+The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), inheritance, explicit model/effort switching and clamping, restoration of model and effort on cancelled or pre-replacement failures, scoped-model validation, and override detection without making any model calls.
