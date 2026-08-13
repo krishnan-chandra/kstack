@@ -43,6 +43,7 @@ create branches.
 | [`personalize`](skills/personalize/) | Mines the user's own session history from any coding agent (Pi, Claude Code, Codex, Cursor) for durable, evidence-backed preferences and applies approved edits to a target such as AGENTS.md. |
 | [`how`](skills/how/) | Explains code structure, ownership, and runtime flow through fast, allowlisted exploration models. |
 | [`why`](skills/why/) | Investigates design rationale through fast, allowlisted evidence gathering and reports direct evidence separately from inference. |
+| [`recall`](skills/recall/) | Reconstructs recent working context across Pi sessions, reconciles it with live Git/PR state, and returns a tight brief with thread statuses and a concrete resume point. Read-only. |
 | [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only; panel-review applies the same canonical lens to every reviewer and synthesis model. |
 
@@ -234,6 +235,7 @@ node --test extensions/shared/*.test.ts
 node --test skills/reflect/*.test.mjs
 node --test skills/architect/*.test.mjs
 node --test skills/decision-trail/*.test.mjs
+node --test skills/recall/*.test.mjs
 node --test skills/investigation-model.test.mjs
 ```
 
