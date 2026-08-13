@@ -144,7 +144,7 @@ the `"panel-review"` section:
   back to the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Opus 4.6**
   (`anthropic/claude-opus-4-6`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
-  medium), **Kimi K3** (`openrouter/moonshotai/kimi-k3`, medium), **Gemini 3.6 Flash**
+  medium), **GLM-5.2** (`openrouter/z-ai/glm-5.2`, high), **Gemini 3.6 Flash**
   (`openrouter/google/gemini-3.6-flash`, high). Defaults that are unavailable or
   unauthenticated are skipped with a warning; write a config to override the
   panel.

@@ -53,13 +53,11 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
-	// Opus 4.6 at medium reasoning; replaces the prior GLM 5.2 (high) entry.
-	// Medium balances review depth against review speed on large bundles.
 	{ label: "opus", model: "anthropic/claude-opus-4-6", thinking: "medium" },
 	// DeepSeek V4 Pro at high thinking repeatedly produced no output for 20+ minutes;
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
-	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
+	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 	{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
 ];
 
