@@ -1,7 +1,7 @@
 /**
  * Kstack Router — the package's front door.
  *
- * /kstack [--route <id>] [--single|--stack] [--] <task>
+ * /kstack [--route <id>] [--single|--stack] [--worktree] [--] <task>
  *
  * Routes tasks through a classifier or explicit --route selection, then
  * dispatches to the appropriate workflow (plan-implement, panel-review,
@@ -39,6 +39,7 @@ interface RouteCardDetails {
 	route: RouteId;
 	routeLabel: string;
 	delivery: DeliveryRecommendation;
+	worktree?: boolean;
 	changeKind?: ChangeKind;
 	modelSource?: string;
 	confidence?: string;
@@ -109,6 +110,7 @@ export default function (pi: ExtensionAPI): void {
 			"",
 			`Route: ${details?.routeLabel ?? "unknown"} (${details?.route ?? "?"})`,
 			...(details?.delivery ? [`Delivery: ${details.delivery === "stack" ? "stacked PRs" : "single PR"}`] : []),
+			...(details?.worktree ? ["Location: managed Git worktree"] : []),
 			...(details?.changeKind ? [`Change kind: ${changeKindLabel(details.changeKind)}`] : []),
 			...(details?.modelSource ? [`Classifier: ${details.modelSource}`] : []),
 			...(details?.confidence ? [`Confidence: ${details.confidence}`] : []),
@@ -173,7 +175,7 @@ export default function (pi: ExtensionAPI): void {
 	// --- Command handler ---
 	pi.registerCommand("kstack", {
 		description:
-			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>. " +
+			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>. " +
 			"Prompts for classification when no --route is given.",
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
@@ -221,7 +223,8 @@ export default function (pi: ExtensionAPI): void {
 
 			// Resolve route.
 			let route: RouteId | undefined = parsed.args.route;
-			let delivery: DeliveryRecommendation = parsed.args.delivery;
+			const worktree = parsed.args.worktree ?? false;
+			let delivery: DeliveryRecommendation = parsed.args.delivery ?? (worktree ? "single" : undefined);
 			let changeKind: ChangeKind = parsed.args.changeKind ?? "generic";
 			let overrode = false;
 			let modelSource = "explicit --route";
@@ -353,6 +356,10 @@ export default function (pi: ExtensionAPI): void {
 				notify("--change-kind is only valid with --route change.", "warning");
 				return;
 			}
+			if (worktree && route !== "change") {
+				notify("--worktree is only valid with the change route.", "warning");
+				return;
+			}
 
 			// For "change" route without explicit delivery: use classifier recommendation
 			// or default to single.
@@ -392,6 +399,7 @@ export default function (pi: ExtensionAPI): void {
 				route,
 				routeLabel: getRouteLabel(route),
 				delivery,
+				worktree,
 				...(route === "change" ? { changeKind } : {}),
 				modelSource,
 				confidence,
@@ -399,7 +407,7 @@ export default function (pi: ExtensionAPI): void {
 			};
 			const routeDescription = getRouteDescription(route);
 			const deliveryNote = delivery
-				? `\nDelivery: ${delivery === "stack" ? "stacked PRs" : "single PR"}`
+				? `\nDelivery: ${delivery === "stack" ? "stacked PRs" : "single PR"}${worktree ? " in a managed Git worktree" : ""}`
 				: "";
 
 			// --- Active-session routes: restrict tools, inject playbook, trigger a turn ---
@@ -472,7 +480,7 @@ export default function (pi: ExtensionAPI): void {
 				details: routeCard,
 			});
 
-			const result = await dispatchRoute(route, task, delivery, changeKind, dispatchToken, lifecycle, pi, ctx);
+			const result = await dispatchRoute(route, task, delivery, worktree, changeKind, dispatchToken, lifecycle, pi, ctx);
 
 			// Update the route card with dispatch status.
 			routeCard.dispatchStatus = result.status;

@@ -38,6 +38,15 @@ describe("kstack-router args parser", () => {
 		assert.equal(r.args.task, "Split feature");
 	});
 
+	it("parses --worktree and rejects stack composition", () => {
+		const r = parseArgs("--route change --worktree Add isolated search");
+		assert.ok(r.ok);
+		assert.equal(r.args.worktree, true);
+		assert.equal(r.args.delivery, "single");
+		assert.ok(!parseArgs("--stack --worktree Add isolated search").ok);
+		assert.ok(!parseArgs("--worktree --worktree Add isolated search").ok);
+	});
+
 	it("parses --route with --stack", () => {
 		const r = parseArgs("--route change --stack Implement CI pipeline");
 		assert.ok(r.ok);

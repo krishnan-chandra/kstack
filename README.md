@@ -10,11 +10,11 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 
 | Extension | Description |
 | --- | --- |
-| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
+| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including unnamed inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–4 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict. |
-| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, runs panel review, addresses the verdict's findings, then publishes a draft PR (write-pr) with reviewer recommendations (find-reviewers). Supports a `--stack` delivery mode that builds a local jj stack with Arena disabled. |
+| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations. Supports local jj stacks and isolated managed Git worktrees. |
 
 ## Skills
 
@@ -27,6 +27,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
 | [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with `jst`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
+| [`git-worktrees`](skills/git-worktrees/) | Creates, inspects, repairs, and safely cleans up Git linked worktrees managed beneath `~/.pi/kstack/worktrees`, with dirty-state and ownership checks before removal. |
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |

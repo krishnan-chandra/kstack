@@ -52,6 +52,8 @@ export type ReviewerResult =
 export interface PanelArgs {
 	base?: string;
 	intent?: string;
+	/** Internal callers may select another validated Git working tree. */
+	repositoryPath?: string;
 }
 
 /**

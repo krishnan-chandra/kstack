@@ -1,0 +1,1 @@
+List the worktrees under my kstack managed worktree root. Identify which are dirty, contain untracked files, are locked, are orphaned, or have a HEAD already reachable from the inferred main branch. Explain which evidence is insufficient to delete one automatically. Make no changes.

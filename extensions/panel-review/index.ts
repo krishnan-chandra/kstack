@@ -110,7 +110,7 @@ export default function (pi: ExtensionAPI) {
 			// Git scope — before any model call.
 			let repoRoot: string;
 			try {
-				repoRoot = requireWorkTree(defaultGitExec, ctx.cwd);
+				repoRoot = requireWorkTree(defaultGitExec, options.repositoryPath ?? ctx.cwd);
 			} catch (err) {
 				notify((err as Error).message, "error");
 				return { status: "failed", error: (err as Error).message };
