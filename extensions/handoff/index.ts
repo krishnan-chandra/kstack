@@ -6,19 +6,22 @@
  *   /handoff now implement this for teams as well
  *   /handoff execute phase one of the plan
  *   /handoff --model anthropic/claude-sonnet-4-5 execute phase one of the plan
+ *   /handoff --model openai/gpt-5.2:high continue the work
  *   /handoff                        # continue from the prior resume point
  *
  * Saving the editor is the only confirmation. The replacement session starts
  * immediately with that prompt; cancelling the editor leaves the old session.
  *
- * Model selection: with `--model`, the replacement session starts on that
- * model; without it, the parent session's active model is pinned (best
- * effort) so the replacement inherits it. Both paths go through
- * `pi.setModel()` before `newSession()`. Startup-level overrides — a
- * `pi --model` CLI flag or model scoping (`--models` / `enabledModels`) —
- * take precedence over this mechanism; the handler compares the replacement
- * session's actual model against the expectation and reports any mismatch
- * instead of claiming success.
+ * Model and effort selection: `--model` accepts `provider/model-id` or
+ * `provider/model-id:<effort>` using Pi thinking levels (`off`, `minimal`,
+ * `low`, `medium`, `high`, `xhigh`, `max`). Without a suffix, the parent
+ * session's effective effort is inherited. Without `--model`, both the parent
+ * model and its effort are pinned (best effort). Model is applied first so
+ * effort is clamped against the selected model's capabilities. Startup-level
+ * overrides — a `pi --model` CLI flag, `--thinking`, or model scoping
+ * (`--models` / `enabledModels`) — take precedence; the handler compares the
+ * replacement session's actual model and effort against the expectation and
+ * reports any mismatch instead of claiming success.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -33,21 +36,34 @@ import {
 	searchHandoffHistory,
 	type HandoffSource,
 } from "./history-reader.ts";
-import { formatModelRef, parseHandoffArgs, resolveModelReference, type HandoffModel } from "./model-selection.ts";
+import {
+	formatModelEffort,
+	formatModelRef,
+	isHandoffEffortLevel,
+	parseHandoffArgs,
+	pinHandoffEffort,
+	resolveModelReference,
+	type HandoffEffortLevel,
+	type HandoffModel,
+} from "./model-selection.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 
 /**
  * Build the command handler separately so lifecycle behavior is easy to test.
  *
- * The handler needs `pi.setModel` to control the replacement session's model:
- * `ctx.newSession()` takes no model option, and a brand-new session resolves
- * its model from the configured default. `setModel` persists that default,
- * so applying it before `newSession` determines the replacement's model in
- * the default configuration. A startup `--model` flag or active model
- * scoping still wins over this mechanism; the handler detects that from the
- * replacement session's actual model and warns instead of claiming success.
+ * The handler needs `pi.setModel` and `pi.setThinkingLevel` to control the
+ * replacement session's model and effort: `ctx.newSession()` takes neither
+ * option, and a brand-new session resolves both from the configured defaults.
+ * Those setters persist the defaults, so applying the model first and the
+ * effort second before `newSession` determines the replacement's state in the
+ * default configuration. A startup `--model` / `--thinking` flag or active
+ * model scoping still wins; the handler detects that from the replacement
+ * session's actual model and thinking level and warns instead of claiming
+ * success.
  */
-export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
+export function createHandoffHandler(
+	api: Pick<ExtensionAPI, "setModel" | "getThinkingLevel" | "setThinkingLevel">,
+) {
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("handoff requires interactive mode", "error");
@@ -62,12 +78,13 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 
 		const goal = parsed.goal.trim() || DEFAULT_HANDOFF_GOAL;
 
-		// Resolve an explicit model before opening the editor so a typo fails
-		// fast. The actual switch is deferred until after the editor is saved,
-		// so cancelling never changes the parent session's model. When model
+		// Resolve an explicit model/effort before opening the editor so a typo
+		// fails fast. The actual switch is deferred until after the editor is
+		// saved, so cancelling never changes the parent session. When model
 		// scoping is active, only scoped models are valid choices: anything
 		// else would be silently replaced in the new session.
 		let targetModel: HandoffModel | undefined;
+		let requestedEffort: HandoffEffortLevel | undefined;
 		if (parsed.modelRef !== undefined) {
 			const scoped = (ctx.scopedModels ?? []) as Array<{ model: HandoffModel }>;
 			const scopedActive = scoped.length > 0;
@@ -78,7 +95,7 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 			if (resolution.status === "not-found") {
 				const hint = scopedActive
 					? " Model scoping is active, so only scoped models are accepted (see /scoped-models)."
-					: " Use provider/model-id; see /model for available models.";
+					: " Use provider/model-id or provider/model-id:<effort>; see /model for available models.";
 				ctx.ui.notify(`Unknown model "${parsed.modelRef}".${hint}`, "error");
 				return;
 			}
@@ -88,6 +105,7 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 				return;
 			}
 			targetModel = resolution.model;
+			requestedEffort = resolution.effort;
 		}
 
 		await ctx.waitForIdle();
@@ -122,6 +140,9 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 		const replacementSessionName = deriveSessionName(editedGoal || goal);
 
 		const previousModel = ctx.model;
+		const previousEffort = readEffort(ctx.thinkingLevel, api);
+		const targetEffort = requestedEffort ?? previousEffort;
+		let appliedEffort: HandoffEffortLevel | undefined;
 
 		if (targetModel) {
 			let switched = false;
@@ -159,19 +180,46 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 			}
 		}
 
-		// An explicit --model switches the parent session before replacement.
-		// If the replacement does not happen, switch back so a cancelled or
-		// failed handoff leaves neither the parent session nor the persisted
-		// default model changed. There is nothing to restore to when no model
-		// was active before; the parent then keeps the requested model.
-		const restoreParentModel = async (): Promise<void> => {
-			if (!targetModel || !previousModel) return;
-			if (sameModel(previousModel, targetModel)) return;
+		// Pin effort after the model so Pi clamps against the selected model's
+		// capabilities. Inherit the parent effort when the reference has no
+		// suffix, including when --model is omitted.
+		if (targetEffort) {
 			try {
-				await api.setModel(previousModel);
-			} catch {
-				// Best effort; the parent keeps the requested model.
+				appliedEffort = pinHandoffEffort(api, targetEffort);
+			} catch (err) {
+				ctx.ui.notify(
+					`Could not set effort ${targetEffort}: ${err instanceof Error ? err.message : String(err)}`,
+					"error",
+				);
+				await restoreParentState(api, {
+					targetModel,
+					previousModel,
+					previousEffort,
+					effortChanged: requestedEffort !== undefined || Boolean(previousEffort),
+				});
+				return;
 			}
+			if (requestedEffort && appliedEffort !== requestedEffort) {
+				ctx.ui.notify(
+					`Requested effort ${requestedEffort} is not supported; using ${appliedEffort} instead`,
+					"warning",
+				);
+			}
+		}
+
+		// An explicit --model / effort switch changes the parent session before
+		// replacement. If the replacement does not happen, restore both so a
+		// cancelled or failed handoff leaves neither the parent session nor the
+		// persisted defaults changed. Restore model first: model restoration
+		// can itself clamp effort. There is nothing to restore to when no model
+		// was active before; the parent then keeps the requested model/effort.
+		const restoreParent = async (): Promise<void> => {
+			await restoreParentState(api, {
+				targetModel,
+				previousModel,
+				previousEffort,
+				effortChanged: appliedEffort !== undefined,
+			});
 		};
 
 		let result: { cancelled: boolean };
@@ -185,24 +233,33 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 				},
 				withSession: async (fresh) => {
 					replacementSessionStarted = true;
-					// Report the model the replacement session actually started
-					// on. A startup --model flag or active model scoping can
-					// override the switch made above; never claim otherwise.
+					// Report the model and effort the replacement session actually
+					// started on. A startup --model / --thinking flag or active
+					// model scoping can override the switch made above; never
+					// claim otherwise.
 					const actual = fresh.model as HandoffModel | undefined;
-					if (targetModel) {
-						if (actual && !sameModel(actual, targetModel)) {
-							fresh.ui.notify(
-								`Handoff started, but the session is on ${formatModelRef(actual)} instead of ${formatModelRef(targetModel)} (a startup --model flag or model scoping overrides handoff selection). Previous session: ${oldFile}`,
-								"warning",
-							);
-						} else {
-							fresh.ui.notify(`Handoff started. Model: ${formatModelRef(targetModel)}. Previous session: ${oldFile}`, "info");
-						}
-					} else if (previousModel && actual && !sameModel(actual, previousModel)) {
+					const actualEffort = readFreshEffort(fresh.thinkingLevel);
+					const expectedModel = targetModel ?? previousModel;
+					const expectedEffort = appliedEffort;
+					const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
+					const effortMismatch = Boolean(
+						expectedEffort && actualEffort && actualEffort !== expectedEffort,
+					);
+					if ((modelMismatch || effortMismatch) && actual) {
+						const actualLabel = formatModelEffort(actual, actualEffort);
+						const expectedLabel = expectedModel
+							? formatModelEffort(expectedModel, expectedEffort)
+							: expectedEffort ?? "the requested selection";
+						const reason = targetModel
+							? "a startup --model/--thinking flag or model scoping overrides handoff selection"
+							: "a startup --model/--thinking flag or model scoping overrides inheritance";
 						fresh.ui.notify(
-							`Handoff started, but the session is on ${formatModelRef(actual)} instead of the parent's ${formatModelRef(previousModel)} (a startup --model flag or model scoping overrides inheritance). Previous session: ${oldFile}`,
+							`Handoff started, but the session is on ${actualLabel} instead of ${expectedLabel} (${reason}). Previous session: ${oldFile}`,
 							"warning",
 						);
+					} else if (actual && (targetModel || expectedEffort)) {
+						const label = formatModelEffort(actual, actualEffort ?? expectedEffort);
+						fresh.ui.notify(`Handoff started. Model: ${label}. Previous session: ${oldFile}`, "info");
 					} else {
 						fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
 					}
@@ -242,14 +299,15 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 		} catch (err) {
 			// Once withSession begins, the old API is stale. In particular, a
 			// send failure must propagate without trying to restore the old model.
-			if (!replacementSessionStarted) await restoreParentModel();
+			if (!replacementSessionStarted) await restoreParent();
 			throw err;
 		}
 
 		if (result.cancelled) {
-			await restoreParentModel();
+			await restoreParent();
 			if (targetModel && !previousModel) {
-				ctx.ui.notify(`New session cancelled; the parent session keeps ${formatModelRef(targetModel)}`, "info");
+				const kept = formatModelEffort(targetModel, appliedEffort);
+				ctx.ui.notify(`New session cancelled; the parent session keeps ${kept}`, "info");
 			} else {
 				ctx.ui.notify("New session cancelled", "info");
 			}
@@ -259,6 +317,49 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 
 function sameModel(a: HandoffModel, b: HandoffModel): boolean {
 	return a.provider === b.provider && a.id === b.id;
+}
+
+function readEffort(
+	fromContext: unknown,
+	api: Pick<ExtensionAPI, "getThinkingLevel">,
+): HandoffEffortLevel | undefined {
+	if (typeof fromContext === "string" && isHandoffEffortLevel(fromContext)) return fromContext;
+	try {
+		const fromApi = api.getThinkingLevel();
+		return isHandoffEffortLevel(fromApi) ? fromApi : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function readFreshEffort(fromContext: unknown): HandoffEffortLevel | undefined {
+	return typeof fromContext === "string" && isHandoffEffortLevel(fromContext) ? fromContext : undefined;
+}
+
+async function restoreParentState(
+	api: Pick<ExtensionAPI, "setModel" | "setThinkingLevel">,
+	state: {
+		targetModel: HandoffModel | undefined;
+		previousModel: HandoffModel | undefined;
+		previousEffort: HandoffEffortLevel | undefined;
+		effortChanged: boolean;
+	},
+): Promise<void> {
+	const { targetModel, previousModel, previousEffort, effortChanged } = state;
+	if (targetModel && previousModel && !sameModel(previousModel, targetModel)) {
+		try {
+			await api.setModel(previousModel);
+		} catch {
+			// Best effort; the parent keeps the requested model.
+		}
+	}
+	if (effortChanged && previousEffort) {
+		try {
+			api.setThinkingLevel(previousEffort);
+		} catch {
+			// Best effort; the parent keeps the requested effort.
+		}
+	}
 }
 
 function requireHandoffSource(ctx: { sessionManager: { getBranch(): unknown[] } }): HandoffSource {
@@ -274,7 +375,7 @@ export default async function (pi: ExtensionAPI) {
 
 	pi.registerCommand("handoff", {
 		description:
-			"Continue in a lean session linked to the current session's history (optional --model provider/model-id)",
+			"Continue in a lean session linked to the current session's history (optional --model provider/model-id[:effort])",
 		handler: createHandoffHandler(pi),
 	});
 

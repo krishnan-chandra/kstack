@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+	formatModelEffort,
 	formatModelRef,
 	isHandoffEffortLevel,
 	parseHandoffArgs,
+	pinHandoffEffort,
 	resolveModelReference,
 	type HandoffEffortLevel,
 	type HandoffModel,
@@ -253,5 +255,60 @@ describe("isHandoffEffortLevel", () => {
 describe("formatModelRef", () => {
 	it("formats the canonical reference", () => {
 		assert.equal(formatModelRef(MODELS[0]), "anthropic/claude-sonnet-4-5");
+	});
+});
+
+describe("formatModelEffort", () => {
+	it("omits the suffix when effort is absent", () => {
+		assert.equal(formatModelEffort(MODELS[0]), "anthropic/claude-sonnet-4-5");
+	});
+
+	it("appends the effort suffix when present", () => {
+		assert.equal(formatModelEffort(MODELS[0], "high"), "anthropic/claude-sonnet-4-5:high");
+	});
+});
+
+describe("pinHandoffEffort", () => {
+	function makeThinkingApi(initial: string, available: string[] = ALL_EFFORTS) {
+		let current = initial;
+		const sets: string[] = [];
+		return {
+			api: {
+				getThinkingLevel: () => current,
+				setThinkingLevel: (level: HandoffEffortLevel) => {
+					sets.push(level);
+					current = available.includes(level) ? level : (available.at(-1) ?? "off");
+				},
+			},
+			sets,
+			get current() {
+				return current;
+			},
+		};
+	}
+
+	it("sets a different effort once and returns the effective level", () => {
+		const { api, sets } = makeThinkingApi("medium");
+		assert.equal(pinHandoffEffort(api, "high"), "high");
+		assert.deepEqual(sets, ["high"]);
+	});
+
+	it("round-trips through another level when the desired effort is already current", () => {
+		const { api, sets } = makeThinkingApi("high");
+		assert.equal(pinHandoffEffort(api, "high"), "high");
+		assert.deepEqual(sets, ["high", "off", "high"]);
+	});
+
+	it("returns the clamped level without bouncing when the request is unsupported", () => {
+		const { api, sets } = makeThinkingApi("high", ["low", "medium", "high"]);
+		assert.equal(pinHandoffEffort(api, "max"), "high");
+		assert.deepEqual(sets, ["max"]);
+	});
+
+	it("skips the bounce when the model exposes only one effective level", () => {
+		const { api, sets } = makeThinkingApi("off", ["off"]);
+		assert.equal(pinHandoffEffort(api, "off"), "off");
+		assert.ok(sets.includes("off"));
+		assert.equal(api.getThinkingLevel(), "off");
 	});
 });
