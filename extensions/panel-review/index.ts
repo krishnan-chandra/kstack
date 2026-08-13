@@ -1,7 +1,7 @@
 /**
  * Panel Review extension for Pi.
  *
- * Runs 2–4 isolated, read-only Pi subagents in parallel against the same
+ * Runs 2–5 isolated, read-only Pi subagents in parallel against the same
  * Git changeset, then synthesizes their independent findings into one
  * lead-review verdict (Act On / Consider / Noted / Dismissed).
  *

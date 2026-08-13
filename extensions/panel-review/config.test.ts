@@ -60,11 +60,17 @@ describe("validateConfig", () => {
 		if (!inverted.ok) assert.match(inverted.error, />= "timeoutMinutes"/);
 	});
 
-	it("rejects 1 or 5+ reviewers", () => {
+	it("accepts 5 reviewers and rejects 1 or 6+", () => {
 		assert.ok(!validateConfig({ reviewers: [{ label: "A", model: "a/b" }] }).ok);
 		assert.ok(
-			!validateConfig({
+			validateConfig({
 				reviewers: ["A", "B", "C", "D", "E"].map((label) => ({ label, model: "a/b" })),
+				synthesis: { model: "a/b" },
+			}).ok,
+		);
+		assert.ok(
+			!validateConfig({
+				reviewers: ["A", "B", "C", "D", "E", "F"].map((label) => ({ label, model: "a/b" })),
 			}).ok,
 		);
 	});
@@ -191,18 +197,19 @@ describe("resolveReviewers", () => {
 		assert.match(bad.error, /openai\/y/);
 	});
 
-	it("uses the default low-cost panel when no config exists", () => {
+	it("uses the five default reviewers without Terra when no config exists", () => {
 		const available = DEFAULT_PANEL.map((r) => r.model);
 		const r = resolveReviewers(null, { find: find(available), scopedModels: [] });
 		assert.ok(r.ok);
-		assert.deepEqual(
-			r.reviewers.map((x) => x.model),
-			available,
-		);
-		assert.equal(r.reviewers.length, DEFAULT_PANEL.length);
+		assert.deepEqual(r.reviewers, [
+			{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "medium" },
+			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
+			{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
+			{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "medium" },
+			{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "medium" },
+		]);
+		assert.equal(r.maxConcurrency, 5);
 		assert.equal(r.warnings.length, 0);
-		// Thinking levels ride along for the CLI model id.
-		assert.ok(r.reviewers.every((x) => x.thinking));
 	});
 
 	it("skips unavailable default panel models with a warning", () => {
@@ -243,7 +250,7 @@ describe("resolveReviewers", () => {
 		];
 		const r = resolveReviewers(null, { find: find([]), scopedModels });
 		assert.ok(r.ok);
-		assert.equal(r.reviewers.length, 4);
+		assert.equal(r.reviewers.length, 5);
 		const providers = r.reviewers.map((x) => x.model.split("/")[0]);
 		// Round-robin: first three must be distinct providers.
 		assert.equal(new Set(providers.slice(0, 3)).size, 3);
@@ -302,6 +309,7 @@ describe("resolveSynthesisModel", () => {
 		const r = resolveSynthesisModel(null, { find: find([DEFAULT_SYNTHESIS.model]), scopedModels: [] });
 		assert.ok(r.ok);
 		assert.equal(r.model, DEFAULT_SYNTHESIS.model);
+		assert.equal(r.thinking, "medium");
 		assert.equal(r.source, "default");
 		assert.equal(r.warnings.length, 0);
 	});
