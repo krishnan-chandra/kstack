@@ -155,8 +155,12 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			notify("--stack and --worktree cannot currently be combined.", "error");
 			return;
 		}
+		const engineeringPrinciplesPrompt = readFileSync(join(PLAYBOOKS_DIR, "engineering-principles.md"), "utf8");
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
+		const changePrompts = playbookPrompt
+			? [engineeringPrinciplesPrompt, playbookPrompt]
+			: [engineeringPrinciplesPrompt];
 
 		const preflightError = await checkBasicPreflights(ctx);
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
@@ -312,7 +316,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								mode,
 								workLocation,
 								skillPaths,
-								playbookPrompt,
+								supplementalPrompts: changePrompts,
 							});
 							if (lifecycle.isCurrent(token)) {
 								sendPhaseMessage(pi, fixer);
@@ -422,7 +426,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								mode,
 								workLocation,
 								skillPaths,
-								playbookPrompt,
+								supplementalPrompts: changePrompts,
 							});
 						} finally {
 							lifecycle.endChild(token, controller);
@@ -479,7 +483,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								mode,
 								workLocation,
 								skillPaths,
-								playbookPrompt,
+								supplementalPrompts: changePrompts,
 							});
 							if (result.status !== "completed" || mode !== "single" || !workstreamCheckpoint) return result;
 							const verified = await verifyCommittedWorkstream(workflowCwd, makeExec(pi), {

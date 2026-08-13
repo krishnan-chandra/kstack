@@ -10,8 +10,8 @@
  * Asserts the dashboard widget mounted, saw queued/running/completed
  * transitions with maxConcurrency=1 keeping later reviewers visibly queued,
  * streamed only text_delta (never thinking_delta) previews, showed a lead
- * synthesis row, never leaked control bytes, and was cleared in the finally
- * path along with the footer status.
+ * synthesis row, never leaked control bytes, was cleared in the finally
+ * path, and never duplicated progress in the TUI footer.
  *
  * Run: node extensions/panel-review/scripts/panel-review-dashboard-e2e.ts
  *
@@ -151,7 +151,7 @@ await handler("--base HEAD --intent verify-dashboard", ctx);
 assert.ok(renders > 5, `expected repeated re-renders, got ${renders}`);
 assert.ok(!widgets.has("panel-review"), "widget cleared on completion");
 assert.equal(component, undefined, "component disposed");
-assert.equal(statuses.get("panel-review"), undefined, "footer status cleared");
+assert.ok(!statuses.has("panel-review"), "TUI progress is not duplicated in the footer");
 
 const flat = snapshots.map((s) => s.join("\n"));
 assert.ok(flat.some((s) => /rev-a — (queued|running)/.test(s)), "rev-a visible");
