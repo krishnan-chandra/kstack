@@ -1,0 +1,1 @@
+Users cannot log in on staging: after a successful IdP callback the browser never stores a Secure session cookie, so the next request comes back unauthenticated. The login path is staging-only (VPN, live IdP, Redis session store, TLS terminator). Fix the cookie.

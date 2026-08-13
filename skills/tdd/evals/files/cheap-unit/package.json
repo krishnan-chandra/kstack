@@ -1,0 +1,8 @@
+{
+  "name": "tdd-eval-cheap-unit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

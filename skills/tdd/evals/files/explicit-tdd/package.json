@@ -1,0 +1,8 @@
+{
+  "name": "tdd-eval-explicit-tdd",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
