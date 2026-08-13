@@ -15,6 +15,11 @@
       "id": "safe-cleanup",
       "prompt_file": "safe-cleanup.txt",
       "description": "Refuse ordinary cleanup of a managed worktree with untracked files and explain the explicit recovery path."
+    },
+    {
+      "id": "merged-pr-cleanup",
+      "prompt_file": "merged-pr-cleanup.txt",
+      "description": "Plan a safe, confirmed cleanup for a squash-merged GitHub PR and explain the user-confirmed session-archiving follow-up."
     }
   ]
 }

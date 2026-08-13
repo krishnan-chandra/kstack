@@ -33,6 +33,12 @@ For one repository, also inspect Git's authoritative records without parsing hum
 git -C <repo> worktree list --porcelain -z
 ```
 
+When cleanup begins with a GitHub PR URL, resolve its branch rather than asking the user for it. The `headRefName` is the branch to match against the helper output:
+
+```bash
+gh pr view <pr-url> --json state,headRefName,baseRefName,mergeCommit
+```
+
 Never treat a directory scan alone as authority. Validate the owning repository again immediately before mutation because branches, locks, and working-copy state can change.
 
 ## Create a managed worktree
@@ -81,6 +87,15 @@ For each candidate:
 1. Re-run the helper and authoritative `git worktree list --porcelain -z` from its owner.
 2. Block ordinary removal when tracked changes, staged changes, or untracked files exist.
 3. Report lock state and whether the branch HEAD is reachable from the inferred base. Reachability is evidence, not permission: a merged branch can still contain useful local files or context.
+
+   For cleanup tied to a GitHub PR, use the PR result to establish that its merged content is present in the base branch before proposing removal. Confirm `state` is `MERGED`, fetch the named base ref, then check the merge commit returned by `gh`:
+
+   ```bash
+   git -C <owner> fetch origin <baseRefName>
+   git -C <owner> merge-base --is-ancestor <mergeCommit.oid> origin/<baseRefName>
+   ```
+
+   A successful check is the safety signal for a squash-merged PR. Its branch HEAD is deliberately not an ancestor of the base, so `head_reachable_from_base: false` is expected and is not a removal blocker. If the fetch or ancestry check fails, stop and report it rather than treating an unavailable local merge object as evidence that the PR was not merged.
 4. Ask for confirmation with the exact path and branch.
 5. Remove through Git:
 
@@ -94,12 +109,20 @@ For each candidate:
    git -C <owner> branch -d kstack/<slug>
    ```
 
+   For a squash-merged branch, Git can warn that the branch is "not yet merged to HEAD" while still exiting successfully because it is merged to its upstream tracking branch. The warning does not invalidate the already verified PR merge and is not a reason to escalate to `git branch -D`.
+
 7. Prune stale administrative records separately and preview first:
 
    ```bash
    git -C <owner> worktree prune --dry-run --verbose
    git -C <owner> worktree prune --verbose
    ```
+
+8. After a merged-PR cleanup, offer to archive the originating Pi session. Archiving is a user-confirmed Pi action. An agent can search or read archives, but cannot archive a session.
+
+   - From the named originating session, run `/session-archive`.
+   - To select an inactive originating session, run `/session-archive-other`.
+   - For a reviewed batch, run `/session-archive-all`.
 
 Do not use `rm -rf` for a live worktree. Do not use `git worktree remove --force` or `git branch -D` unless the user explicitly approves discarding the exact state you reported.
 
