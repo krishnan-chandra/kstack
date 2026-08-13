@@ -11,7 +11,7 @@ import {
 import { getSessionRow, openArchiveDb, searchArchive } from "./archive-store.ts";
 import { archiveDestination, hashFile } from "./archive-files.ts";
 import { sha256Hex } from "./session-jsonl.ts";
-import { makeTempTree, richSessionJsonl, sessionJsonl, TEST_SESSION_ID } from "./test-helpers.ts";
+import { makeTempTree, messageEntry, richSessionJsonl, sessionJsonl, TEST_SESSION_ID, userMessage } from "./test-helpers.ts";
 
 const CREATED = "2026-08-11T08:48:02.226Z";
 
@@ -193,6 +193,37 @@ describe("archiveCurrentSession lifecycle", () => {
 		const db = openArchiveDb(tree.dbPath);
 		try {
 			assert.equal(getSessionRow(db, TEST_SESSION_ID)?.state, "pending");
+		} finally {
+			db.close();
+		}
+	});
+
+	it("archives an unnamed current session and leaves the archive row unnamed", async () => {
+		const tree = makeTempTree();
+		const content = sessionJsonl([
+			messageEntry("u1", null, userMessage("hello archive world")),
+		]);
+		const source = tree.writeSession(TEST_SESSION_ID, content);
+		const fake = makeFakeCtx({});
+
+		const result = await archiveCurrentSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			snapshot: {
+				sourcePath: source,
+				sessionId: TEST_SESSION_ID,
+				sessionDir: tree.sessionDir,
+			},
+			...fake,
+		});
+
+		assert.equal(result.status, "archived");
+		assert.ok(fake.calls.some((c) => c.kind === "confirm" && /019ff001 \(1 entries\)/.test(c.detail ?? "")));
+		assert.ok(!existsSync(source));
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			const row = getSessionRow(db, TEST_SESSION_ID);
+			assert.equal(row?.state, "archived");
+			assert.equal(row?.name, null);
 		} finally {
 			db.close();
 		}

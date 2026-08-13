@@ -42,15 +42,14 @@ JSONL artifacts, although an automated reindex command is future work.
 
 | Command | Effect |
 |---|---|
-| `/session-archive` | Require a name, confirm, then archive the current session and continue in a new empty session. Name an unnamed current session first with Pi's built-in `/name <name>` command. |
+| `/session-archive` | Confirm, then archive the current session and continue in a new empty session. Named sessions keep their name; unnamed sessions stay unnamed. |
 | `/session-archive-other` | Pick any inactive session and archive it. Named sessions use their compact name; unnamed sessions are labeled with a bounded first-message summary. Duplicate labels show a modified timestamp. |
 | `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch, including unnamed sessions. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
 | `/session-archives [filter]` | Read-only stats and archived-session listing; optional text filter. |
 
 Archiving is always explicit and confirmed. Nothing is archived automatically
-on shutdown, reload, or session switch. The current-session command requires a
-name because it creates a replacement session as part of the operation. Inactive
-sessions may be archived without names; their archive rows remain unnamed.
+on shutdown, reload, or session switch. Current and inactive sessions may be
+archived without names; their archive rows remain unnamed.
 
 ## Agent tools
 

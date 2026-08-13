@@ -107,14 +107,10 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("session-archive", {
-		description: "Archive the named current session (read-only, searchable) and start a new one",
+		description: "Archive the current session (read-only, searchable) and start a new one",
 		handler: async (_args, ctx) => {
 			const sessionId = ctx.sessionManager.getSessionId();
-			const sessionName = ctx.sessionManager.getSessionName();
-			if (!sessionName) {
-				ctx.ui.notify("Name this session with /name <name>, then retry /session-archive.", "warning");
-				return;
-			}
+			const sessionName = ctx.sessionManager.getSessionName()?.trim() || undefined;
 			await archiveCurrentSession({
 				deps: { dbPath, archiveRoot },
 				snapshot: {

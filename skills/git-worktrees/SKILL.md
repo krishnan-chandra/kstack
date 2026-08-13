@@ -120,7 +120,7 @@ For each candidate:
 
 8. After a merged-PR cleanup, offer to archive the originating Pi session. Archiving is a user-confirmed Pi action. An agent can search or read archives, but cannot archive a session.
 
-   - From the named originating session, run `/session-archive`.
+   - From the originating session, run `/session-archive`.
    - To select an inactive originating session, run `/session-archive-other`.
    - For a reviewed batch, run `/session-archive-all`.
 
