@@ -77,7 +77,9 @@ export default function (pi: ExtensionAPI) {
 		handler: async (ctx) => {
 			if (activeAbort && !activeAbort.signal.aborted) {
 				activeAbort.abort();
-				ctx.ui.setStatus("panel-review", "panel-review: aborting (SIGTERM, SIGKILL after grace)…");
+				if (ctx.mode !== "tui") {
+					ctx.ui.setStatus("panel-review", "panel-review: aborting (SIGTERM, SIGKILL after grace)…");
+				}
 			} else {
 				ctx.ui.notify("No panel review is running.", "info");
 			}
@@ -106,6 +108,9 @@ export default function (pi: ExtensionAPI) {
 
 	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
+			const setCompactStatus = (status: string | undefined) => {
+				if (ctx.mode !== "tui") ctx.ui.setStatus("panel-review", status);
+			};
 			if (!ctx.hasUI) {
 				notify("panel-review requires interactive (TUI/RPC) mode.", "error");
 				return { status: "failed", error: "panel-review requires interactive (TUI/RPC) mode." };
@@ -220,8 +225,8 @@ export default function (pi: ExtensionAPI) {
 				);
 				if (!confirmed) return { status: "declined" };
 
-				// Live dashboard: TUI-only above-editor widget; footer status stays as
-				// the RPC/compact fallback. Mounted only after confirmation.
+				// Live dashboard: TUI-only above-editor widget. Compact status is an
+				// RPC fallback only, avoiding duplicate progress in the TUI footer.
 				if (ctx.mode === "tui") {
 					dashboard = new PanelDashboardStore();
 					for (const r of resolution.reviewers) dashboard.addReviewer(r.label, r.label, modelCliId(r));
@@ -245,10 +250,7 @@ export default function (pi: ExtensionAPI) {
 				const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
 				const updateStatus = () => {
 					const lines = resolution.reviewers.map((r) => `${r.label}:${progress.get(r.label) ?? "queued"}`).join(" ");
-					ctx.ui.setStatus(
-						"panel-review",
-						`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${elapsed()} — ${lines}`,
-					);
+					setCompactStatus(`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${elapsed()} — ${lines}`);
 				};
 				updateStatus();
 				ticker = setInterval(() => {
@@ -290,7 +292,7 @@ export default function (pi: ExtensionAPI) {
 
 				clearInterval(ticker);
 				ticker = undefined;
-				ctx.ui.setStatus("panel-review", undefined);
+				setCompactStatus(undefined);
 				if (panel.aborted > 0 && panel.completed === 0 && panel.failed === 0) {
 					notify("Panel review aborted.", "info");
 					return { status: "aborted" };
@@ -304,7 +306,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				// Synthesize with the configured synthesis model in an isolated child process.
-				ctx.ui.setStatus("panel-review", `panel-review: synthesizing verdict with ${synthesisCliId}…`);
+				setCompactStatus(`panel-review: synthesizing verdict with ${synthesisCliId}…`);
 				dashboard?.addLead("lead", "lead", synthesisCliId);
 				dashboard?.markRunning("lead");
 				const { input, truncated: synthTruncated } = buildSynthesisInput({
@@ -332,7 +334,7 @@ export default function (pi: ExtensionAPI) {
 						dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
 					},
 				});
-				ctx.ui.setStatus("panel-review", undefined);
+				setCompactStatus(undefined);
 				dashboard?.complete("lead", {
 					status: synthResult.status,
 					turns: synthResult.usage?.turns,
@@ -380,7 +382,7 @@ export default function (pi: ExtensionAPI) {
 				disposeDashboard?.();
 				disposeDashboard = undefined;
 				dashboard = undefined;
-				ctx.ui.setStatus("panel-review", undefined);
+				setCompactStatus(undefined);
 				if (scope) {
 					try {
 						rmSync(scope.dir, { recursive: true, force: true });
