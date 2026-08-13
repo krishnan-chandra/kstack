@@ -36,6 +36,7 @@ create branches.
 | [`simplify`](skills/simplify/) | Runs parallel read-only review lenses on scoped code changes, then applies targeted cleanup to reduce complexity while preserving behavior. |
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
+| [`typescript-best-practices`](skills/typescript-best-practices/) | Applies TypeScript type-system discipline, boundary validation, constructive modeling, and safe narrowing patterns when reading or editing `.ts` or `.tsx` files. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |
 | [`reflect`](skills/reflect/) | Reviews a selected Pi session through independent judgment, tooling, and contrarian lenses, then proposes user-approved, durable workflow improvements. |
 | [`decision-trail`](skills/decision-trail/) | Keeps an opt-in, append-only TSV decision log (what, why, evidence, result) for long-running or unattended work, then audits it against the session transcript with a cross-model review. Explicit invocation only. |
@@ -244,7 +245,7 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `git-worktrees`, `simplify`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `decision-trail`, `how`, and `why` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
+The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `git-worktrees`, `simplify`, `unslop`, `technical-writing`, `typescript-best-practices`, `blast-radius`, `reflect`, `decision-trail`, `how`, and `why` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
