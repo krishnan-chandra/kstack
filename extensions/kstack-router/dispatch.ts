@@ -25,6 +25,7 @@ export async function dispatchRoute(
 	route: RouteId,
 	task: string,
 	delivery: DeliveryRecommendation,
+	worktree: boolean,
 	changeKind: ChangeKind,
 	dispatchToken: DispatchToken,
 	lifecycle: RouterLifecycle,
@@ -39,7 +40,7 @@ export async function dispatchRoute(
 		case "change": {
 			const mode = delivery === "stack" ? "stack" : "single";
 			try {
-				const result = await requestPlanImplement(pi, task, mode, changeKind, ctx);
+				const result = await requestPlanImplement(pi, task, mode, worktree ? "worktree" : "current", changeKind, ctx);
 				if (!result.handled) {
 					return {
 						status: "failed",

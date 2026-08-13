@@ -11,6 +11,7 @@ reviewers (`find-reviewers`).
 /plan-implement Add optimistic locking to the session archive writer
 /plan-implement --change-kind bug-fix Fix the archive race
 /plan-implement --single --change-kind feature Add archive search
+/plan-implement --worktree --change-kind feature Add archive search without touching this checkout
 /plan-implement --stack --change-kind refactor Split the auth rollout into a three-PR jj stack
 /plan-implement
 ```
@@ -71,6 +72,28 @@ Skills and context files intentionally remain enabled. A task can therefore
 compose with `create-pi-extension`, `create-skill`, `find-reviewers`, or any
 other matching installed/project skill without running recursive extensions.
 
+### Managed worktree mode (`--worktree`)
+
+Worktree mode pins the remote default (falling back through conventional
+main/master refs to `HEAD`) before planning. After plan approval it creates a
+unique branch and linked worktree beneath:
+
+```text
+~/.pi/kstack/worktrees/<repo-name>-<common-dir-hash>/<task-slug>
+```
+
+The planner inspects the original checkout; the implementer, panel review,
+review fixer, and publisher operate on the managed worktree. Panel review uses
+the pinned SHA as its immutable base. Files and uncommitted changes in the
+original checkout are not modified, although the linked worktree necessarily
+shares Git metadata and branch refs. The worktree is retained on success,
+failure, abort, and publication. Use the `git-worktrees` skill to inspect and
+clean it up explicitly.
+
+`--worktree` currently supports single-PR delivery only. Combining it with
+`--stack` fails before model calls because a Git linked worktree is not a jj
+workspace.
+
 ### Stacked-PR mode (`--stack`)
 
 Stacked-PR mode builds a **local** Jujutsu stack of changes and bookmarks, one
@@ -110,8 +133,9 @@ The extension exposes an in-process event-bus API (`kstack:plan-implement:reques
 to allow other extensions (notably `kstack-router`) to invoke the workflow without
 synthesizing slash-command strings.
 
-The request carries a structured `{ task, mode, changeKind, ctx }` payload with a
-synchronous `claimed` flag and an awaited completion promise. The slash command
+The request carries a structured `{ task, mode, workLocation, changeKind, ctx }` payload with a
+synchronous `claimed` flag and an awaited completion promise. For compatibility,
+older callers may omit `workLocation`, which means `current`. The slash command
 and the event listener call the same internal runner. Only the slash command
 collects flags and editor input. Both paths retain task validation,
 Git/panel/model preflight, confirmations, lifecycle checks, cleanup, and panel
@@ -177,9 +201,11 @@ instructions; child system prompts tell agents to honor trusted instructions
 and the explicit user task. The planner's Pi tool set is read-only, but OS file
 permissions are unchanged.
 
-Panel review uses its existing scope resolution, so its verdict may include
-changes that were already present before `/plan-implement` began. The
-review-fixer and publisher children run with the user's Pi/OS permissions; the
+In current-working-tree mode, panel review uses its existing scope resolution,
+so its verdict may include changes that were already present before
+`/plan-implement` began. Worktree mode instead reviews only the managed linked
+worktree against its pinned base. The review-fixer and publisher children run
+with the user's Pi/OS permissions; the
 publisher's confirmation is the only gate before it pushes a branch and opens
 a draft PR on the user's GitHub account.
 
@@ -191,6 +217,9 @@ a draft PR on the user's GitHub account.
 - Stack-mode preflight failures (no jj, not a workspace, no colocated git, no
   single `trunk()` commit, missing `jj-stacked-prs` skill, Arena not excludable)
   stop before model calls.
+- Worktree-mode base/path failures stop before model calls. Creation happens
+  only after plan approval; a creation failure stops before the implementer and
+  reports any directory or branch that may need inspection.
 - Planner failure or plan rejection stops before the implementer.
 - Implementer failure is displayed and warns that partial edits may exist; it
   does not start panel review.

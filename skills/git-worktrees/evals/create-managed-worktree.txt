@@ -1,0 +1,1 @@
+In this disposable Git repository, create an isolated worktree for “add archive search” from the remote default branch. Keep it under the kstack managed worktree root, leave files and uncommitted changes in the current checkout alone, and report the path, branch, pinned base, and cleanup instructions. Do not push anything.

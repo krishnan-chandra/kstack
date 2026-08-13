@@ -48,6 +48,22 @@ describe("plan-implement child runner", () => {
 		assert.match(implementer.at(-1) ?? "", /approved plan at \/plan/);
 	});
 
+	it("tells mutation roles to stay in a parent-created managed worktree", () => {
+		for (const role of ["implementer", "fixer", "publisher"] as const) {
+			const args = buildChildArgs({
+				role,
+				model: "a/i",
+				promptFile: "/p",
+				taskFile: "/t",
+				planFile: role === "implementer" ? "/plan" : undefined,
+				verdictFile: role === "implementer" ? undefined : "/v",
+				workLocation: "worktree",
+			});
+			assert.match(args.at(-1) ?? "", /parent created and selected this managed Git worktree/);
+			assert.match(args.at(-1) ?? "", /leave this worktree in place/);
+		}
+	});
+
 	it("appends the selected proof-obligation playbook to each child role", () => {
 		const prompt = "# Bug-fix proof obligations\nReproduce first.";
 		for (const role of ["planner", "implementer"] as const) {
@@ -170,6 +186,31 @@ describe("plan-implement child runner", () => {
 		const result = await promise;
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /child_process error/);
+	});
+
+	it("spawns a mutation child in the selected managed worktree", async () => {
+		const process = new FakeProcess();
+		let spawnedCwd: unknown;
+		const promise = runAgent(options(process, {
+			role: "implementer",
+			planFile: "/tmp/plan.md",
+			cwd: "/managed/repo/change",
+			deps: {
+				spawnImpl: (_command: string, _args: string[], spawnOptions: Record<string, unknown>) => {
+					spawnedCwd = spawnOptions.cwd;
+					return process;
+				},
+				piInvocation: (args: string[]) => ({ command: "pi", args }),
+				timeoutMs: 1000,
+			},
+		}));
+		process.stdout.emit("data", Buffer.from(JSON.stringify({
+			type: "message_end",
+			message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
+		}) + "\n"));
+		process.close(0);
+		assert.equal((await promise).status, "completed");
+		assert.equal(spawnedCwd, "/managed/repo/change");
 	});
 
 	it("returns the final assistant output and usage", async () => {

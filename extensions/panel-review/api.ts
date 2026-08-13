@@ -24,6 +24,7 @@ export function isPanelReviewRequest(value: unknown): value is PanelReviewReques
 		!Array.isArray(options) &&
 		(options.base === undefined || typeof options.base === "string") &&
 		(options.intent === undefined || typeof options.intent === "string") &&
+		(options.repositoryPath === undefined || typeof options.repositoryPath === "string") &&
 		typeof request.ctx === "object" &&
 		request.ctx !== null
 	);

@@ -70,6 +70,17 @@ describe("parsePlanImplementArgs", () => {
 		}
 	});
 
+	it("accepts a managed worktree only with single delivery", () => {
+		const r = parsePlanImplementArgs("--worktree --single --change-kind feature add search");
+		assert.equal(r.ok, true);
+		if (r.ok) {
+			assert.equal(r.workLocation, "worktree");
+			assert.equal(r.task, "add search");
+		}
+		assert.equal(parsePlanImplementArgs("--stack --worktree add search").ok, false);
+		assert.equal(parsePlanImplementArgs("--worktree --worktree add search").ok, false);
+	});
+
 	it("uses -- to allow a task that starts with dashes", () => {
 		const r = parsePlanImplementArgs("--change-kind generic -- --task-with-dashes");
 		assert.equal(r.ok, true);

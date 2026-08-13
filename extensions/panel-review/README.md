@@ -13,8 +13,10 @@ verdict.
 
 Other trusted extensions can invoke the same workflow without serializing
 values into slash-command text. Import `requestPanelReview` from `api.ts` and
-pass structured `{ intent, base? }` options plus the caller's current
-`ExtensionCommandContext`; panel-review claims the request synchronously on
+pass structured `{ intent, base?, repositoryPath? }` options plus the caller's
+current `ExtensionCommandContext`; `repositoryPath` is for trusted in-process
+callers that need to review another validated Git working tree (for example a
+managed worktree). Panel-review claims the request synchronously on
 Pi's event bus and exposes a completion promise that resolves a structured
 `PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
 base/head SHAs), `no-changes`, `declined`, `aborted`, or `failed`. The normal
