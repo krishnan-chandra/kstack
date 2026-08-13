@@ -17,13 +17,17 @@ Present this frame to the user for approval before proceeding.
 ## Subsequent turns
 
 Follow the arena skill workflow:
-- Generate N independent candidates.
+- Generate N independent candidates in isolated locations.
 - Cross-judge against the rubric.
 - Pick the winner as base.
 - Graft strongest parts from losers.
+- Before writing the synthesized final artifact into the repository, create a
+  dedicated task branch (or reuse a parent-created managed-worktree branch)
+  and commit that verified result as a coherent increment.
 - Verify the synthesized result.
 
 ## Done predicate
 
-Done when the synthesized artifact is produced and verified. The working tree
-contains only the final result, not intermediate candidates.
+Done when the synthesized artifact is produced, verified, and committed on the
+task branch. The working tree contains only the final result, not intermediate
+candidates. Do not push or publish.

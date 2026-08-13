@@ -106,6 +106,15 @@ describe("kstack-router catalog", () => {
 		assert.ok(existsSync(join(EXTENSION_DIR, "playbooks", "principles.md")));
 	});
 
+	it("shared principles require branch-and-commit policy for writable work", () => {
+		const principles = readFileSync(join(EXTENSION_DIR, "playbooks", "principles.md"), "utf8");
+		assert.match(principles, /## Writable workstreams/);
+		assert.match(principles, /dedicated `kstack\/<task-slug>` branch/);
+		assert.match(principles, /commits coherent, verified increments/);
+		assert.match(principles, /Read-only routes[\s\S]*`investigate`, `review`, `session-pickup`[\s\S]*do not create branches/);
+		assert.match(principles, /Local branch creation and incremental commits are part of writable/);
+	});
+
 	it("classifier prompt stays in sync with the catalog", () => {
 		const prompt = readFileSync(join(EXTENSION_DIR, "prompts", "classifier.md"), "utf8");
 		for (const route of getAllRoutes()) {

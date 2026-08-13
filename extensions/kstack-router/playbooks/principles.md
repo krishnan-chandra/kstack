@@ -26,6 +26,15 @@ framing. Present the frame to the user for approval before continuing.
 - Parallel workers never share state or merge into the working tree.
 - Classifier output is advisory; the user always confirms the route.
 
+## Writable workstreams
+
+After approval and before the first repository write, a writable route creates a
+dedicated `kstack/<task-slug>` branch (or reuses the parent-created managed
+worktree branch) and commits coherent, verified increments as work proceeds.
+Do not carry a dirty current working tree onto that branch. Read-only routes
+(`investigate`, `review`, `session-pickup`) do not create branches. Routes that
+become writable only after approval inherit this policy at that point.
+
 ## Verification
 
 - Tests run and pass (or are reported with a clear reason for skipping).
@@ -35,4 +44,5 @@ framing. Present the frame to the user for approval before continuing.
 ## Publication prohibition
 
 No route pushes, publishes, creates PRs, deploys, or performs destructive
-operations. Those steps remain separate, confirmed actions.
+operations. Local branch creation and incremental commits are part of writable
+work; remote publication remains a separate, confirmed action.

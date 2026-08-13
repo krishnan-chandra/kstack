@@ -51,6 +51,12 @@ the classifier has insufficient context:
 to a managed Git linked worktree beneath `~/.pi/kstack/worktrees`. It cannot be
 combined with `--stack` in v1.
 
+Writable workstreams (`change`, and other routes after they become writable)
+create a dedicated `kstack/<task-slug>` branch before the first repository
+write and commit coherent increments as work proceeds. They stop on a dirty
+current working tree and never push or publish. Read-only routes
+(`investigate`, `review`, `session-pickup`) do not create branches.
+
 Non-generic kinds attach a concise proof-obligation playbook to both child
 roles. Bug fixes reproduce and rerun the same regression check; refactors pin
 and preserve behavior; performance work records matching baseline and
