@@ -54,9 +54,9 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
-	// Qwen at high thinking repeatedly exceeded the child timeout on large
-	// bundles; medium keeps it inside budget at similar review quality.
-	{ label: "qwen", model: "openrouter/qwen/qwen3.8-max", thinking: "medium" },
+	// Qwen was too slow on large bundles; GLM 5.2 is faster at similar review
+	// quality. medium thinking keeps it inside the per-child timeout budget.
+	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
 	// DeepSeek V4 Pro at high thinking repeatedly produced no output for 20+ minutes;
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },

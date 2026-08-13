@@ -114,8 +114,8 @@ the `"panel-review"` section:
   before anything is launched. Without a config file, synthesis runs on the
   built-in default **GPT-5.6 Terra** (`openai/gpt-5.6-terra`, medium), falling
   back to the active model with a warning.
-- Without a config, a built-in low-cost default panel runs: **Qwen3.8 Max**
-  (`openrouter/qwen/qwen3.8-max`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
+- Without a config, a built-in low-cost default panel runs: **GLM 5.2**
+  (`openrouter/z-ai/glm-5.2`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
   medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), **Gemini 3.6 Flash**
   (`openrouter/google/gemini-3.6-flash`, medium), and **Muse Spark 1.2**
   (`openrouter/meta/muse-spark-1.2`, medium). Defaults that are unavailable or
