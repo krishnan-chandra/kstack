@@ -104,7 +104,7 @@ the `"panel-review"` section:
   "panel-review": {
     "reviewers": [
       { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" },
-      { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "high" }
+      { "label": "opus", "model": "anthropic/claude-opus-4-6", "thinking": "medium" }
     ],
     "maxConcurrency": 5,
     "timeoutMinutes": 10,
@@ -129,9 +129,9 @@ the `"panel-review"` section:
   before anything is launched. Without a config file, synthesis runs on the
   built-in default **GPT-5.6 Terra** (`openai/gpt-5.6-terra`, medium), falling
   back to the active model with a warning.
-- Without a config, a built-in low-cost default panel runs: **GLM 5.2**
-  (`openrouter/z-ai/glm-5.2`, high), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
-  medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), **Gemini 3.6 Flash**
+- Without a config, a built-in low-cost default panel runs: **Opus 4.6**
+  (`anthropic/claude-opus-4-6`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
+  medium), **Kimi K3** (`openrouter/moonshotai/kimi-k3`, medium), **Gemini 3.6 Flash**
   (`openrouter/google/gemini-3.6-flash`, high). Defaults that are unavailable or
   unauthenticated are skipped with a warning; write a config to override the
   panel.
