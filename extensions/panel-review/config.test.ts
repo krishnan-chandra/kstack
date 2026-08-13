@@ -197,7 +197,7 @@ describe("resolveReviewers", () => {
 		assert.match(bad.error, /openai\/y/);
 	});
 
-	it("uses the five default reviewers without Terra when no config exists", () => {
+	it("uses the four default reviewers without Terra when no config exists", () => {
 		const available = DEFAULT_PANEL.map((r) => r.model);
 		const r = resolveReviewers(null, { find: find(available), scopedModels: [] });
 		assert.ok(r.ok);
@@ -206,7 +206,6 @@ describe("resolveReviewers", () => {
 			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 			{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
 			{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
-			{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "high" },
 		]);
 		assert.equal(r.maxConcurrency, 5);
 		assert.equal(r.warnings.length, 0);

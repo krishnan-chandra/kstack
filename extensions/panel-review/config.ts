@@ -7,8 +7,7 @@
  *   {
  *     "panel-review": {
  *       "reviewers": [
- *         { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" },
- *         { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "high" }
+ *         { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" }
  *       ],
  *       "maxConcurrency": 5,
  *       "timeoutMinutes": 10,
@@ -62,7 +61,6 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
 	{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
-	{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "high" },
 ];
 
 /**
