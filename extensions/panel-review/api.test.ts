@@ -49,4 +49,5 @@ describe("panel-review in-process API", () => {
 		assert.equal(claimPanelReviewRequest(request, async () => ({ status: "declined" as const })), true);
 		assert.equal(claimPanelReviewRequest(request, async () => { throw new Error("should not run"); }), false);
 	});
+
 });

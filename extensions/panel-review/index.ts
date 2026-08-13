@@ -47,6 +47,10 @@ function assembleReviewerPrompt(): string {
 		"---",
 		"",
 		readPrompt("code-quality.md").trim(),
+		"",
+		"---",
+		"",
+		readPrompt("thermo-nuclear.md").trim(),
 	].join("\n");
 }
 
@@ -200,6 +204,7 @@ export default function (pi: ExtensionAPI) {
 				const confirmed = await ctx.ui.confirm(
 					"Run panel review?",
 					`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
+						"Review lens: thermo-nuclear code quality\n" +
 						`Changes: ${scope.fileCount} file(s), ${(scope.diffBytes / 1024).toFixed(0)} KiB diff, ` +
 						`${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
 						`Reviewers:\n${reviewerList}\n` +
@@ -310,7 +315,7 @@ export default function (pi: ExtensionAPI) {
 				const synthInputFile = join(promptDir, "synthesis-input.md");
 				writeFileSync(synthInputFile, input, { encoding: "utf8", mode: 0o600 });
 				const synthPromptFile = join(promptDir, "synthesis-prompt.md");
-				writeFileSync(synthPromptFile, buildSynthesisPrompt(readPrompt("lead-judgment.md")), {
+				writeFileSync(synthPromptFile, buildSynthesisPrompt(readPrompt("lead-judgment.md"), readPrompt("thermo-nuclear.md")), {
 					encoding: "utf8",
 					mode: 0o600,
 				});
@@ -394,7 +399,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	pi.registerCommand("panel-review", {
-		description: "Review current changes with a panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
+		description: "Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) {

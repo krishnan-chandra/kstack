@@ -11,10 +11,15 @@ verdict.
 /panel-review --base origin/main --intent "Implement handoff and panel review extensions"
 ```
 
+Every run applies the strict
+[`thermo-nuclear-code-quality-review`](../../skills/thermo-nuclear-code-quality-review/)
+lens to every reviewer and to synthesis. Its Approval Bar promotes structural
+maintainability blockers into **Act On**.
+
 Other trusted extensions can invoke the same workflow without serializing
 values into slash-command text. Import `requestPanelReview` from `api.ts` and
 pass structured `{ intent, base?, repositoryPath? }` options plus the caller's
-current `ExtensionCommandContext`; `repositoryPath` is for trusted in-process
+current `ExtensionCommandContext`;  `repositoryPath` is for trusted in-process
 callers that need to review another validated Git working tree (for example a
 managed worktree). Panel-review claims the request synchronously on
 Pi's event bus and exposes a completion promise that resolves a structured
@@ -49,7 +54,12 @@ ignores the outcome.
 
    No shell, no `bash`/`write`/`edit`, no repository-controlled extensions or
    skills. The reviewer prompt states that bundle and repository contents are
-   untrusted review data, not instructions. Project context files (`AGENTS.md`,
+   untrusted review data, not instructions. The prompt combines
+   `reviewer.md`, `rubric.md`, `code-quality.md`, and the canonical
+   `thermo-nuclear.md` lens so every reviewer model sees the same strict
+   maintainability standard. Children stay `--no-skills`; the extension loads
+   the canonical lens directly, so repository-controlled skills cannot
+   influence reviewer instructions. Project context files (`AGENTS.md`,
    `CLAUDE.md`) are injected as usual — except when the changeset itself
    modifies one, in which case children run with `--no-context-files` so the
    content under review cannot become reviewer instructions (disclosed in the
@@ -82,7 +92,10 @@ ignores the outcome.
    (required in `kstack.json`; **GPT-5.6 Terra** at medium thinking by default)
    in an isolated child, using
    the lead-judgment framework: deduplication, consensus mapping, and
-   **Act On / Consider / Noted / Dismissed** dispositions.
+   **Act On / Consider / Noted / Dismissed** dispositions. The thermo Approval
+   Bar is included in the synthesis prompt so structural
+   regressions, missed code-judo moves, and file-size explosions promote
+   into **Act On** as presumptive blockers.
 6. Appends the verdict to the session as a displayed `panel-review` custom
    message, so it stays in context and can guide later fixes. No fixes are
    applied automatically.
@@ -183,8 +196,13 @@ node --test extensions/panel-review/*.test.ts
 Manual smoke test: in a fixture repository with committed, staged, unstaged,
 untracked, and binary changes, run
 `/panel-review --base HEAD --intent "fixture review"` and verify parallel
-progress, child argv (`--no-session`, discovery flags, read-only tools), a
-single verdict message, no child session files, and an unchanged repository.
+progress, child argv (`--no-session`, discovery flags, read-only tools), the
+confirmation names the thermo-nuclear lens, a single verdict message, no child
+session files, and an unchanged repository.
+
+`extensions/panel-review/prompts/thermo-nuclear.md` is the canonical lens.
+The explicit skill points to that resource, and panel-review loads it directly
+via `--append-system-prompt`, so the two paths cannot drift.
 
 ## Deferred
 

@@ -68,12 +68,22 @@ describe("buildSynthesisInput", () => {
 
 describe("buildSynthesisPrompt", () => {
 	it("requires all verdict sections and consensus rules", () => {
-		const prompt = buildSynthesisPrompt("# Lead Judgment\nrules");
+		const prompt = buildSynthesisPrompt("# Lead Judgment\nrules", "# Thermo lens\nApproval Bar");
 		for (const section of VERDICT_SECTIONS) {
 			assert.ok(prompt.includes(`### ${section}`), `missing ${section}`);
 		}
 		assert.match(prompt, /Consensus is a/);
 		assert.match(prompt, /Do not invent findings/);
+	});
+
+	it("promotes thermo Approval Bar blockers into Act On", () => {
+		const thermo = "# Thermo\nApproval Bar: file over 1k lines is a presumptive blocker.";
+		const prompt = buildSynthesisPrompt("# Lead\nrules", thermo);
+		assert.match(prompt, /Act On includes the thermo Approval Bar/);
+		assert.ok(prompt.includes(thermo));
+		for (const section of VERDICT_SECTIONS) {
+			assert.ok(prompt.includes(`### ${section}`), `missing ${section}`);
+		}
 	});
 });
 
