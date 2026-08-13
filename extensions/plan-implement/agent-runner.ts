@@ -42,8 +42,8 @@ export interface BuildChildArgsOptions {
 	workLocation?: WorkLocation;
 	/** Stack mode only: skill paths re-added after --no-skills (Arena excluded). */
 	skillPaths?: readonly string[];
-	/** Specialized proof-obligation instructions appended to the role prompt. */
-	playbookPrompt?: string;
+	/** Ordered workflow guidance appended after the role prompt. */
+	supplementalPrompts?: readonly string[];
 }
 
 /**
@@ -91,9 +91,17 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 		options.model,
 		"--append-system-prompt",
 		options.promptFile,
-		...(options.playbookPrompt ? ["--append-system-prompt", options.playbookPrompt] : []),
+		...expandSupplementalPrompts(options.supplementalPrompts),
 		target,
 	];
+}
+
+function expandSupplementalPrompts(prompts: readonly string[] | undefined): string[] {
+	const flags: string[] = [];
+	for (const prompt of prompts ?? []) {
+		if (prompt) flags.push("--append-system-prompt", prompt);
+	}
+	return flags;
 }
 
 function expandSkillPaths(paths: readonly string[] | undefined): string[] {

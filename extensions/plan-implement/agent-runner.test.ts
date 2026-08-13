@@ -64,21 +64,28 @@ describe("plan-implement child runner", () => {
 		}
 	});
 
-	it("appends the selected proof-obligation playbook to each child role", () => {
-		const prompt = "# Bug-fix proof obligations\nReproduce first.";
-		for (const role of ["planner", "implementer"] as const) {
+	it("appends workflow guidance in order after the role prompt", () => {
+		const principles = "# Engineering principles for changes";
+		const proofObligations = "# Bug-fix proof obligations\nReproduce first.";
+		for (const role of ["planner", "implementer", "fixer"] as const) {
 			const args = buildChildArgs({
 				role,
 				model: "a/model",
 				promptFile: "/role.md",
 				taskFile: "/task.md",
 				planFile: role === "implementer" ? "/plan.md" : undefined,
-				playbookPrompt: prompt,
+				verdictFile: role === "fixer" ? "/verdict.md" : undefined,
+				supplementalPrompts: [principles, proofObligations],
 			});
 			const promptFlags = args.reduce<number[]>((indices, value, index) => value === "--append-system-prompt" ? [...indices, index] : indices, []);
-			assert.equal(promptFlags.length, 2);
-			assert.equal(args[promptFlags[1] + 1], prompt);
+			assert.deepEqual(promptFlags.map((index) => args[index + 1]), ["/role.md", principles, proofObligations]);
 		}
+	});
+
+	it("does not add workflow guidance when no supplemental prompts are supplied", () => {
+		const args = buildChildArgs({ role: "publisher", model: "a/model", promptFile: "/publisher.md", taskFile: "/task.md", verdictFile: "/verdict.md" });
+		const promptFlags = args.filter((value) => value === "--append-system-prompt");
+		assert.equal(promptFlags.length, 1);
 	});
 
 	it("stack mode disables skill discovery and re-adds every provided skill except arena", () => {

@@ -56,11 +56,17 @@ another option. Put `--` before a task that starts with dashes.
    force-pushes.
 
 Both `kstack-router` and direct `/plan-implement` calls supply a selected
-change kind. The confirmation displays it, and the extension appends the
-matching non-generic playbook to both roles. Bug fixes require a before-and-after
-reproduction, refactors pin behavior, performance work compares matching
-measurements, features prove observable behavior, and prototypes stay isolated
-and produce a decision.
+change kind. The confirmation displays it. The planner, implementer, and review
+fixer receive the shared `playbooks/engineering-principles.md` index, followed
+by the matching non-generic proof-obligation playbook. General principles shape
+the design without expanding scope; the specialized playbook defines the
+change's evidence contract. Generic changes still receive the shared index.
+The publisher receives neither because it packages the already-reviewed change
+rather than shaping implementation.
+
+Bug fixes require a before-and-after reproduction, refactors pin behavior,
+performance work compares matching measurements, features prove observable
+behavior, and prototypes stay isolated and produce a decision.
 
 Both children use `--no-session --no-extensions --no-prompt-templates`. The
 review-fixer and publisher phases reuse the implementer model and tools; the

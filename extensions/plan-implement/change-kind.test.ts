@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
@@ -20,5 +20,17 @@ describe("change-kind playbooks", () => {
 			if (kind === "generic") assert.equal(file, undefined);
 			else assert.ok(file && existsSync(join(PLAYBOOKS_DIR, file)), `Missing ${kind} playbook`);
 		}
+	});
+
+	it("ships a self-contained engineering-principles index for every change kind", () => {
+		const path = join(PLAYBOOKS_DIR, "engineering-principles.md");
+		assert.ok(existsSync(path));
+		const principles = readFileSync(path, "utf8");
+		assert.match(principles, /Start from the observable outcome/);
+		assert.match(principles, /Subtract and flatten first/);
+		assert.match(principles, /Model the domain explicitly/);
+		assert.match(principles, /Fix causes, not symptoms/);
+		assert.match(principles, /Sequence and prove real behavior/);
+		assert.doesNotMatch(principles, /principle-[a-z-]+/);
 	});
 });
