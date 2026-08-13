@@ -37,6 +37,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`personalize`](skills/personalize/) | Mines the user's own session history from any coding agent (Pi, Claude Code, Codex, Cursor) for durable, evidence-backed preferences and applies approved edits to a target such as AGENTS.md. |
 | [`how`](skills/how/) | Explains code structure, ownership, and runtime flow through fast, allowlisted exploration models. |
 | [`why`](skills/why/) | Investigates design rationale through fast, allowlisted evidence gathering and reports direct evidence separately from inference. |
+| [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
 
 ## Configuration
 

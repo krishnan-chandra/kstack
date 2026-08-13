@@ -1,0 +1,132 @@
+{
+  "skill_name": "tdd",
+  "evals": [
+    {
+      "id": 1,
+      "name": "cheap-unit",
+      "prompt": "pickDefault in pick-default.js returns the empty string when value is \"\". It should treat empty string as missing and use the fallback, same as null. Fix it.",
+      "expected_output": "A focused empty-string test fails for the intended reason before production code changes, then pickDefault treats \"\" as missing and the same test passes.",
+      "files": [
+        "evals/files/cheap-unit/package.json",
+        "evals/files/cheap-unit/pick-default.js",
+        "evals/files/cheap-unit/pick-default.test.js"
+      ],
+      "assertions": [
+        {
+          "text": "Adds a focused empty-string regression in pick-default.test.js",
+          "check": {
+            "type": "file_contains",
+            "path": "work/pick-default.test.js",
+            "needle": "pickDefault(\"\", \"x\")"
+          }
+        },
+        {
+          "text": "pickDefault treats empty string as missing",
+          "check": {
+            "type": "file_contains",
+            "path": "work/pick-default.js",
+            "needle": "\"\""
+          }
+        },
+        {
+          "text": "Final reply names failing-before evidence",
+          "check": {
+            "type": "file_matches",
+            "path": "result.txt",
+            "pattern": "(?i)fail"
+          }
+        },
+        {
+          "text": "Edits the test and runs it before changing production code",
+          "check": null
+        },
+        {
+          "text": "Does not weaken the existing null/undefined/present-value tests",
+          "check": {
+            "type": "file_contains",
+            "path": "work/pick-default.test.js",
+            "needle": "uses the fallback for null"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "impractical-login",
+      "prompt": "Users cannot log in on staging: after a successful IdP callback the browser never stores a Secure session cookie, so the next request comes back unauthenticated. The login path is staging-only (VPN, live IdP, Redis session store, TLS terminator). Fix the cookie.",
+      "expected_output": "The run explains why a cheap failing unit test is not worth it, uses the closest available check, and does not invent a mock IdP/Redis/browser harness.",
+      "files": [
+        "evals/files/impractical-login/README.md",
+        "evals/files/impractical-login/session-cookie.js",
+        "evals/files/impractical-login/staging-notes.md"
+      ],
+      "assertions": [
+        {
+          "text": "Explains why a cheap local failing test is not worth it",
+          "check": {
+            "type": "file_matches",
+            "path": "result.txt",
+            "pattern": "(?i)(not worth|impractical|cannot|staging-only|no (cheap |failing )?test|skip)"
+          }
+        },
+        {
+          "text": "Does not invent a mock IdP/Redis/browser test file",
+          "check": null
+        },
+        {
+          "text": "Uses a closest local check or names staging as the real confirmation",
+          "check": null
+        },
+        {
+          "text": "Touches the cookie helper rather than leaving the workspace unchanged",
+          "check": {
+            "type": "file_contains",
+            "path": "work/session-cookie.js",
+            "needle": "Secure"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "explicit-tdd",
+      "prompt": "TDD this: slugify should collapse repeated hyphens and strip leading and trailing hyphens. \"Hello  world!\" should become \"hello-world\", not \"hello-world-\".",
+      "expected_output": "A failing hyphen-trimming test is added and run before slugify.js changes, then the implementation is updated and the same test passes.",
+      "files": [
+        "evals/files/explicit-tdd/package.json",
+        "evals/files/explicit-tdd/slugify.js",
+        "evals/files/explicit-tdd/slugify.test.js"
+      ],
+      "assertions": [
+        {
+          "text": "Adds a regression for Hello  world! -> hello-world",
+          "check": {
+            "type": "file_contains",
+            "path": "work/slugify.test.js",
+            "needle": "Hello  world!"
+          }
+        },
+        {
+          "text": "slugify strips leading/trailing hyphens",
+          "check": {
+            "type": "file_matches",
+            "path": "work/slugify.js",
+            "pattern": "replace\\(/\\^"
+          }
+        },
+        {
+          "text": "Final reply names failing-before evidence",
+          "check": {
+            "type": "file_matches",
+            "path": "result.txt",
+            "pattern": "(?i)fail"
+          }
+        },
+        {
+          "text": "Edits the test and runs it before changing production code",
+          "check": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+TDD this: slugify should collapse repeated hyphens and strip leading and trailing hyphens. "Hello  world!" should become "hello-world", not "hello-world-".

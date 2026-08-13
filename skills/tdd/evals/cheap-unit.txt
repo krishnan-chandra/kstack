@@ -1,0 +1,1 @@
+pickDefault in pick-default.js returns the empty string when value is "". It should treat empty string as missing and use the fallback, same as null. Fix it.
