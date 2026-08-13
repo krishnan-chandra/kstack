@@ -175,6 +175,7 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 		};
 
 		let result: { cancelled: boolean };
+		let replacementSessionStarted = false;
 		try {
 			result = await ctx.newSession({
 				parentSession: oldFile,
@@ -183,6 +184,7 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
 				},
 				withSession: async (fresh) => {
+					replacementSessionStarted = true;
 					// Report the model the replacement session actually started
 					// on. A startup --model flag or active model scoping can
 					// override the switch made above; never claim otherwise.
@@ -204,24 +206,43 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 					} else {
 						fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
 					}
-					// The editor already confirmed this text. Send it now so the
-					// user does not have to submit the same prompt a second time.
-					// If the replacement session cannot start a turn (no model or
-					// no API key), leave the prompt in the editor instead of
-					// throwing after the session has already switched.
-					try {
-						await fresh.sendUserMessage(edited);
-					} catch (err) {
+					// The editor already confirmed this text. Check the failures Pi
+					// raises before accepting a user message, and only restore the
+					// editor for those known pre-submission failures. Once sending
+					// starts, an error may occur after the message was persisted, so
+					// restoring it could create a duplicate turn on retry.
+					const leavePromptInEditor = (reason: string): void => {
 						fresh.ui.setEditorText(edited);
-						fresh.ui.notify(
-							`Handoff prompt is ready to submit: ${err instanceof Error ? err.message : String(err)}`,
-							"warning",
-						);
+						fresh.ui.notify(`Handoff prompt is ready to submit: ${reason}`, "warning");
+					};
+					if (!actual) {
+						leavePromptInEditor("No model selected");
+						return;
 					}
+
+					let hasAuth = fresh.modelRegistry.hasConfiguredAuth(actual);
+					if (!hasAuth) {
+						try {
+							hasAuth = (await fresh.modelRegistry.getProviderAuth(actual.provider)) !== undefined;
+						} catch (err) {
+							leavePromptInEditor(
+								`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`,
+							);
+							return;
+						}
+					}
+					if (!hasAuth) {
+						leavePromptInEditor(`No credentials available for ${formatModelRef(actual)}`);
+						return;
+					}
+
+					await fresh.sendUserMessage(edited);
 				},
 			});
 		} catch (err) {
-			await restoreParentModel();
+			// Once withSession begins, the old API is stale. In particular, a
+			// send failure must propagate without trying to restore the old model.
+			if (!replacementSessionStarted) await restoreParentModel();
 			throw err;
 		}
 

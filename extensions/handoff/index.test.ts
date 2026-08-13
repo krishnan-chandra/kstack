@@ -45,6 +45,8 @@ interface FakeCtxOptions {
 	model?: HandoffModel | undefined;
 	scopedModels?: Array<{ model: HandoffModel }>;
 	freshModel?: HandoffModel | undefined;
+	freshHasConfiguredAuth?: boolean;
+	freshProviderAuth?: unknown;
 }
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
@@ -118,7 +120,11 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 				},
 			});
 			await options.withSession?.({
-				model: opts.freshModel,
+				model: "freshModel" in opts ? opts.freshModel : MODELS[0],
+				modelRegistry: {
+					hasConfiguredAuth: () => opts.freshHasConfiguredAuth ?? true,
+					getProviderAuth: async () => opts.freshProviderAuth,
+				},
 				ui: {
 					setEditorText: (text: string) => {
 						order.push("fresh.setEditorText");
@@ -237,21 +243,48 @@ describe("handoff command lifecycle", () => {
 		assert.ok(!order.includes("fresh.sendUserMessage"));
 	});
 
-	it("leaves the prompt in the editor when the replacement session cannot start a turn", async () => {
+	it("leaves the prompt in the editor when the replacement session has no model", async () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			sendUserMessageError: new Error("No model selected"),
-		});
+		const { ctx, notifications, calls } = makeFakeCtx(order, { freshModel: undefined });
 		await createHandoffHandler(api)("goal", ctx as never);
 		assert.equal(calls.newSession, 1);
-		assert.equal(calls.sendUserMessage.length, 1);
-		assert.deepEqual(calls.setEditorText, calls.sendUserMessage);
-		assert.ok(order.includes("fresh.sendUserMessage"));
+		assert.equal(calls.sendUserMessage.length, 0);
+		assert.equal(calls.setEditorText.length, 1);
+		assert.ok(!order.includes("fresh.sendUserMessage"));
 		assert.ok(order.includes("fresh.setEditorText"));
 		assert.equal(notifications.at(-1)!.level, "warning");
 		assert.ok(notifications.at(-1)!.message.includes("ready to submit"));
 		assert.ok(notifications.at(-1)!.message.includes("No model selected"));
+	});
+
+	it("leaves the prompt in the editor when the replacement session has no credentials", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const { ctx, notifications, calls } = makeFakeCtx(order, { freshHasConfiguredAuth: false });
+		await createHandoffHandler(api)("goal", ctx as never);
+		assert.equal(calls.sendUserMessage.length, 0);
+		assert.equal(calls.setEditorText.length, 1);
+		assert.equal(notifications.at(-1)!.level, "warning");
+		assert.ok(notifications.at(-1)!.message.includes("No credentials available"));
+	});
+
+	it("does not restore a possibly accepted prompt when sendUserMessage throws", async () => {
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order);
+		const { ctx, calls } = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			freshModel: MODELS[2],
+			sendUserMessageError: new Error("provider failed after accepting prompt"),
+		});
+
+		await assert.rejects(
+			createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never),
+			/provider failed after accepting prompt/,
+		);
+		assert.equal(calls.sendUserMessage.length, 1);
+		assert.equal(calls.setEditorText.length, 0);
+		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
 	});
 });
 
