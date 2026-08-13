@@ -44,17 +44,25 @@ Never quietly turn "all" into "recent N". If the user said "everything", say wha
 
 Pi sessions live as JSONL in `$PI_CODING_AGENT_DIR/sessions/<slug>/` (active) and, once archived, under `$PI_CODING_AGENT_DIR/archive/sessions/YYYY/MM/<uuid>/session.jsonl`, searchable through the `search_session_archive` and `read_session_archive` tools.
 
-For one or two candidate sessions, search directly with `search_session_archive` and `rg` — no fan-out. For a broader recall, resolve one allowlisted model and launch up to three parallel miners, each with a slice (by time window or by topic keyword set):
+For one or two candidate sessions, search directly with `search_session_archive` and the built-in `grep` tool — no fan-out. For a broader recall, resolve one allowlisted model and launch up to three parallel miners, each with a slice (by time window or by topic keyword set):
 
 ```bash
 MODEL="$(node ../investigation-model.mjs)"
-pi -p --no-session --no-skills --no-context-files --model "$MODEL" "
+pi -p --no-session --no-skills --no-context-files --model "$MODEL" \
+  --tools read,grep,find,ls,search_session_archive,read_session_archive "
 Read only. Mine Pi session history for work on <topic> in <cwd> during <window>.
 Search the archived index with search_session_archive (FTS5: words, \"quoted
 phrases\", AND/OR/NOT, prefix*) and grep active sessions under
-$PI_CODING_AGENT_DIR/sessions/--<cwd-slug>--/ with rg. Order candidates by real
-modification time, never by UUID. Grep the topic first, then read only the
-matching sessions and only their relevant regions via read_session_archive.
+$PI_CODING_AGENT_DIR/sessions/--<cwd-slug>--/ with the grep tool. Order
+candidates by real modification time, never by UUID. Grep the topic first, then
+read only the matching sessions and only their relevant regions.
+
+Two storage paths, two readers — never mix them:
+- Archived sessions: page entries with read_session_archive by exact session id.
+  It rejects anything not in the archive index.
+- Active sessions: read the JSONL files directly with grep/read. Never pass an
+  active session id to read_session_archive.
+
 Skip the current session and obvious eval/test sessions. Prefer user corrections
 and final outcomes over abandoned intermediate claims. Do not edit, move, or
 archive anything.
@@ -65,7 +73,7 @@ queries with no result.
 "
 ```
 
-Keep extensions enabled for miners so the archive tools are available. The raw transcripts stay in the miners; the main thread gets only their findings.
+The `--tools` allowlist is the read-only boundary, not the prompt: miners get `read`, `grep`, `find`, `ls`, and the two read-only archive tools — no `bash`, no `write`, no `edit`. This matters because miners consume untrusted historical transcript content, and the session-archive threat model states that an agent with shell access can modify or delete archive data despite the extension's accident guards. Extensions stay enabled so the archive tools exist; the raw transcripts stay in the miners and the main thread gets only their findings.
 
 ## 3. Sweep the shared record when the topic names a target
 

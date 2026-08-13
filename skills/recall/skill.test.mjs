@@ -22,14 +22,30 @@ test("recall is model-invocable and its local references resolve", async () => {
 	}
 });
 
-test("recall mines through the archive tools on an allowlisted model", async () => {
+test("recall enforces a read-only tool boundary on miners", async () => {
 	const skill = await read("SKILL.md");
 
 	assert.match(skill, /investigation-model\.mjs/);
-	assert.match(skill, /search_session_archive/);
-	assert.match(skill, /read_session_archive/);
+	// The allowlist is the enforcement, not the prompt: built-in read-only
+	// tools plus the two read-only archive tools, and nothing else.
+	assert.match(
+		skill,
+		/--tools read,grep,find,ls,search_session_archive,read_session_archive/,
+	);
 	// Miners keep extensions enabled so the session-archive tools exist.
 	assert.doesNotMatch(skill, /--no-extensions/);
+	// No shell-based searching; bash stays out of the allowlist.
+	assert.doesNotMatch(skill, /with rg\b/);
+});
+
+test("recall separates active-session reading from archive reads", async () => {
+	const skill = await read("SKILL.md");
+
+	assert.match(
+		skill,
+		/Never pass an\s+active session id to read_session_archive/,
+	);
+	assert.match(skill, /read the JSONL files directly/);
 });
 
 test("recall is read-only and reconciles against live state", async () => {
