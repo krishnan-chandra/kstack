@@ -319,7 +319,11 @@ export function runReviewer(options: RunReviewerOptions): Promise<ReviewerResult
 				return;
 			}
 			if (!output) {
-				finish({ status: "failed", label: spec.label, model, error: "Reviewer produced no output." });
+				const activityHint = activity ? `, last: ${activity}` : "";
+				const usageHint = ` (${usage.turns} turns completed${activityHint})`;
+				const excerpt = stderr.trim() ? ` stderr: ${stderr.trim()}` : "";
+				const detail = `Reviewer produced no output.${usageHint}${excerpt}`;
+				finish({ status: "failed", label: spec.label, model, error: truncateHeadUtf8(detail, stderrCap), ...timeoutDiagnostics() });
 				return;
 			}
 			finish({ status: "completed", label: spec.label, model, output, usage });

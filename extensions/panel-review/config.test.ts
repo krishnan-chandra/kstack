@@ -202,11 +202,11 @@ describe("resolveReviewers", () => {
 		const r = resolveReviewers(null, { find: find(available), scopedModels: [] });
 		assert.ok(r.ok);
 		assert.deepEqual(r.reviewers, [
-			{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
+			{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 			{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
-			{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "medium" },
-			{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "medium" },
+			{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
+			{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "high" },
 		]);
 		assert.equal(r.maxConcurrency, 5);
 		assert.equal(r.warnings.length, 0);

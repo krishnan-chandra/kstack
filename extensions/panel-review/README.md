@@ -88,8 +88,8 @@ the `"panel-review"` section:
 {
   "panel-review": {
     "reviewers": [
-      { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "medium" },
-      { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "medium" }
+      { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" },
+      { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "high" }
     ],
     "maxConcurrency": 5,
     "timeoutMinutes": 10,
@@ -115,10 +115,10 @@ the `"panel-review"` section:
   built-in default **GPT-5.6 Terra** (`openai/gpt-5.6-terra`, medium), falling
   back to the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **GLM 5.2**
-  (`openrouter/z-ai/glm-5.2`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
+  (`openrouter/z-ai/glm-5.2`, high), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
   medium), **Grok 4.6** (`openrouter/x-ai/grok-4.6`, medium), **Gemini 3.6 Flash**
-  (`openrouter/google/gemini-3.6-flash`, medium), and **Muse Spark 1.2**
-  (`openrouter/meta/muse-spark-1.2`, medium). Defaults that are unavailable or
+  (`openrouter/google/gemini-3.6-flash`, high), and **Muse Spark 1.2**
+  (`openrouter/meta/muse-spark-1.2`, high). Defaults that are unavailable or
   unauthenticated are skipped with a warning; write a config to override the
   panel.
 - If fewer than two default models are available, up to five distinct models

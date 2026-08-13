@@ -7,8 +7,8 @@
  *   {
  *     "panel-review": {
  *       "reviewers": [
- *         { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "medium" },
- *         { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "medium" }
+ *         { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" },
+ *         { "label": "muse", "model": "openrouter/meta/muse-spark-1.2", "thinking": "high" }
  *       ],
  *       "maxConcurrency": 5,
  *       "timeoutMinutes": 10,
@@ -55,14 +55,14 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
 	// Qwen was too slow on large bundles; GLM 5.2 is faster at similar review
-	// quality. medium thinking keeps it inside the per-child timeout budget.
-	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
+	// quality. high thinking is now used for deeper review.
+	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 	// DeepSeek V4 Pro at high thinking repeatedly produced no output for 20+ minutes;
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ label: "grok", model: "openrouter/x-ai/grok-4.6", thinking: "medium" },
-	{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "medium" },
-	{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "medium" },
+	{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
+	{ label: "muse", model: "openrouter/meta/muse-spark-1.2", thinking: "high" },
 ];
 
 /**
