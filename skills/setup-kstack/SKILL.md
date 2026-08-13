@@ -1,6 +1,6 @@
 ---
 name: setup-kstack
-description: Configure the models and thinking levels that K-Stack workflows use. Use for /setup-kstack, "set up kstack", "configure kstack models", "change panel reviewers", "change planner or implementer model", or when kstack.json contains stale, unavailable, or manually edited model assignments. Discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure the models and thinking levels that K-Stack workflows use. Use for /setup-kstack, "set up kstack", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited model assignments. Discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
 compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent).
 ---
@@ -57,6 +57,13 @@ selection. `pi --list-models` does not expose every provider's exact
 thinking-level map, so use the listed thinking capability as the available
 preflight and explain that Pi may clamp a provider-specific unsupported level.
 
+Provider catalogs can lead Pi's bundled catalog. If the user explicitly requests
+an exact provider model ID that is absent from `pi --list-models`, accept it only
+when `pi auth check --model <provider/model> --json` reports `ready`. Show a
+warning in the preview that local catalog metadata (including thinking support
+and context limits) is unavailable. Never invent an absent ID or silently choose
+one: this exception requires an exact user-supplied identifier.
+
 ## 3. Choose the roles
 
 Start from the existing user configuration. For a missing section, start from
@@ -76,6 +83,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
 | `swarm` | `worker`, `maxConcurrency` | Use a fast worker for broad coverage work. |
+| `pr-autopilot` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Prefer cheap, fast models from distinct families. |
 
 Keep the current timeouts and concurrency values unless the user asks to change
 them. Keep at least two distinct model families in a panel when available. Warn,
@@ -102,8 +110,9 @@ list or select from the list above.
 
 Before showing the preview, check all of these conditions:
 
-- Every selected `provider/model` appears in `pi --list-models` and every
-  selected provider passed `pi auth check`.
+- Every selected `provider/model` either appears in `pi --list-models` or is an
+  exact user-requested provider ID that passed the catalog-lag exception above.
+  Every selected provider passed `pi auth check`.
 - The proposed root remains a JSON object. Preserve unrelated top-level keys
   byte-for-byte in meaning, including settings for extensions this skill does
   not know.
@@ -112,6 +121,9 @@ Before showing the preview, check all of these conditions:
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
   high-or-deeper thinking.
 - The investigation rules above hold.
+- `pr-autopilot.models` contains 2–5 unique labels and model IDs, every thinking
+  level is `off`, `minimal`, or `low`, concurrency is 1–5, idle timeout is
+  1–15 minutes, and max runtime is 2–60 minutes and not below idle timeout.
 
 Use the existing extension validators as the source of truth when they are
 available. A validation error is a reason to revise the preview, not to delete
@@ -120,8 +132,9 @@ an entire section and start over.
 ## 5. Preview, then write atomically
 
 Render a unified diff from the current JSON to the complete proposed JSON. State
-all warnings, including duplicate reviewer/synthesis models and any model whose
-thinking support is not fully discoverable. Ask for explicit approval of this
+all warnings, including duplicate reviewer/synthesis models, any model whose
+thinking support is not fully discoverable, and exact user-requested IDs accepted
+through the catalog-lag exception. Ask for explicit approval of this
 exact preview.
 
 After approval only:
