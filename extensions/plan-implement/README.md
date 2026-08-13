@@ -153,8 +153,8 @@ Configuration is the `"plan-implement"` section of
   "plan-implement": {
     "planner": { "model": "openai/gpt-5.6-sol", "thinking": "high" },
     "implementer": {
-      "model": "openrouter/deepseek/deepseek-v4-flash",
-      "thinking": "low"
+      "model": "openrouter/x-ai/grok-4.6",
+      "thinking": "high"
     },
     "timeoutMinutes": 30
   }
@@ -170,9 +170,9 @@ child.
 
 Without config, the first authenticated candidate is selected from each list:
 
-- Planner: GPT-5.6 Sol (max), Claude Opus 4.6 (high), Claude Fable 5 (high).
-- Implementer: DeepSeek V4 Flash, Qwen 3.6 Flash, Gemini 3.5 Flash Lite,
-  GLM 5.2, GPT-5.6 Terra, GPT-5.6 Luna (all low).
+- Planner: GPT-5.6 Sol (high), Claude Opus 4.6 (high), Claude Fable 5 (high).
+- Implementer: Grok 4.6 (high), then Qwen 3.6 Flash, Gemini 3.5 Flash Lite,
+  GLM 5.2, GPT-5.6 Terra, or GPT-5.6 Luna (low).
 
 The extension does not fall back to the active parent model; explicit role and
 cost separation is part of its contract.

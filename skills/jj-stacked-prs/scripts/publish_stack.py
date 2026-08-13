@@ -8,9 +8,9 @@ Usage:
                       --plan-id <id>
                       [--trunk <revset>] [--timeout <secs>]
 
-``plan`` is strictly read-only: it inspects the local stack and GitHub state
-(using only ``jj log`` and ``gh api`` GET requests) and returns a structured
-JSON plan with a deterministic ``plan_id``.
+``plan`` is strictly read-only: it inspects local and selected-remote bookmark
+state plus GitHub state using read-only ``jj``, ``git``, and ``gh`` queries, then
+returns a structured JSON plan with a deterministic ``plan_id``.
 
 ``apply`` re-computes the same state, verifies the ``plan_id`` matches, then
 executes pushes, PR creation, base updates, and navigation comments in
@@ -32,10 +32,9 @@ from stack_model import (
     build_inspect_model,
     derive_slices,
     list_bookmarks,
-    resolve_revset_strict,
+    list_remote_bookmarks,
 )
 from github_stack import (
-    GH_API_TIMEOUT,
     build_navigation_comment,
     build_plan,
     build_apply_result_json,
@@ -43,13 +42,11 @@ from github_stack import (
     create_or_update_comment,
     create_pr,
     find_kstack_comment,
-    find_pr_for_bookmark,
     get_default_branch,
     get_gh_user,
     get_pr_comments,
     get_remote_info,
     list_open_prs,
-    parse_comment_metadata,
     push_bookmark,
     redact_url,
     update_pr_base,
@@ -90,8 +87,17 @@ def cmd_plan(args: argparse.Namespace) -> dict[str, Any]:
     top_bookmark = model["top"]
     assert top_bookmark is not None
 
-    # Derive PR slices from the bookmark stack
+    # Derive PR slices from the bookmark stack. Publication must prove that
+    # the selected top is the final boundary; partial parser output or a
+    # mismatched stack must not silently publish only a prefix.
     slices = derive_slices(model["stack"], top_bookmark)
+    if not slices or slices[-1].bookmark != top_bookmark:
+        return {
+            "status": "blocked",
+            "plan_id": None,
+            "blockers": [f"Selected top bookmark {top_bookmark!r} is not the final PR boundary."],
+            "model": model,
+        }
 
     # Get remote info
     remote_info = get_remote_info(cwd, args.remote, args.timeout)
@@ -123,12 +129,13 @@ def cmd_plan(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "status": "blocked",
             "plan_id": None,
-            "blockers": [f"Could not list open PRs: {exc}"],
+            "blockers": [str(exc)],
             "model": model,
         }
 
-    # Get local bookmarks for commit IDs
+    # Get local and selected-remote bookmark targets for exact push planning.
     bookmarks_list = list_bookmarks(cwd, args.timeout)
+    remote_bookmarks = list_remote_bookmarks(cwd, args.remote, args.timeout)
 
     # Build plan (no mutations)
     plan = build_plan(
@@ -138,6 +145,7 @@ def cmd_plan(args: argparse.Namespace) -> dict[str, Any]:
         default_branch=default_branch,
         slices=slices,
         local_bookmarks=bookmarks_list,
+        remote_bookmarks=remote_bookmarks,
         open_prs=open_prs,
     )
 
@@ -174,6 +182,8 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     blockers = list(model.get("blockers", []))
+    if model.get("truncated", False):
+        blockers.append("The stack is truncated; publish refused on incomplete data.")
     if model.get("top") is None:
         blockers.append("No top bookmark could be inferred. Specify --top explicitly.")
 
@@ -189,6 +199,13 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     assert top_bookmark is not None
 
     slices = derive_slices(model["stack"], top_bookmark)
+    if not slices or slices[-1].bookmark != top_bookmark:
+        return {
+            "status": "blocked",
+            "plan_id": None,
+            "blockers": [f"Selected top bookmark {top_bookmark!r} is not the final PR boundary."],
+            "recomputed_model": model,
+        }
     remote_info = get_remote_info(cwd, args.remote, args.timeout)
     if remote_info.github_repo is None:
         return {
@@ -202,6 +219,7 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     default_branch = get_default_branch(gh_repo, cwd, args.timeout)
     open_prs = list_open_prs(gh_repo, cwd, args.timeout)
     bookmarks_list = list_bookmarks(cwd, args.timeout)
+    remote_bookmarks = list_remote_bookmarks(cwd, args.remote, args.timeout)
 
     plan = build_plan(
         cwd=cwd,
@@ -210,6 +228,7 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
         default_branch=default_branch,
         slices=slices,
         local_bookmarks=bookmarks_list,
+        remote_bookmarks=remote_bookmarks,
         open_prs=open_prs,
     )
 
@@ -236,11 +255,13 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     # --- Execute mutations base-to-top ---
     completed_actions: list[dict[str, Any]] = []
     failed_action: dict[str, Any] | None = None
-    created_pr_numbers: dict[str, int] = {}  # bookmark -> PR number
-    # Make comment_actions mutable so we can populate PR numbers for new PRs
-    comment_actions = list(plan.comment_actions)
+    # Keep mutable publication state for comments: newly created PR numbers are
+    # not present in the read-only plan's immutable SliceAction values.
+    comment_actions = [dict(action) for action in plan.comment_actions]
+    published_slices = list(plan.slices)
 
     for i, (slc, action) in enumerate(zip(slices, plan.slices)):
+        current_action = "push_bookmark"
         try:
             # 1. Push bookmark
             if action.push_required:
@@ -254,13 +275,14 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
             # 2. Create PR if needed
             pr_number = action.pr_number
             if action.create_pr:
+                current_action = "create_pr"
                 # Use the slice subject as provisional title
                 title = slc.subject or action.bookmark
                 # Target base: use the short form (without refs/heads/)
                 target_base = action.target_base.replace("refs/heads/", "")
                 new_pr = create_pr(gh_repo, action.bookmark, target_base, title, cwd, args.timeout)
                 pr_number = new_pr.number
-                created_pr_numbers[action.bookmark] = pr_number
+                published_slices[i] = action._replace(pr_number=pr_number)
                 # Update the matching comment action entry so it is not skipped
                 for ca in comment_actions:
                     if ca.get("bookmark") == action.bookmark:
@@ -276,6 +298,7 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
 
             # 3. Update base if changed
             if action.update_base and pr_number is not None:
+                current_action = "update_pr_base"
                 target_base = action.target_base.replace("refs/heads/", "")
                 # Map bookmark names to PR numbers for base resolution
                 # (the target_base could be a bookmark name that now has a PR)
@@ -289,7 +312,7 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
                 })
         except StackError as exc:
             failed_action = {
-                "action": "push_or_create" if action.create_pr else "push",
+                "action": current_action,
                 "bookmark": action.bookmark,
                 "error": str(exc),
             }
@@ -298,15 +321,23 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     # --- Comment reconciliation ---
     # This happens even if some core actions failed (best-effort)
     comment_errors: list[str] = []
-    gh_user = get_gh_user(cwd, args.timeout) or None
-    for slc_action in comment_actions:
+    gh_user = get_gh_user(cwd, args.timeout)
+    if not gh_user:
+        # Updating without a verified author can claim another user's marker;
+        # creating without detecting the existing owned comment duplicates it.
+        # Preserve core publication and fail this best-effort phase closed.
+        comment_errors.append(
+            "Navigation comments skipped: could not determine the authenticated GitHub user."
+        )
+    eligible_comment_actions = comment_actions if gh_user else []
+    for slc_action in eligible_comment_actions:
         pr_num = slc_action.get("pr_number")
         if pr_num is None:
             continue
         try:
             # Build the navigation comment body
             comment_body = build_navigation_comment(
-                plan.slices,
+                published_slices,
                 gh_repo,
                 default_branch,
             )

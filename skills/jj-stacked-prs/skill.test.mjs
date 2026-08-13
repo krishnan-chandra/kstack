@@ -18,6 +18,7 @@ const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
 const SKILL_MD = join(SKILL_DIR, "SKILL.md");
 const SCRIPTS_DIR = join(SKILL_DIR, "scripts");
 const TESTS_DIR = join(SKILL_DIR, "tests");
+const REPO_ROOT = join(SKILL_DIR, "..", "..");
 
 test("SKILL.md exists", () => {
   assert.ok(existsSync(SKILL_MD));
@@ -43,6 +44,11 @@ test("No references to removed npm package (jst submit) in non-sources files", (
     SKILL_MD,
     join(SKILL_DIR, "references", "workflows.md"),
     join(SKILL_DIR, "references", "safety-and-recovery.md"),
+    join(REPO_ROOT, "README.md"),
+    join(REPO_ROOT, "extensions", "plan-implement", "README.md"),
+    join(REPO_ROOT, "extensions", "plan-implement", "prompts", "planner.md"),
+    join(REPO_ROOT, "extensions", "plan-implement", "prompts", "implementer.md"),
+    join(REPO_ROOT, "extensions", "plan-implement", "prompts", "publisher.md"),
   ];
   for (const file of files) {
     if (!existsSync(file)) continue;

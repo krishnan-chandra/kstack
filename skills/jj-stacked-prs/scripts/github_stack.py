@@ -1,10 +1,9 @@
 """GitHub remote parsing, read-only planning, PR/comment models, and mutation execution.
 
-All functions use ``gh api`` for REST/GraphQL calls — never raw HTTP or SDK
+GitHub operations use the authenticated ``gh`` CLI — never raw HTTP or SDK
 dependencies. Credentials are owned by ``gh`` and are never extracted, logged,
-or embedded in arguments. The ``plan`` mode is strictly read-only (GET/HEAD
-only). Mutation (POST/PATCH) only happens in ``apply`` mode under explicit
-confirmation.
+or embedded in arguments. The ``plan`` mode is strictly read-only (GET only).
+Mutation only happens in ``apply`` mode under explicit confirmation.
 
 Important contracts:
 - ``gh api`` calls are bounded by timeout and output caps.
@@ -17,11 +16,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from typing import Any, NamedTuple
 
-from stack_model import StackError, run_cmd, run_gh
+from stack_model import StackError, run_gh
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -30,7 +28,6 @@ from stack_model import StackError, run_cmd, run_gh
 KSTACK_COMMENT_MARKER = "<!-- kstack-stack-nav -->"
 KSTACK_COMMENT_SCHEMA_VERSION = 1
 GH_API_TIMEOUT = 30
-GH_OUTPUT_CAP = 512 * 1024
 
 
 class GitHubRepo(NamedTuple):
@@ -185,45 +182,74 @@ def list_open_prs(
     cwd: str,
     timeout: int = GH_API_TIMEOUT,
 ) -> list[PRInfo]:
-    """List all open PRs for the repo via ``gh pr list``.
-
-    Uses a GraphQL-style query through ``gh pr list`` for reliable draft detection.
-    """
+    """List every open PR for the repo through paginated ``gh api`` GETs."""
     result = run_gh(
         [
-            "pr", "list",
-            "--repo", f"{gh_repo.owner}/{gh_repo.repo}",
-            "--state", "open",
-            "--json", "number,headRefName,baseRefName,title,isDraft,url,headRepositoryOwner",
-            "--limit", "200",
+            "api",
+            "--method", "GET",
+            f"/repos/{gh_repo.owner}/{gh_repo.repo}/pulls",
+            "--field", "state=open",
+            "--field", "per_page=100",
+            "--paginate",
+            "--jq",
+            ".[] | {number, headRefName: .head.ref, baseRefName: .base.ref, "
+            "title, isDraft: .draft, url: .html_url, "
+            "headRepository: {nameWithOwner: .head.repo.full_name}, "
+            "headRepositoryOwner: {login: .head.repo.owner.login}}",
         ],
         cwd=cwd,
         timeout=timeout,
     )
     if result.returncode != 0:
         raise StackError(
-            f"gh pr list failed: {result.stderr.strip() or result.stdout.strip()}",
+            f"Could not list open PRs: {result.stderr.strip() or result.stdout.strip()}",
             1,
         )
-    try:
-        items = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise StackError(f"Could not parse gh pr list output: {exc}", 1) from exc
 
-    return [
-        PRInfo(
+    items: list[dict[str, Any]] = []
+    text = result.stdout.strip()
+    if text:
+        decoder = json.JSONDecoder()
+        offset = 0
+        try:
+            while offset < len(text):
+                while offset < len(text) and text[offset].isspace():
+                    offset += 1
+                if offset >= len(text):
+                    break
+                parsed, offset = decoder.raw_decode(text, offset)
+                values = parsed if isinstance(parsed, list) else [parsed]
+                if not all(isinstance(value, dict) for value in values):
+                    raise StackError("Could not parse open-PR response: expected JSON objects.", 1)
+                items.extend(values)
+        except json.JSONDecodeError as exc:
+            raise StackError(f"Could not parse open-PR response: {exc}", 1) from exc
+
+    prs: list[PRInfo] = []
+    expected_repo = f"{gh_repo.owner}/{gh_repo.repo}".casefold()
+    for item in items:
+        # Deleted forks have null head repository and owner values. Ignore those
+        # unrelated PRs rather than aborting publication for the whole repository.
+        head_repository = item.get("headRepository") or {}
+        head_repository_owner = item.get("headRepositoryOwner") or {}
+        if not isinstance(head_repository, dict):
+            continue
+        if not isinstance(head_repository_owner, dict):
+            head_repository_owner = {}
+        name_with_owner = head_repository.get("nameWithOwner") or ""
+        if not isinstance(name_with_owner, str) or name_with_owner.casefold() != expected_repo:
+            continue
+        owner_login = head_repository_owner.get("login") or ""
+        prs.append(PRInfo(
             number=item["number"],
             head_ref=item["headRefName"],
             base_ref=item["baseRefName"],
-            title=item.get("title", ""),
-            is_draft=item.get("isDraft", False),
-            url=item.get("url", ""),
-            head_owner=item.get("headRepositoryOwner", {}).get("login", ""),
-        )
-        for item in items
-        # Exclude fork PRs whose head repo owner differs from the target repository owner
-        if item.get("headRepositoryOwner", {}).get("login", "") == gh_repo.owner
-    ]
+            title=item.get("title", "") or "",
+            is_draft=bool(item.get("isDraft", False)),
+            url=item.get("url", "") or "",
+            head_owner=owner_login if isinstance(owner_login, str) else "",
+        ))
+    return prs
 
 
 def find_pr_for_bookmark(
@@ -231,10 +257,8 @@ def find_pr_for_bookmark(
     bookmark: str,
 ) -> PRInfo | None:
     """Find an open PR whose head ref matches the bookmark name."""
-    for pr in prs:
-        if pr.head_ref == bookmark:
-            return pr
-    return None
+    matches = [pr for pr in prs if pr.head_ref == bookmark]
+    return matches[0] if len(matches) == 1 else None
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +315,14 @@ def find_kstack_comment(comments: list[dict[str, Any]], gh_user: str | None = No
         body = comment.get("body", "") or ""
         if KSTACK_COMMENT_MARKER not in body:
             continue
-        if gh_user is not None and comment.get("user") != gh_user:
+        # GitHub logins are case-insensitive, so compare casefolded values.
+        author = comment.get("user")
+        if gh_user is not None and (
+            not isinstance(author, str) or author.casefold() != gh_user.casefold()
+        ):
+            continue
+        metadata = parse_comment_metadata(body)
+        if metadata is None or metadata.get("schema_version") not in (0, KSTACK_COMMENT_SCHEMA_VERSION):
             continue
         return comment
     return None
@@ -333,7 +364,7 @@ def compute_plan_id(
 def compute_slice_state(
     bookmark: str,
     local_commit_id: str | None,
-    remote_bookmark_exists: bool,
+    remote_commit_id: str | None,
     existing_pr: PRInfo | None,
     target_base: str,
 ) -> dict[str, Any]:
@@ -341,7 +372,7 @@ def compute_slice_state(
     return {
         "bookmark": bookmark,
         "local_commit_id": local_commit_id,
-        "remote_bookmark_exists": remote_bookmark_exists,
+        "remote_commit_id": remote_commit_id,
         "existing_pr_number": existing_pr.number if existing_pr else None,
         "existing_pr_base": existing_pr.base_ref if existing_pr else None,
         "target_base": target_base,
@@ -355,6 +386,7 @@ def build_plan(
     default_branch: str,
     slices: list[Any],  # List of Slice from stack_model
     local_bookmarks: list[dict[str, Any]],
+    remote_bookmarks: list[dict[str, Any]],
     open_prs: list[PRInfo],
     existing_comments: list[dict[str, Any]] | None = None,
 ) -> StackPlan:
@@ -365,22 +397,36 @@ def build_plan(
     repo_key = f"{gh_repo.owner}/{gh_repo.repo}"
 
     slice_actions: list[SliceAction] = []
+    slices_state: list[dict[str, Any]] = []
+    blockers: list[str] = []
     last_bookmark: str | None = None
 
     for i, slc in enumerate(slices):
         target_base = last_bookmark if last_bookmark else default_branch
 
-        # Find the local bookmark commit
-        bm_commit = next(
-            (b["commit_id"] for b in local_bookmarks if b["name"] == slc.bookmark),
-            None,
-        )
+        local_matches = [b["commit_id"] for b in local_bookmarks if b["name"] == slc.bookmark]
+        remote_matches = [b["commit_id"] for b in remote_bookmarks if b["name"] == slc.bookmark]
+        if len(local_matches) != 1:
+            blockers.append(
+                f"Bookmark {slc.bookmark!r} did not resolve to exactly one local target."
+            )
+        if len(remote_matches) > 1:
+            blockers.append(
+                f"Bookmark {slc.bookmark!r} is conflicted on remote {remote_name!r}."
+            )
+        local_commit = local_matches[0] if len(local_matches) == 1 else None
+        remote_commit = remote_matches[0] if len(remote_matches) == 1 else None
 
-        # Find matching PR
-        existing_pr = find_pr_for_bookmark(open_prs, slc.bookmark)
+        # Find one unambiguous matching PR.
+        matching_prs = [pr for pr in open_prs if pr.head_ref == slc.bookmark]
+        if len(matching_prs) > 1:
+            blockers.append(
+                f"Multiple open PRs use bookmark {slc.bookmark!r}; refusing an ambiguous update."
+            )
+        existing_pr = matching_prs[0] if len(matching_prs) == 1 else None
 
         # Determine what's needed
-        push_required = False
+        push_required = local_commit != remote_commit
         create_pr = existing_pr is None
         update_base = False
         current_base = existing_pr.base_ref if existing_pr else None
@@ -389,12 +435,6 @@ def build_plan(
             # PR exists: update base if it changed
             if existing_pr.base_ref and existing_pr.base_ref != target_base:
                 update_base = True
-            # Push may still be needed if local bookmarks differ from remote
-            # (we detect that by checking if the remote also has this bookmark)
-            # For simplicity, we push all bookmarks; jj handles no-op pushes.
-            push_required = True
-        else:
-            push_required = True
 
         slice_actions.append(SliceAction(
             bookmark=slc.bookmark,
@@ -405,23 +445,17 @@ def build_plan(
             current_base=current_base,
             target_base=target_base,
         ))
-        last_bookmark = slc.bookmark
-
-    # Build the slices_state for plan ID
-    slices_state = []
-    for i, (slc, action) in enumerate(zip(slices, slice_actions)):
-        target_base = slice_actions[i].target_base
-        bm_commit = next(
-            (b["commit_id"] for b in local_bookmarks if b["name"] == slc.bookmark),
-            None,
-        )
+        # Reuse the exact resolution that produced the action. Re-resolving with
+        # first-match semantics could make a blocked divergent bookmark hash a
+        # different target than the action itself.
         slices_state.append(compute_slice_state(
             bookmark=slc.bookmark,
-            local_commit_id=bm_commit,
-            remote_bookmark_exists=False,  # We'd need jj git fetch state for this
-            existing_pr=find_pr_for_bookmark(open_prs, slc.bookmark),
+            local_commit_id=local_commit,
+            remote_commit_id=remote_commit,
+            existing_pr=existing_pr,
             target_base=target_base,
         ))
+        last_bookmark = slc.bookmark
 
     plan_id = compute_plan_id(repo_key, default_branch, slices_state)
 
@@ -436,7 +470,6 @@ def build_plan(
             "bookmark": action.bookmark,
         })
 
-    blockers: list[str] = []
     if not gh_repo:
         blockers.append(f"Remote {remote_name!r} is not a GitHub repository.")
 
@@ -467,8 +500,11 @@ def push_bookmark(
     """
     from stack_model import run_jj
 
+    # On the supported jj >= 0.44, --bookmark automatically tracks a new
+    # remote bookmark and rewrites use jj's force-with-lease safety checks.
+    # There is no raw force push and --allow-new is not a 0.44 option.
     result = run_jj(
-        ["git", "push", "--remote", remote, "--bookmark", bookmark, "--allow-new", "--force"],
+        ["git", "push", "--remote", remote, "--bookmark", bookmark],
         cwd=cwd,
         timeout=timeout,
     )
@@ -533,8 +569,13 @@ def create_pr(
             )
         except (json.JSONDecodeError, KeyError):
             pass
-    # Fallback: return minimal info from the URL
-    return PRInfo(number=0, head_ref=bookmark, base_ref=base, title=title, is_draft=True, url=pr_url, head_owner=gh_repo.owner)
+    # The PR was created, but continuing without its number would send later
+    # reconciliation requests to PR #0. Stop and let a fresh plan discover it.
+    raise StackError(
+        f"Created PR for bookmark {bookmark!r} at {pr_url!r}, but could not read its metadata. "
+        "Run plan again to continue safely.",
+        1,
+    )
 
 
 def update_pr_base(

@@ -66,7 +66,7 @@ Add a `kstack-router` section to `$PI_CODING_AGENT_DIR/kstack.json`:
 {
   "kstack-router": {
     "classifier": {
-      "model": "openrouter/google/gemini-3.5-flash-lite",
+      "model": "openrouter/google/gemini-3.6-flash",
       "thinking": "low"
     },
     "timeoutSeconds": 90
@@ -86,7 +86,7 @@ All fields are optional. Without configuration:
 ## Model fallback
 
 1. Configured model (from `kstack.json`).
-2. Built-in default: `openrouter/google/gemini-3.5-flash-lite`.
+2. Built-in default: `openrouter/google/gemini-3.6-flash` with low reasoning.
 3. Active session model (with a warning about latency/cost).
 4. Manual route picker (no model call).
 
