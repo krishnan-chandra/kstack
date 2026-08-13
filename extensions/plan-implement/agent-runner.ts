@@ -59,7 +59,7 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 	const worktreeNote = options.workLocation === "worktree"
 		? " The parent created and selected this managed Git worktree. Work only in the current cwd, do not create or remove another worktree, and leave this worktree in place for explicit cleanup."
 		: "";
-	const skillFlags = stackMode ? expandSkillPaths(options.skillPaths) : [];
+	const skillFlags = stackMode ? expandRepeatedFlag("--skill", options.skillPaths) : [];
 
 	let target: string;
 	if (options.role === "planner") {
@@ -91,25 +91,17 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 		options.model,
 		"--append-system-prompt",
 		options.promptFile,
-		...expandSupplementalPrompts(options.supplementalPrompts),
+		...expandRepeatedFlag("--append-system-prompt", options.supplementalPrompts),
 		target,
 	];
 }
 
-function expandSupplementalPrompts(prompts: readonly string[] | undefined): string[] {
-	const flags: string[] = [];
-	for (const prompt of prompts ?? []) {
-		if (prompt) flags.push("--append-system-prompt", prompt);
+function expandRepeatedFlag(flag: string, values: readonly string[] | undefined): string[] {
+	const args: string[] = [];
+	for (const value of values ?? []) {
+		if (value) args.push(flag, value);
 	}
-	return flags;
-}
-
-function expandSkillPaths(paths: readonly string[] | undefined): string[] {
-	const flags: string[] = [];
-	for (const path of paths ?? []) {
-		if (path) flags.push("--skill", path);
-	}
-	return flags;
+	return args;
 }
 
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {
