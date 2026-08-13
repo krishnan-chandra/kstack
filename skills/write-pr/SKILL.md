@@ -28,6 +28,18 @@ Fetch the base ref first if it is unavailable or stale. Read enough surrounding 
 
 If the committed diff is empty, stop instead of creating or rewriting a misleading PR.
 
+### Optional commit signing
+
+Commit signing is optional unless the user requests it or the repository enforces it. Do not require or configure jj signing merely because Git commit signing is enabled in the user's configuration.
+
+When signing is requested or required, inspect the signatures on every outgoing commit in `<base>..HEAD`. In a jj repository, inspect jj's effective identity and signing configuration separately because jj does not inherit Git's `user.*`, `commit.gpgsign`, or signing-key settings. Then:
+
+- require a non-empty jj identity and a configured signing backend compatible with the user's key;
+- verify the actual outgoing commit signatures instead of trusting configuration alone; and
+- stop before publication if any outgoing commit is unsigned or has a bad, unknown, or invalid signature.
+
+Do not change user-level identity or signing configuration without the user's approval. If optional signing is not requested, continue without treating unsigned jj commits as an error.
+
 ## Compose the title
 
 Write one concrete sentence fragment that names the primary user-visible or developer-visible outcome.
@@ -78,7 +90,7 @@ gh pr edit <number> --title '<title>' --body-file <body-file>
 
 For a new PR:
 
-1. Push the current branch with `git push -u origin HEAD` if the commits are not on the remote. Creating the PR grants permission for this necessary push, but not for committing uncommitted work or force-pushing.
+1. If signing was requested or required and the outgoing history changed, re-run the signing check immediately before publication. Then push the current branch with `git push -u origin HEAD` if the commits are not on the remote. Creating the PR grants permission for this necessary push, but not for committing uncommitted work or force-pushing.
 2. Create the PR explicitly as a draft:
 
 ```bash
@@ -87,11 +99,14 @@ gh pr create --draft --base <base> --head <current-branch> --title '<title>' --b
 
 Do not change draft state, reviewers, labels, assignees, milestones, or projects on an existing PR unless the user asks.
 
+When signing was requested or required, verify after publication that GitHub recognizes every outgoing commit's signature and that the PR head matches the locally verified head. Treat missing or invalid forge verification as a publication failure rather than reporting success.
+
 ## Report the result
 
 Return:
 
 - whether the PR was created as a draft or updated;
 - the final title;
-- the PR URL; and
+- the PR URL;
+- signature verification when signing was requested or required; and
 - any uncommitted changes omitted from the analysis.

@@ -84,35 +84,35 @@ jj edit --ignore-immutable <change-id>
 jj describe --ignore-immutable -r <change-id> -m "..."
 ```
 
-After rewriting a pushed change you must force-push the corresponding branch; `jst submit` handles that for bookmarked changes. State this to the user.
+After rewriting a pushed change you must force-push the corresponding branch; the bundled publisher handles that for bookmarked changes. State this to the user.
 
-## Partial `jst` failures
+## Partial `publish_stack.py` failures
 
-`jst submit` pushes bookmarks and creates/updates PRs in stack order. If it fails partway:
+`publish_stack.py apply` pushes bookmarks and creates/updates PRs in stack order. If it fails partway:
 
 - Some bookmarks may be pushed and some PRs created while others are not.
-- Re-run `jst submit <top> --remote <remote> --dry-run` to see the residual plan; `jst` updates existing PRs rather than recreating them, so re-running is idempotent.
-- Do not manually force-push to "finish" it; let `jst` reconcile. If a bookmark's remote ref is missing, `jst` will push it on the next run.
+- Re-run `publish_stack.py plan` to see the residual plan; the publisher updates existing PRs rather than recreating them, so re-running is idempotent.
+- Do not manually force-push to "finish" it; let the publisher reconcile. If a bookmark's remote ref is missing, the publisher will push it on the next run.
+- The apply output includes a `plan_id` and either `"status": "completed"` or `"status": "partial"` with a `failed_action` describing what failed. Rerun `plan` to get a fresh plan ID, then `apply` with that ID.
 
 ## Deleted remote bookmarks
 
 After a PR merges and the remote branch is deleted, `jj git fetch` forgets the corresponding local bookmark. Abandon the merged segment **before** fetching while you still have the local bookmark (see workflow 8 in [workflows.md](workflows.md)). If you already fetched and lost the bookmark, you can still rebase the remainder by change ID or by the next surviving bookmark.
 
-## Missing `jst` or auth
+## Missing `gh` or auth
 
 Before publishing:
 
 ```bash
-command -v jst || echo "jst not installed: npm install -g jj-stack"
 gh auth status
 ```
 
-If `jst` is absent, stop and tell the user to install it; do not install silently. If `gh` is unauthenticated and no `GITHUB_TOKEN`/`GH_TOKEN` is set, stop and tell the user to run `gh auth login` or export a token. Local stack work does not require either.
+If `gh` is unauthenticated and no `GITHUB_TOKEN`/`GH_TOKEN` is set, stop and tell the user to run `gh auth login` or export a token. Local stack work does not require either.
 
 ## What never happens automatically
 
 - No `--ignore-immutable` without explicit, scoped approval.
-- No `jst submit` without a `--dry-run` preview and confirmation.
+- No `publish_stack.py apply` without a `plan` preview and confirmation.
 - No `jj abandon` of a conflict without diff/ancestry inspection.
 - No direct `git rebase`/`git reset`/force-push in colocated repos.
-- No installing of `jst` or `gh`, and no GitHub authentication on the user's behalf.
+- No installing of `gh`, and no GitHub authentication on the user's behalf.

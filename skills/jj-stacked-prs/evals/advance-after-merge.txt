@@ -1,3 +1,3 @@
-The bottom PR of my jj stack just merged on GitHub — it was the `cache` bookmark PR, and the stack is cache → email → signup with `signup` at the top. The remote branch was set to delete on merge. My remote is `origin` and `jst` is installed.
+The bottom PR of my jj stack just merged on GitHub — it was the `cache` bookmark PR, and the stack is cache → email → signup with `signup` at the top. The remote branch was set to delete on merge. My remote is `origin`.
 
 I need to advance my stack now that `cache` is in `main`. Show me how to verify the merge actually happened, clean up the merged segment locally, sync with the latest `main`, rebase what's left, and get the remaining PRs' bases repaired and ready to update. I want a dry-run preview before anything is pushed, and I want to know how to undo if a rebase goes wrong.

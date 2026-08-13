@@ -37,7 +37,7 @@ The `jj-stacked-prs` skill asks interactive users to preview and confirm every m
 7. Leave an empty working-copy change above the top bookmark when practical (`jj new`).
 8. Reinspect the full stack for conflicts, divergence, merges, empty descriptions, and missing bookmarks — use the skill's read-only inspection helper if available.
 9. Report the base-to-top stack table (bookmark, change ID, subject, state) and the recovery operation id from `jj op log`.
-10. **Never** run `jst submit`, `jj git push`, `gh pr create`, or any publication command. The parent extension reviews the local stack; publishing is a separate, later, confirmed step.
+10. **Never** run `jj git push`, `gh pr create`, or any publication command. The parent extension reviews the local stack; publishing is a separate, later, confirmed step.
 
 Partial failure leaves the local stack intact. Report exactly which slices completed and which remain, and the recovery operation. Do not claim success for a slice you did not finish and verify.
 

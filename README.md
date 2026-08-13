@@ -26,7 +26,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
-| [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with `jst`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
+| [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with the bundled `publish_stack.py`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
 | [`git-worktrees`](skills/git-worktrees/) | Creates, inspects, repairs, and safely cleans up Git linked worktrees managed beneath `~/.pi/kstack/worktrees`, with dirty-state and ownership checks before removal. |
 | [`simplify`](skills/simplify/) | Runs parallel read-only review lenses on scoped code changes, then applies targeted cleanup to reduce complexity while preserving behavior. |
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
@@ -172,7 +172,7 @@ The two-model implementation workflow also has a stacked-PR delivery mode:
 
 In stack mode the planner and implementer build a **local** jj stack of
 bookmarks (one per PR) and deterministically exclude the `arena` skill; no PRs
-are created. Publishing the stack with `jst submit` is a separate, confirmed
+are created. Publishing the stack with the bundled `publish_stack.py` is a separate, confirmed
 step guided by the [`jj-stacked-prs`](skills/jj-stacked-prs/) skill.
 
 To remove the package registration, run this from the same checkout:
@@ -240,6 +240,23 @@ node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `git-worktrees`, `simplify`, `unslop`, `technical-writing`, `blast-radius`, `reflect`, `decision-trail`, `how`, and `why` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
+
+### Skill tests
+
+The `jj-stacked-prs` skill includes Python tests for its bundled publisher and inspector:
+
+```bash
+python3 -m unittest discover -s skills/jj-stacked-prs/tests -p 'test_*.py'
+node --test skills/jj-stacked-prs/skill.test.mjs
+```
+
+Validate all Python scripts compile:
+
+```bash
+python3 -m py_compile skills/jj-stacked-prs/scripts/*.py
+```
+
+### Session archive smoke test
 
 The full smoke test starts isolated Pi RPC processes, archives an unnamed inactive fixture and a named live session, makes a few small model calls, and does not touch the normal Pi session directory:
 

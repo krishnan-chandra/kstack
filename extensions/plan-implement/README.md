@@ -114,12 +114,12 @@ repeated `--skill` (including `jj-stacked-prs`). This prevents parallel
 candidates from corrupting a shared jj operation log while preserving
 task-specific skills. The planner produces a `Delivery: stacked-prs` plan with
 ordered PR slices; the implementer consults `jj-stacked-prs`, creates the local
-stack, and never runs `jst submit`, `jj git push`, or `gh pr create`. After a
+stack, and never runs publish commands (`publish_stack.py apply`), `jj git push`, or `gh pr create`. After a
 successful implementation, panel review runs once against the immutable
 `trunk()` base. The review fixer amends findings into the correct slices of
 the local stack (per `jj-stacked-prs`), and the publisher — after its own
 confirmation — submits the stack as draft PRs via the `jj-stacked-prs`
-publishing workflow (`jst submit`), applies `write-pr` title/body discipline
+publishing workflow (the bundled `publish_stack.py`), applies `write-pr` title/body discipline
 to each slice, and recommends reviewers across the full stack range.
 
 The Planner, Implementer, Review fixer, and Publisher cards identify the

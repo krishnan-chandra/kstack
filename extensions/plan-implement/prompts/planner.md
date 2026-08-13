@@ -63,4 +63,4 @@ Ensure:
 - Migrations, schema changes, and their tests appear in the slice that needs them, not lumped into the top slice.
 - The final section is whole-stack verification (build, focused tests, and the relevant regression suite).
 
-Do **not** include push, `jst submit`, `gh pr create`, or any publication step. The implementer builds the local stack only; publishing is a later, separately confirmed step. Do not edit or write repository files.
+Do **not** include push, `jj git push`, `gh pr create`, or any publication step. The implementer builds the local stack only; publishing is a later, separately confirmed step. Do not edit or write repository files.
