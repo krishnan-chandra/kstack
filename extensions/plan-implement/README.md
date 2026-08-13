@@ -44,7 +44,8 @@ another option. Put `--` before a task that starts with dashes.
 8. On a completed verdict, asks whether to address the findings, then runs
    the review fixer (implementer model, full tools) with the task and the
    verdict passed through mode-`0600` temp files. The fixer addresses Act On
-   findings, verifies each against the repository, and re-runs focused tests.
+   findings, verifies each against the repository, re-runs focused tests, and
+   commits verified fixes on the existing workstream branch.
 9. Asks whether to publish, then runs the publisher (implementer model): it
    follows `write-pr` to push the branch and create a draft PR (or update an
    existing PR's title/body), then follows `find-reviewers` to recommend 2–5
@@ -72,6 +73,18 @@ Skills and context files intentionally remain enabled. A task can therefore
 compose with `create-pi-extension`, `create-skill`, `find-reviewers`, or any
 other matching installed/project skill without running recursive extensions.
 
+After plan approval, the extension inspects `git status`. In the current
+working tree it stops if tracked or untracked files already exist, then
+recommends `--worktree`. On a clean tree it creates and selects a dedicated
+`kstack/<task-slug>` branch from the current `HEAD` (numeric suffix on
+collision) before launching the implementer. The implementer verifies that
+branch and commits each coherent, verified increment. It never pushes or publishes. Finish with no uncommitted task changes. If a local Git
+identity, hook, or signing requirement blocks a commit, the agent stops and
+reports the blocker.
+
+The review fixer stays on that branch and commits each independent, verified
+fix batch. It does not start another branch.
+
 ### Managed worktree mode (`--worktree`)
 
 Worktree mode pins the remote default (falling back through conventional
@@ -83,12 +96,13 @@ unique branch and linked worktree beneath:
 ```
 
 The planner inspects the original checkout; the implementer, panel review,
-review fixer, and publisher operate on the managed worktree. Panel review uses
-the pinned SHA as its immutable base. Files and uncommitted changes in the
-original checkout are not modified, although the linked worktree necessarily
-shares Git metadata and branch refs. The worktree is retained on success,
-failure, abort, and publication. Use the `git-worktrees` skill to inspect and
-clean it up explicitly.
+review fixer, and publisher operate on the managed worktree and reuse the
+parent-created `kstack/<task-slug>` branch rather than creating a second one.
+Panel review uses the pinned SHA as its immutable base. Files and uncommitted
+changes in the original checkout are not modified, although the linked
+worktree necessarily shares Git metadata and branch refs. The worktree is
+retained on success, failure, abort, and publication. Use the `git-worktrees`
+skill to inspect and clean it up explicitly.
 
 `--worktree` currently supports single-PR delivery only. Combining it with
 `--stack` fails before model calls because a Git linked worktree is not a jj
@@ -113,8 +127,11 @@ turned off with `--no-skills` and every other discovered skill is re-added with
 repeated `--skill` (including `jj-stacked-prs`). This prevents parallel
 candidates from corrupting a shared jj operation log while preserving
 task-specific skills. The planner produces a `Delivery: stacked-prs` plan with
-ordered PR slices; the implementer consults `jj-stacked-prs`, creates the local
-stack, and never runs publish commands (`publish_stack.py apply`), `jj git push`, or `gh pr create`. After a
+ordered PR slices; the implementer consults `jj-stacked-prs`, starts a new
+stack from `trunk()`, describes coherent `jj` changes incrementally, and places
+bookmarks at PR boundaries. Those described changes are the stacked equivalent
+of a Git task branch and incremental commits. The implementer never runs
+publish commands (`publish_stack.py apply`), `jj git push`, or `gh pr create`. After a
 successful implementation, panel review runs once against the immutable
 `trunk()` base. The review fixer amends findings into the correct slices of
 the local stack (per `jj-stacked-prs`), and the publisher — after its own
@@ -201,13 +218,13 @@ instructions; child system prompts tell agents to honor trusted instructions
 and the explicit user task. The planner's Pi tool set is read-only, but OS file
 permissions are unchanged.
 
-In current-working-tree mode, panel review uses its existing scope resolution,
-so its verdict may include changes that were already present before
-`/plan-implement` began. Worktree mode instead reviews only the managed linked
-worktree against its pinned base. The review-fixer and publisher children run
-with the user's Pi/OS permissions; the
-publisher's confirmation is the only gate before it pushes a branch and opens
-a draft PR on the user's GitHub account.
+In current-working-tree mode the implementer refuses a dirty tree, so panel
+review sees the committed task branch rather than mixed pre-existing edits.
+Worktree mode reviews only the managed linked worktree against its pinned
+base. The review-fixer and publisher children run with the user's Pi/OS
+permissions; the publisher's confirmation is the only gate before it pushes a
+branch and opens a draft PR on the user's GitHub account. Publication stops if
+uncommitted files belong to the requested workstream.
 
 ## Failure policy
 
@@ -221,8 +238,10 @@ a draft PR on the user's GitHub account.
   only after plan approval; a creation failure stops before the implementer and
   reports any directory or branch that may need inspection.
 - Planner failure or plan rejection stops before the implementer.
-- Implementer failure is displayed and warns that partial edits may exist; it
-  does not start panel review.
+- Implementer failure is displayed and warns that committed checkpoints may
+  exist on the task branch and that uncommitted partial edits may remain; it
+  does not start panel review. Inspect the branch and `git status` before
+  retrying.
 - Successful implementation invokes panel-review directly through its claimed
   event-bus request. Missing listeners and request failures are reported.
   Panel confirmation, partial reviewer failures, and synthesis behavior remain

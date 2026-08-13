@@ -15,7 +15,10 @@ Present this frame to the user for approval before proceeding.
 ## Subsequent turns
 
 Follow the create-skill skill workflow:
-- Draft SKILL.md.
+- Before drafting repository files, create a dedicated task branch (or reuse a
+  parent-created managed-worktree branch) and keep the current tree clean.
+- Draft SKILL.md and commit coherent, verified increments as the skill takes
+  shape.
 - Run headless with-skill vs baseline eval.
 - Grade results.
 - Aggregate benchmark.
@@ -24,6 +27,7 @@ Follow the create-skill skill workflow:
 
 ## Done predicate
 
-Done when the skill is drafted, tested, evaluated, and the results are
-presented for review. The skill is not automatically activated; the user must
-review and install.
+Done when the skill is drafted, tested, evaluated, committed on the task
+branch, and the results are presented for review. The skill is not
+automatically activated; the user must review and install. Do not push or
+publish.

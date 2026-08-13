@@ -26,9 +26,16 @@ Return one self-contained plan with:
 1. **Goal and done predicate**
 2. **Relevant current behavior** with concrete file paths and symbols
 3. **Design decisions and boundaries**, including alternatives rejected when material
-4. **Ordered implementation steps**, naming files to create or edit
+4. **Ordered implementation steps**, naming files to create or edit and marking coherent commit checkpoints
 5. **Verification**, including focused and regression tests
 6. **Risks, migration/compatibility concerns, and non-goals**
+
+Single-PR implementation must start on a dedicated task branch before the first edit:
+
+- current working tree: create `kstack/<task-slug>` from the current `HEAD` (numeric suffix on collision) only when the tree is clean;
+- managed worktree: verify and reuse the parent-created `kstack/<task-slug>` branch; do not nest another branch.
+
+Treat a commit checkpoint as one reviewable, verified milestone. Do not plan a single terminal commit or a commit that is knowingly broken. Do not include push, `gh pr create`, or any publication step.
 
 Resolve important ambiguity through repository evidence. If the task cannot safely be planned without user input, state the blocking questions instead of inventing requirements. Do not edit or write repository files.
 
@@ -62,5 +69,6 @@ Ensure:
 - Bookmark names are unique across the stack and lowercase-hyphenated.
 - Migrations, schema changes, and their tests appear in the slice that needs them, not lumped into the top slice.
 - The final section is whole-stack verification (build, focused tests, and the relevant regression suite).
+- Bookmark boundaries are the stacked equivalent of a task branch; describe coherent `jj` changes incrementally as each slice is completed.
 
 Do **not** include push, `jj git push`, `gh pr create`, or any publication step. The implementer builds the local stack only; publishing is a later, separately confirmed step. Do not edit or write repository files.

@@ -19,6 +19,7 @@ import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import type { PanelArgs } from "../panel-review/types.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
 import { createManagedWorktree, planManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
+import { createCurrentWorkstreamBranch, verifyCommittedWorkstream, type WorkstreamCheckpoint } from "./git-policy.ts";
 import { runWorkflow } from "./workflow.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 
@@ -239,7 +240,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					"You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. " +
 					"After the verdict you approve addressing its findings, then publishing the stack as draft PRs with reviewer recommendations."
 				: `Planner (read-only): ${plannerModel}\n` +
-					`Implementer (can modify files): ${implementerModel}\n` +
+					`Implementer (creates a dedicated branch and incremental local commits): ${implementerModel}\n` +
 					`Change kind: ${changeKindLabel(changeKind)}\n` +
 					(worktreePlan
 						? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.branch}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n`
@@ -247,8 +248,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					`Timeout: ${roles.timeoutMinutes} min per role\n\n` +
 					"Children keep normal skill and context-file discovery enabled. Extensions are disabled in children. " +
 					(worktreePlan
-						? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there; the worktree is retained for explicit cleanup. "
-						: "The review may include pre-existing working-tree changes. ") +
+						? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. "
+						: "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. ") +
 					"After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.",
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
@@ -261,6 +262,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 
 		const timeoutMs = roles.timeoutMinutes * 60_000;
 		let workflowCwd = ctx.cwd;
+		let workstreamCheckpoint: WorkstreamCheckpoint | undefined = worktreePlan
+			? { branch: worktreePlan.branch, baseSha: worktreePlan.baseSha }
+			: undefined;
 		const updateProgress = ({ role, turns, activity }: { role: AgentRole; turns: number; activity: string }) => {
 			if (lifecycle.isCurrent(token)) {
 				ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
@@ -284,10 +288,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 
 				const fixConfirmed = await ctx.ui.confirm(
 					"Address panel-review findings?",
-					`Review fixer (can modify files): ${implementerModel}\n` +
+					`Review fixer (commits verified fixes locally): ${implementerModel}\n` +
 						`Timeout: ${roles.timeoutMinutes} min\n\n` +
 						"The fixer addresses the verdict's Act On findings (and small, clearly-correct Consider items), " +
-						"verifies each against the repository, and re-runs focused tests. It does not commit or publish.",
+						"verifies each against the repository, and re-runs focused tests. It commits verified fixes locally but does not push or publish.",
 				);
 				if (lifecycle.isCurrent(token) && fixConfirmed) {
 					const controller = lifecycle.beginChild(token, "fixing");
@@ -313,6 +317,17 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								sendPhaseMessage(pi, fixer);
 								if (fixer.status !== "completed") {
 									notify(`Review fixer did not complete: ${errorText(fixer)}`, fixer.status === "aborted" ? "info" : "error");
+									return;
+								}
+								if (mode === "single" && workstreamCheckpoint) {
+									const verified = await verifyCommittedWorkstream(workflowCwd, makeExec(pi), {
+										...workstreamCheckpoint,
+										requireNewCommit: false,
+									});
+									if (!verified.ok) {
+										notify(`Review fixer postcondition failed: ${verified.error} Publication was not offered.`, "error");
+										return;
+									}
 								}
 							}
 						} finally {
@@ -422,7 +437,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 						if (!lifecycle.isCurrent(token)) return false;
 						return ctx.ui.confirm(
 							"Approve planner output?",
-							`Review the Planner card above. Continue with ${implementerModel}, which can modify the working tree?`,
+							mode === "stack"
+								? `Review the Planner card above. Continue with ${implementerModel}, which creates local jj changes and bookmarks?`
+								: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`,
 						);
 					},
 					runImplementer: async () => {
@@ -440,9 +457,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 									return { status: "aborted", role: "implementer", model: implementerModel };
 								}
 								notify(`Managed worktree created and retained at ${workflowCwd} (${created.plan.branch}).`, "info");
+							} else if (mode === "single" && !workstreamCheckpoint) {
+								ctx.ui.setStatus("plan-implement", "plan-implement: creating task branch…");
+								const created = await createCurrentWorkstreamBranch(workflowCwd, task, makeExec(pi));
+								if (!created.ok) return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+								workstreamCheckpoint = { branch: created.branch, baseSha: created.baseSha };
+								notify(`Task branch created: ${created.branch}.`, "info");
 							}
 							ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
-							return await runAgent({
+							const result = await runAgent({
 								role: "implementer",
 								model: implementerModel,
 								promptFile: join(PROMPTS_DIR, "implementer.md"),
@@ -457,6 +480,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								skillPaths,
 								playbookPrompt,
 							});
+							if (result.status !== "completed" || mode !== "single" || !workstreamCheckpoint) return result;
+							const verified = await verifyCommittedWorkstream(workflowCwd, makeExec(pi), {
+								...workstreamCheckpoint,
+								requireNewCommit: true,
+							});
+							if (!verified.ok) return { status: "failed", role: "implementer", model: implementerModel, error: verified.error };
+							return result;
 						} finally {
 							lifecycle.endChild(token, controller);
 						}
@@ -475,7 +505,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 						notify("Plan rejected; the implementer was not launched.", "info");
 					} else if (outcome.status === "implementer-failed") {
 						notify(
-							`Implementer did not complete: ${errorText(outcome.implementer)} Partial working-tree changes may exist; panel review was not started.`,
+							`Implementer did not complete: ${errorText(outcome.implementer)} Committed checkpoints may exist on the task branch, and uncommitted partial edits may remain; panel review was not started.`,
 							outcome.implementer.status === "aborted" ? "warning" : "error",
 						);
 					} else {

@@ -1,7 +1,7 @@
 /**
- * Startup reconciliation and integrity checks for the archive state machine.
- * Recovers interrupted archive operations and surfaces drift, without ever
- * touching the currently active session file.
+ * Startup reconciliation for interrupted archive operations.
+ * Full integrity checks are explicit so routine startup never hashes every
+ * finalized archive file.
  */
 
 import { existsSync, unlinkSync } from "node:fs";
@@ -20,8 +20,6 @@ interface ReconcileReport {
 	leftPending: ReconcileIssue[];
 	/** Pending rows marked 'error' (unrecoverable without user action). */
 	errors: ReconcileIssue[];
-	/** Archived rows whose file is missing or drifted. */
-	integrity: ReconcileIssue[];
 }
 
 interface ReconcileOptions {
@@ -30,8 +28,6 @@ interface ReconcileOptions {
 	currentSessionFile?: string;
 	/** Bound on pending rows processed per run. */
 	pendingLimit?: number;
-	/** Bound on archived rows integrity-checked per run. */
-	archivedLimit?: number;
 }
 
 /**
@@ -40,17 +36,12 @@ interface ReconcileOptions {
  * are hash-identical, and never for the live session file.
  */
 export function reconcileArchive(options: ReconcileOptions): ReconcileReport {
-	const report: ReconcileReport = { finalized: [], leftPending: [], errors: [], integrity: [] };
+	const report: ReconcileReport = { finalized: [], leftPending: [], errors: [] };
 	const db = openArchiveDb(options.dbPath);
 	try {
 		const pending = listSessionRows(db, { state: "pending", limit: options.pendingLimit ?? 50 });
 		for (const row of pending) {
 			reconcilePending(db, row, options.currentSessionFile, report);
-		}
-
-		const archived = listSessionRows(db, { state: "archived", limit: options.archivedLimit ?? 200 });
-		for (const row of archived) {
-			checkArchivedIntegrity(row, report);
 		}
 	} finally {
 		db.close();
@@ -132,18 +123,18 @@ interface ArchivedRow {
 	sha256: string;
 }
 
-function checkArchivedIntegrity(row: ArchivedRow, report: ReconcileReport): void {
+function checkArchivedIntegrity(row: ArchivedRow, integrity: ReconcileIssue[]): void {
 	if (!row.archive_path || !existsSync(row.archive_path)) {
-		report.integrity.push({ sessionId: row.session_id, message: "archived file is missing" });
+		integrity.push({ sessionId: row.session_id, message: "archived file is missing" });
 		return;
 	}
 	try {
 		const actual = hashFile(row.archive_path);
 		if (actual.sha256 !== row.sha256) {
-			report.integrity.push({ sessionId: row.session_id, message: "archived file content drifted (hash mismatch)" });
+			integrity.push({ sessionId: row.session_id, message: "archived file content drifted (hash mismatch)" });
 		}
 	} catch (err) {
-		report.integrity.push({
+		integrity.push({
 			sessionId: row.session_id,
 			message: `archived file could not be verified: ${(err as Error).message}`,
 		});
@@ -152,14 +143,14 @@ function checkArchivedIntegrity(row: ArchivedRow, report: ReconcileReport): void
 
 /** Read-only integrity inspection for /session-archives. */
 export function inspectArchiveIntegrity(dbPath: string, limit = 200): ReconcileIssue[] {
-	const report: ReconcileReport = { finalized: [], leftPending: [], errors: [], integrity: [] };
+	const integrity: ReconcileIssue[] = [];
 	const db = openArchiveDb(dbPath);
 	try {
 		for (const row of listSessionRows(db, { state: "archived", limit })) {
-			checkArchivedIntegrity(row, report);
+			checkArchivedIntegrity(row, integrity);
 		}
 	} finally {
 		db.close();
 	}
-	return report.integrity;
+	return integrity;
 }

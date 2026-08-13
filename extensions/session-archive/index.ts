@@ -91,7 +91,7 @@ export default async function (pi: ExtensionAPI) {
 				dbPath,
 				currentSessionFile: ctx.sessionManager.getSessionFile(),
 			});
-			const problems = report.errors.length + report.integrity.length;
+			const problems = report.errors.length;
 			if (report.finalized.length > 0) {
 				ctx.ui.notify(`session-archive: recovered ${report.finalized.length} interrupted archive(s).`, "info");
 			}

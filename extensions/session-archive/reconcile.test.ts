@@ -149,7 +149,7 @@ describe("reconcileArchive", () => {
 		assert.ok(existsSync(dest));
 	});
 
-	it("reports integrity failures for archived sessions without deleting DB data", () => {
+	it("does not inspect finalized archive files during startup reconciliation", () => {
 		const tree = makeTempTree();
 		const content = richSessionJsonl();
 		const { dest, sha256, size } = setupPending(tree, content);
@@ -160,11 +160,7 @@ describe("reconcileArchive", () => {
 		db.close();
 		unlinkSync(dest);
 
-		const report = reconcileArchive({ dbPath: tree.dbPath });
-		assert.deepEqual(
-			report.integrity.map((i) => i.sessionId),
-			[TEST_SESSION_ID],
-		);
+		reconcileArchive({ dbPath: tree.dbPath });
 		const db2 = openArchiveDb(tree.dbPath);
 		assert.equal(getSessionRow(db2, TEST_SESSION_ID)?.state, "archived");
 		db2.close();
@@ -186,22 +182,6 @@ describe("reconcileArchive", () => {
 		assert.match(issues[0].message, /hash mismatch/);
 	});
 
-	it("reports drift for archived files whose bytes changed", () => {
-		const tree = makeTempTree();
-		const content = richSessionJsonl();
-		const { dest, sha256, size } = setupPending(tree, content);
-		mkdirSync(dirname(dest), { recursive: true });
-		writeFileSync(dest, content);
-		const db = openArchiveDb(tree.dbPath);
-		finalizeArchived(db, TEST_SESSION_ID, dest, size, sha256);
-		db.close();
-		writeFileSync(dest, content.replace("hello archive world", "drifted content"));
-
-		const report = reconcileArchive({ dbPath: tree.dbPath });
-		assert.equal(report.integrity.length, 1);
-		assert.match(report.integrity[0].message, /drifted/);
-	});
-
 	it("is idempotent across repeated runs", () => {
 		const tree = makeTempTree();
 		const content = richSessionJsonl();
@@ -214,7 +194,6 @@ describe("reconcileArchive", () => {
 		const second = reconcileArchive({ dbPath: tree.dbPath });
 		assert.equal(second.finalized.length, 0);
 		assert.equal(second.errors.length, 0);
-		assert.equal(second.integrity.length, 0);
 	});
 
 	it("bounds work per run", () => {

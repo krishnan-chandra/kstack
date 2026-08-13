@@ -113,13 +113,17 @@ filesystem and SQLite cannot commit atomically:
 3. The file is set `0444` and the row finalized in one transaction.
 
 Every step preserves at least one complete JSONL copy. On the next Pi start,
-bounded reconciliation runs before archive tools serve requests:
+bounded reconciliation checks only interrupted `pending` operations before
+archive tools serve requests:
 
 - destination present + hash matches → chmod, finalize (source removed only
   when it is not the live session file);
 - destination absent + source present → left active for an explicit retry;
-- both missing, or any hash mismatch → marked `error`, nothing deleted;
-- `archived` rows with missing/drifted files → reported in `/session-archives`.
+- both missing, or any hash mismatch → marked `error`, nothing deleted.
+
+Finalized archive files are not hashed during routine startup. The explicit
+`/session-archives` command checks finalized rows and reports missing or drifted
+files.
 
 Re-running any operation is idempotent: identical bytes at the destination
 complete the operation, different bytes are a hard collision error and are
@@ -131,8 +135,6 @@ cross-process session-liveness detection described above.
 
 ## Deferred work
 
-- Split pending-operation recovery from full archived-file integrity hashing so
-  routine `session_start` events do less synchronous work.
 - Add explicit rebuild/reindex, full verification, export, retention/deletion,
   and "continue from archive" maintenance flows. A continuation must create a
   new active session rather than reopen an archived JSONL.
@@ -159,6 +161,6 @@ Structure:
 - `archive-store.ts` — SQLite schema, transactions, queries, byte references
 - `session-jsonl.ts` — strict v3 parsing, text extraction, hashes, byte offsets
 - `archive-files.ts` — path validation, rename/copy fallback, chmod, guard
-- `reconcile.ts` — pending-operation recovery and integrity checks
+- `reconcile.ts` — startup pending-operation recovery and explicit integrity checks
 - `tool-output.ts` — UTF-8-safe bounded output chunking
 - `*.test.ts` — Node test files beside the modules they cover
