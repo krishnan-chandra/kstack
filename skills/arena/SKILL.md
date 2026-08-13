@@ -26,11 +26,11 @@ Read `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`) for 
 {
   "arena": {
     "runners": [
-      { "label": "sonnet", "model": "anthropic/claude-sonnet-4-5" },
-      { "label": "gemini", "model": "google/gemini-2.5-pro" },
-      { "label": "gpt", "model": "openai/gpt-5.4" }
+      { "label": "terra", "model": "openai/gpt-5.6-terra", "thinking": "max" },
+      { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" },
+      { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
     ],
-    "crossJudge": { "model": "openai/gpt-5.4", "thinking": "high" },
+    "crossJudge": { "model": "openai/gpt-5.6-sol", "thinking": "medium" },
     "maxConcurrency": 4
   }
 }

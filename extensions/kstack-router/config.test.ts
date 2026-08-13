@@ -121,14 +121,14 @@ describe("resolveClassifierModel", () => {
 		assert.equal(result.thinking, "low");
 	});
 
-	it("omits thinking for default and active fallback models", () => {
+	it("uses low thinking for the default and omits it for the active fallback", () => {
 		const fallback = resolveClassifierModel(null, {
 			available: () => true,
 			activeModelId: "active/mymodel",
 		});
 		if ("error" in fallback) assert.fail("should not error");
 		assert.equal(fallback.source, "default");
-		assert.equal(fallback.thinking, undefined);
+		assert.equal(fallback.thinking, "low");
 
 		const active = resolveClassifierModel(null, {
 			available: () => false,

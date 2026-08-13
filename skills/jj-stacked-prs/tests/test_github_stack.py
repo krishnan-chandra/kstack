@@ -10,14 +10,14 @@ import stat
 import sys
 import tempfile
 import unittest
-from typing import Any, Callable
+from unittest.mock import patch
 
 # Ensure the scripts directory is on the path for imports
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from stack_model import StackError
+from stack_model import CommandResult, StackError
 
 
 class GitHubStackUnitTest(unittest.TestCase):
@@ -59,6 +59,54 @@ class GitHubStackUnitTest(unittest.TestCase):
         result = parse_github_url("")
         self.assertIsNone(result)
 
+    def test_list_open_prs_matches_exact_head_repository_case_insensitively(self) -> None:
+        from github_stack import GitHubRepo, list_open_prs
+        payload = json.dumps([
+            {
+                "number": 1,
+                "headRefName": "feat1",
+                "baseRefName": "main",
+                "title": "right repo",
+                "isDraft": True,
+                "url": "https://github.com/Owner/Repo/pull/1",
+                "headRepository": {"nameWithOwner": "Owner/Repo"},
+                "headRepositoryOwner": {"login": "Owner"},
+            },
+            {
+                "number": 2,
+                "headRefName": "feat1",
+                "baseRefName": "main",
+                "title": "same-owner fork",
+                "isDraft": True,
+                "url": "https://github.com/Owner/Repo/pull/2",
+                "headRepository": {"nameWithOwner": "Owner/repo-fork"},
+                "headRepositoryOwner": {"login": "Owner"},
+            },
+        ])
+        with patch("github_stack.run_gh", return_value=CommandResult(payload, "", 0)):
+            prs = list_open_prs(GitHubRepo("owner", "repo"), ".")
+        self.assertEqual([pr.number for pr in prs], [1])
+
+    def test_push_bookmark_uses_supported_safe_jj_arguments(self) -> None:
+        from github_stack import push_bookmark
+        with patch("stack_model.run_jj", return_value=CommandResult("", "", 0)) as run_jj:
+            push_bookmark(".", "origin", "feature")
+        run_jj.assert_called_once_with(
+            ["git", "push", "--remote", "origin", "--bookmark", "feature"],
+            cwd=".",
+            timeout=30,
+        )
+
+    def test_create_pr_stops_when_created_pr_cannot_be_resolved(self) -> None:
+        from github_stack import GitHubRepo, create_pr
+        responses = [
+            CommandResult("https://github.com/o/r/pull/7\n", "", 0),
+            CommandResult("", "lookup failed", 1),
+        ]
+        with patch("github_stack.run_gh", side_effect=responses):
+            with self.assertRaisesRegex(StackError, "Run plan again"):
+                create_pr(GitHubRepo("o", "r"), "feature", "main", "Title", ".")
+
     def test_find_pr_for_bookmark(self) -> None:
         from github_stack import PRInfo, find_pr_for_bookmark
         prs = [
@@ -75,6 +123,14 @@ class GitHubStackUnitTest(unittest.TestCase):
     def test_find_pr_for_bookmark_empty(self) -> None:
         from github_stack import find_pr_for_bookmark
         self.assertIsNone(find_pr_for_bookmark([], "feat1"))
+
+    def test_find_pr_for_bookmark_rejects_ambiguity(self) -> None:
+        from github_stack import PRInfo, find_pr_for_bookmark
+        prs = [
+            PRInfo(1, "feat1", "main", "one", True, "url1", "o"),
+            PRInfo(2, "feat1", "release", "two", True, "url2", "o"),
+        ]
+        self.assertIsNone(find_pr_for_bookmark(prs, "feat1"))
 
     def test_build_navigation_comment(self) -> None:
         from github_stack import (
@@ -102,11 +158,27 @@ class GitHubStackUnitTest(unittest.TestCase):
         from github_stack import KSTACK_COMMENT_MARKER, find_kstack_comment
         comments = [
             {"id": 1, "body": "regular comment"},
-            {"id": 2, "body": f"{KSTACK_COMMENT_MARKER}\nnav content"},
+            {"id": 2, "body": f"{KSTACK_COMMENT_MARKER}\n<!-- kstack-stack-schema-v1 -->\nnav content"},
         ]
         result = find_kstack_comment(comments)
         self.assertIsNotNone(result)
         self.assertEqual(result["id"], 2)
+
+    def test_find_kstack_comment_rejects_wrong_author_or_schema(self) -> None:
+        from github_stack import KSTACK_COMMENT_MARKER, find_kstack_comment
+        comments = [
+            {
+                "id": 1,
+                "body": f"{KSTACK_COMMENT_MARKER}\n<!-- kstack-stack-schema-v1 -->",
+                "user": "someone-else",
+            },
+            {
+                "id": 2,
+                "body": f"{KSTACK_COMMENT_MARKER}\n<!-- kstack-stack-schema-v999 -->",
+                "user": "publisher",
+            },
+        ]
+        self.assertIsNone(find_kstack_comment(comments, gh_user="publisher"))
 
     def test_find_kstack_comment_not_found(self) -> None:
         from github_stack import find_kstack_comment
@@ -130,6 +202,48 @@ class GitHubStackUnitTest(unittest.TestCase):
     def test_parse_comment_metadata_no_marker(self) -> None:
         from github_stack import parse_comment_metadata
         self.assertIsNone(parse_comment_metadata("just a comment"))
+
+    def test_build_plan_only_pushes_changed_bookmarks(self) -> None:
+        from github_stack import GitHubRepo, build_plan
+        from stack_model import Slice
+
+        plan = build_plan(
+            cwd=".",
+            remote_name="origin",
+            gh_repo=GitHubRepo("o", "r"),
+            default_branch="main",
+            slices=[
+                Slice("synced", None, ["a"], "Synced"),
+                Slice("changed", "synced", ["b"], "Changed"),
+            ],
+            local_bookmarks=[
+                {"name": "synced", "commit_id": "111"},
+                {"name": "changed", "commit_id": "222"},
+            ],
+            remote_bookmarks=[
+                {"name": "synced", "commit_id": "111"},
+                {"name": "changed", "commit_id": "old"},
+            ],
+            open_prs=[],
+        )
+        self.assertFalse(plan.slices[0].push_required)
+        self.assertTrue(plan.slices[1].push_required)
+
+    def test_build_plan_blocks_conflicted_remote_bookmark(self) -> None:
+        from github_stack import GitHubRepo, build_plan
+        from stack_model import Slice
+
+        plan = build_plan(
+            cwd=".", remote_name="origin", gh_repo=GitHubRepo("o", "r"),
+            default_branch="main", slices=[Slice("feature", None, ["a"], "Feature")],
+            local_bookmarks=[{"name": "feature", "commit_id": "new"}],
+            remote_bookmarks=[
+                {"name": "feature", "commit_id": "old1"},
+                {"name": "feature", "commit_id": "old2"},
+            ],
+            open_prs=[],
+        )
+        self.assertTrue(any("conflicted" in blocker for blocker in plan.blockers))
 
     def test_build_plan_json(self) -> None:
         from github_stack import (

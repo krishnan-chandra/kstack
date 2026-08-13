@@ -13,10 +13,8 @@ Important contracts:
 from __future__ import annotations
 
 import json
-import os
-import re
 import subprocess
-import sys
+import tempfile
 from typing import Any, NamedTuple
 
 MIN_JJ_MAJOR = 0
@@ -49,27 +47,44 @@ def run_cmd(
     cwd: str,
     timeout: int = DEFAULT_TIMEOUT,
     env: dict[str, str] | None = None,
+    output_cap: int = OUTPUT_CAP_BYTES,
 ) -> CommandResult:
-    """Run an external command with timeout and cap stderr.
+    """Run a command with a timeout and bounded in-memory output.
 
-    Returns (stdout, stderr, returncode). Never raises on nonzero exit.
-    Raises ``StackError`` only if the binary is missing or the call times out.
+    Output is spooled to temporary files so a noisy child cannot grow the
+    publisher's memory without bound. Never raises merely for a nonzero exit.
     """
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            shell=False,
-            env=env,
-        )
-    except FileNotFoundError as exc:
-        raise StackError(f"Executable was not found on PATH: {cmd[0]}", 2) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise StackError(f"Command timed out after {timeout}s: {' '.join(cmd)}", 1) from exc
-    return CommandResult(proc.stdout, proc.stderr, proc.returncode)
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                shell=False,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            raise StackError(f"Executable was not found on PATH: {cmd[0]}", 2) from exc
+        try:
+            returncode = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            raise StackError(f"Command timed out after {timeout}s: {' '.join(cmd)}", 1) from exc
+
+        stdout_size = stdout_file.tell()
+        stderr_size = stderr_file.tell()
+        if stdout_size > output_cap or stderr_size > output_cap:
+            raise StackError(
+                f"Command output exceeded the {output_cap}-byte cap: {cmd[0]}",
+                1,
+            )
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read().decode("utf-8", errors="replace")
+        stderr = stderr_file.read().decode("utf-8", errors="replace")
+        return CommandResult(stdout, stderr, returncode)
 
 
 def run_jj(
@@ -88,7 +103,7 @@ def run_gh(
     env: dict[str, str] | None = None,
 ) -> CommandResult:
     """Run ``gh`` with the given arguments."""
-    return run_cmd(["gh", *args], cwd, timeout, env=env)
+    return run_cmd(["gh", *args], cwd, timeout, env=env, output_cap=512 * 1024)
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +152,13 @@ def resolve_revset(
 ) -> str | None:
     """Resolve *revset* to one short commit id, or ``None`` on failure."""
     out, _, code = run_jj(
-        ["log", "-r", revset, "--no-graph", "--no-pager", "-T", "commit_id.short()"],
+        ["log", "-r", revset, "--no-graph", "--no-pager", "-T", 'commit_id.short() ++ "\\n"'],
         cwd, timeout,
     )
     if code != 0:
         return None
     lines = [ln for ln in out.splitlines() if ln.strip()]
-    return lines[-1] if lines else None
+    return lines[0] if len(lines) == 1 else None
 
 
 def resolve_revset_strict(
@@ -164,37 +179,57 @@ def resolve_revset_strict(
 def working_copy_change_id(cwd: str, timeout: int = DEFAULT_TIMEOUT) -> str | None:
     """Return the change id of the working copy, or ``None``."""
     out, _, code = run_jj(
-        ["log", "-r", "@", "--no-graph", "--no-pager", "-T", "change_id.short()"],
+        ["log", "-r", "@", "--no-graph", "--no-pager", "-T", 'change_id.short() ++ "\\n"'],
         cwd, timeout,
     )
     if code != 0:
         return None
     lines = [ln for ln in out.splitlines() if ln.strip()]
-    return lines[-1] if lines else None
+    return lines[0] if len(lines) == 1 else None
 
 
 # ---------------------------------------------------------------------------
 # Bookmark queries
 # ---------------------------------------------------------------------------
 
-BOOKMARK_TEMPLATE = r'self.name() ++ "\t" ++ self.normal_target().commit_id().short() ++ "\n"'
+# `jj bookmark list` includes tracked remote bookmarks when they differ from
+# their local counterpart. Filter those rows explicitly so callers never
+# mistake a remote-only bookmark for a local PR boundary.
+BOOKMARK_TEMPLATE = r'if(self.remote(), "", self.name() ++ "\t" ++ self.normal_target().commit_id() ++ "\n")'
+REMOTE_BOOKMARK_TEMPLATE = r'if(self.remote(), self.name() ++ "\t" ++ self.normal_target().commit_id() ++ "\n", "")'
 
 STACK_TEMPLATE = r'''"" ++ "{\"change_id\":\"" ++ change_id.short() ++ "\",\"commit_id\":\"" ++ commit_id.short() ++ "\",\"subject\":" ++ description.first_line().escape_json() ++ ",\"empty\":" ++ if(empty, "true", "false") ++ ",\"conflict\":" ++ if(conflict, "true", "false") ++ ",\"divergent\":" ++ if(divergent, "true", "false") ++ ",\"merge\":" ++ if(parents.len() > 1, "true", "false") ++ ",\"bookmarks\":" ++ json(local_bookmarks.map(|b| b.name())) ++ ",\"remote_bookmarks\":" ++ json(remote_bookmarks.map(|b| b.name())) ++ ",\"parents\":" ++ json(parents.map(|c| c.commit_id().short())) ++ "}"'''
 
 
-def list_bookmarks(cwd: str, timeout: int = DEFAULT_TIMEOUT) -> list[dict[str, Any]]:
-    """Return all local bookmarks as ``[{"name": ..., "commit_id": ...}]``."""
-    out, _, code = run_jj(["bookmark", "list", "--no-pager", "-T", BOOKMARK_TEMPLATE], cwd, timeout)
+def _parse_bookmarks(text: str) -> list[dict[str, Any]]:
     bookmarks: list[dict[str, Any]] = []
-    if code != 0:
-        return bookmarks
-    for line in out.splitlines():
+    for line in text.splitlines():
         if not line.strip():
             continue
         parts = line.split("\t", 1)
         if len(parts) == 2:
             bookmarks.append({"name": parts[0], "commit_id": parts[1]})
     return bookmarks
+
+
+def list_bookmarks(cwd: str, timeout: int = DEFAULT_TIMEOUT) -> list[dict[str, Any]]:
+    """Return local bookmarks as ``[{"name": ..., "commit_id": ...}]``."""
+    out, _, code = run_jj(["bookmark", "list", "--no-pager", "-T", BOOKMARK_TEMPLATE], cwd, timeout)
+    return _parse_bookmarks(out) if code == 0 else []
+
+
+def list_remote_bookmarks(
+    cwd: str,
+    remote: str,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> list[dict[str, Any]]:
+    """Return bookmarks for one selected remote using jj's last fetched state."""
+    out, _, code = run_jj(
+        ["bookmark", "list", "--no-pager", "--remote", remote, "-T", REMOTE_BOOKMARK_TEMPLATE],
+        cwd,
+        timeout,
+    )
+    return _parse_bookmarks(out) if code == 0 else []
 
 
 # ---------------------------------------------------------------------------

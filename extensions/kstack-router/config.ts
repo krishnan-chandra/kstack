@@ -104,7 +104,7 @@ export function resolveClassifierModel(
 	const defaultModel = DEFAULTS.classifierModel;
 	const slash = defaultModel.indexOf("/");
 	if (deps.available(defaultModel.slice(0, slash), defaultModel.slice(slash + 1))) {
-		return { modelId: defaultModel, source: "default" };
+		return { modelId: defaultModel, source: "default", thinking: DEFAULTS.classifierThinking };
 	}
 
 	// Fall back to active model.

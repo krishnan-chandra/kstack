@@ -38,7 +38,17 @@ describe("plan-implement config", () => {
 		if (!bad.ok) assert.match(bad.error, /b\/i/);
 	});
 
-	it("uses ordered high-reason and small-model defaults", () => {
+	it("prefers Sol high and Grok high by default", () => {
+		const available = new Set([DEFAULT_PLANNERS[0].model, DEFAULT_IMPLEMENTERS[0].model]);
+		const result = resolveRoles(null, { available: (provider, id) => available.has(`${provider}/${id}`) });
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.deepEqual(result.roles.planner, { model: "openai/gpt-5.6-sol", thinking: "high" });
+			assert.deepEqual(result.roles.implementer, { model: "openrouter/x-ai/grok-4.6", thinking: "high" });
+		}
+	});
+
+	it("uses later ordered defaults when preferred models are unavailable", () => {
 		const available = new Set([DEFAULT_PLANNERS[1].model, DEFAULT_IMPLEMENTERS[2].model]);
 		const result = resolveRoles(null, { available: (provider, id) => available.has(`${provider}/${id}`) });
 		assert.equal(result.ok, true);

@@ -188,6 +188,15 @@ class StackModelUnitTest(unittest.TestCase):
         blockers = detect_blockers([], "trunk_hash", None, None)
         self.assertTrue(any("No top bookmark" in b for b in blockers))
 
+    def test_run_cmd_rejects_output_over_cap(self) -> None:
+        from stack_model import StackError, run_cmd
+        with self.assertRaisesRegex(StackError, "output exceeded"):
+            run_cmd(
+                [sys.executable, "-c", "print('x' * 1000)"],
+                cwd=self._tmpdir,
+                output_cap=100,
+            )
+
     def test_enforce_output_cap_under_limit(self) -> None:
         from stack_model import enforce_output_cap
         model = {"stack": [{"a": 1}], "stack_size": 1}

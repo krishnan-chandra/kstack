@@ -11,7 +11,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from typing import Any
+from types import SimpleNamespace
+from unittest.mock import patch
+
+_SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 PUBLISH_SCRIPT = os.path.join(
     os.path.dirname(__file__), "..", "scripts", "publish_stack.py"
@@ -31,6 +36,68 @@ def _make_fake_bin(commands: dict[str, str]) -> str:
             f.write(script)
         os.chmod(path, stat.S_IRWXU)
     return tmpdir
+
+
+class PublishStackApplyUnitTest(unittest.TestCase):
+    def test_first_publish_comments_include_all_created_pr_numbers(self) -> None:
+        from github_stack import GitHubRepo, PRInfo, RemoteInfo, SliceAction, StackPlan
+        from publish_stack import cmd_apply
+        from stack_model import Slice
+
+        slices = [
+            Slice("feat1", None, ["change1"], "First"),
+            Slice("feat2", "feat1", ["change2"], "Second"),
+        ]
+        actions = [
+            SliceAction("feat1", None, True, True, False, None, "main"),
+            SliceAction("feat2", None, True, True, False, None, "feat1"),
+        ]
+        plan = StackPlan(
+            "plan123",
+            {"owner": "owner", "repo": "repo", "default_branch": "main"},
+            "origin",
+            "main",
+            actions,
+            [
+                {"pr_number": None, "action": "create_or_update", "body_template": "navigation", "bookmark": "feat1"},
+                {"pr_number": None, "action": "create_or_update", "body_template": "navigation", "bookmark": "feat2"},
+            ],
+            [],
+        )
+        created = [
+            PRInfo(11, "feat1", "main", "First", True, "https://example/11", "owner"),
+            PRInfo(12, "feat2", "feat1", "Second", True, "https://example/12", "owner"),
+        ]
+        args = SimpleNamespace(
+            repo=".", trunk="trunk()", top="feat2", max_stack=50,
+            timeout=20, remote="origin", plan_id="plan123",
+        )
+        model = {"blockers": [], "truncated": False, "top": "feat2", "stack": []}
+
+        with (
+            patch("publish_stack.build_inspect_model", return_value=model),
+            patch("publish_stack.derive_slices", return_value=slices),
+            patch("publish_stack.get_remote_info", return_value=RemoteInfo("origin", "https://github.com/owner/repo", GitHubRepo("owner", "repo"))),
+            patch("publish_stack.get_default_branch", return_value="main"),
+            patch("publish_stack.list_open_prs", return_value=[]),
+            patch("publish_stack.list_bookmarks", return_value=[]),
+            patch("publish_stack.list_remote_bookmarks", return_value=[]),
+            patch("publish_stack.build_plan", return_value=plan),
+            patch("publish_stack.push_bookmark"),
+            patch("publish_stack.create_pr", side_effect=created),
+            patch("publish_stack.get_gh_user", return_value="publisher"),
+            patch("publish_stack.get_pr_comments", return_value=[]),
+            patch("publish_stack.create_or_update_comment", return_value={}) as write_comment,
+        ):
+            result = cmd_apply(args)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual([entry["pr_number"] for entry in result["completed_actions"] if entry["action"] == "create_pr"], [11, 12])
+        self.assertEqual(write_comment.call_count, 2)
+        for comment_call in write_comment.call_args_list:
+            body = comment_call.args[2]
+            self.assertIn("#11", body)
+            self.assertIn("#12", body)
 
 
 class PublishStackPlanTest(unittest.TestCase):

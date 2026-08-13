@@ -2,7 +2,7 @@
 name: jj-stacked-prs
 description: Manage linear stacks of GitHub pull requests on top of a Jujutsu (jj) working copy — create, edit, absorb fixes, sync with trunk, publish with the bundled `publish_stack.py`, and advance after a merge. Use whenever the user mentions jj + stacked PRs, bookmarks as PR boundaries, restacking, "publish this stack", "advance the stack", "sync with main", editing a commit in the middle of a stack, `jj absorb`, or recovering after a stacked PR merge. Even when they don't say "stack" explicitly, if they're using jj and talking about multiple PRs or bookmark boundaries, use this skill.
 license: MIT
-compatibility: A colocated jj + Git workspace with a remote `main`/`master`/`trunk` branch (so the `trunk()` revset resolves). Requires `jj >= 0.44` and python3 for the read-only inspection helper and the bundled publisher. Publishing requires GitHub auth (`gh` or `GITHUB_TOKEN`); the skill reports missing tools and never installs them silently. Read-only by default — every mutation is a separate, explicitly confirmed step.
+compatibility: A colocated jj + Git workspace with a remote `main`/`master`/`trunk` branch (so the `trunk()` revset resolves). Requires `jj >= 0.44` and python3 for the read-only inspection helper and the bundled publisher. Publishing requires the `gh` CLI, authenticated through `gh auth` or `GH_TOKEN`/`GITHUB_TOKEN`; the skill reports missing tools and never installs them silently. Read-only by default — every mutation is a separate, explicitly confirmed step.
 ---
 
 # Stacked PRs with Jujutsu
@@ -68,7 +68,7 @@ python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <bookmark>
 python3 <skill-dir>/scripts/publish_stack.py apply --repo <path> --top <bookmark> --remote <name> --plan-id <id>
 ```
 
-The `plan` command inspects the local stack and GitHub state using only read-only `jj` and `gh` queries (GET requests only). It returns a structured plan with a deterministic `plan_id`. The `apply` command recomputes the state, rejects stale plan IDs, and executes pushes, PR creation/updates, and navigation comments in base-to-top order.
+The `plan` command inspects local and selected-remote bookmark state plus GitHub state using read-only `jj`, `git`, and `gh` queries. It returns a structured plan with a deterministic `plan_id`. The `apply` command recomputes the state, rejects stale plan IDs, and executes pushes, PR creation/updates, and navigation comments in base-to-top order.
 
 See [references/workflows.md](references/workflows.md) for the full publishing workflow.
 
