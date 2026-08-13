@@ -40,10 +40,13 @@ interface FakeCtxOptions {
 	editorResult?: string | undefined;
 	newSessionResult?: { cancelled: boolean };
 	newSessionError?: Error;
+	sendUserMessageError?: Error;
 	sessionFile?: string | undefined;
 	model?: HandoffModel | undefined;
 	scopedModels?: Array<{ model: HandoffModel }>;
 	freshModel?: HandoffModel | undefined;
+	freshHasConfiguredAuth?: boolean;
+	freshProviderAuth?: unknown;
 }
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
@@ -51,6 +54,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	const customMessages: Array<{ customType: string; content: string; display: boolean; details?: unknown }> = [];
 	const calls = {
 		editorDrafts: [] as string[],
+		sendUserMessage: [] as string[],
 		setEditorText: [] as string[],
 		sessionNames: [] as string[],
 		newSession: 0,
@@ -91,6 +95,9 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 				throw new Error("stale UI used after replacement");
 			},
 		},
+		sendUserMessage: () => {
+			throw new Error("stale sendUserMessage used after replacement");
+		},
 		newSession: async (options: {
 			parentSession?: string;
 			setup?: (sm: unknown) => Promise<void>;
@@ -113,7 +120,11 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 				},
 			});
 			await options.withSession?.({
-				model: opts.freshModel,
+				model: "freshModel" in opts ? opts.freshModel : MODELS[0],
+				modelRegistry: {
+					hasConfiguredAuth: () => opts.freshHasConfiguredAuth ?? true,
+					getProviderAuth: async () => opts.freshProviderAuth,
+				},
 				ui: {
 					setEditorText: (text: string) => {
 						order.push("fresh.setEditorText");
@@ -122,6 +133,11 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 					notify: (message: string, level: string) => {
 						notifications.push({ message, level });
 					},
+				},
+				sendUserMessage: async (text: string) => {
+					order.push("fresh.sendUserMessage");
+					calls.sendUserMessage.push(text);
+					if (opts.sendUserMessageError) throw opts.sendUserMessageError;
 				},
 			});
 			return { cancelled: false };
@@ -167,7 +183,7 @@ describe("handoff command lifecycle", () => {
 			"getSessionId",
 			"editor",
 			"newSession",
-			"fresh.setEditorText",
+			"fresh.sendUserMessage",
 		]);
 		assert.equal(apiCalls.setModel.length, 0);
 		assert.equal(calls.editorDrafts.length, 1);
@@ -178,7 +194,7 @@ describe("handoff command lifecycle", () => {
 		assert.ok(draft.includes("read_handoff_history"));
 		assert.ok(draft.includes("search_handoff_history"));
 		assert.ok(!draft.includes("## Conversation History"));
-		assert.deepEqual(calls.setEditorText, [`EDITED ${draft}`]);
+		assert.deepEqual(calls.sendUserMessage, [`EDITED ${draft}`]);
 		assert.deepEqual(calls.sessionNames, ["implement teams support"]);
 
 		assert.equal(customMessages.length, 1);
@@ -224,7 +240,51 @@ describe("handoff command lifecycle", () => {
 		assert.equal(notifications.at(-1)!.message, "New session cancelled");
 		assert.equal(notifications.at(-1)!.level, "info");
 		assert.equal(customMessages.length, 0);
-		assert.ok(!order.includes("fresh.setEditorText"));
+		assert.ok(!order.includes("fresh.sendUserMessage"));
+	});
+
+	it("leaves the prompt in the editor when the replacement session has no model", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const { ctx, notifications, calls } = makeFakeCtx(order, { freshModel: undefined });
+		await createHandoffHandler(api)("goal", ctx as never);
+		assert.equal(calls.newSession, 1);
+		assert.equal(calls.sendUserMessage.length, 0);
+		assert.equal(calls.setEditorText.length, 1);
+		assert.ok(!order.includes("fresh.sendUserMessage"));
+		assert.ok(order.includes("fresh.setEditorText"));
+		assert.equal(notifications.at(-1)!.level, "warning");
+		assert.ok(notifications.at(-1)!.message.includes("ready to submit"));
+		assert.ok(notifications.at(-1)!.message.includes("No model selected"));
+	});
+
+	it("leaves the prompt in the editor when the replacement session has no credentials", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const { ctx, notifications, calls } = makeFakeCtx(order, { freshHasConfiguredAuth: false });
+		await createHandoffHandler(api)("goal", ctx as never);
+		assert.equal(calls.sendUserMessage.length, 0);
+		assert.equal(calls.setEditorText.length, 1);
+		assert.equal(notifications.at(-1)!.level, "warning");
+		assert.ok(notifications.at(-1)!.message.includes("No credentials available"));
+	});
+
+	it("does not restore a possibly accepted prompt when sendUserMessage throws", async () => {
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order);
+		const { ctx, calls } = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			freshModel: MODELS[2],
+			sendUserMessageError: new Error("provider failed after accepting prompt"),
+		});
+
+		await assert.rejects(
+			createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never),
+			/provider failed after accepting prompt/,
+		);
+		assert.equal(calls.sendUserMessage.length, 1);
+		assert.equal(calls.setEditorText.length, 0);
+		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
 	});
 });
 
@@ -263,7 +323,7 @@ describe("handoff model selection", () => {
 			"editor",
 			"setModel",
 			"newSession",
-			"fresh.setEditorText",
+			"fresh.sendUserMessage",
 		]);
 		assert.deepEqual(apiCalls.setModel, [PARENT_MODEL]);
 		assert.equal(calls.newSession, 1);
@@ -287,7 +347,7 @@ describe("handoff model selection", () => {
 			"editor",
 			"setModel",
 			"newSession",
-			"fresh.setEditorText",
+			"fresh.sendUserMessage",
 		]);
 	});
 
@@ -305,7 +365,7 @@ describe("handoff model selection", () => {
 			"editor",
 			"setModel",
 			"newSession",
-			"fresh.setEditorText",
+			"fresh.sendUserMessage",
 		]);
 		const draft = calls.editorDrafts[0];
 		assert.ok(draft.includes("## Goal\nship the feature"));
@@ -495,7 +555,7 @@ describe("handoff model scoping and override detection", () => {
 		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
 		assert.equal(calls.newSession, 1);
 		assert.equal(notifications.at(-1)!.level, "warning");
-		assert.ok(notifications.at(-1)!.message.includes("started on anthropic/claude-sonnet-4-5"));
+		assert.ok(notifications.at(-1)!.message.includes("is on anthropic/claude-sonnet-4-5"));
 		assert.ok(notifications.at(-1)!.message.includes("instead of openai/gpt-5.2"));
 	});
 
@@ -519,7 +579,7 @@ describe("handoff model scoping and override detection", () => {
 		await createHandoffHandler(api)("goal", ctx as never);
 		assert.equal(calls.newSession, 1);
 		assert.equal(notifications.at(-1)!.level, "warning");
-		assert.ok(notifications.at(-1)!.message.includes("started on openai/gpt-5.2"));
+		assert.ok(notifications.at(-1)!.message.includes("is on openai/gpt-5.2"));
 		assert.ok(notifications.at(-1)!.message.includes("parent's anthropic/claude-opus-4-6"));
 	});
 
