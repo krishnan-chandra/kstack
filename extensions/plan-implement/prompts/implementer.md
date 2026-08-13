@@ -21,9 +21,8 @@ Implement the requested change completely and narrowly.
 
 Inspect `git status` and the current branch before the first repository edit.
 
-- If this run is in a parent-created managed worktree, verify and stay on that `kstack/<task-slug>` branch. Do not create a second branch.
-- In the current working tree, refuse to carry a dirty tree into the task branch. If `git status` shows tracked or untracked pre-existing changes, stop before branch creation, report the files, and recommend rerunning with `--worktree`. Do not stash, move, discard, or commit those files.
-- In the current working tree, when the tree is clean, create a dedicated `kstack/<task-slug>` branch from the current `HEAD` before the first edit. Use a numeric suffix (`-2`, `-3`, …) when the name already exists. Starting from `HEAD` preserves the caller's chosen base.
+- The parent creates and selects a dedicated `kstack/<task-slug>` branch before launching you, both in the current checkout and in a managed worktree. Verify and stay on that branch. Do not create a second branch.
+- If `git status` nevertheless shows tracked or untracked pre-existing changes before your first edit, stop, report the files, and recommend rerunning with `--worktree` when appropriate. Do not stash, move, discard, or commit those files.
 - If a local Git identity, hook, or signing requirement blocks branch creation or a commit, stop and report the blocker. Do not bypass configuration.
 
 ### Incremental commits

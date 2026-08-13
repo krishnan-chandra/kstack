@@ -73,12 +73,12 @@ Skills and context files intentionally remain enabled. A task can therefore
 compose with `create-pi-extension`, `create-skill`, `find-reviewers`, or any
 other matching installed/project skill without running recursive extensions.
 
-After plan approval, the implementer inspects the branch and `git status`
-before editing. In the current working tree it stops if tracked or untracked
-files already exist, then recommends `--worktree`. On a clean tree it creates
-a dedicated `kstack/<task-slug>` branch from the current `HEAD` (numeric
-suffix on collision) and commits each coherent, verified increment. It never
-pushes or publishes. Finish with no uncommitted task changes. If a local Git
+After plan approval, the extension inspects `git status`. In the current
+working tree it stops if tracked or untracked files already exist, then
+recommends `--worktree`. On a clean tree it creates and selects a dedicated
+`kstack/<task-slug>` branch from the current `HEAD` (numeric suffix on
+collision) before launching the implementer. The implementer verifies that
+branch and commits each coherent, verified increment. It never pushes or publishes. Finish with no uncommitted task changes. If a local Git
 identity, hook, or signing requirement blocks a commit, the agent stops and
 reports the blocker.
 

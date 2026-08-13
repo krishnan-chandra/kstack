@@ -19,6 +19,7 @@ import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import type { PanelArgs } from "../panel-review/types.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
 import { createManagedWorktree, planManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
+import { createCurrentWorkstreamBranch, verifyCommittedWorkstream, type WorkstreamCheckpoint } from "./git-policy.ts";
 import { runWorkflow } from "./workflow.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 
@@ -261,6 +262,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 
 		const timeoutMs = roles.timeoutMinutes * 60_000;
 		let workflowCwd = ctx.cwd;
+		let workstreamCheckpoint: WorkstreamCheckpoint | undefined = worktreePlan
+			? { branch: worktreePlan.branch, baseSha: worktreePlan.baseSha }
+			: undefined;
 		const updateProgress = ({ role, turns, activity }: { role: AgentRole; turns: number; activity: string }) => {
 			if (lifecycle.isCurrent(token)) {
 				ctx.ui.setStatus("plan-implement", `plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
@@ -313,6 +317,17 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								sendPhaseMessage(pi, fixer);
 								if (fixer.status !== "completed") {
 									notify(`Review fixer did not complete: ${errorText(fixer)}`, fixer.status === "aborted" ? "info" : "error");
+									return;
+								}
+								if (mode === "single" && workstreamCheckpoint) {
+									const verified = await verifyCommittedWorkstream(workflowCwd, makeExec(pi), {
+										...workstreamCheckpoint,
+										requireNewCommit: false,
+									});
+									if (!verified.ok) {
+										notify(`Review fixer postcondition failed: ${verified.error} Publication was not offered.`, "error");
+										return;
+									}
 								}
 							}
 						} finally {
@@ -442,9 +457,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 									return { status: "aborted", role: "implementer", model: implementerModel };
 								}
 								notify(`Managed worktree created and retained at ${workflowCwd} (${created.plan.branch}).`, "info");
+							} else if (mode === "single" && !workstreamCheckpoint) {
+								ctx.ui.setStatus("plan-implement", "plan-implement: creating task branch…");
+								const created = await createCurrentWorkstreamBranch(workflowCwd, task, makeExec(pi));
+								if (!created.ok) return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+								workstreamCheckpoint = { branch: created.branch, baseSha: created.baseSha };
+								notify(`Task branch created: ${created.branch}.`, "info");
 							}
 							ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
-							return await runAgent({
+							const result = await runAgent({
 								role: "implementer",
 								model: implementerModel,
 								promptFile: join(PROMPTS_DIR, "implementer.md"),
@@ -459,6 +480,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								skillPaths,
 								playbookPrompt,
 							});
+							if (result.status !== "completed" || mode !== "single" || !workstreamCheckpoint) return result;
+							const verified = await verifyCommittedWorkstream(workflowCwd, makeExec(pi), {
+								...workstreamCheckpoint,
+								requireNewCommit: true,
+							});
+							if (!verified.ok) return { status: "failed", role: "implementer", model: implementerModel, error: verified.error };
+							return result;
 						} finally {
 							lifecycle.endChild(token, controller);
 						}

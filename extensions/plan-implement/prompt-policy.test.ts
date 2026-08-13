@@ -19,19 +19,17 @@ describe("plan-implement prompt policy", () => {
 	it("requires a dedicated current-mode branch before the first edit", () => {
 		assert.match(planner, /kstack\/<task-slug>/);
 		assert.match(planner, /current `HEAD`/);
-		assert.match(implementer, /create a dedicated `kstack\/<task-slug>` branch/);
-		assert.match(implementer, /before the first edit/);
-		assert.match(implementer, /numeric suffix/);
+		assert.match(implementer, /parent creates and selects a dedicated `kstack\/<task-slug>` branch/);
+		assert.match(implementer, /Do not create a second branch/);
 	});
 
 	it("reuses a parent-created managed-worktree branch", () => {
 		assert.match(planner, /managed worktree: verify and reuse/i);
-		assert.match(implementer, /parent-created managed worktree/);
+		assert.match(implementer, /managed worktree/);
 		assert.match(implementer, /Do not create a second branch/);
 	});
 
 	it("stops on a dirty current working tree", () => {
-		assert.match(implementer, /refuse to carry a dirty tree/);
 		assert.match(implementer, /tracked or untracked pre-existing changes/);
 		assert.match(implementer, /recommend rerunning with `--worktree`/);
 		assert.match(implementer, /Do not stash, move, discard, or commit those files/);
