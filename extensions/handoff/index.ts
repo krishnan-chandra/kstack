@@ -8,6 +8,9 @@
  *   /handoff --model anthropic/claude-sonnet-4-5 execute phase one of the plan
  *   /handoff                        # continue from the prior resume point
  *
+ * Saving the editor is the only confirmation. The replacement session starts
+ * immediately with that prompt; cancelling the editor leaves the old session.
+ *
  * Model selection: with `--model`, the replacement session starts on that
  * model; without it, the parent session's active model is pinned (best
  * effort) so the replacement inherits it. Both paths go through
@@ -60,10 +63,10 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 		const goal = parsed.goal.trim() || DEFAULT_HANDOFF_GOAL;
 
 		// Resolve an explicit model before opening the editor so a typo fails
-		// fast. The actual switch is deferred until after the user confirms the
-		// prompt, so cancelling the editor never changes the parent session's
-		// model. When model scoping is active, only scoped models are valid
-		// choices: anything else would be silently replaced in the new session.
+		// fast. The actual switch is deferred until after the editor is saved,
+		// so cancelling never changes the parent session's model. When model
+		// scoping is active, only scoped models are valid choices: anything
+		// else would be silently replaced in the new session.
 		let targetModel: HandoffModel | undefined;
 		if (parsed.modelRef !== undefined) {
 			const scoped = (ctx.scopedModels ?? []) as Array<{ model: HandoffModel }>;
@@ -180,7 +183,6 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
 				},
 				withSession: async (fresh) => {
-					fresh.ui.setEditorText(edited);
 					// Report the model the replacement session actually started
 					// on. A startup --model flag or active model scoping can
 					// override the switch made above; never claim otherwise.
@@ -188,19 +190,33 @@ export function createHandoffHandler(api: Pick<ExtensionAPI, "setModel">) {
 					if (targetModel) {
 						if (actual && !sameModel(actual, targetModel)) {
 							fresh.ui.notify(
-								`Handoff ready, but the session started on ${formatModelRef(actual)} instead of ${formatModelRef(targetModel)} (a startup --model flag or model scoping overrides handoff selection). Previous session: ${oldFile}`,
+								`Handoff started, but the session is on ${formatModelRef(actual)} instead of ${formatModelRef(targetModel)} (a startup --model flag or model scoping overrides handoff selection). Previous session: ${oldFile}`,
 								"warning",
 							);
 						} else {
-							fresh.ui.notify(`Handoff ready. Model: ${formatModelRef(targetModel)}. Previous session: ${oldFile}`, "info");
+							fresh.ui.notify(`Handoff started. Model: ${formatModelRef(targetModel)}. Previous session: ${oldFile}`, "info");
 						}
 					} else if (previousModel && actual && !sameModel(actual, previousModel)) {
 						fresh.ui.notify(
-							`Handoff ready, but the session started on ${formatModelRef(actual)} instead of the parent's ${formatModelRef(previousModel)} (a startup --model flag or model scoping overrides inheritance). Previous session: ${oldFile}`,
+							`Handoff started, but the session is on ${formatModelRef(actual)} instead of the parent's ${formatModelRef(previousModel)} (a startup --model flag or model scoping overrides inheritance). Previous session: ${oldFile}`,
 							"warning",
 						);
 					} else {
-						fresh.ui.notify(`Handoff ready. Previous session: ${oldFile}`, "info");
+						fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
+					}
+					// The editor already confirmed this text. Send it now so the
+					// user does not have to submit the same prompt a second time.
+					// If the replacement session cannot start a turn (no model or
+					// no API key), leave the prompt in the editor instead of
+					// throwing after the session has already switched.
+					try {
+						await fresh.sendUserMessage(edited);
+					} catch (err) {
+						fresh.ui.setEditorText(edited);
+						fresh.ui.notify(
+							`Handoff prompt is ready to submit: ${err instanceof Error ? err.message : String(err)}`,
+							"warning",
+						);
 					}
 				},
 			});

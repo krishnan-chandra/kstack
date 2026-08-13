@@ -2,7 +2,7 @@
 
 Continue work in a fresh, lean Pi session while keeping a durable reference to the previous session's history.
 
-`/handoff` does **not** copy the old conversation into the new context and does not call an LLM to summarize it. It builds a small editable prompt containing the user's goal and the previous session reference, then opens a linked replacement session. The next agent uses read-only handoff tools to retrieve only the history it needs.
+`/handoff` does **not** copy the old conversation into the new context and does not call an LLM to summarize it. It builds a small editable prompt containing the user's goal and the previous session reference. Saving that editor is the only confirmation: the linked replacement session starts immediately with the saved prompt. The next agent uses read-only handoff tools to retrieve only the history it needs.
 
 The sessions are linked twice:
 
@@ -45,7 +45,7 @@ Session ID: <uuid>  CWD: /path/to/project
 Lookup: use the active path above; if it is later archived, use read_session_archive with the exact session ID (or search_session_archive with session_id to search within it)
 ```
 
-Edit or cancel this prompt before any session replacement occurs. After the switch, submit it when ready.
+Edit or cancel this prompt before any session replacement occurs. Saving it starts the replacement session and sends the prompt. Cancelling leaves the old session active.
 
 ## Read-only history tools
 
@@ -57,13 +57,14 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 ## Behavior notes
 
 - **Reference-only:** no conversation serialization, synthesis call, generated summary, or inherited conversation payload.
-- **Immediate naming:** the replacement session is named from the handoff goal during setup, before its first user message is submitted.
+- **Immediate naming:** the replacement session is named from the handoff goal during setup, before the confirmed prompt is sent.
 - **On-demand history:** the replacement agent retrieves normalized recent entries or targeted matches through the handoff-specific tools.
 - **Model selection:** `--model` switches to the requested model right before the replacement session is created; without it, the parent session's active model is pinned so the new session starts on it. Both paths use `pi.setModel()` before `ctx.newSession()`, because a brand-new session resolves its model from the configured default. An unknown or ambiguous model reference fails before the editor opens; a requested model without an API key cancels the handoff. Choosing a model also persists it as the configured default, the same as `/model` or `Ctrl+P`.
 - **Model selection limits:** this mechanism works in the default configuration. A startup `pi --model` flag or active model scoping (`--models` / `enabledModels`) takes precedence over it; when that happens the handoff warns about the model the replacement session actually started on instead of claiming the requested one. With scoping active, `--model` only accepts scoped models. Inheritance is best effort: if the parent model cannot be pinned (e.g. its credentials were removed), the handoff proceeds on the configured default and says so.
-- **No model required:** `/handoff` works even when no model is currently selected because the command itself makes no model call.
+- **No model required to open the handoff:** `/handoff` itself still makes no model call. Auto-start needs a usable model in the replacement session; otherwise the confirmed prompt stays in the editor.
 - **Persisted sessions only:** ephemeral `--no-session` sessions are rejected because they have no durable history artifact for the next agent to inspect.
 - **Interactive only:** the command requires TUI mode so the user can edit the continuation prompt.
+- **One confirmation:** saving the editor both confirms the prompt and starts the replacement session. There is no second submit after the switch. If the new session cannot start a turn (no model or no API key), the confirmed prompt is left in the editor instead.
 - **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active. If an explicit `--model` switch was already applied, it is rolled back on the parent session when the replacement is cancelled or fails.
 
 ## Tests
@@ -72,4 +73,4 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 node --test extensions/handoff/*.test.ts
 ```
 
-The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, cancellation paths, stale-context safety, model flag parsing, model resolution, inheritance, explicit model switching, model restoration on cancelled or failed handoffs, scoped-model validation, and override detection without making any model calls.
+The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, one-confirmation auto-start, cancellation paths, stale-context safety, model flag parsing, model resolution, inheritance, explicit model switching, model restoration on cancelled or failed handoffs, scoped-model validation, and override detection without making any model calls.

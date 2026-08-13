@@ -12,7 +12,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | --- | --- |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including unnamed current and inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
-| [`handoff`](extensions/handoff/) | Opens a lean replacement session with an editable reference prompt and read-only tools for normalized, on-demand access to the linked session's active or archived history. |
+| [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, then gives read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements with a distinct small/fast model, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations. Supports local jj stacks and isolated managed Git worktrees. |
 
@@ -64,7 +64,7 @@ subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 Kstack names an unnamed session from the first task when `/plan-implement` or
 `/kstack` starts. `/handoff` names its replacement session from the handoff goal
-before that session's first user message. Existing names are never overwritten.
+before sending that session's first user message. Existing names are never overwritten.
 Keep names short and specific so `/resume` and archive selection stay readable.
 
 For workflows started outside those commands, use Pi's built-in naming support:
