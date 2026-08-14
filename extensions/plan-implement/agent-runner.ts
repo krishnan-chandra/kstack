@@ -1,31 +1,11 @@
 /** Isolated planner/implementer Pi subprocess lifecycle. */
 
-import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { basename } from "node:path";
-import { JsonLineParser } from "../shared/pi-json-lines.ts";
+import { getPiInvocation, runChildAgent, truncateHeadUtf8, type ChildRunnerDeps, type SpawnImpl, type SpawnedProcess } from "../shared/child-agent-runner.ts";
 import { LIMITS, type AgentRole, type AgentRunResult, type DeliveryMode, type UsageSummary, type WorkLocation } from "./types.ts";
 
-export interface SpawnedProcess {
-	stdout: { on(event: "data", cb: (data: Buffer) => void): void };
-	stderr: { on(event: "data", cb: (data: Buffer) => void): void };
-	on(event: "close", cb: (code: number | null) => void): void;
-	on(event: "error", cb: (error: Error) => void): void;
-	kill(signal?: string): boolean;
-	killed: boolean;
-	pid?: number;
-}
-
-export type SpawnImpl = (command: string, args: string[], options: Record<string, unknown>) => SpawnedProcess;
-
-export interface RunnerDeps {
-	spawnImpl?: SpawnImpl;
-	piInvocation?: (args: string[]) => { command: string; args: string[] };
-	killGraceMs?: number;
+export type { SpawnImpl, SpawnedProcess };
+export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs" | "maxRuntimeMs"> {
 	timeoutMs?: number;
-	outputCapBytes?: number;
-	stderrCapBytes?: number;
-	stdoutLineCapBytes?: number;
 }
 
 export interface BuildChildArgsOptions {
@@ -109,34 +89,10 @@ function expandRepeatedFlag(flag: string, values: readonly string[] | undefined)
 	return args;
 }
 
-export function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
-	}
-	const execName = basename(process.execPath).toLowerCase();
-	if (!/^(node|bun)(\.exe)?$/.test(execName)) return { command: process.execPath, args };
-	return { command: "pi", args };
-}
+export { getPiInvocation };
 
 export function truncateUtf8(text: string, maxBytes: number, label = "Output"): string {
-	const bytes = Buffer.from(text, "utf8");
-	if (bytes.length <= maxBytes) return text;
-	let content = bytes.subarray(0, maxBytes).toString("utf8");
-	while (Buffer.byteLength(content, "utf8") > maxBytes) content = content.slice(0, -1);
-	return `${content}\n\n[${label} truncated at ${maxBytes} bytes.]`;
-}
-
-function emptyUsage(): UsageSummary {
-	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-}
-
-function summarizeTool(toolName: string, args: Record<string, unknown> | undefined): string {
-	const value = Object.values(args ?? {}).find((entry): entry is string => typeof entry === "string");
-	if (!value) return toolName;
-	const compact = value.length > 48 ? `${value.slice(0, 47)}…` : value;
-	return `${toolName} ${compact}`;
+	return truncateHeadUtf8(text, maxBytes, label);
 }
 
 export interface RunAgentOptions extends BuildChildArgsOptions {
@@ -146,173 +102,19 @@ export interface RunAgentOptions extends BuildChildArgsOptions {
 	onProgress?: (progress: { role: AgentRole; turns: number; activity: string }) => void;
 }
 
-export function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
+export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
 	const deps = options.deps ?? {};
-	const spawnImpl = deps.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
-	const invocation = (deps.piInvocation ?? getPiInvocation)(buildChildArgs(options));
-	const outputCap =
-		deps.outputCapBytes ??
-		(options.role === "planner" ? LIMITS.plannerOutputBytes : LIMITS.implementerOutputBytes);	const stderrCap = deps.stderrCapBytes ?? LIMITS.stderrBytes;
-	const stdoutLineCap = deps.stdoutLineCapBytes ?? LIMITS.stdoutLineBytes;
 	const timeoutMs = deps.timeoutMs ?? LIMITS.defaultTimeoutMinutes * 60_000;
-	const killGraceMs = deps.killGraceMs ?? LIMITS.killGraceMs;
-
-	return new Promise<AgentRunResult>((resolve) => {
-		let process: SpawnedProcess;
-		try {
-			process = spawnImpl(invocation.command, invocation.args, {
-				cwd: options.cwd,
-				shell: false,
-				detached: processPlatformSupportsGroups(),
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-		} catch (error) {
-			resolve({ status: "failed", role: options.role, model: options.model, error: `Spawn failed: ${(error as Error).message}` });
-			return;
-		}
-
-		const usage = emptyUsage();
-		let finalText = "";
-		let stderr = "";
-		let stopReason: string | undefined;
-		let errorMessage: string | undefined;
-		let aborted = false;
-		let timedOut = false;
-		let protocolError: string | undefined;
-		let protocolKillStarted = false;
-		let closed = false;
-		let settled = false;
-		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-		let graceTimer: ReturnType<typeof setTimeout> | undefined;
-
-		const parser = new JsonLineParser((event) => {
-			if (event.type === "tool_execution_start" && event.toolName) {
-				options.onProgress?.({ role: options.role, turns: usage.turns, activity: summarizeTool(event.toolName, event.args) });
-				return;
-			}
-			if (event.type !== "message_end" || event.message?.role !== "assistant") return;
-			const message = event.message;
-			usage.turns++;
-			usage.input += message.usage?.input ?? 0;
-			usage.output += message.usage?.output ?? 0;
-			usage.cacheRead += message.usage?.cacheRead ?? 0;
-			usage.cacheWrite += message.usage?.cacheWrite ?? 0;
-			usage.cost += message.usage?.cost?.total ?? 0;
-			stopReason = message.stopReason ?? stopReason;
-			errorMessage = message.errorMessage ?? errorMessage;
-			const text = (message.content ?? [])
-				.filter((part) => part.type === "text" && part.text)
-				.map((part) => part.text)
-				.join("\n");
-			if (text) finalText = text;
-			options.onProgress?.({ role: options.role, turns: usage.turns, activity: "thinking" });
-		}, {
-			maxLineBytes: stdoutLineCap,
-			onOverflow: (maxBytes) => {
-				protocolError = `Child emitted a JSONL stdout line larger than ${maxBytes} bytes.`;
-			},
-		});
-
-		process.stdout.on("data", (data) => {
-			parser.push(data);
-			if (protocolError && !protocolKillStarted) {
-				protocolKillStarted = true;
-				killTree("SIGTERM");
-				startEscalation();
-			}
-		});
-		process.stderr.on("data", (data) => {
-			if (Buffer.byteLength(stderr, "utf8") < stderrCap) {
-				stderr = truncateUtf8(stderr + data.toString("utf8"), stderrCap, "stderr");
-			}
-		});
-
-		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
-			try {
-				if (processPlatformSupportsGroups() && process.pid) globalThis.process.kill(-process.pid, signal);
-				else process.kill(signal);
-			} catch {
-				try {
-					process.kill(signal);
-				} catch {
-					// Process already exited.
-				}
-			}
-		};
-
-		const startEscalation = () => {
-			if (graceTimer) return;
-			graceTimer = setTimeout(() => {
-				if (!closed) killTree("SIGKILL");
-			}, killGraceMs);
-			graceTimer.unref?.();
-		};
-
-		const abortProcess = () => {
-			aborted = true;
-			killTree("SIGTERM");
-			startEscalation();
-		};
-
-		const finish = (result: AgentRunResult) => {
-			if (settled) return;
-			settled = true;
-			if (timeoutTimer) clearTimeout(timeoutTimer);
-			if (graceTimer) clearTimeout(graceTimer);
-			options.signal?.removeEventListener("abort", abortProcess);
-			resolve(result);
-		};
-
-		if (options.signal) {
-			if (options.signal.aborted) abortProcess();
-			else options.signal.addEventListener("abort", abortProcess, { once: true });
-		}
-
-		timeoutTimer = setTimeout(() => {
-			timedOut = true;
-			killTree("SIGTERM");
-			startEscalation();
-		}, timeoutMs);
-		timeoutTimer.unref?.();
-
-		process.on("error", (error) => {
-			finish({ status: "failed", role: options.role, model: options.model, error: `Spawn failed: ${error.message}` });
-		});
-
-		process.on("close", (code) => {
-			closed = true;
-			parser.flush();
-			if (aborted) {
-				finish({ status: "aborted", role: options.role, model: options.model });
-				return;
-			}
-			if (timedOut) {
-				finish({ status: "failed", role: options.role, model: options.model, error: `Timed out after ${Math.round(timeoutMs / 1000)}s.` });
-				return;
-			}
-			if (protocolError) {
-				finish({ status: "failed", role: options.role, model: options.model, error: protocolError });
-				return;
-			}
-			if ((code ?? 1) !== 0 || stopReason === "error" || stopReason === "aborted") {
-				finish({
-					status: "failed",
-					role: options.role,
-					model: options.model,
-					error: errorMessage || stderr.trim() || (stopReason ? `stop reason: ${stopReason}` : `exit code ${code ?? 1}`),
-				});
-				return;
-			}
-			const output = truncateUtf8(finalText.trim(), outputCap);
-			if (!output) {
-				finish({ status: "failed", role: options.role, model: options.model, error: `${options.role} produced no final output.` });
-				return;
-			}
-			finish({ status: "completed", role: options.role, model: options.model, output, usage });
-		});
+	const result = await runChildAgent({
+		args: buildChildArgs(options), cwd: options.cwd, signal: options.signal,
+		deps: { ...deps, idleTimeoutMs: undefined, maxRuntimeMs: timeoutMs, outputCapBytes: deps.outputCapBytes ?? (options.role === "planner" ? LIMITS.plannerOutputBytes : LIMITS.implementerOutputBytes), stderrCapBytes: deps.stderrCapBytes ?? LIMITS.stderrBytes, stdoutLineCapBytes: deps.stdoutLineCapBytes ?? LIMITS.stdoutLineBytes, killGraceMs: deps.killGraceMs ?? LIMITS.killGraceMs },
+		onProgress: (progress) => options.onProgress?.({ role: options.role, turns: progress.turns, activity: progress.activity ?? "thinking" }),
 	});
-}
-
-function processPlatformSupportsGroups(): boolean {
-	return globalThis.process.platform !== "win32";
+	const identity = { role: options.role, model: options.model };
+	if (result.status === "completed") return { ...identity, status: "completed", output: result.output, usage: result.usage };
+	if (result.status === "aborted") return { ...identity, status: "aborted" };
+	let error = result.error;
+	if (error.startsWith("Timed out: exceeded max runtime")) error = `Timed out after ${Math.round(timeoutMs / 1000)}s.`;
+	if (error.startsWith("Child produced no output.")) error = `${options.role} produced no final output.`;
+	return { ...identity, status: "failed", error };
 }
