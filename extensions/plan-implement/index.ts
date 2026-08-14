@@ -59,6 +59,9 @@ function makeExec(pi: ExtensionAPI): ExecFn {
 
 export default function planImplementExtension(pi: ExtensionAPI): void {
 	const lifecycle = new WorkflowLifecycle();
+	// Extensions normally load before session_start; eager activation also keeps
+	// commands usable when an extension is loaded into an existing session.
+	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());
 	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 	pi.registerShortcut("ctrl+shift+i", {
@@ -132,7 +135,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const commandSession = lifecycle.currentSessionToken();
-		if (!commandSession) return;
+		if (!commandSession) {
+			notify("plan-implement has no active session; try again after the session starts.", "error");
+			return;
+		}
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
 		if (mode === "stack" && workLocation === "worktree") {

@@ -20,6 +20,9 @@ let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscript
 
 export default function (pi: ExtensionAPI): void {
 	const lifecycle = new PanelLifecycle();
+	// Extensions normally load before session_start; eager activation also keeps
+	// commands usable when an extension is loaded into an existing session.
+	lifecycle.startSession();
 
 	pi.registerShortcut("ctrl+shift+v", {
 		description: "Inspect panel review child transcripts",
@@ -96,7 +99,10 @@ export default function (pi: ExtensionAPI): void {
 			ctx.ui.notify("panel-review requires interactive (TUI/RPC) mode.", "error");
 			return { status: "failed", error: "panel-review requires interactive (TUI/RPC) mode." };
 		}
-		if (!session) return { status: "failed", error: "no active session" };
+		if (!session) {
+			ctx.ui.notify("panel-review has no active session; try again after the session starts.", "error");
+			return { status: "failed", error: "no active session" };
+		}
 		if (lifecycle.isRunning()) {
 			notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
 			return { status: "failed", error: "a panel review is already running" };

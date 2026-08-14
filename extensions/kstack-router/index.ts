@@ -33,6 +33,9 @@ interface PendingDispatch {
 
 export default function (pi: ExtensionAPI): void {
 	const lifecycle = new RouterLifecycle();
+	// Extensions normally load before session_start; eager activation also keeps
+	// commands usable when an extension is loaded into an existing session.
+	lifecycle.startSession();
 
 	// Store a pending dispatch token so before_agent_start can access it.
 	let pendingDispatch: PendingDispatch | undefined;
@@ -124,7 +127,10 @@ export default function (pi: ExtensionAPI): void {
 			}
 
 			const sessionToken = lifecycle.sessionToken();
-			if (!sessionToken) return;
+			if (!sessionToken) {
+				notify("kstack-router has no active session; try again after the session starts.", "error");
+				return;
+			}
 
 			// Validate the catalog (internal consistency check).
 			const catalogErrors = validateCatalog();
