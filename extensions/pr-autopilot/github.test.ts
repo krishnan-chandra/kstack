@@ -52,6 +52,16 @@ describe("github parsers", () => {
 			assert.equal(checks[2].status, "pending");
 			assert.equal(checks[2].conclusion, null);
 		});
+
+		it("keeps cancelled checks distinct from neutral checks", () => {
+			const checks = parsePrChecksJson(JSON.stringify([
+				{ name: "cancelled", state: "CANCELLED", bucket: "cancel" },
+				{ name: "allowed-neutral", state: "NEUTRAL", bucket: "neutral" },
+			]));
+			assert.equal(checks[0].status, "cancelled");
+			assert.equal(checks[0].conclusion, "cancelled");
+			assert.equal(checks[1].status, "neutral");
+		});
 	});
 
 	describe("parseReviewThreadsPage", () => {
@@ -107,6 +117,26 @@ describe("github parsers", () => {
 			assert.equal(thread.id, "issue-comment-9");
 			assert.equal(thread.source, "issue-comment");
 			assert.equal(thread.commenter, "bugbot");
+		});
+
+		it("accepts slurped pagination and keeps page order", () => {
+			const comments = parseIssueComments(JSON.stringify([
+				[{ id: 1, user: { login: "first" }, body: "first page" }],
+				[{ id: 2, user: { login: "second" }, body: "second page" }],
+			]));
+			assert.deepEqual(comments.map((comment) => comment.id), [1, 2]);
+		});
+
+		it("filters autopilot replies before retaining the newest bounded set", () => {
+			const rows = Array.from({ length: 105 }, (_, index) => ({
+				id: index + 1,
+				user: { login: "reviewer" },
+				body: index === 104 ? "<!-- pr-autopilot -->\nhandled" : `comment ${index + 1}`,
+			}));
+			const comments = parseIssueComments(JSON.stringify(rows));
+			assert.equal(comments.length, 100);
+			assert.equal(comments[0].id, 5);
+			assert.equal(comments.at(-1)?.id, 104);
 		});
 	});
 

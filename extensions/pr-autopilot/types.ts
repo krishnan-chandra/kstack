@@ -47,8 +47,8 @@ export interface ResolvedAutopilotConfig {
 /** A GitHub check run / CI job as surfaced by `gh pr checks`. */
 export interface CheckRun {
 	name: string;
-	status: "success" | "failure" | "pending" | "neutral" | "skipped";
-	conclusion: "success" | "failure" | "pending" | "neutral" | "skipped" | null;
+	status: "success" | "failure" | "cancelled" | "pending" | "neutral" | "skipped";
+	conclusion: "success" | "failure" | "cancelled" | "pending" | "neutral" | "skipped" | null;
 	detailsUrl?: string;
 	/** GitHub Actions run id, when the details URL points at an Actions run. */
 	runId?: string;
@@ -138,6 +138,7 @@ export interface CycleResult {
 
 /** Persisted across ticks so a later drive/watch resume does not re-handle work. */
 export interface AutopilotPersistedState {
+	repoKey: string;
 	prNumber: number;
 	headSha: string;
 	/** Review items whose reply and, when applicable, resolution both succeeded. */
@@ -205,6 +206,8 @@ export const LIMITS = {
 	logExcerptBytes: 6 * 1024,
 	/** Body slice shown to the triager (full body still used for sensitivity). */
 	threadBodyChars: 400,
+	/** Most recent non-autopilot issue comments retained after pagination. */
+	issueComments: 100,
 	/** Drive mode: max fix/push cycles (watches do not count). */
 	maxDriveCycles: 3,
 	/** Watch mode: max fix/push cycles while waiting on GitHub. */

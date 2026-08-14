@@ -406,8 +406,9 @@ export function parseIssueComments(stdout: string): RawIssueComment[] {
 		return [];
 	}
 	if (!Array.isArray(parsed)) return [];
+	const items: unknown[] = parsed.every(Array.isArray) ? parsed.flat() : parsed;
 	const comments: RawIssueComment[] = [];
-	for (const item of parsed) {
+	for (const item of items) {
 		if (!isRecord(item)) continue;
 		const id = asNumber(item.id);
 		if (id === undefined || !Number.isInteger(id) || id < 1) continue;
@@ -421,7 +422,7 @@ export function parseIssueComments(stdout: string): RawIssueComment[] {
 			url: asString(item.html_url) ?? asString(item.url),
 		});
 	}
-	return comments;
+	return comments.slice(-LIMITS.issueComments);
 }
 
 export function issueCommentToThread(comment: RawIssueComment): ReviewThread {
@@ -444,6 +445,8 @@ export async function getIssueComments(
 		"api",
 		`repos/{owner}/{repo}/issues/${prNumber}/comments`,
 		"--method", "GET",
+		"--paginate",
+		"--slurp",
 	]);
 	if (result.code !== 0) return { ...result, threads: [] };
 	return { ...result, threads: parseIssueComments(result.stdout.trim() || "[]").map(issueCommentToThread) };
@@ -469,7 +472,8 @@ function parseCheckState(state: string | undefined, bucket: string | undefined):
 	if (token === "pass" || token === "success") return "success";
 	if (token === "fail" || token === "failure" || token === "error") return "failure";
 	if (token === "skipping" || token === "skipped") return "skipped";
-	if (token === "cancel" || token === "cancelled" || token === "neutral") return "neutral";
+	if (token === "cancel" || token === "cancelled") return "cancelled";
+	if (token === "neutral") return "neutral";
 	return "pending";
 }
 
@@ -618,52 +622,6 @@ export async function resolveReviewThread(
 
 export async function markPrReady(exec: ExecFn, cwd: string, prNumber: number): Promise<ExecFnResult> {
 	return gh(exec, cwd, ["pr", "ready", String(prNumber)]);
-}
-
-/** Check whether the PR head has conflicts against its base. */
-export async function checkConflicts(exec: ExecFn, cwd: string, prNumber: number): Promise<ExecFnResult & { hasConflicts: boolean }> {
-	const result = await gh(exec, cwd, [
-		"pr", "view",
-		String(prNumber),
-		"--json", "mergeable,mergeStateStatus",
-	]);
-	if (result.code !== 0) {
-		return { ...result, hasConflicts: false };
-	}
-	try {
-		const parsed: unknown = JSON.parse(result.stdout.trim() || "{}");
-		const mergeable = isRecord(parsed) ? asString(parsed.mergeable) : undefined;
-		const status = isRecord(parsed) ? parseMergeStateStatus(parsed.mergeStateStatus) : "UNKNOWN";
-		return { ...result, hasConflicts: mergeable === "CONFLICTING" || mergeable === "false" || status === "DIRTY" };
-	} catch {
-		return { ...result, hasConflicts: false };
-	}
-}
-
-/**
- * Check whether the PR is behind its base (stale / needs an update-branch merge).
- */
-export async function checkStaleBase(
-	exec: ExecFn,
-	cwd: string,
-	prNumber: number,
-): Promise<ExecFnResult & { isStale: boolean }> {
-	const result = await gh(exec, cwd, [
-		"pr", "view",
-		String(prNumber),
-		"--json", "mergeStateStatus",
-		"-q", ".mergeStateStatus",
-	]);
-	if (result.code !== 0) {
-		return { ...result, isStale: false };
-	}
-	const status = parseMergeStateStatus(result.stdout.trim());
-	return { ...result, isStale: status === "BEHIND" };
-}
-
-/** Post a comment on a PR. Used for reporting blockers the autopilot will not auto-resolve. */
-export async function postPRComment(exec: ExecFn, cwd: string, prNumber: number, body: string): Promise<ExecFnResult> {
-	return gh(exec, cwd, ["pr", "comment", String(prNumber), "--body", body]);
 }
 
 export async function currentBranch(exec: ExecFn, cwd: string): Promise<ExecFnResult & { branch?: string }> {
