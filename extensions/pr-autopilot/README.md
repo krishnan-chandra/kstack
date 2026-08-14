@@ -49,7 +49,7 @@ Config lives in the `"pr-autopilot"` section of
   "pr-autopilot": {
     "models": [
       { "label": "luna", "model": "openai/gpt-5.6-luna", "thinking": "low" },
-      { "label": "gemini", "model": "openrouter/google/gemini-3.7-flash", "thinking": "low" },
+      { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "low" },
       { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" }
     ],
     "maxConcurrency": 3,

@@ -135,7 +135,7 @@ the `"panel-review"` section:
 {
   "panel-review": {
     "reviewers": [
-      { "label": "gemini", "model": "openrouter/google/gemini-3.7-flash", "thinking": "high" },
+      { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "high" },
       { "label": "opus", "model": "anthropic/claude-opus-4-6", "thinking": "medium" }
     ],
     "maxConcurrency": 5,
@@ -164,7 +164,7 @@ the `"panel-review"` section:
 - Without a config, a built-in low-cost default panel runs: **Opus 4.6**
   (`anthropic/claude-opus-4-6`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
   medium), **Kimi k3** (`openrouter/moonshotai/kimi-k3`, medium), **Gemini 3.7 Flash**
-  (`openrouter/google/gemini-3.7-flash`, high). Defaults that are unavailable or
+  (`google-vertex/gemini-3.7-flash`, high). Defaults that are unavailable or
   unauthenticated are skipped with a warning; write a config to override the
   panel.
 - If fewer than two default models are available, up to five distinct models

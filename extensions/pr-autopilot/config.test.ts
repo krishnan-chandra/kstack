@@ -9,7 +9,7 @@ describe("pr-autopilot config", () => {
 	it("defaults to the three tiny models", () => {
 		assert.equal(DEFAULT_TINY_MODELS.length, 3);
 		assert.equal(DEFAULT_TINY_MODELS[0].model, "openai/gpt-5.6-luna");
-		assert.equal(DEFAULT_TINY_MODELS[1].model, "openrouter/google/gemini-3.7-flash");
+		assert.equal(DEFAULT_TINY_MODELS[1].model, "google-vertex/gemini-3.7-flash");
 		assert.equal(DEFAULT_TINY_MODELS[2].model, "openrouter/deepseek/deepseek-v4-flash");
 		for (const m of DEFAULT_TINY_MODELS) {
 			assert.equal(m.thinking, "low");
@@ -20,7 +20,7 @@ describe("pr-autopilot config", () => {
 		const result = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-				{ label: "lite", model: "openrouter/google/gemini-3.7-flash" },
+				{ label: "lite", model: "google-vertex/gemini-3.7-flash" },
 			],
 			maxConcurrency: 2,
 			timeoutMinutes: 5,
@@ -41,7 +41,7 @@ describe("pr-autopilot config", () => {
 		const result = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "high" },
-				{ label: "lite", model: "openrouter/google/gemini-3.7-flash" },
+				{ label: "lite", model: "google-vertex/gemini-3.7-flash" },
 			],
 		});
 		assert.equal(result.ok, false);
@@ -137,7 +137,7 @@ describe("pr-autopilot config", () => {
 		const valid = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-				{ label: "lite", model: "openrouter/google/gemini-3.7-flash", thinking: "low" },
+				{ label: "lite", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
 			],
 		});
 		assert.equal(valid.ok, true);
@@ -169,7 +169,7 @@ describe("pr-autopilot config", () => {
 				{ status: "missing", path: dir },
 				{
 					available: (provider, modelId) =>
-						provider === "openai" || (provider === "openrouter" && modelId.includes("gemini")),
+						provider === "openai" || (provider === "google-vertex" && modelId.includes("gemini")),
 				},
 			);
 			assert.equal(result.ok, true);
@@ -199,7 +199,7 @@ describe("pr-autopilot config", () => {
 					"pr-autopilot": {
 						models: [
 							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-							{ label: "lite", model: "openrouter/google/gemini-3.7-flash", thinking: "low" },
+							{ label: "lite", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
 						],
 					},
 				}),
@@ -220,7 +220,7 @@ describe("pr-autopilot config", () => {
 					"pr-babysit": {
 						models: [
 							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-							{ label: "lite", model: "openrouter/google/gemini-3.7-flash", thinking: "low" },
+							{ label: "lite", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
 						],
 					},
 				}),

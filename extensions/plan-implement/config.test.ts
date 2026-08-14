@@ -64,7 +64,7 @@ describe("plan-implement config", () => {
 	it("uses the configured implementer fallback set", () => {
 		assert.deepEqual(DEFAULT_IMPLEMENTERS, [
 			{ model: "openai/gpt-5.6-terra", thinking: "medium" },
-			{ model: "openrouter/google/gemini-3.7-flash", thinking: "high" },
+			{ model: "google-vertex/gemini-3.7-flash", thinking: "high" },
 			{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
 			{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 		]);

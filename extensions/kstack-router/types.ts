@@ -61,7 +61,7 @@ export interface RouterConfig {
 }
 
 export const DEFAULTS = {
-	classifierModel: "openrouter/google/gemini-3.7-flash",
+	classifierModel: "google-vertex/gemini-3.7-flash",
 	classifierThinking: "low",
 	timeoutSeconds: 90,
 	maxTaskBytes: 32 * 1024,
