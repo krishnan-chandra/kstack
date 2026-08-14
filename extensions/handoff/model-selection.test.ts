@@ -29,11 +29,21 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "implement teams support",
 			modelRef: undefined,
+			archive: false,
 		});
 	});
 
 	it("handles empty input", () => {
-		assert.deepEqual(parseHandoffArgs("   "), { ok: true, goal: "", modelRef: undefined });
+		assert.deepEqual(parseHandoffArgs("   "), { ok: true, goal: "", modelRef: undefined, archive: false });
+	});
+
+	it("extracts the opt-in archive flag", () => {
+		assert.deepEqual(parseHandoffArgs("--archive continue the work"), {
+			ok: true,
+			goal: "continue the work",
+			modelRef: undefined,
+			archive: true,
+		});
 	});
 
 	it("extracts --model before the goal", () => {
@@ -41,6 +51,7 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "execute phase one",
 			modelRef: "anthropic/claude-opus-4-6",
+			archive: false,
 		});
 	});
 
@@ -49,6 +60,7 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "execute phase one",
 			modelRef: "openai/gpt-5.2",
+			archive: false,
 		});
 	});
 
@@ -57,6 +69,7 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "continue",
 			modelRef: "google/gemini-3-pro",
+			archive: false,
 		});
 	});
 
@@ -65,6 +78,7 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "continue",
 			modelRef: "google/gemini-3-pro",
+			archive: false,
 		});
 	});
 
@@ -73,6 +87,7 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "continue the work",
 			modelRef: "openai/gpt-5.2:high",
+			archive: false,
 		});
 	});
 
@@ -81,6 +96,7 @@ describe("parseHandoffArgs", () => {
 			ok: true,
 			goal: "finish the refactor",
 			modelRef: "anthropic/claude-opus-4-6:max",
+			archive: false,
 		});
 	});
 

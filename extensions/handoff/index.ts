@@ -33,7 +33,7 @@ export default async function (pi: ExtensionAPI) {
 
 	pi.registerCommand("handoff", {
 		description:
-			"Continue in a lean session linked to the current session's history (optional --model provider/model-id[:effort])",
+			"Continue in a lean session linked to current history (optional --archive, --model provider/model-id[:effort])",
 		handler: createHandoffHandler(pi),
 	});
 
