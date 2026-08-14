@@ -14,6 +14,7 @@ Run the full test suite and typecheck from the repository root:
 ```bash
 npm test
 npm run typecheck
+npm run lint
 ```
 
 Use a colocated test glob for a focused iteration, such as
