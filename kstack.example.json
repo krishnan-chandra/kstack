@@ -2,7 +2,7 @@
 	"panel-review": {
 		"reviewers": [
 			{ "label": "opus", "model": "anthropic/claude-opus-4-6", "thinking": "medium" },
-			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-pro", "thinking": "medium" },
+			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "medium" },
 			{ "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" },
 			{ "label": "gemini", "model": "openrouter/google/gemini-3.7-flash", "thinking": "high" }
 		],
@@ -17,7 +17,7 @@
 		"timeoutMinutes": 30
 	},
 	"fast-implement": {
-		"implementer": { "model": "openai/gpt-5.6-terra", "thinking": "medium" },
+		"implementer": { "model": "openai/gpt-5.6-sol", "thinking": "low" },
 		"timeoutMinutes": 30
 	},
 	"kstack-router": {
