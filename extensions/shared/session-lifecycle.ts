@@ -38,18 +38,34 @@ export class SessionLifecycle {
 	protected onShutdown(): void {}
 }
 
-/** Generation-counted session guard allowing at most one active run. */
+/** Generation-counted session guard allowing at most one abortable run. */
 export class SessionRunLifecycle extends SessionLifecycle {
 	private running = false;
+	private controller: AbortController | undefined;
 
 	beginRun(token: SessionToken): SessionToken | undefined {
 		if (this.running || !this.isSessionCurrent(token)) return undefined;
 		this.running = true;
+		this.controller = new AbortController();
 		return this.currentSessionToken();
 	}
 
+	/** Return the active run's signal when the token is current. */
+	runSignal(token: SessionToken): AbortSignal | undefined {
+		return this.isCurrent(token) ? this.controller?.signal : undefined;
+	}
+
+	/** Abort the active run. Returns false when no run can be aborted. */
+	abortRun(): boolean {
+		if (!this.controller || this.controller.signal.aborted) return false;
+		this.controller.abort();
+		return true;
+	}
+
 	endRun(token: SessionToken): void {
-		if (this.isSessionCurrent(token)) this.running = false;
+		if (!this.isCurrent(token)) return;
+		this.running = false;
+		this.controller = undefined;
 	}
 
 	isRunning(): boolean {
@@ -61,10 +77,14 @@ export class SessionRunLifecycle extends SessionLifecycle {
 	}
 
 	protected override onStart(): void {
+		this.controller?.abort();
 		this.running = false;
+		this.controller = undefined;
 	}
 
 	protected override onShutdown(): void {
+		this.controller?.abort();
 		this.running = false;
+		this.controller = undefined;
 	}
 }

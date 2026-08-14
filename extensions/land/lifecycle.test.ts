@@ -21,3 +21,25 @@ test("allows one active run and shutdown aborts it", () => {
 	lifecycle.shutdownSession();
 	assert.equal(token.signal.aborted, true);
 });
+
+test("starting a replacement session aborts the active run", () => {
+	const lifecycle = new LandLifecycle();
+	lifecycle.startSession();
+	const token = lifecycle.begin();
+	assert.ok(token);
+
+	lifecycle.startSession();
+
+	assert.equal(token.signal.aborted, true);
+	assert.equal(lifecycle.isRunning(), false);
+});
+
+test("abort returns false while idle and after the run is already aborted", () => {
+	const lifecycle = new LandLifecycle();
+	lifecycle.startSession();
+	assert.equal(lifecycle.abort(), false);
+	const token = lifecycle.begin();
+	assert.ok(token);
+	assert.equal(lifecycle.abort(), true);
+	assert.equal(lifecycle.abort(), false);
+});
