@@ -16,21 +16,37 @@ not numbered and not superseded by anything below.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001  | Fix cross-process schema race in session-archive | P1 | S | — | DONE |
-| 002  | Add root package.json and test scripts | P1 | S | 001 | DONE |
-| 003  | Add a typecheck gate and fix all type errors | P1 | L | 002 | DONE |
-| 004  | Extract one shared child-agent runner | P2 | L | 003 | DONE |
-| 005  | Extract one shared kstack.json config loader | P2 | M | 003 | DONE |
-| 006  | Fix pr-autopilot GitHub state-reading bugs | P2 | M | — | DONE |
-| 007  | Guard panel-review against concurrent runs | P2 | S | — | DONE |
-| 008  | Slim plan-implement/index.ts into phase modules | P3 | M | 003, 004 | DONE |
-| 009  | Split the pr-autopilot driver module | P3 | M | 004 | DONE |
-| 010  | Cache parsed handoff history between tool calls | P3 | S | — | DONE |
-| 011  | Add a root AGENTS.md | P3 | S | — | DONE |
+| 001  | Fix cross-process schema race in session-archive | P1 | S | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #31) |
+| 002  | Add root package.json and test scripts | P1 | S | 001 | DONE — verified 2026-08-14 @ `7e18fff` (PR #32) |
+| 003  | Add a typecheck gate and fix all type errors | P1 | L | 002 | DONE — verified 2026-08-14 @ `7e18fff` (PR #33; `npm run typecheck` clean) |
+| 004  | Extract one shared child-agent runner | P2 | L | 003 | DONE — verified 2026-08-14 @ `7e18fff` (PR #34; `getPiInvocation` only in shared/) |
+| 005  | Extract one shared kstack.json config loader | P2 | M | 003 | DONE — verified 2026-08-14 @ `7e18fff` (PR #35; residual `PI_CODING_AGENT_DIR` hits are doc comments) |
+| 006  | Fix pr-autopilot GitHub state-reading bugs | P2 | M | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #36; repo-keyed state, `cancelled` status, dead exports gone) |
+| 007  | Guard panel-review against concurrent runs | P2 | S | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #37; lifecycle.ts present) |
+| 008  | Slim plan-implement/index.ts into phase modules | P3 | M | 003, 004 | DONE — verified 2026-08-14 @ `7e18fff` (PR #38; index.ts 191 lines, phases.ts present) |
+| 009  | Split the pr-autopilot driver module | P3 | M | 004 | DONE — verified 2026-08-14 @ `7e18fff` (PR #39; driver.ts + autopilot-operations.ts, autopilot.ts is a shim) |
+| 010  | Cache parsed handoff history between tool calls | P3 | S | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #40; `clearHandoffParseCache` exported) |
+| 011  | Add a root AGENTS.md | P3 | S | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #41; 47 lines) |
+| 012  | Extract one shared session-lifecycle core | P2 | M | — | TODO |
+| 013  | Characterization tests for the pr-autopilot drive loop | P2 | M | — | TODO |
+| 014  | Slim the kstack-router command handler | P3 | M | 012 (soft) | TODO |
+| 015  | Extract panel-review's run pipeline into phase modules | P3 | M | 012 (soft) | TODO |
+
+Reconciled on 2026-08-14 against `7e18fff`: full suite 667/667 pass, typecheck clean.
+Plans 012–015 added in the same reconcile session (second audit round over the
+refactored codebase; operator requested the lifecycle extraction explicitly).
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 
-## Dependency notes
+## Dependency notes (round 2)
+
+- 013 is independent and the highest-impact remaining item: the drive loop
+  pushes to real PRs and has zero direct tests.
+- 012 before 014/015 is soft ordering only (they churn the same extensions'
+  files); nothing breaks if reversed.
+- 014 and 015 are independent of each other.
+
+## Dependency notes (round 1)
 
 - 002 requires 001 because CI must start green: the suite currently has exactly one
   failing test (`archive-store.test.ts` "serializes concurrent imports from two
@@ -45,9 +61,21 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 
 ## Findings considered and rejected
 
-- **kstack-router command handler split** (`extensions/kstack-router/index.ts`, ~350-line
-  handler): real spaghetti growth, but the logic is linear, covered by a headless smoke
-  test, and lower-churn than plan-implement/pr-autopilot. Revisit after 008/009 land.
+Round 2 (2026-08-14, @ `7e18fff`):
+
+- **`noUncheckedIndexedAccess`**: measured at 197 new errors; `exactOptionalPropertyTypes`
+  at 96. Large mechanical sweeps with modest payoff now that the strict baseline exists;
+  revisit when the error counts drop naturally or a bug traces to unchecked indexing.
+- **`github.ts` size** (719 lines): large but cohesive — flat, independently tested `gh`
+  wrappers with no shared mutable state. Splitting adds navigation cost without reducing
+  coupling. Not worth doing.
+- **`handoff/index.test.ts` size** (849 lines): a test file; splitting has no leverage.
+- **kstack-router command handler split**: promoted to plan 014 this round (its round-1
+  deferral condition — "revisit after 008/009 land" — was met); the dispatch try/finally
+  hardening is folded into it as Step 1.
+
+Round 1 (@ `d0a9409`):
+
 - **Async `collectScope` in panel-review** (`review-scope.ts` uses `execFileSync` with a
   64 MB buffer on the extension-host event loop): the freeze is real but bounded and
   happens once, immediately before an interactive confirm. Low impact for typical diffs;

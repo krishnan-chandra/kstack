@@ -6,4 +6,3 @@ coverage/
 *.sqlite3-wal
 .workspace/
 __pycache__/
-plans/
