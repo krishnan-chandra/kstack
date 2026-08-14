@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
-import { type ChildRunnerDeps, runChildAgent } from "../shared/child-agent-runner.ts";
+import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { createCurrentWorkstreamBranch, verifyCommittedWorkstream } from "../shared/git-policy.ts";
 import { createManagedWorktree, planManagedWorktree } from "../shared/worktree.ts";
@@ -11,13 +11,9 @@ import { type FastImplementOutcome, type FastImplementRequest, LIMITS, type Reso
 const extensionDir = new URL(".", import.meta.url);
 const sharedPlaybooks = new URL("../shared/playbooks/", extensionDir);
 export function buildChildArgs(model: string, promptFile: string, taskFile: string): string[] {
+	// Keeps skills and context files available to the implementer.
 	return [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-		"--no-extensions",
-		"--no-prompt-templates",
+		...childIsolationArgs({ noSkills: false }),
 		"--model",
 		model,
 		"--append-system-prompt",

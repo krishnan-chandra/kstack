@@ -5,7 +5,8 @@
 | Module | Purpose |
 | --- | --- |
 | `change-kind.ts` | Defines the change-kind taxonomy, labels, and proof-obligation playbook names. |
-| `child-agent-runner.ts` | Runs bounded Pi child processes and parses their JSONL event streams. |
+| `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, and parses their JSONL event streams. |
+| `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
 | `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec`. |
 | `git-policy.ts` | Enforces current-workstream branch and committed-worktree postconditions. |

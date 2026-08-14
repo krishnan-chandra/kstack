@@ -69,6 +69,25 @@ const DEFAULT_LINE_CAP = 2 * 1024 * 1024;
 const DEFAULT_KILL_GRACE = 5000;
 const PREVIEW_CAP = 4096;
 
+export interface ChildIsolationOptions {
+	/** Pass --no-skills (default true; fast-implement sets false). */
+	noSkills?: boolean;
+	/** Pass --no-context-files (default false). */
+	noContextFiles?: boolean;
+	/** Pass --no-tools --no-approve (classifier only; default false). */
+	noToolsNoApprove?: boolean;
+}
+
+/** Canonical isolation prefix for isolated Pi child processes. */
+export function childIsolationArgs(options: ChildIsolationOptions = {}): string[] {
+	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions"];
+	if (options.noSkills !== false) args.push("--no-skills");
+	args.push("--no-prompt-templates");
+	if (options.noContextFiles) args.push("--no-context-files");
+	if (options.noToolsNoApprove) args.push("--no-tools", "--no-approve");
+	return args;
+}
+
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");

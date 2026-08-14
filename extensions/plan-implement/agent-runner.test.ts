@@ -137,8 +137,8 @@ describe("plan-implement child runner", () => {
 			assert.ok(skillAt > noSkillsAt, "--skill comes after --no-skills");
 			assert.ok(planner.includes(path), `planner re-adds ${path}`);
 		}
-		// Order: --no-skills immediately followed by the first --skill.
-		assert.equal(planner[noSkillsAt + 1], "--skill");
+		// Isolation flags use the shared canonical order, then skill re-add flags.
+		assert.ok(planner.indexOf("--skill") > noSkillsAt);
 		assert.match(planner.at(-1) ?? "", /stacked-PR/);
 
 		const implementer = buildChildArgs({

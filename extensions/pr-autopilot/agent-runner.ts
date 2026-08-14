@@ -1,6 +1,7 @@
 /** Thin pr-autopilot adapter around the shared child-agent lifecycle. */
 import {
 	type ChildRunnerDeps,
+	childIsolationArgs,
 	getPiInvocation,
 	runChildAgent,
 	type SpawnedProcess,
@@ -20,14 +21,7 @@ export function buildChildArgs(opts: {
 	tools?: string;
 }): string[] {
 	return [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-		"--no-extensions",
-		"--no-skills",
-		"--no-prompt-templates",
-		"--no-context-files",
+		...childIsolationArgs({ noContextFiles: true }),
 		...(opts.tools ? ["--tools", opts.tools] : []),
 		"--model",
 		opts.model,
