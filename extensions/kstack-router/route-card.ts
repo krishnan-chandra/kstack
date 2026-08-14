@@ -2,7 +2,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { type ChangeKind, changeKindLabel } from "../plan-implement/change-kind.ts";
+import { type ChangeKind, changeKindLabel } from "../shared/change-kind.ts";
 import type { DeliveryRecommendation, RouteId } from "./types.ts";
 
 export interface RouteCardDetails {

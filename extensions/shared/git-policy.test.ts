@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ExecFn } from "./delivery-mode.ts";
+import type { ExecFn } from "./git-exec.ts";
 import { createCurrentWorkstreamBranch, verifyCommittedWorkstream } from "./git-policy.ts";
 
 function fakeExec(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {

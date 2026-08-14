@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ExecFn, ExecFnResult } from "./delivery-mode.ts";
+import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 import { createManagedWorktree, planManagedWorktree, slugifyWorktreeTask } from "./worktree.ts";
 
 const BASE_SHA = "0123456789abcdef0123456789abcdef01234567";

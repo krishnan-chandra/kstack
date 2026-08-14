@@ -1,24 +1,14 @@
 /** Stack-mode preflight: jj/Git colocated workspace and immutable trunk() resolution. */
 
 import { realpathSync } from "node:fs";
+import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
+
+export type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const TRUNK_TEMPLATE = 'commit_id ++ "\\n"';
 const MIN_JJ_MAJOR = 0;
 const MIN_JJ_MINOR = 44;
-
-export interface ExecFnResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-/** Injected command runner so the preflight is unit-testable without real jj/git. */
-export type ExecFn = (
-	command: string,
-	args: string[],
-	options: { cwd: string; timeout?: number },
-) => Promise<ExecFnResult>;
 
 export interface StackPreflight {
 	ok: true;

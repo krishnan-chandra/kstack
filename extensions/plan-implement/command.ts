@@ -1,7 +1,7 @@
 /** Pure task validation, command parsing, and panel-review options. */
 
 import type { PanelArgs } from "../panel-review/types.ts";
-import { type ChangeKind, isChangeKind } from "./change-kind.ts";
+import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
 const DELIVERY_FLAGS = new Set(["--single", "--stack"]);

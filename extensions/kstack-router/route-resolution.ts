@@ -1,6 +1,6 @@
 /** Route decision pipeline, isolated from Pi command and UI contexts. */
 
-import type { ChangeKind } from "../plan-implement/change-kind.ts";
+import type { ChangeKind } from "../shared/change-kind.ts";
 import { getRouteLabel } from "./catalog.ts";
 import { buildRouteAlternatives, formatRecommendation } from "./classification.ts";
 import type { ClassifierRunResult } from "./classifier-runner.ts";

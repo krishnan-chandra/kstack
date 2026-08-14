@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
+import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./autopilot.ts";
 import { parseArgs } from "./command.ts";

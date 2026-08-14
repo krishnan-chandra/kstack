@@ -1,8 +1,8 @@
 /** In-process request contract for invoking plan-implement from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { ChangeKind } from "./change-kind.ts";
-import { isChangeKind } from "./change-kind.ts";
+import type { ChangeKind } from "../shared/change-kind.ts";
+import { isChangeKind } from "../shared/change-kind.ts";
 import type { DeliveryMode, WorkLocation } from "./types.ts";
 
 export const PLAN_IMPLEMENT_REQUEST_EVENT = "kstack:plan-implement:request";
