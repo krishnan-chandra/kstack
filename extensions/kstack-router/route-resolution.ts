@@ -24,7 +24,7 @@ export interface RouteResolutionEffects {
 	setStatus(text: string | undefined): void;
 }
 
-export interface ResolvedRoute {
+interface ResolvedRoute {
 	route: RouteId;
 	delivery: DeliveryRecommendation;
 	changeKind: ChangeKind;
@@ -33,7 +33,7 @@ export interface ResolvedRoute {
 	confidence?: string;
 }
 
-export type RouteResolution = { resolved: ResolvedRoute } | { cancelled: true } | { failed: string };
+type RouteResolution = { resolved: ResolvedRoute } | { cancelled: true } | { failed: string };
 
 export async function resolveRoute(
 	input: {

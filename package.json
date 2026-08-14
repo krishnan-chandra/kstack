@@ -15,9 +15,10 @@
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
+		"check:exports": "node check-exports.mjs",
 		"format": "biome check --write .",
 		"lint": "biome check .",
-		"test": "node --test install.test.mjs \"extensions/**/*.test.ts\" \"skills/**/*.test.mjs\"",
+		"test": "node --test install.test.mjs check-exports.test.mjs \"extensions/**/*.test.ts\" \"skills/**/*.test.mjs\"",
 		"test:extensions": "node --test \"extensions/**/*.test.ts\"",
 		"typecheck": "tsc -p tsconfig.json"
 	}

@@ -14,7 +14,7 @@ export interface RequestEnvelope<TPayload, TResult, TVersion extends number = nu
 	completion?: Promise<TResult>;
 }
 
-export interface ChannelSpec<TPayload, TResult, TVersion extends number> {
+interface ChannelSpec<TPayload, TResult, TVersion extends number> {
 	event: string;
 	schemaVersion: TVersion;
 	/** Validate the payload only; the channel validates envelope mechanics. */

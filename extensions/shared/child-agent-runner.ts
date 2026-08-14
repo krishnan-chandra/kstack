@@ -48,7 +48,7 @@ export type ChildEvent =
 	| { kind: "text_delta"; delta: string; at: number }
 	| { kind: "turn_end"; turn: number; text: string; usage: ChildUsage; at: number };
 
-export interface RunChildOptions {
+interface RunChildOptions {
 	args: string[];
 	cwd: string;
 	stdin?: string;
@@ -58,7 +58,7 @@ export interface RunChildOptions {
 	onEvent?: (event: ChildEvent) => void;
 }
 
-export type ChildRunResult =
+type ChildRunResult =
 	| { status: "completed"; output: string; usage: ChildUsage }
 	| { status: "failed"; error: string; usage: ChildUsage; stderr: string; activity?: string }
 	| { status: "aborted"; usage: ChildUsage; activity?: string };
@@ -69,7 +69,7 @@ const DEFAULT_LINE_CAP = 2 * 1024 * 1024;
 const DEFAULT_KILL_GRACE = 5000;
 const PREVIEW_CAP = 4096;
 
-export interface ChildIsolationOptions {
+interface ChildIsolationOptions {
 	/** Pass --no-skills (default true; fast-implement sets false). */
 	noSkills?: boolean;
 	/** Pass --no-context-files (default false). */

@@ -1,6 +1,6 @@
 const MAX_SESSION_NAME_LENGTH = 48;
 
-export interface SessionNamingApi {
+interface SessionNamingApi {
 	getSessionName(): string | undefined;
 	setSessionName(name: string): void;
 }

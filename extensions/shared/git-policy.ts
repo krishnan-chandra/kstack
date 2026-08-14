@@ -8,8 +8,8 @@ export interface WorkstreamCheckpoint {
 	baseSha: string;
 }
 
-export type BranchResult = ({ ok: true } & WorkstreamCheckpoint) | { ok: false; error: string };
-export type VerifyResult = { ok: true; headSha: string } | { ok: false; error: string };
+type BranchResult = ({ ok: true } & WorkstreamCheckpoint) | { ok: false; error: string };
+type VerifyResult = { ok: true; headSha: string } | { ok: false; error: string };
 
 async function git(exec: ExecFn, cwd: string, args: string[]): Promise<ExecFnResult> {
 	try {

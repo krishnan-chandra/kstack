@@ -1,6 +1,6 @@
 import { SessionRunLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
 
-export interface LandRunToken extends SessionToken {
+interface LandRunToken extends SessionToken {
 	readonly signal: AbortSignal;
 }
 

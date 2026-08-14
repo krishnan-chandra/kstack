@@ -27,7 +27,7 @@ export const ALL_ROUTES: readonly RouteId[] = [
 	"unsupported",
 ] as const;
 
-export const ROUTE_SET: ReadonlySet<string> = new Set<string>(ALL_ROUTES);
+const ROUTE_SET: ReadonlySet<string> = new Set<string>(ALL_ROUTES);
 
 export function isRouteId(value: string): value is RouteId {
 	return ROUTE_SET.has(value);
@@ -85,7 +85,7 @@ export interface RouterArgs {
 	task: string;
 }
 
-export const ALLOWED_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const ALLOWED_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 /**
  * Read-only handoff/archive tools (already active in the session) that the
@@ -93,7 +93,7 @@ export const ALLOWED_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
  * intersection logic in dispatch.ts means these are never enabled when the
  * owning extension is not loaded.
  */
-export const SESSION_PICKUP_EXTRA_READ_TOOLS = new Set([
+const SESSION_PICKUP_EXTRA_READ_TOOLS = new Set([
 	"read_handoff_history",
 	"search_handoff_history",
 	"read_session_archive",
@@ -101,7 +101,7 @@ export const SESSION_PICKUP_EXTRA_READ_TOOLS = new Set([
 ]);
 
 /** Routes dispatched in the active session behind a read-only tool gate. */
-export const ACTIVE_SESSION_ROUTES: ReadonlySet<RouteId> = new Set<RouteId>([
+const ACTIVE_SESSION_ROUTES: ReadonlySet<RouteId> = new Set<RouteId>([
 	"investigate",
 	"arena",
 	"swarm",

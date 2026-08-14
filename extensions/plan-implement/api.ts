@@ -16,6 +16,7 @@ interface PlanImplementPayload {
 	ctx: ExtensionCommandContext;
 }
 
+/* exported: request-channel contract */
 export interface PlanImplementRequest extends RequestEnvelope<PlanImplementPayload, void, 1> {}
 
 function isWorkLocation(value: unknown): value is WorkLocation {
@@ -42,6 +43,7 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 		isChangeKind(value.changeKind),
 });
 
+/* exported: request-channel contract */
 export function isPlanImplementRequest(value: unknown): value is PlanImplementRequest {
 	return channel.isRequest(value);
 }

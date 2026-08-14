@@ -23,7 +23,7 @@ export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs" | "max
 	timeoutMs?: number;
 }
 
-export interface BuildChildArgsOptions {
+interface BuildChildArgsOptions {
 	role: AgentRole;
 	model: string;
 	promptFile: string;

@@ -94,7 +94,7 @@ export function wrapAndSanitizeText(
 }
 
 /** Compute flattened formatted lines for the selected child. */
-export function computeInspectorBodyLines(
+function computeInspectorBodyLines(
 	dashboard: PanelDashboardStore,
 	transcripts: PanelTranscriptStore,
 	selectedIndex: number,
@@ -421,7 +421,7 @@ export class InspectorComponent implements Component {
 	}
 }
 
-export interface OpenInspectorOptions {
+interface OpenInspectorOptions {
 	text?: TerminalText;
 	onAbort?: () => void;
 }

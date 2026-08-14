@@ -35,14 +35,14 @@ interface HandoffEntryLike {
 	details?: unknown;
 }
 
-export interface ReadHandoffHistoryOptions {
+interface ReadHandoffHistoryOptions {
 	offset?: number;
 	limit?: number;
 	chunk?: number;
 	from?: "start" | "tail";
 }
 
-export interface SearchHandoffHistoryOptions {
+interface SearchHandoffHistoryOptions {
 	query: string;
 	role?: string;
 	limit?: number;

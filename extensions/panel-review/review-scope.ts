@@ -91,7 +91,7 @@ export function resolveBase(exec: GitExec, cwd: string, explicitBase?: string): 
 	return { ref: "HEAD", mergeBaseSha: head, strategy: "head" };
 }
 
-export interface StatusEntry {
+interface StatusEntry {
 	/** Two-character porcelain status, e.g. "M ", " M", "??", "R ". */
 	xy: string;
 	path: string;
@@ -120,7 +120,7 @@ export function parsePorcelainZ(raw: string): StatusEntry[] {
 }
 
 /** Context files Pi injects into child system prompts (see pi usage docs). */
-export const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
+const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
 
 /** True when a repo-relative path names a context file Pi would load. */
 export function touchesContextFile(path: string): boolean {
@@ -212,7 +212,7 @@ export function truncateUtf8(text: string, maxBytes: number): { text: string; tr
 	return { text: out, truncated: true };
 }
 
-export interface CollectScopeOptions {
+interface CollectScopeOptions {
 	exec?: GitExec;
 	fsImpl?: Fs;
 	tmpDir?: string;

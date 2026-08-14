@@ -1,7 +1,7 @@
 import { isThinkingLevel, MODEL_ID_RE, THINKING_LEVELS, type ThinkingLevel } from "./kstack-config.ts";
 
 /** A model reference as configured in kstack.json sections. */
-export interface ModelSpecLike {
+interface ModelSpecLike {
 	label?: string;
 	model: string;
 	thinking?: string;
@@ -20,7 +20,7 @@ export function splitModelRef(ref: string): { provider: string; modelId: string 
 
 export const MODEL_LABEL_RE = /^[A-Za-z0-9_-]{1,16}$/;
 
-export interface ModelSpecFieldRules {
+interface ModelSpecFieldRules {
 	requireLabel: boolean;
 	allowedThinking?: readonly string[];
 	errors: {
@@ -30,7 +30,7 @@ export interface ModelSpecFieldRules {
 	};
 }
 
-export type ModelSpecFieldResult =
+type ModelSpecFieldResult =
 	| { ok: true; label?: string; model: string; thinking?: ThinkingLevel }
 	| { ok: false; error: string };
 

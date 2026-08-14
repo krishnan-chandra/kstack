@@ -9,9 +9,9 @@
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import type { ReviewerResult, ReviewerSpec } from "./types.ts";
 
-export type RunOne = (spec: ReviewerSpec, index: number) => Promise<ReviewerResult>;
+type RunOne = (spec: ReviewerSpec, index: number) => Promise<ReviewerResult>;
 
-export interface PanelRun {
+interface PanelRun {
 	results: ReviewerResult[];
 	completed: number;
 	failed: number;

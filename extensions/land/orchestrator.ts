@@ -2,7 +2,7 @@ import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 import { getPullRequest, getRepository, mergePullRequest, waitForMerge } from "./github.ts";
 import type { ExecFn, FrontierResult, LandOptions, LandResult, MergeMethod } from "./types.ts";
 
-export interface LandDeps {
+interface LandDeps {
 	exec: ExecFn;
 	cwd: string;
 	signal: AbortSignal;

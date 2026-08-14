@@ -21,7 +21,7 @@ import type { PanelArgs, PanelReviewOutcome, ReviewerSpec, ScopeBundle } from ".
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 
-export interface PanelResolution {
+interface PanelResolution {
 	reviewers: ReviewerSpec[];
 	maxConcurrency: number;
 	warnings: string[];

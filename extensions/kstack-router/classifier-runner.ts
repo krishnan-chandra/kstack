@@ -18,7 +18,7 @@ const PROMPT_FILE = join(dirname(fileURLToPath(import.meta.url)), "prompts", "cl
 const STDOUT_LINE_CAP_BYTES = 1024 * 1024;
 const STDERR_CAP_BYTES = 4 * 1024;
 const KILL_GRACE_MS = 5000;
-export interface ClassifierUsage {
+interface ClassifierUsage {
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -30,7 +30,7 @@ export type ClassifierRunResult =
 	| { status: "completed"; envelope: ClassifierEnvelope; model: string; usage: ClassifierUsage }
 	| { status: "failed"; error: string; stderr: string }
 	| { status: "aborted" };
-export interface ClassifierRunnerOptions {
+interface ClassifierRunnerOptions {
 	model: string;
 	task: string;
 	thinking?: string;

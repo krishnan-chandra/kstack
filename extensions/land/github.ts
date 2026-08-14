@@ -1,10 +1,11 @@
 import { type ExecFn, LIMITS, type MergeMethod } from "./types.ts";
-export interface RepositorySnapshot {
+
+interface RepositorySnapshot {
 	nameWithOwner: string;
 	defaultBranch: string;
 	allowedMethods: MergeMethod[];
 }
-export interface PullRequestSnapshot {
+interface PullRequestSnapshot {
 	number: number;
 	url: string;
 	title: string;

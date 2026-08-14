@@ -2,7 +2,7 @@
 
 import type { AgentRunResult } from "./types.ts";
 
-export type WorkflowResult =
+type WorkflowResult =
 	| { status: "planner-failed"; planner: AgentRunResult }
 	| { status: "rejected"; planner: Extract<AgentRunResult, { status: "completed" }> }
 	| {
@@ -16,7 +16,7 @@ export type WorkflowResult =
 			implementer: Extract<AgentRunResult, { status: "completed" }>;
 	  };
 
-export interface WorkflowDeps {
+interface WorkflowDeps {
 	runPlanner: () => Promise<AgentRunResult>;
 	onPlan: (plan: Extract<AgentRunResult, { status: "completed" }>) => Promise<void> | void;
 	approvePlan: (plan: Extract<AgentRunResult, { status: "completed" }>) => Promise<boolean>;

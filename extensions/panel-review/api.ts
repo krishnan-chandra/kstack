@@ -11,6 +11,7 @@ interface PanelReviewPayload {
 	ctx: ExtensionCommandContext;
 }
 
+/* exported: request-channel contract */
 export interface PanelReviewRequest extends RequestEnvelope<PanelReviewPayload, PanelReviewOutcome, 2> {}
 
 const channel = createRequestChannel<PanelReviewPayload, PanelReviewOutcome, 2>({
@@ -40,6 +41,7 @@ const channel = createRequestChannel<PanelReviewPayload, PanelReviewOutcome, 2>(
 	},
 });
 
+/* exported: request-channel contract */
 export function isPanelReviewRequest(value: unknown): value is PanelReviewRequest {
 	return channel.isRequest(value);
 }
