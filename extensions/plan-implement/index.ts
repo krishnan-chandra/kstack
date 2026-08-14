@@ -1,6 +1,6 @@
 /** Two-model plan → approve → implement → panel-review orchestration. */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,7 @@ import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } 
 import { createManagedWorktree, planManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
 import { createCurrentWorkstreamBranch, verifyCommittedWorkstream, type WorkstreamCheckpoint } from "./git-policy.ts";
 import { runWorkflow } from "./workflow.ts";
+import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -406,6 +407,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
 				const taskFile = join(tempDir, "task.md");
 				const planFile = join(tempDir, "approved-plan.md");
+				const ledgerFile = join(tempDir, "execution-ledger.md");
+				let immutablePlanSnapshot: string | undefined;
+				let planValidationError: string | undefined;
 				writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
 
 				const outcome = await runWorkflow({
@@ -434,12 +438,27 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					},
 					onPlan: (plan) => {
 						if (!lifecycle.isCurrent(token)) return;
-						writeFileSync(planFile, `# Approved implementation plan\n\n${plan.output}\n`, { encoding: "utf8", mode: 0o600 });
+						const approvedFileContent = `# Approved implementation plan\n\n${plan.output}\n`;
+						writeFileSync(planFile, approvedFileContent, { encoding: "utf8", mode: 0o600 });
+						const ledger = createExecutionLedger(plan.output);
+						if (!ledger.ok) {
+							planValidationError = ledger.error;
+						} else {
+							writeFileSync(ledgerFile, ledger.ledger, { encoding: "utf8", mode: 0o600 });
+							immutablePlanSnapshot = approvedFileContent;
+							// The child receives read access only; the snapshot check below also
+							// catches an attempted chmod/edit/delete by a mutation-capable child.
+							chmodSync(planFile, 0o444);
+						}
 						sendPhaseMessage(pi, plan);
 						ctx.ui.setStatus("plan-implement", undefined);
 					},
 					approvePlan: async () => {
 						if (!lifecycle.isCurrent(token)) return false;
+						if (planValidationError) {
+							notify(`Planner output cannot be approved: ${planValidationError}`, "error");
+							return false;
+						}
 						return ctx.ui.confirm(
 							"Approve planner output?",
 							mode === "stack"
@@ -470,12 +489,16 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								notify(`Task branch created: ${created.branch}.`, "info");
 							}
 							ctx.ui.setStatus("plan-implement", `plan-implement: implementer ${implementerModel}…`);
+							if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot) {
+								return { status: "failed", role: "implementer", model: implementerModel, error: "Approved plan changed before implementation; the plan is read-only." };
+							}
 							const result = await runAgent({
 								role: "implementer",
 								model: implementerModel,
 								promptFile: join(PROMPTS_DIR, "implementer.md"),
 								taskFile,
 								planFile,
+								ledgerFile,
 								cwd: workflowCwd,
 								signal: controller.signal,
 								deps: { timeoutMs },
@@ -485,13 +508,25 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 								skillPaths,
 								supplementalPrompts: changePrompts,
 							});
-							if (result.status !== "completed" || mode !== "single" || !workstreamCheckpoint) return result;
+							if (result.status !== "completed") return result;
+							if (readFileSync(planFile, "utf8") !== immutablePlanSnapshot) {
+								return { status: "failed", role: "implementer", model: implementerModel, error: "Implementer modified the approved plan; the plan is read-only." };
+							}
+							const approvedPlan = readFileSync(planFile, "utf8").replace(/^# Approved implementation plan\n\n/, "").replace(/\n$/, "");
+							const checkedLedger = validateExecutionLedger(approvedPlan, result.output);
+							// Keep an incomplete result reviewable: synthesis must see the
+							// omission and turn it into a blocking finding rather than having
+							// the parent silently discard the implementer's work.
+							const ledgerForReview = checkedLedger.ok ? checkedLedger.ledger : extractExecutionLedger(result.output);
+							writeFileSync(ledgerFile, ledgerForReview, { encoding: "utf8", mode: 0o600 });
+							const resultWithLedger = { ...result, executionLedger: ledgerForReview };
+							if (mode !== "single" || !workstreamCheckpoint) return resultWithLedger;
 							const verified = await verifyCommittedWorkstream(workflowCwd, makeExec(pi), {
 								...workstreamCheckpoint,
 								requireNewCommit: true,
 							});
 							if (!verified.ok) return { status: "failed", role: "implementer", model: implementerModel, error: verified.error };
-							return result;
+							return resultWithLedger;
 						} finally {
 							lifecycle.endChild(token, controller);
 						}
@@ -515,8 +550,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 						);
 					} else {
 						reviewOptions = mode === "stack" && trunkSha
-							? buildStackPanelReviewOptions(task, trunkSha)
-							: { ...buildPanelReviewOptions(task), ...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: workflowCwd } : {}) };
+							? buildStackPanelReviewOptions(task, trunkSha, outcome.planner.output, outcome.implementer.executionLedger)
+							: {
+									...buildPanelReviewOptions(task, outcome.planner.output, outcome.implementer.executionLedger),
+									...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: workflowCwd } : {}),
+								};
 					}
 				}
 			} finally {

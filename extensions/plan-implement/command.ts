@@ -85,14 +85,31 @@ function boundedPanelIntent(task: string): string {
 	return Array.from(oneLine).slice(0, LIMITS.panelIntentChars).join("");
 }
 
-export function buildPanelReviewOptions(task: string): PanelArgs {
-	return { intent: `Plan/implement: ${boundedPanelIntent(task)}` };
+function addPlanReviewContext(options: PanelArgs, approvedPlan?: string, executionLedger?: string): PanelArgs {
+	return {
+		...options,
+		...(approvedPlan !== undefined ? { approvedPlan } : {}),
+		...(executionLedger !== undefined ? { executionLedger } : {}),
+	};
+}
+
+export function buildPanelReviewOptions(task: string, approvedPlan?: string, executionLedger?: string): PanelArgs {
+	return addPlanReviewContext({ intent: `Plan/implement: ${boundedPanelIntent(task)}` }, approvedPlan, executionLedger);
 }
 
 /** Review a completed local stack against the immutable trunk SHA from preflight. */
-export function buildStackPanelReviewOptions(task: string, trunkSha: string): PanelArgs {
-	return {
-		base: trunkSha,
-		intent: `Plan/implement (stacked): ${boundedPanelIntent(task)}`,
-	};
+export function buildStackPanelReviewOptions(
+	task: string,
+	trunkSha: string,
+	approvedPlan?: string,
+	executionLedger?: string,
+): PanelArgs {
+	return addPlanReviewContext(
+		{
+			base: trunkSha,
+			intent: `Plan/implement (stacked): ${boundedPanelIntent(task)}`,
+		},
+		approvedPlan,
+		executionLedger,
+	);
 }

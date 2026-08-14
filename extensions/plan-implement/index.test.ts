@@ -20,6 +20,14 @@ describe("plan-implement command helpers", () => {
 		const options = buildPanelReviewOptions("x".repeat(2000));
 		assert.equal(options.intent?.length, "Plan/implement: ".length + 1000);
 	});
+
+	it("passes the approved plan and implementer ledger to panel review", () => {
+		assert.deepEqual(buildPanelReviewOptions("task", "approved plan", "## Execution Ledger\n- [STEP-1] task — done"), {
+			intent: "Plan/implement: task",
+			approvedPlan: "approved plan",
+			executionLedger: "## Execution Ledger\n- [STEP-1] task — done",
+		});
+	});
 });
 
 describe("parsePlanImplementArgs", () => {

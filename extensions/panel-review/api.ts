@@ -25,6 +25,8 @@ export function isPanelReviewRequest(value: unknown): value is PanelReviewReques
 		(options.base === undefined || typeof options.base === "string") &&
 		(options.intent === undefined || typeof options.intent === "string") &&
 		(options.repositoryPath === undefined || typeof options.repositoryPath === "string") &&
+		(options.approvedPlan === undefined || typeof options.approvedPlan === "string") &&
+		(options.executionLedger === undefined || typeof options.executionLedger === "string") &&
 		typeof request.ctx === "object" &&
 		request.ctx !== null
 	);

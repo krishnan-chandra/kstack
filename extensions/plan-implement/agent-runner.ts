@@ -34,6 +34,8 @@ export interface BuildChildArgsOptions {
 	promptFile: string;
 	taskFile: string;
 	planFile?: string;
+	/** Mutable execution ledger copied from the approved plan for the implementer. */
+	ledgerFile?: string;
 	/** Panel-review verdict file, passed to the fixer and publisher roles. */
 	verdictFile?: string;
 	/** Delivery mode; defaults to "single" (current behavior). */
@@ -69,7 +71,10 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 		target = `Read the user task at ${options.taskFile}, inspect the repository, and produce the plan. ${delivery}`;
 	} else if (options.role === "implementer") {
 		const stackNote = stackMode ? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and follow its local-stack policy." : "";
-		target = `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.${stackNote}${worktreeNote}`;
+		const ledgerNote = options.ledgerFile
+			? ` Read and update the execution ledger at ${options.ledgerFile}; its final contents and the complete ledger in your response must close every plan item.`
+			: " Include the complete execution ledger in your response, even if no ledger file was supplied.";
+		target = `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.${ledgerNote}${stackNote}${worktreeNote}`;
 	} else if (options.role === "fixer") {
 		const stackNote = stackMode ? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and amend the local stack instead of creating new commits." : "";
 		target = `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then address the actionable findings and verify your fixes.${stackNote}${worktreeNote}`;

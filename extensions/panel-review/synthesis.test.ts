@@ -64,6 +64,19 @@ describe("buildSynthesisInput", () => {
 		assert.match(input, /may be incomplete/);
 		assert.ok(!/manifest is complete/.test(input));
 	});
+
+	it("hands the approved plan and implementer ledger to synthesis", () => {
+		const { input } = buildSynthesisInput({
+			intent: "x",
+			scope,
+			results: [completed("A", "ok")],
+			approvedPlan: "[STEP-1] Add the thing",
+			executionLedger: "## Execution Ledger\n- [STEP-1] Add the thing — done",
+		});
+		assert.match(input, /Approved Plan \(read-only\)/);
+		assert.match(input, /Execution Ledger \(implementer result\)/);
+		assert.match(input, /STEP-1.*done/);
+	});
 });
 
 describe("buildSynthesisPrompt", () => {

@@ -37,8 +37,8 @@ another option. Put `--` before a task that starts with dashes.
    assignments before spending.
 4. Runs the planner with only `read,grep,find,ls`.
 5. Displays the plan and asks for approval before mutation.
-6. Runs the implementer with Pi's normal built-in tools.
-7. Displays the implementer's final report and, on success, asks the loaded
+6. Runs the implementer with Pi's normal built-in tools. The approved plan is a read-only file, and the implementer must close every ordered step and acceptance criterion in an execution ledger as `done`, `blocked: <reason>`, or `skip: <reason>`.
+7. Validates item-by-item parity, displays the implementer's final report (including the ledger), and, on success, asks the loaded
    panel-review extension to run through Pi's in-process event bus. The panel
    keeps its own confirmation and verdict rendering and returns a structured
    outcome to the loop.
@@ -63,6 +63,13 @@ the design without expanding scope; the specialized playbook defines the
 change's evidence contract. Generic changes still receive the shared index.
 The publisher receives neither because it packages the already-reviewed change
 rather than shaping implementation.
+
+The planner emits machine-readable ordered `[STEP-n]` items and `[AC-n]`
+acceptance criteria. The parent copies them into the mutable execution ledger,
+preserves the implementer result for panel-review, including missing or
+malformed entries, and passes both the immutable plan and ledger onward.
+Synthesis treats omitted plan items as blocking findings; a prose deviations
+section cannot close an item.
 
 Bug fixes require a before-and-after reproduction, refactors pin behavior,
 performance work compares matching measurements, features prove observable

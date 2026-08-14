@@ -92,7 +92,9 @@ ignores the outcome.
    (required in `kstack.json`; **GPT-5.6 Terra** at medium thinking by default)
    in an isolated child, using
    the lead-judgment framework: deduplication, consensus mapping, and
-   **Act On / Consider / Noted / Dismissed** dispositions. The thermo Approval
+   **Act On / Consider / Noted / Dismissed** dispositions. For plan-implement
+   runs, synthesis also receives the immutable approved plan and implementer
+   execution ledger; omitted plan items are blocking findings. The thermo Approval
    Bar is included in the synthesis prompt so structural
    regressions, missed code-judo moves, and file-size explosions promote
    into **Act On** as presumptive blockers.

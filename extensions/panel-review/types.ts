@@ -54,6 +54,9 @@ export interface PanelArgs {
 	intent?: string;
 	/** Internal callers may select another validated Git working tree. */
 	repositoryPath?: string;
+	/** Approved plan and implementer ledger supplied by plan-implement. */
+	approvedPlan?: string;
+	executionLedger?: string;
 }
 
 /**

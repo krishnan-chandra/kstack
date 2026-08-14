@@ -30,6 +30,20 @@ Return one self-contained plan with:
 5. **Verification**, including focused and regression tests
 6. **Risks, migration/compatibility concerns, and non-goals**
 
+Use these exact machine-readable sections in every plan. Do not put implementation steps or acceptance criteria only in prose:
+
+```markdown
+## Ordered implementation steps
+1. [STEP-1] ...
+2. [STEP-2] ...
+
+## Acceptance criteria
+- [AC-1] ...
+- [AC-2] ...
+```
+
+Use consecutive identifiers, keep each item on one line, and include every acceptance criterion from the user task. The implementer will be required to close every `[STEP-n]` and `[AC-n]` item in an execution ledger.
+
 Single-PR implementation must start on a dedicated task branch before the first edit:
 
 - current working tree: create `kstack/<task-slug>` from the current `HEAD` (numeric suffix on collision) only when the tree is clean;

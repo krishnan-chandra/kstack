@@ -313,6 +313,8 @@ export default function (pi: ExtensionAPI) {
 					intent,
 					scope,
 					results: panel.results,
+					approvedPlan: options.approvedPlan,
+					executionLedger: options.executionLedger,
 				});
 				const synthInputFile = join(promptDir, "synthesis-input.md");
 				writeFileSync(synthInputFile, input, { encoding: "utf8", mode: 0o600 });

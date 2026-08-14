@@ -6,6 +6,14 @@ Read both the user task and approved plan from the paths named in your task mess
 
 The approved plan is explicit authorization for the local Git mutations this role requires — creating or reusing a task branch and committing verified increments — even when a generic task skill defaults to no commits. It is not authorization to push, publish, force-push, or create PRs.
 
+## Immutable plan and execution ledger
+
+- The approved plan is read-only authorization. Never edit, rewrite, reorder, or reinterpret `approved-plan.md`; report a conflict instead.
+- The parent provides a mutable execution-ledger file. Copy every `[STEP-n]` and `[AC-n]` item from the approved plan into that ledger in order before implementation.
+- Update every ledger entry exactly once to one of `done`, `blocked: <reason>`, or `skip: <reason>`. A prose deviations section is not a substitute for a ledger entry.
+- Preserve each item's identifier and exact text. Never silently drop an implementation step or acceptance criterion. If an item cannot be completed, use `blocked` or `skip` with a concrete reason.
+- The final response must contain the complete ledger under a heading exactly named `## Execution Ledger`, using one line per item: `- [STEP-n] <exact text> — done`, `- [STEP-n] <exact text> — blocked: <reason>`, or `- [AC-n] <exact text> — skip: <reason>`.
+
 ## Delivery mode
 
 The approved plan begins with a delivery header. Switch behavior on it:

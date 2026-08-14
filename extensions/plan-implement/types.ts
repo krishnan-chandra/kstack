@@ -45,7 +45,15 @@ export interface UsageSummary {
 export type AgentRole = "planner" | "implementer" | "fixer" | "publisher";
 
 export type AgentRunResult =
-	| { status: "completed"; role: AgentRole; model: string; output: string; usage: UsageSummary }
+	| {
+			status: "completed";
+			role: AgentRole;
+			model: string;
+			output: string;
+			usage: UsageSummary;
+			/** Execution-ledger section preserved for panel review, including omissions. */
+			executionLedger?: string;
+	  }
 	| { status: "failed"; role: AgentRole; model: string; error: string }
 	| { status: "aborted"; role: AgentRole; model: string };
 
