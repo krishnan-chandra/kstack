@@ -205,7 +205,7 @@ describe("resolveReviewers", () => {
 			{ label: "opus", model: "anthropic/claude-opus-4-6", thinking: "medium" },
 			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 			{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
-			{ label: "gemini", model: "openrouter/google/gemini-3.6-flash", thinking: "high" },
+			{ label: "gemini", model: "openrouter/google/gemini-3.7-flash", thinking: "high" },
 		]);
 		assert.equal(r.maxConcurrency, 5);
 		assert.equal(r.warnings.length, 0);

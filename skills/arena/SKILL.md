@@ -27,7 +27,7 @@ Read `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`) for 
   "arena": {
     "runners": [
       { "label": "terra", "model": "openai/gpt-5.6-terra", "thinking": "max" },
-      { "label": "gemini", "model": "openrouter/google/gemini-3.6-flash", "thinking": "high" },
+      { "label": "gemini", "model": "openrouter/google/gemini-3.7-flash", "thinking": "high" },
       { "label": "kimi", "model": "openrouter/moonshotai/kimi-k3", "thinking": "high" }
     ],
     "crossJudge": { "model": "openai/gpt-5.6-sol", "thinking": "medium" },
