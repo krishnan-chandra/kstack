@@ -227,7 +227,7 @@ export default function (pi: ExtensionAPI): void {
 				routeLabel: getRouteLabel(route),
 				delivery,
 				worktree,
-				...(route === "change" ? { changeKind } : {}),
+				...(route === "change" || route === "fast-change" ? { changeKind } : {}),
 				modelSource,
 				confidence,
 				overrode,
@@ -332,6 +332,8 @@ export default function (pi: ExtensionAPI): void {
 					notify((result as { error?: string }).error ?? "Dispatch failed.", "error");
 				} else if (route === "change") {
 					notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
+				} else if (route === "fast-change") {
+					notify("Delegated to fast-implement. Use Ctrl+Shift+F to abort the implementation child.", "info");
 				} else if (route === "review") {
 					notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
 				}

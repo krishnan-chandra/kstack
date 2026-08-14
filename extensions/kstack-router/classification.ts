@@ -92,7 +92,7 @@ export function parseClassifierOutput(
 		// Fast classifiers sometimes fill every field shown in the output
 		// template. A valid non-change route should not be discarded because
 		// its inapplicable, otherwise-valid changeKind was echoed.
-		if (envelope.route === "change") changeKind = envelope.changeKind;
+		if (envelope.route === "change" || envelope.route === "fast-change") changeKind = envelope.changeKind;
 	}
 
 	// Reject unknown keys.

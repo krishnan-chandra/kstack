@@ -129,11 +129,15 @@ export async function resolveRoute(
 		}
 	}
 
-	if (parsedArgs.changeKind && route !== "change") {
+	if (parsedArgs.changeKind && route !== "change" && route !== "fast-change") {
 		return { failed: "--change-kind is only valid with --route change." };
 	}
-	if (worktree && route !== "change") {
+	if (worktree && route !== "change" && route !== "fast-change") {
 		return { failed: "--worktree is only valid with the change route." };
+	}
+	if (route === "fast-change") {
+		if (delivery === "stack") return { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." };
+		delivery = "single";
 	}
 	if (route === "change" && !delivery) {
 		if (!overrode) {

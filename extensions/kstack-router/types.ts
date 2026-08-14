@@ -7,6 +7,7 @@ export { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 export type RouteId =
 	| "investigate"
 	| "change"
+	| "fast-change"
 	| "arena"
 	| "swarm"
 	| "skill-authoring"
@@ -17,6 +18,7 @@ export type RouteId =
 export const ALL_ROUTES: readonly RouteId[] = [
 	"investigate",
 	"change",
+	"fast-change",
 	"arena",
 	"swarm",
 	"skill-authoring",
