@@ -46,6 +46,37 @@ affected PR. jj auto-rebases every descendant, so the resolution flows
 upstack to all of them — you resolve once, not once per PR. This is the
 strongest practical argument for stacked PRs in jj.
 
+### Regenerate a mechanical formatting change
+
+Editing an ancestor can conflict with a later change that formats most of the repository. Do not resolve formatter output line by line. First inspect the conflicted change and confirm that its purpose is mechanical formatting:
+
+```bash
+jj edit <formatting-change-id>
+jj diff -r @
+jj resolve --list
+```
+
+For each conflicted path reported by `jj resolve --list`, restore the ancestor's updated version from the formatting change's parent:
+
+```bash
+jj restore --from @- <conflicted-path>
+```
+
+Then rerun the repository's configured formatter over the same scope as the original formatting change. For example:
+
+```bash
+npm run format
+```
+
+Reinspect the change before continuing. The resulting diff should contain the ancestor's semantic fix plus deterministic formatter output, with no conflict markers or unrelated edits:
+
+```bash
+jj diff -r @
+inspect_stack.py --top <top>
+```
+
+If you created a separate resolution change instead of editing the formatting change directly, squash only the verified resolution into the formatting change. Run the repository's typecheck and tests after descendants finish rebasing.
+
 ## Divergent changes
 
 Divergent changes share a change ID across multiple commits, usually from mixing `git` and `jj` in a colocated repo. The inspection helper flags them as a blocker. Resolve by inspecting and keeping the canonical copy:

@@ -175,11 +175,31 @@ python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --re
 
 Only after you have **verified** the bottom PR merged on GitHub. Do not abandon based on assumption.
 
-While the bottom bookmark still exists locally (before `jj git fetch` deletes it), abandon the merged segment. The `-` suffix on the end of the revset excludes the next bookmark's commit — `x..y` is inclusive of `y`, so `trunk()..<next-bookmark>` would also abandon the unmerged next PR:
+### Check the merge policy
+
+Before merging on the user's behalf, inspect the repository's allowed merge methods:
 
 ```bash
-jj abandon 'trunk()..<next-bookmark>-'    # the segment that was the merged PR, excluding the next bookmark
+gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,defaultBranchRef
 ```
+
+Also check whether the base branch requires signed commits. GitHub cannot sign commits that it creates for a rebase merge, so a signed-commit rule can reject `gh pr merge --rebase` even when the repository otherwise allows rebase merges. Query the branch rule with the repository owner, name, and base branch from the PR:
+
+```bash
+gh api repos/<owner>/<repo>/branches/<base>/protection/required_signatures
+```
+
+If the response reports `"enabled": true`, do not select a rebase merge. Use an allowed method that GitHub can sign, such as squash, or stop if no compatible method is available. Pin the expected head with `--match-head-commit` when you run `gh pr merge`.
+
+### Remove the merged segment locally
+
+Before `jj git fetch` can remove the local bookmark, abandon through the bookmark of the PR that just merged:
+
+```bash
+jj abandon 'trunk()..<merged-bookmark>'
+```
+
+Use the **merged** bookmark as the boundary. Do not derive the boundary from `<next-bookmark>-`: a PR slice may contain several changes, including unbookmarked changes below its bookmark. The next bookmark's parent can therefore belong to the next PR, and abandoning through it would remove unmerged work.
 
 Then fetch the updated trunk and rebase the remainder:
 

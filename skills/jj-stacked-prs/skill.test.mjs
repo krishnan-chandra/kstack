@@ -39,6 +39,12 @@ test("SKILL.md references the two-phase plan/apply contract", () => {
   assert.ok(content.includes("plan"), "Missing plan reference");
 });
 
+test("stack advancement uses the merged bookmark as its abandon boundary", () => {
+  const content = readFileSync(join(SKILL_DIR, "references", "workflows.md"), "utf8");
+  assert.ok(content.includes("jj abandon 'trunk()..<merged-bookmark>'"), "Missing safe merged-bookmark revset");
+  assert.ok(!content.includes("jj abandon 'trunk()..<next-bookmark>-'"), "Unsafe next-bookmark revset returned");
+});
+
 test("No references to removed npm package (jst submit) in non-sources files", () => {
   const files = [
     SKILL_MD,
