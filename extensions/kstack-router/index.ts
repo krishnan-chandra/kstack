@@ -333,7 +333,7 @@ export default function (pi: ExtensionAPI): void {
 				} else if (route === "change") {
 					notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
 				} else if (route === "fast-change") {
-					notify("Delegated to fast-implement. Use Ctrl+Shift+F to abort the implementation child.", "info");
+					notify("Delegated to fast-implement. Use Ctrl+Shift+A to abort the implementation child.", "info");
 				} else if (route === "review") {
 					notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
 				}

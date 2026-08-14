@@ -11,7 +11,7 @@ import type { FastImplementRequest } from "./types.ts";
 export default function fastImplementExtension(pi: ExtensionAPI): void {
 	let active: AbortController | undefined;
 	pi.on("session_shutdown", () => active?.abort());
-	pi.registerShortcut("ctrl+shift+f", { description: "Abort the running fast implementation child", handler: async (ctx) => { if (active) { active.abort(); ctx.ui.setStatus("fast-implement", "fast-implement: aborting child…"); } else ctx.ui.notify("No fast implementation child is running.", "info"); } });
+	pi.registerShortcut("ctrl+shift+a", { description: "Abort the running fast implementation child", handler: async (ctx) => { if (active) { active.abort(); ctx.ui.setStatus("fast-implement", "fast-implement: aborting child…"); } else ctx.ui.notify("No fast implementation child is running.", "info"); } });
 	pi.registerMessageRenderer("fast-implement", (message, { expanded, outputPad }, theme) => { const details = message.details as { status?: string; branch?: string } | undefined; const header = `${details?.status === "completed" ? theme.fg("success", "■") : theme.fg("error", "■")} ${theme.fg("accent", "Fast implement")}${theme.fg("muted", ` — ${details?.branch ?? "no workstream"}`)}`; const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text)); box.addChild(new Text(expanded ? `${header}\n\n${message.content}` : `${header}${theme.fg("dim", " (Ctrl+O to expand)")}`, 0, 0)); return box; });
 	async function run(request: FastImplementRequest, ctx: ExtensionCommandContext): Promise<void> {
 		if (!ctx.hasUI) { ctx.ui.notify("fast-implement requires interactive TUI or RPC mode.", "error"); return; }
