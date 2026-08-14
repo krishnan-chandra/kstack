@@ -118,7 +118,33 @@ interface ActiveSession {
 	entries: ParsedEntry[];
 }
 
-function readActiveSession(source: HandoffSource, env: NodeJS.ProcessEnv): ActiveSession | undefined {
+interface ParsedCacheEntry {
+	canonical: string;
+	size: number;
+	mtimeMs: number;
+	ino: number;
+	sessionId: string;
+	parsed: ActiveSession;
+}
+
+export interface HandoffHistoryFs {
+	statSync: typeof statSync;
+	readFileSync: typeof readFileSync;
+}
+
+const defaultFs: HandoffHistoryFs = { statSync, readFileSync };
+let parseCache: ParsedCacheEntry | undefined;
+
+/** Test hook for isolating module-level cache behavior. */
+export function clearHandoffParseCache(): void {
+	parseCache = undefined;
+}
+
+function readActiveSession(
+	source: HandoffSource,
+	env: NodeJS.ProcessEnv,
+	fsImpl: HandoffHistoryFs,
+): ActiveSession | undefined {
 	let canonical: string;
 	try {
 		canonical = assertSafeActiveSessionPath(source, env);
@@ -126,9 +152,27 @@ function readActiveSession(source: HandoffSource, env: NodeJS.ProcessEnv): Activ
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
+	let stat;
+	try {
+		stat = fsImpl.statSync(canonical);
+	} catch (error) {
+		// The file may have moved between validation and the cache check.
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+	if (
+		parseCache?.canonical === canonical &&
+		parseCache.size === stat.size &&
+		parseCache.mtimeMs === stat.mtimeMs &&
+		parseCache.ino === stat.ino &&
+		parseCache.sessionId === source.sessionId
+	) {
+		return parseCache.parsed;
+	}
+
 	let parsed;
 	try {
-		parsed = parseSessionJsonlBytes(readFileSync(canonical));
+		parsed = parseSessionJsonlBytes(fsImpl.readFileSync(canonical));
 	} catch (error) {
 		// The file may have moved between validation and reading.
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -139,7 +183,16 @@ function readActiveSession(source: HandoffSource, env: NodeJS.ProcessEnv): Activ
 			`Previous session ID mismatch: reference says ${source.sessionId}, file header says ${parsed.header.id}.`,
 		);
 	}
-	return { source: "active", cwd: parsed.header.cwd, entries: parsed.entries };
+	const active: ActiveSession = { source: "active", cwd: parsed.header.cwd, entries: parsed.entries };
+	parseCache = {
+		canonical,
+		size: stat.size,
+		mtimeMs: stat.mtimeMs,
+		ino: stat.ino,
+		sessionId: source.sessionId,
+		parsed: active,
+	};
+	return active;
 }
 
 function formatEntry(entry: {
@@ -220,10 +273,11 @@ export function readHandoffHistory(
 	source: HandoffSource,
 	options: ReadHandoffHistoryOptions = {},
 	env: NodeJS.ProcessEnv = process.env,
+	fsImpl: HandoffHistoryFs = defaultFs,
 ): string {
 	const limit = boundedInteger(options.limit, 50, 1, 200);
 	const chunk = boundedInteger(options.chunk, 0, 0, 1_000_000);
-	const active = readActiveSession(source, env);
+	const active = readActiveSession(source, env, fsImpl);
 	if (active) {
 		const total = active.entries.length;
 		const offset =
@@ -270,13 +324,14 @@ export function searchHandoffHistory(
 	source: HandoffSource,
 	options: SearchHandoffHistoryOptions,
 	env: NodeJS.ProcessEnv = process.env,
+	fsImpl: HandoffHistoryFs = defaultFs,
 ): string {
 	const query = options.query.trim();
 	if (!query) throw new Error("query must not be empty");
 	const limit = boundedInteger(options.limit, 20, 1, 100);
 	const terms = searchTerms(query);
 	if (terms.length === 0) throw new Error("query must contain at least one word or quoted phrase");
-	const active = readActiveSession(source, env);
+	const active = readActiveSession(source, env, fsImpl);
 	let output: string;
 	if (active) {
 		const hits = active.entries

@@ -1,11 +1,13 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	findHandoffSource,
+	clearHandoffParseCache,
 	readHandoffHistory,
 	searchHandoffHistory,
+	type HandoffHistoryFs,
 	type HandoffSource,
 } from "./history-reader.ts";
 import {
@@ -21,6 +23,7 @@ import { finalizeArchived, importSessionPending, openArchiveDb } from "../sessio
 
 const roots: string[] = [];
 afterEach(() => {
+	clearHandoffParseCache();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -103,6 +106,44 @@ describe("findHandoffSource", () => {
 });
 
 describe("readHandoffHistory", () => {
+	it("reuses a parsed session while the file identity is unchanged", () => {
+		const { source, env } = fixture();
+		let reads = 0;
+		const fsImpl: HandoffHistoryFs = {
+			statSync,
+			readFileSync: ((...args: Parameters<typeof readFileSync>) => {
+				reads++;
+				return readFileSync(...args);
+			}) as typeof readFileSync,
+		};
+
+		readHandoffHistory(source, {}, env, fsImpl);
+		readHandoffHistory(source, {}, env, fsImpl);
+
+		assert.equal(reads, 1);
+	});
+
+	it("invalidates the cache when the active session grows", () => {
+		const { source, env } = fixture();
+		readHandoffHistory(source, {}, env);
+		appendFileSync(source.sessionFile, `${JSON.stringify(messageEntry("u3", "u2", userMessage("appended cache entry")))}\n`);
+
+		const output = readHandoffHistory(source, {}, env);
+
+		assert.ok(output.includes("entries 1–4 of 4"));
+		assert.ok(output.includes("appended cache entry"));
+	});
+
+	it("does not serve cached content after the file is replaced with another session id", () => {
+		const { source, env } = fixture();
+		readHandoffHistory(source, {}, env);
+		const replacement = `${source.sessionFile}.replacement`;
+		writeFileSync(replacement, sessionJsonl([], { id: "11111111-2222-3333-4444-555555555555" }));
+		renameSync(replacement, source.sessionFile);
+
+		assert.throws(() => readHandoffHistory(source, {}, env), /session ID mismatch/i);
+	});
+
 	it("reads normalized recent entries by default and omits thinking/tool arguments", () => {
 		const { source, env } = fixture();
 		const output = readHandoffHistory(source, { limit: 2 }, env);
