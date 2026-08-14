@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
-import { runChildAgent, type SpawnedProcess } from "./child-agent-runner.ts";
+import { runChildAgent, type ChildEvent, type SpawnedProcess } from "./child-agent-runner.ts";
 
 class FakeProcess implements SpawnedProcess {
 	stdin = { writes: [] as string[], ended: false, write: (data: string) => { this.stdin.writes.push(data); return true; }, end: () => { this.stdin.ended = true; } };
@@ -66,5 +66,51 @@ describe("runChildAgent", () => {
 	it("pipes optional stdin", async () => {
 		const child = new FakeProcess(); const promise = runChildAgent({ args: [], cwd: "/repo", stdin: "secret", deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }) } });
 		assert.deepEqual(child.stdin.writes, ["secret"]); assert.equal(child.stdin.ended, true); child.output(event("ok")); child.close(0); assert.equal((await promise).status, "completed");
+	});
+	it("emits structured ChildEvents in order", async () => {
+		const child = new FakeProcess();
+		const events: ChildEvent[] = [];
+		const promise = runChildAgent({
+			args: ["--mode", "json"],
+			cwd: "/repo",
+			onEvent: (ev) => events.push(ev),
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }) },
+		});
+		child.output(JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "/repo/foo.ts" } }) + "\n");
+		await new Promise((r) => setTimeout(r, 10));
+		child.output(JSON.stringify({ type: "tool_execution_end" }) + "\n");
+		child.output(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello " } }) + "\n");
+		child.output(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } }) + "\n");
+		child.output(JSON.stringify({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "hello world" }],
+				usage: { input: 100, output: 20, cacheRead: 5, cacheWrite: 2, cost: { total: 0.05 } },
+			},
+		}) + "\n");
+		child.close(0);
+		const result = await promise;
+		assert.equal(result.status, "completed");
+		assert.equal(events.length, 5);
+		assert.equal(events[0].kind, "tool_start");
+		if (events[0].kind === "tool_start") assert.equal(events[0].summary, "read foo.ts");
+		assert.equal(events[1].kind, "tool_end");
+		if (events[1].kind === "tool_end") {
+			assert.equal(typeof events[1].durationMs, "number");
+			assert.ok(events[1].durationMs! >= 0);
+		}
+		assert.equal(events[2].kind, "text_delta");
+		if (events[2].kind === "text_delta") assert.equal(events[2].delta, "hello ");
+		assert.equal(events[3].kind, "text_delta");
+		if (events[3].kind === "text_delta") assert.equal(events[3].delta, "world");
+		assert.equal(events[4].kind, "turn_end");
+		if (events[4].kind === "turn_end") {
+			assert.equal(events[4].turn, 1);
+			assert.equal(events[4].text, "hello world");
+			assert.equal(events[4].usage.input, 100);
+			assert.equal(events[4].usage.output, 20);
+			assert.equal(events[4].usage.cost, 0.05);
+		}
 	});
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
-import { buildChildArgs, runReviewer, summarizeToolCall, type SpawnImpl } from "./reviewer-runner.ts";
+import { buildChildArgs, runReviewer, summarizeToolCall, type ChildEvent, type SpawnImpl } from "./reviewer-runner.ts";
 import type { ReviewerResult } from "./types.ts";
 
 describe("JsonLineParser", () => {
@@ -522,5 +522,20 @@ describe("runReviewer live text preview", () => {
 		assert.ok(!lastStreamed.includes("�"));
 		// message_end reconciles to the final short text.
 		if (r.status === "completed") assert.equal(r.output, "done");
+	});
+
+	it("forwards onEvent structured events", async () => {
+		const received: ChildEvent[] = [];
+		const r = await run(
+			{
+				events: [{ type: "tool_execution_start", toolName: "read", args: { path: "a.ts" } }],
+				finalText: "ok",
+			},
+			{ onEvent: (ev) => received.push(ev) },
+		);
+		assert.equal(r.status, "completed");
+		assert.ok(received.length >= 2);
+		assert.equal(received[0].kind, "tool_start");
+		assert.equal(received[received.length - 1].kind, "turn_end");
 	});
 });

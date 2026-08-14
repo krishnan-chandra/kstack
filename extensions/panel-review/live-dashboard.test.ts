@@ -119,7 +119,7 @@ describe("renderDashboard", () => {
 		store.markRunning("a");
 		store.markRunning("b");
 		const lines = renderDashboard(store, 100, theme);
-		assert.match(lines[0], /Panel review — 0\/5 done · 0s — Ctrl\+Shift\+X to abort/);
+		assert.match(lines[0], /Panel review — 0\/5 done · 0s — \^⇧V inspect · \^⇧X abort/);
 		const body = lines.slice(1).join("\n");
 		for (let i = 0; i < 5; i++) assert.match(body, new RegExp(`R${i} — `));
 		assert.match(body, /R0 — running/);

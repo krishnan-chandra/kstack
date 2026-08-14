@@ -71,12 +71,29 @@ ignores the outcome.
    (thinking content is never displayed). Queued reviewers stay visible when
    `maxConcurrency` is below the panel size, and after the reviewers finish a
    distinct lead/synthesis row appears beneath them. The header shows summary
-   counts, elapsed time, and the abort hint. On narrow terminals the model
-   and activity columns drop first; labels and states always remain. All
-   displayed child text is untrusted: ANSI/OSC/APC sequences and control
-   characters are stripped before theming, and every line is truncated to the
-   terminal width. The dashboard is ephemeral — it disappears on success,
-   decline, abort, failure, or error, and is never written to the session.
+   counts, elapsed time, and shortcuts: **Ctrl+Shift+V** (`^⇧V`) to open the
+   read-only inspector overlay, and **Ctrl+Shift+X** (`^⇧X`) to abort. On
+   narrow terminals the model and activity columns drop first; labels and
+   states always remain. All displayed child text is untrusted: ANSI/OSC/APC
+   sequences and control characters are stripped before theming, and every line
+   is truncated to the terminal width. The dashboard is ephemeral — it
+   disappears on success, decline, abort, failure, or error, and is never
+   written to the session.
+
+   Press **Ctrl+Shift+V** during a running panel review in TUI mode to open
+   the interactive inspector overlay:
+   - **Tabs**: Switch between reviewers (and the lead once revealed) using
+     `Left`/`Right`/`Tab`/`Shift+Tab`.
+   - **Scrolling**: Scroll the selected child's transcript using `Up`/`Down`/
+     `PageUp`/`PageDown`/`Home`/`End` (`g`/`G`).
+   - **Follow Tail**: `f` toggles auto-scrolling to the live tail (default ON;
+     scrolling up disables follow, scrolling to bottom or `f` re-enables it).
+   - **Esc**: Closes the inspector overlay.
+   - **Strictly read-only**: Input never reaches child processes; abort
+     (**Ctrl+Shift+X**) remains functional while the overlay is open.
+   - **Bounded & ephemeral**: Transcripts are capped at 128 KiB / 1,000 entries
+     per child with an eviction notice when earlier lines are dropped; nothing
+     is persisted to the session or disk.
 
    Outside TUI mode (RPC), the compact footer status line remains the
    fallback, showing each reviewer's live activity (current tool call, turn
@@ -168,6 +185,8 @@ the `"panel-review"` section:
 | Child idle timeout | 10 min without output (SIGTERM, then SIGKILL after a 5 s grace) |
 | Child max runtime | 30 min absolute ceiling |
 | Dashboard live text preview | 240-byte rolling UTF-8 tail per child |
+| Inspector transcript cap | 128 KiB / 1,000 entries per child (oldest evicted with notice) |
+| Inspector entry text cap | 8 KiB per entry (UTF-8 safe head/tail truncation) |
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes
