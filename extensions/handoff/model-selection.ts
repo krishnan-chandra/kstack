@@ -15,9 +15,10 @@
  * effort), so inheritance holds whenever the parent's state is usable and not
  * overridden at startup.
  */
+import { THINKING_LEVELS } from "../shared/kstack-config.ts";
 
 /** Canonical Pi thinking/effort levels accepted by `/handoff --model <ref>:<effort>`. */
-export const HANDOFF_EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
 
 export type HandoffEffortLevel = (typeof HANDOFF_EFFORT_LEVELS)[number];
 

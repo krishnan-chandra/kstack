@@ -30,10 +30,9 @@
  * unavailable.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
+export { getAgentDir, getKstackPath, THINKING_LEVELS };
 
 export const MIN_REVIEWERS = 2;
 export const MAX_REVIEWERS = 5;
@@ -42,10 +41,6 @@ export const DEFAULT_TIMEOUT_MINUTES = 10;
 export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
 
 /** Thinking levels Pi understands; used to validate config entries. */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-/** "provider/model"; extra path segments allowed (e.g. openrouter/deepseek/deepseek-v4-pro). */
-const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
 /**
  * Built-in low-cost default panel, used when no kstack.json exists.
@@ -66,16 +61,6 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
  * their synthesis model explicitly.
  */
 export const DEFAULT_SYNTHESIS = { model: "openai/gpt-5.6-terra", thinking: "medium" } as const;
-
-export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-	const dir = env.PI_CODING_AGENT_DIR;
-	if (dir) return dir.startsWith("~/") ? join(homedir(), dir.slice(2)) : dir;
-	return join(homedir(), ".pi", "agent");
-}
-
-export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
-	return join(getAgentDir(env), "kstack.json");
-}
 
 export type ConfigLoad =
 	| { status: "loaded"; config: PanelConfig; path: string }
@@ -201,23 +186,10 @@ function validateSynthesis(obj: Record<string, unknown>): { ok: true; spec: { mo
  * `"panel-review"` key.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const kstackFile = getKstackPath(env);
-	if (!existsSync(kstackFile)) return { status: "missing", path: kstackFile };
-	try {
-		const raw = JSON.parse(readFileSync(kstackFile, "utf8"));
-		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-			return { status: "invalid", path: kstackFile, error: "kstack.json must be a JSON object." };
-		}
-		const section = (raw as Record<string, unknown>)["panel-review"];
-		if (section === undefined) {
-			return { status: "missing", path: kstackFile };
-		}
-		const result = validateConfig(section);
-		if (!result.ok) return { status: "invalid", path: kstackFile, error: result.error };
-		return { status: "loaded", config: result.config, path: kstackFile };
-	} catch (err) {
-		return { status: "invalid", path: kstackFile, error: `Unreadable config: ${(err as Error).message}` };
-	}
+	const section = loadKstackSection("panel-review", env);
+	if (section.status !== "found") return section;
+	const result = validateConfig(section.value);
+	return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error };
 }
 
 /** Model the CLI accepts: "provider/model" with optional ":thinking" suffix. */

@@ -1,7 +1,8 @@
 /** Shared types and limits for the plan/implement workflow. */
+import { THINKING_LEVELS, type ThinkingLevel } from "../shared/kstack-config.ts";
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export { THINKING_LEVELS };
+export type { ThinkingLevel };
 
 /** How the approved plan is delivered. */
 export type DeliveryMode = "single" | "stack";
