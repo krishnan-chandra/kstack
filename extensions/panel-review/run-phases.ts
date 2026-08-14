@@ -1,9 +1,10 @@
 /** Testable resolution and execution phases for panel-review. */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readPromptAsset } from "../shared/prompt-assets.ts";
 import {
 	type ConfigLoad,
 	DEFAULT_MAX_RUNTIME_MINUTES,
@@ -218,7 +219,10 @@ export async function runReviewPipeline(
 		const synthesisPromptFile = join(promptDir, "synthesis-prompt.md");
 		writeFileSync(
 			synthesisPromptFile,
-			buildSynthesisPrompt(readPrompt("lead-judgment.md"), readPrompt("thermo-nuclear.md")),
+			buildSynthesisPrompt(
+				readPromptAsset(PROMPTS_DIR, "lead-judgment.md"),
+				readPromptAsset(PROMPTS_DIR, "thermo-nuclear.md"),
+			),
 			{ encoding: "utf8", mode: 0o600 },
 		);
 		const synthesisResult = await ops.runReviewer({
@@ -296,12 +300,8 @@ export async function runReviewPipeline(
 	}
 }
 
-function readPrompt(name: string): string {
-	return readFileSync(join(PROMPTS_DIR, name), "utf8");
-}
-
 function assembleReviewerPrompt(): string {
 	return ["reviewer.md", "rubric.md", "code-quality.md", "thermo-nuclear.md"]
-		.map((name) => readPrompt(name).trim())
+		.map((name) => readPromptAsset(PROMPTS_DIR, name).trim())
 		.join("\n\n---\n\n");
 }

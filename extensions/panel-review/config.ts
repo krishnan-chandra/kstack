@@ -40,6 +40,7 @@ import {
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
 export { getAgentDir, getKstackPath, THINKING_LEVELS };
+export { modelCliId } from "../shared/model-spec.ts";
 
 export const MIN_REVIEWERS = 2;
 export const MAX_REVIEWERS = 5;
@@ -205,11 +206,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	return result.ok
 		? { status: "loaded", config: result.config, path: section.path }
 		: { status: "invalid", path: section.path, error: result.error };
-}
-
-/** Model the CLI accepts: "provider/model" with optional ":thinking" suffix. */
-export function modelCliId(spec: ReviewerSpec): string {
-	return spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
 }
 
 export interface ModelLike {

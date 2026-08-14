@@ -7,12 +7,13 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { requestLand } from "../land/api.ts";
 import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
+import { makeExec } from "../shared/git-exec.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { CHANGE_KINDS, type ChangeKind, changeKindLabel, changeKindPlaybookFile, isChangeKind } from "../shared/change-kind.ts";
 import { parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
-import { type ExecFn, preflightStack } from "./delivery-mode.ts";
+import { preflightStack } from "./delivery-mode.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { runApprovedWorkflow } from "./phases.ts";
@@ -53,10 +54,6 @@ function sendPhaseMessage(pi: ExtensionAPI, result: AgentRunResult): void {
 function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[] } }): SkillRef[] {
 	return (ctx.getSystemPromptOptions().skills ?? []).map((skill) => ({ name: skill.name, baseDir: skill.baseDir }));
 }
-function makeExec(pi: ExtensionAPI): ExecFn {
-	return (command, args, options) => pi.exec(command, args, { cwd: options.cwd, timeout: options.timeout });
-}
-
 export default function planImplementExtension(pi: ExtensionAPI): void {
 	const lifecycle = new WorkflowLifecycle();
 	// Extensions normally load before session_start; eager activation also keeps

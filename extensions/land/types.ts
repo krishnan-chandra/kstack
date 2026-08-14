@@ -29,17 +29,7 @@ export interface LandResult {
 	recoveryOperationId?: string;
 	blockers: string[];
 }
-export interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-export interface ExecOptions {
-	cwd: string;
-	timeout: number;
-	signal?: AbortSignal;
-}
-export type ExecFn = (command: string, args: string[], options: ExecOptions) => Promise<ExecResult>;
+export type { ExecFn, ExecFnOptions as ExecOptions, ExecFnResult as ExecResult } from "../shared/git-exec.ts";
 export const LIMITS = {
 	queryMs: 15_000,
 	mergeMs: 60_000,

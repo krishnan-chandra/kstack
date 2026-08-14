@@ -1,10 +1,10 @@
 /** Kstack Router — the package's front door. */
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ChangeKind } from "../shared/change-kind.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
+import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { parseArgs } from "./args.ts";
 import { checkDependencies, getRouteDescription, getRouteLabel, validateCatalog } from "./catalog.ts";
@@ -91,14 +91,14 @@ export default function (pi: ExtensionAPI): void {
 
 		const parts: string[] = [];
 		try {
-			parts.push(readPlaybook("principles.md"));
+			parts.push(readPromptAsset(PLAYBOOKS_DIR, "principles.md"));
 		} catch {
 			// Principles absent is not fatal.
 		}
 		const playbookFile = getPlaybookForRoute(route);
 		if (playbookFile) {
 			try {
-				parts.push(readPlaybook(playbookFile));
+				parts.push(readPromptAsset(PLAYBOOKS_DIR, playbookFile));
 			} catch {
 				// Playbook absent is not fatal.
 			}
@@ -342,8 +342,4 @@ export default function (pi: ExtensionAPI): void {
 			}
 		},
 	});
-}
-
-function readPlaybook(name: string): string {
-	return readFileSync(join(PLAYBOOKS_DIR, name), "utf8");
 }
