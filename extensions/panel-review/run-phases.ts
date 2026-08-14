@@ -75,7 +75,8 @@ export interface ReviewPipelineEffects {
 	notify(message: string, level: "info" | "warning" | "error"): void;
 	setCompactStatus(status: string | undefined): void;
 	createDashboard(reviewers: ReviewerSpec[]): PipelineDashboard | undefined;
-	setActiveAbort(controller: AbortController | undefined): void;
+	setActiveAbort(controller: AbortController): void;
+	clearActiveAbort(controller: AbortController): void;
 	waitForIdle(): Promise<void>;
 	sendVerdict(verdict: string, details: VerdictDetails): void;
 }
@@ -231,7 +232,7 @@ export async function runReviewPipeline(
 		return { status: "completed", verdict, synthesized, baseSha: scope.baseSha, headSha: scope.headSha };
 	} finally {
 		if (ticker) clearInterval(ticker);
-		if (abort) fx.setActiveAbort(undefined);
+		if (abort) fx.clearActiveAbort(abort);
 		dashboard?.dispose();
 		fx.setCompactStatus(undefined);
 		if (promptDir) {

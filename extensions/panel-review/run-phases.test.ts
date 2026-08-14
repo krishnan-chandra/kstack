@@ -110,6 +110,7 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 		setCompactStatus: () => {},
 		createDashboard: () => undefined,
 		setActiveAbort: () => {},
+		clearActiveAbort: () => {},
 		waitForIdle: async () => {},
 		sendVerdict: () => assert.fail("failed panels must not emit a verdict"),
 	};
@@ -149,4 +150,59 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 		assert.match(result.error, /two \(test\/two\): failed — bad output/);
 	}
 	assert.match(notifications[0] ?? "", /All reviewers failed; nothing to synthesize/);
+});
+
+test("an older pipeline cannot clear a newer run's abort controller", async () => {
+	let activeAbort: AbortController | undefined;
+	let firstAbort: AbortController | undefined;
+	const replacementAbort = new AbortController();
+	const fx: ReviewPipelineEffects = {
+		isCurrent: () => true,
+		notify: () => {},
+		setCompactStatus: () => {},
+		createDashboard: () => undefined,
+		setActiveAbort: (controller) => {
+			firstAbort ??= controller;
+			activeAbort = controller;
+		},
+		clearActiveAbort: (controller) => {
+			if (activeAbort === controller) activeAbort = undefined;
+		},
+		waitForIdle: async () => {},
+		sendVerdict: () => assert.fail("failed panels must not emit a verdict"),
+	};
+	const ops: ReviewPipelineOps = {
+		runPanel: async () => {
+			assert.equal(activeAbort, firstAbort);
+			activeAbort = replacementAbort;
+			return {
+				results: [{ status: "failed", label: "one", model: "test/one", error: "stopped" }],
+				completed: 0,
+				failed: 1,
+				aborted: 0,
+			};
+		},
+		runReviewer: async () => { throw new Error("reviewer runner should be owned by the fake panel"); },
+	};
+	const scope: ScopeBundle = {
+		path: "/tmp/bundle.md", dir: "/tmp", repoRoot: "/repo", headSha: "head", baseSha: "base",
+		baseRef: "main", baseStrategy: "main", fileCount: 1, diffBytes: 1, untrackedCount: 0,
+		binaryCount: 0, truncated: false, contextFilesTouched: false, generatedAt: "now",
+	};
+
+	await runReviewPipeline({
+		scope,
+		intent: "review",
+		options: {},
+		resolution: {
+			reviewers: panelConfig.reviewers,
+			maxConcurrency: 2,
+			warnings: [],
+			synthesis: { model: "test/lead", cliId: "test/lead" },
+			timeoutMinutes: 1,
+			maxRuntimeMinutes: 2,
+		},
+	}, fx, ops);
+
+	assert.equal(activeAbort, replacementAbort);
 });

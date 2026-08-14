@@ -147,6 +147,9 @@ export default function (pi: ExtensionAPI): void {
 					setCompactStatus,
 					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
 					setActiveAbort: (controller) => { activeAbort = controller; },
+					clearActiveAbort: (controller) => {
+						if (activeAbort === controller) activeAbort = undefined;
+					},
 					waitForIdle: () => ctx.waitForIdle(),
 					sendVerdict: (verdict, details) => pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),
 				},
