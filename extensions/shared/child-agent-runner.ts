@@ -205,7 +205,6 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			graceTimer = setTimeout(() => {
 				if (!closed) killTree("SIGKILL");
 			}, killGraceMs);
-			graceTimer.unref?.();
 		};
 		const stop = () => {
 			if (killStarted) return;
@@ -227,13 +226,12 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			resolve(result);
 		};
 		const armIdle = () => {
-			if (deps.idleTimeoutMs === undefined) return;
+			if (settled || deps.idleTimeoutMs === undefined) return;
 			if (idleTimer) clearTimeout(idleTimer);
 			idleTimer = setTimeout(() => {
 				idleTimedOut = true;
 				stop();
 			}, deps.idleTimeoutMs);
-			idleTimer.unref?.();
 		};
 
 		const parser = new JsonLineParser(
@@ -365,7 +363,6 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 				runtimeTimedOut = true;
 				stop();
 			}, deps.maxRuntimeMs);
-			runtimeTimer.unref?.();
 		}
 		if (options.stdin !== undefined && child.stdin) {
 			child.stdin.write(options.stdin);
