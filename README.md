@@ -37,6 +37,8 @@ create branches.
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
 | [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with the bundled `publish_stack.py`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
 | [`git-worktrees`](skills/git-worktrees/) | Creates, inspects, repairs, and safely cleans up Git linked worktrees managed beneath `~/.pi/kstack/worktrees`, with dirty-state and ownership checks before removal. |
+| [`fix-merge-conflicts`](skills/fix-merge-conflicts/) | Resolves merge, rebase, or jj conflicts non-interactively, then validates the build and tests before finalizing. |
+| [`write-pr`](skills/write-pr/) | Writes a crisp pull-request title and description from the branch diff, updating the open PR or creating a draft. |
 | [`simplify`](skills/simplify/) | Runs parallel read-only review lenses on scoped code changes, then applies targeted cleanup to reduce complexity while preserving behavior. |
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
@@ -283,12 +285,15 @@ node --test extensions/panel-review/*.test.ts
 node --test extensions/plan-implement/*.test.ts
 node --test extensions/kstack-router/*.test.ts
 node --test extensions/pr-autopilot/*.test.ts
+node --test extensions/land/*.test.ts
+node --test extensions/fast-implement/*.test.ts
 node --test extensions/shared/*.test.ts
 node --test skills/reflect/*.test.mjs
 node --test skills/architect/*.test.mjs
 node --test skills/decision-trail/*.test.mjs
 node --test skills/recall/*.test.mjs
 node --test skills/setup-kstack/*.test.mjs
+node --test skills/personalize/skill.test.mjs
 node --test skills/investigation-model.test.mjs
 ```
 
@@ -300,7 +305,7 @@ injection, restoration, delegation):
 node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
 
-The package also includes the `create-pi-extension`, `create-skill`, `find-reviewers`, `arena`, `architect`, `swarm`, `jj-stacked-prs`, `git-worktrees`, `simplify`, `unslop`, `technical-writing`, `typescript-best-practices`, `blast-radius`, `reflect`, `decision-trail`, `how`, `why`, `recall`, `setup-kstack`, and `tdd` skills. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
+The package also includes the skills listed in the table above. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
