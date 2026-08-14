@@ -1,0 +1,10 @@
+{
+	"name": "kstack",
+	"private": true,
+	"type": "module",
+	"engines": { "node": ">=22" },
+	"scripts": {
+		"test": "node --test install.test.mjs \"extensions/**/*.test.ts\" \"skills/**/*.test.mjs\"",
+		"test:extensions": "node --test \"extensions/**/*.test.ts\""
+	}
+}
