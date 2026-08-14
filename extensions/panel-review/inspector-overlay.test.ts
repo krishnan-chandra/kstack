@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { matchesKey } from "@earendil-works/pi-tui";
 import {
 	formatTokens,
 	InspectorComponent,
@@ -19,6 +20,26 @@ const fakeText: TerminalText = {
 	stripTerminalSequences: (t) => t.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ""),
 	truncateToWidth: (t, w) => (t.length > w ? `${t.slice(0, Math.max(0, w - 1))}…` : t),
 };
+
+describe("inspector key compatibility", () => {
+	it("pins matchesKey support for legacy terminal sequences", () => {
+		const sequences: Array<[string, Parameters<typeof matchesKey>[1]]> = [
+			["\x1b", "escape"],
+			["\x18", "ctrl+x"],
+			["\x1b[D", "left"],
+			["\x1b[Z", "shift+tab"],
+			["\x1b[C", "right"],
+			["\t", "tab"],
+			["\x1b[A", "up"],
+			["\x1b[B", "down"],
+			["\x1b[5~", "pageUp"],
+			["\x1b[6~", "pageDown"],
+			["\x1b[H", "home"],
+			["\x1b[F", "end"],
+		];
+		for (const [sequence, key] of sequences) assert.equal(matchesKey(sequence, key), true, key);
+	});
+});
 
 describe("sanitizeMultilineText", () => {
 	it("strips ANSI escapes and C0 controls while preserving newlines", () => {
@@ -220,6 +241,31 @@ describe("InspectorComponent", () => {
 		comp.handleInput("\x1b");
 		assert.equal(closed, true);
 
+		comp.dispose();
+	});
+
+	it("handles ctrl-shift-x and ignores unknown sequences", () => {
+		const dashboard = new PanelDashboardStore(() => 1000);
+		dashboard.addReviewer("r1", "alpha", "model-a");
+		const transcripts = new PanelTranscriptStore(() => 1000);
+		transcripts.addChild("r1");
+		let aborted = false;
+		const comp = new InspectorComponent(
+			dashboard,
+			transcripts,
+			{ requestRender: () => {} },
+			fakeTheme,
+			() => {},
+			() => {
+				aborted = true;
+			},
+			fakeText,
+		);
+		const before = { ...comp.getState() };
+		assert.doesNotThrow(() => comp.handleInput("\x1b[999~"));
+		assert.deepEqual(comp.getState(), before);
+		comp.handleInput("\x1b[120;6u");
+		assert.equal(aborted, true);
 		comp.dispose();
 	});
 
