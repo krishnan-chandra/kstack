@@ -7,10 +7,11 @@ export interface SessionNamingApi {
 
 /** Build a short, deterministic slug from a workflow's user task. */
 export function deriveSessionName(task: string): string {
-	const firstContentLine = task
-		.split(/\r?\n/)
-		.map((line) => line.trim())
-		.find(Boolean) ?? "development-task";
+	const firstContentLine =
+		task
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.find(Boolean) ?? "development-task";
 	const slug = firstContentLine
 		.replace(/^(?:#{1,6}|[-*+]|>)\s+/, "")
 		.normalize("NFKD")

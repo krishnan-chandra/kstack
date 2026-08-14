@@ -3,15 +3,21 @@ import test from "node:test";
 import { LandLifecycle } from "./lifecycle.ts";
 
 test("end releases the run without turning normal completion into an abort", () => {
-	const lifecycle = new LandLifecycle(); lifecycle.startSession();
-	const token = lifecycle.begin(); assert.ok(token);
+	const lifecycle = new LandLifecycle();
+	lifecycle.startSession();
+	const token = lifecycle.begin();
+	assert.ok(token);
 	lifecycle.end(token);
 	assert.equal(token.signal.aborted, false);
 	assert.equal(lifecycle.isRunning(), false);
 });
 
 test("allows one active run and shutdown aborts it", () => {
-	const lifecycle = new LandLifecycle(); lifecycle.startSession();
-	const token = lifecycle.begin(); assert.ok(token); assert.equal(lifecycle.begin(), undefined);
-	lifecycle.shutdownSession(); assert.equal(token.signal.aborted, true);
+	const lifecycle = new LandLifecycle();
+	lifecycle.startSession();
+	const token = lifecycle.begin();
+	assert.ok(token);
+	assert.equal(lifecycle.begin(), undefined);
+	lifecycle.shutdownSession();
+	assert.equal(token.signal.aborted, true);
 });

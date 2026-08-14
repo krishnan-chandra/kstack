@@ -22,9 +22,9 @@ describe("pr-autopilot config", () => {
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
 				{ label: "lite", model: "openrouter/google/gemini-3.7-flash" },
 			],
-			"maxConcurrency": 2,
-			"timeoutMinutes": 5,
-			"maxRuntimeMinutes": 15,
+			maxConcurrency: 2,
+			timeoutMinutes: 5,
+			maxRuntimeMinutes: 15,
 		});
 		assert.equal(result.ok, true);
 		if (result.ok) {
@@ -59,21 +59,78 @@ describe("pr-autopilot config", () => {
 	it("rejects duplicate labels and models", () => {
 		const base = { thinking: "low" };
 		assert.match(
-			(validateConfig({ models: [{ ...base, label: "a", model: "openai/m1" }, { ...base, label: "a", model: "openai/m2" }] }) as { error: string }).error,
+			(
+				validateConfig({
+					models: [
+						{ ...base, label: "a", model: "openai/m1" },
+						{ ...base, label: "a", model: "openai/m2" },
+					],
+				}) as { error: string }
+			).error,
 			/Duplicate model label/,
 		);
 		assert.match(
-			(validateConfig({ models: [{ ...base, label: "a", model: "openai/m1" }, { ...base, label: "b", model: "openai/m1" }] }) as { error: string }).error,
+			(
+				validateConfig({
+					models: [
+						{ ...base, label: "a", model: "openai/m1" },
+						{ ...base, label: "b", model: "openai/m1" },
+					],
+				}) as { error: string }
+			).error,
 			/Duplicate model/,
 		);
 	});
 
 	it("rejects invalid model ids, timeouts, and concurrency", () => {
 		const base = { thinking: "low" };
-		assert.match((validateConfig({ models: [{ ...base, label: "a", model: "bad" }, { ...base, label: "b", model: "openai/m2" }] }) as { error: string }).error, /provider\/model/);
-		assert.match((validateConfig({ models: [{ ...base, label: "a", model: "openai/m1" }, { ...base, label: "b", model: "openai/m2" }], timeoutMinutes: 0 }) as { error: string }).error, /between 1 and 15/);
-		assert.match((validateConfig({ models: [{ ...base, label: "a", model: "openai/m1" }, { ...base, label: "b", model: "openai/m2" }], maxConcurrency: 0 }) as { error: string }).error, /between 1 and 5/);
-		assert.match((validateConfig({ models: [{ ...base, label: "a", model: "openai/m1" }, { ...base, label: "b", model: "openai/m2" }], maxRuntimeMinutes: 1 }) as { error: string }).error, /between 2 and 60/);
+		assert.match(
+			(
+				validateConfig({
+					models: [
+						{ ...base, label: "a", model: "bad" },
+						{ ...base, label: "b", model: "openai/m2" },
+					],
+				}) as { error: string }
+			).error,
+			/provider\/model/,
+		);
+		assert.match(
+			(
+				validateConfig({
+					models: [
+						{ ...base, label: "a", model: "openai/m1" },
+						{ ...base, label: "b", model: "openai/m2" },
+					],
+					timeoutMinutes: 0,
+				}) as { error: string }
+			).error,
+			/between 1 and 15/,
+		);
+		assert.match(
+			(
+				validateConfig({
+					models: [
+						{ ...base, label: "a", model: "openai/m1" },
+						{ ...base, label: "b", model: "openai/m2" },
+					],
+					maxConcurrency: 0,
+				}) as { error: string }
+			).error,
+			/between 1 and 5/,
+		);
+		assert.match(
+			(
+				validateConfig({
+					models: [
+						{ ...base, label: "a", model: "openai/m1" },
+						{ ...base, label: "b", model: "openai/m2" },
+					],
+					maxRuntimeMinutes: 1,
+				}) as { error: string }
+			).error,
+			/between 2 and 60/,
+		);
 	});
 
 	it("resolves configured models only when all are available", () => {
@@ -86,15 +143,21 @@ describe("pr-autopilot config", () => {
 		assert.equal(valid.ok, true);
 		if (!valid.ok) return;
 
-		const ok = resolveModels({ status: "loaded", config: { ...valid.config, source: "config", warnings: [] }, path: "/fake" }, {
-			available: () => true,
-		});
+		const ok = resolveModels(
+			{ status: "loaded", config: { ...valid.config, source: "config", warnings: [] }, path: "/fake" },
+			{
+				available: () => true,
+			},
+		);
 		assert.equal(ok.ok, true);
 		if (ok.ok) assert.equal(ok.config.source, "config");
 
-		const bad = resolveModels({ status: "loaded", config: { ...valid.config, source: "config", warnings: [] }, path: "/fake" }, {
-			available: (provider) => provider === "openai",
-		});
+		const bad = resolveModels(
+			{ status: "loaded", config: { ...valid.config, source: "config", warnings: [] }, path: "/fake" },
+			{
+				available: (provider) => provider === "openai",
+			},
+		);
 		assert.equal(bad.ok, false);
 		if (!bad.ok) assert.match(bad.error, /gemini-3.7-flash/);
 	});
@@ -102,10 +165,13 @@ describe("pr-autopilot config", () => {
 	it("falls back to defaults filtered to available", () => {
 		const dir = mkdtempSync(join(tmpdir(), "pr-autopilot-config-"));
 		try {
-			const result = resolveModels({ status: "missing", path: dir }, {
-				available: (provider, modelId) =>
-					provider === "openai" || (provider === "openrouter" && modelId.includes("gemini")),
-			});
+			const result = resolveModels(
+				{ status: "missing", path: dir },
+				{
+					available: (provider, modelId) =>
+						provider === "openai" || (provider === "openrouter" && modelId.includes("gemini")),
+				},
+			);
 			assert.equal(result.ok, true);
 			if (result.ok) {
 				assert.equal(result.config.source, "default");

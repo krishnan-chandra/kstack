@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
-import { buildChildArgs, runReviewer, summarizeToolCall, type ChildEvent, type SpawnImpl } from "./reviewer-runner.ts";
+import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl, summarizeToolCall } from "./reviewer-runner.ts";
 import type { ReviewerResult } from "./types.ts";
 
 describe("JsonLineParser", () => {
@@ -319,7 +319,11 @@ describe("runReviewer stall detection", () => {
 			deps: {
 				// 200ms total runtime with output every 40ms; idle limit is 100ms.
 				spawnImpl: timedSpawn(
-					{ chunks: [40, 80, 120, 160].map((atMs) => ({ atMs, text: '{"type":"message_start"}\n' })), closeAtMs: 200, finalText: "ok" },
+					{
+						chunks: [40, 80, 120, 160].map((atMs) => ({ atMs, text: '{"type":"message_start"}\n' })),
+						closeAtMs: 200,
+						finalText: "ok",
+					},
 					(sig) => killed.push(sig),
 				),
 				killGraceMs: 5,
@@ -364,9 +368,28 @@ describe("runReviewer stall detection", () => {
 			deps: {
 				spawnImpl: timedSpawn({
 					chunks: [
-						{ atMs: 10, text: JSON.stringify({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "/repo/extensions/panel-review/types.ts" } }) + "\n" },
-						{ atMs: 20, text: JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "read" }) + "\n" },
-						{ atMs: 30, text: JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], usage: { input: 10 } } }) + "\n" },
+						{
+							atMs: 10,
+							text:
+								JSON.stringify({
+									type: "tool_execution_start",
+									toolCallId: "c1",
+									toolName: "read",
+									args: { path: "/repo/extensions/panel-review/types.ts" },
+								}) + "\n",
+						},
+						{
+							atMs: 20,
+							text: JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "read" }) + "\n",
+						},
+						{
+							atMs: 30,
+							text:
+								JSON.stringify({
+									type: "message_end",
+									message: { role: "assistant", content: [{ type: "text", text: "partial" }], usage: { input: 10 } },
+								}) + "\n",
+						},
 					],
 					// never closes: the child stalls after one completed turn
 				}),
@@ -416,7 +439,10 @@ describe("runReviewer live text preview", () => {
 		const seen: { preview?: string }[] = [];
 		const lines = [
 			JSON.stringify({ type: "message_start", message: { role: "assistant" } }),
-			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "secret reasoning" } }),
+			JSON.stringify({
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_delta", delta: "secret reasoning" },
+			}),
 			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hello " } }),
 			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } }),
 		];
@@ -476,7 +502,10 @@ describe("runReviewer live text preview", () => {
 				events: [
 					{ type: "message_start", message: { role: "assistant" } },
 					{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "first draft " } },
-					{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "first draft" }], usage: {} } },
+					{
+						type: "message_end",
+						message: { role: "assistant", content: [{ type: "text", text: "first draft" }], usage: {} },
+					},
 					{ type: "message_start", message: { role: "assistant" } },
 					{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "second draft" } },
 				],

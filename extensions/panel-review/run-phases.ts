@@ -5,16 +5,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	type ConfigLoad,
 	DEFAULT_MAX_RUNTIME_MINUTES,
 	DEFAULT_TIMEOUT_MINUTES,
 	modelCliId,
+	type ResolveDeps,
 	resolveReviewers,
 	resolveSynthesisModel,
-	type ConfigLoad,
-	type ResolveDeps,
 } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
-import { runReviewer, type ChildEvent } from "./reviewer-runner.ts";
+import { type ChildEvent, runReviewer } from "./reviewer-runner.ts";
 import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec, ScopeBundle } from "./types.ts";
 
@@ -123,11 +123,18 @@ export async function runReviewPipeline(
 		const startedAt = Date.now();
 		const updateStatus = () => {
 			if (!fx.isCurrent()) return;
-			const lines = resolution.reviewers.map((reviewer) => `${reviewer.label}:${progress.get(reviewer.label) ?? "queued"}`).join(" ");
-			fx.setCompactStatus(`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${Math.round((Date.now() - startedAt) / 1000)}s — ${lines}`);
+			const lines = resolution.reviewers
+				.map((reviewer) => `${reviewer.label}:${progress.get(reviewer.label) ?? "queued"}`)
+				.join(" ");
+			fx.setCompactStatus(
+				`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${Math.round((Date.now() - startedAt) / 1000)}s — ${lines}`,
+			);
 		};
 		updateStatus();
-		ticker = setInterval(() => { updateStatus(); if (fx.isCurrent()) dashboard?.tick(); }, 1000);
+		ticker = setInterval(() => {
+			updateStatus();
+			if (fx.isCurrent()) dashboard?.tick();
+		}, 1000);
 		ticker.unref?.();
 		const childDeps = {
 			timeoutMs: resolution.timeoutMinutes * 60_000,
@@ -140,40 +147,47 @@ export async function runReviewPipeline(
 				dashboard?.markRunning(spec.label);
 				dashboard?.note(spec.label, "Reviewer started");
 			}
-			return ops.runReviewer({
-				spec,
-				model: modelCliId(spec),
-				promptFile: reviewerPromptFile,
-				task: `Review the bundle at ${scope.path}.`,
-				cwd: scope.repoRoot,
-				noContextFiles: scope.contextFilesTouched,
-				signal: abort?.signal,
-				deps: childDeps,
-				onProgress: ({ label, turns, activity, preview }) => {
-					progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
+			return ops
+				.runReviewer({
+					spec,
+					model: modelCliId(spec),
+					promptFile: reviewerPromptFile,
+					task: `Review the bundle at ${scope.path}.`,
+					cwd: scope.repoRoot,
+					noContextFiles: scope.contextFilesTouched,
+					signal: abort?.signal,
+					deps: childDeps,
+					onProgress: ({ label, turns, activity, preview }) => {
+						progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
+						updateStatus();
+						if (fx.isCurrent())
+							dashboard?.progress(label, {
+								turns,
+								...(activity ? { activity } : {}),
+								...(preview !== undefined ? { preview } : {}),
+							});
+					},
+					onEvent: (event) => {
+						if (fx.isCurrent()) dashboard?.event(spec.label, event);
+					},
+				})
+				.then((result) => {
+					doneCount++;
+					progress.set(spec.label, result.status === "completed" ? "✓" : result.status === "failed" ? "✗" : "aborted");
 					updateStatus();
-					if (fx.isCurrent()) dashboard?.progress(label, { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
-				},
-				onEvent: (event) => {
-					if (fx.isCurrent()) dashboard?.event(spec.label, event);
-				},
-			}).then((result) => {
-				doneCount++;
-				progress.set(spec.label, result.status === "completed" ? "✓" : result.status === "failed" ? "✗" : "aborted");
-				updateStatus();
-				if (fx.isCurrent()) {
-					dashboard?.complete(spec.label, {
-						status: result.status,
-						turns: result.usage?.turns,
-						...(result.status === "failed" ? { error: result.error } : {}),
-					});
-					dashboard?.note(
-						spec.label,
-						`Reviewer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
-					);
-				}
-				return result;
-			});
+					if (fx.isCurrent()) {
+						dashboard?.complete(spec.label, {
+							status: result.status,
+							turns: result.usage?.turns,
+							...(result.status === "failed" ? { error: result.error } : {}),
+						});
+						dashboard?.note(
+							spec.label,
+							`Reviewer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
+						);
+					}
+					return result;
+				});
 		});
 		clearInterval(ticker);
 		ticker = undefined;
@@ -183,9 +197,12 @@ export async function runReviewPipeline(
 			return { status: "aborted" };
 		}
 		if (panel.completed === 0) {
-			const diagnostics = panel.results.map((result) =>
-				`  ${result.label} (${result.model}): ${result.status}${result.status === "failed" ? ` — ${result.error}` : ""}`,
-			).join("\n");
+			const diagnostics = panel.results
+				.map(
+					(result) =>
+						`  ${result.label} (${result.model}): ${result.status}${result.status === "failed" ? ` — ${result.error}` : ""}`,
+				)
+				.join("\n");
 			fx.notify(`All reviewers failed; nothing to synthesize.\n${diagnostics}`, "error");
 			return { status: "failed", error: `All reviewers failed.\n${diagnostics}` };
 		}
@@ -194,14 +211,20 @@ export async function runReviewPipeline(
 		dashboard?.addLead("lead", "lead", synthesis.cliId);
 		if (fx.isCurrent()) dashboard?.markRunning("lead");
 		const { input: synthesisInput, truncated } = buildSynthesisInput({
-			intent, scope, results: panel.results,
+			intent,
+			scope,
+			results: panel.results,
 			approvedPlan: options.approvedPlan,
 			executionLedger: options.executionLedger,
 		});
 		const synthesisInputFile = join(promptDir, "synthesis-input.md");
 		writeFileSync(synthesisInputFile, synthesisInput, { encoding: "utf8", mode: 0o600 });
 		const synthesisPromptFile = join(promptDir, "synthesis-prompt.md");
-		writeFileSync(synthesisPromptFile, buildSynthesisPrompt(readPrompt("lead-judgment.md"), readPrompt("thermo-nuclear.md")), { encoding: "utf8", mode: 0o600 });
+		writeFileSync(
+			synthesisPromptFile,
+			buildSynthesisPrompt(readPrompt("lead-judgment.md"), readPrompt("thermo-nuclear.md")),
+			{ encoding: "utf8", mode: 0o600 },
+		);
 		const synthesisResult = await ops.runReviewer({
 			spec: { label: "lead", model: synthesis.model, thinking: synthesis.thinking },
 			model: synthesis.cliId,
@@ -212,7 +235,12 @@ export async function runReviewPipeline(
 			signal: abort?.signal,
 			deps: childDeps,
 			onProgress: ({ turns, activity, preview }) => {
-				if (fx.isCurrent()) dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
+				if (fx.isCurrent())
+					dashboard?.progress("lead", {
+						turns,
+						...(activity ? { activity } : {}),
+						...(preview !== undefined ? { preview } : {}),
+					});
 			},
 			onEvent: (event) => {
 				if (fx.isCurrent()) dashboard?.event("lead", event);
@@ -233,7 +261,10 @@ export async function runReviewPipeline(
 		const synthesized = synthesisResult.status === "completed";
 		const verdict = synthesized ? synthesisResult.output : renderRawReports(panel.results);
 		if (!synthesized) {
-			fx.notify(`Synthesis ${synthesisResult.status}${synthesisResult.status === "failed" ? `: ${synthesisResult.error}` : ""}. Preserving raw reviewer reports.`, "warning");
+			fx.notify(
+				`Synthesis ${synthesisResult.status}${synthesisResult.status === "failed" ? `: ${synthesisResult.error}` : ""}. Preserving raw reviewer reports.`,
+				"warning",
+			);
 		}
 		const details: VerdictDetails = {
 			schemaVersion: 1,
@@ -241,7 +272,9 @@ export async function runReviewPipeline(
 			headSha: scope.headSha,
 			models: resolution.reviewers.map(modelCliId),
 			reviewerStatuses: panel.results.map((result) => ({
-				label: result.label, model: result.model, status: result.status,
+				label: result.label,
+				model: result.model,
+				status: result.status,
 				...(result.status === "failed" ? { error: result.error } : {}),
 			})),
 			synthesisModel: synthesis.cliId,

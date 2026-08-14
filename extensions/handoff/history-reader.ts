@@ -1,6 +1,12 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getAgentDir, getArchiveDbPath, getArchiveRoot, isPathInside, validateSessionId } from "../session-archive/archive-files.ts";
+import {
+	getAgentDir,
+	getArchiveDbPath,
+	getArchiveRoot,
+	isPathInside,
+	validateSessionId,
+} from "../session-archive/archive-files.ts";
 import {
 	countEntries,
 	getSessionRow,
@@ -8,7 +14,7 @@ import {
 	readEntries,
 	searchArchive,
 } from "../session-archive/archive-store.ts";
-import { parseSessionJsonlBytes, type ParsedEntry } from "../session-archive/session-jsonl.ts";
+import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/session-jsonl.ts";
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
@@ -68,7 +74,7 @@ function sourceFromDetails(details: unknown): HandoffSource | undefined {
 function sourceFromContent(content: unknown): HandoffSource | undefined {
 	if (typeof content !== "string") return undefined;
 	const file = content.match(/^Previous session: (.+)$/m)?.[1];
-	const metadata = content.match(/^Session ID: (\S+)  CWD: (.+)$/m);
+	const metadata = content.match(/^Session ID: (\S+) {2}CWD: (.+)$/m);
 	if (!file || !metadata || file.startsWith("(")) return undefined;
 	return { version: 1, sessionFile: file, sessionId: metadata[1], cwd: metadata[2] };
 }
@@ -365,10 +371,7 @@ export function searchHandoffHistory(
 				hits.length === 0
 					? `No matches in archived previous session ${source.sessionId}.`
 					: `Matches in archived previous session ${source.sessionId}:\n\n${hits
-							.map(
-								(hit) =>
-									`[${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`,
-							)
+							.map((hit) => `[${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`)
 							.join("\n\n")}`;
 		} finally {
 			db.close();

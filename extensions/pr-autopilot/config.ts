@@ -23,8 +23,15 @@
  * (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash) are used.
  */
 
-import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import {
+	getAgentDir,
+	getKstackPath,
+	loadKstackSection,
+	MODEL_ID_RE,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
+
 export { getAgentDir, getKstackPath };
 
 export type ConfigLoad =
@@ -47,7 +54,10 @@ export const DEFAULT_TINY_MODELS: readonly AutopilotModelSpec[] = [
  * Validate a single model spec. Enforces the tiny-model invariant: thinking
  * must be at most "low" (or absent, which defaults to "low").
  */
-function validateModelSpec(raw: unknown, index: number): { ok: true; spec: AutopilotModelSpec } | { ok: false; error: string } {
+function validateModelSpec(
+	raw: unknown,
+	index: number,
+): { ok: true; spec: AutopilotModelSpec } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: `Model entry ${index} must be an object {label, model, thinking?}.` };
 	}
@@ -60,7 +70,10 @@ function validateModelSpec(raw: unknown, index: number): { ok: true; spec: Autop
 	}
 	if (value.thinking !== undefined) {
 		if (typeof value.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(value.thinking)) {
-			return { ok: false, error: `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.` };
+			return {
+				ok: false,
+				error: `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
+			};
 		}
 		// Tiny-model invariant: no thinking level above "low".
 		const allowed = ["off", "minimal", "low"];
@@ -117,7 +130,12 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 
 	let maxConcurrency;
 	if (obj.maxConcurrency !== undefined) {
-		if (typeof obj.maxConcurrency !== "number" || !Number.isInteger(obj.maxConcurrency) || obj.maxConcurrency < 1 || obj.maxConcurrency > 5) {
+		if (
+			typeof obj.maxConcurrency !== "number" ||
+			!Number.isInteger(obj.maxConcurrency) ||
+			obj.maxConcurrency < 1 ||
+			obj.maxConcurrency > 5
+		) {
 			return { ok: false, error: `"maxConcurrency" must be an integer between 1 and 5.` };
 		}
 		maxConcurrency = obj.maxConcurrency;
@@ -127,7 +145,12 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 
 	let timeoutMinutes;
 	if (obj.timeoutMinutes !== undefined) {
-		if (typeof obj.timeoutMinutes !== "number" || !Number.isFinite(obj.timeoutMinutes) || obj.timeoutMinutes < 1 || obj.timeoutMinutes > 15) {
+		if (
+			typeof obj.timeoutMinutes !== "number" ||
+			!Number.isFinite(obj.timeoutMinutes) ||
+			obj.timeoutMinutes < 1 ||
+			obj.timeoutMinutes > 15
+		) {
 			return { ok: false, error: `"timeoutMinutes" must be a number between 1 and 15.` };
 		}
 		timeoutMinutes = obj.timeoutMinutes;
@@ -137,7 +160,12 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 
 	let maxRuntimeMinutes;
 	if (obj.maxRuntimeMinutes !== undefined) {
-		if (typeof obj.maxRuntimeMinutes !== "number" || !Number.isFinite(obj.maxRuntimeMinutes) || obj.maxRuntimeMinutes < 2 || obj.maxRuntimeMinutes > 60) {
+		if (
+			typeof obj.maxRuntimeMinutes !== "number" ||
+			!Number.isFinite(obj.maxRuntimeMinutes) ||
+			obj.maxRuntimeMinutes < 2 ||
+			obj.maxRuntimeMinutes > 60
+		) {
 			return { ok: false, error: `"maxRuntimeMinutes" must be a number between 2 and 60.` };
 		}
 		maxRuntimeMinutes = obj.maxRuntimeMinutes;
@@ -163,7 +191,10 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	let section = loadKstackSection("pr-autopilot", env);
 	let legacy = false;
-	if (section.status === "missing") { section = loadKstackSection("pr-babysit", env); legacy = section.status === "found"; }
+	if (section.status === "missing") {
+		section = loadKstackSection("pr-babysit", env);
+		legacy = section.status === "found";
+	}
 	if (section.status !== "found") return section;
 	const result = validateConfig(section.value);
 	if (!result.ok) return { status: "invalid", path: section.path, error: result.error };
@@ -208,7 +239,10 @@ export function resolveModels(
 					"\nFix the pr-autopilot section in kstack.json or authenticate the providers.",
 			};
 		}
-		return { ok: true, config: { ...config.config, source: "config", warnings: [...config.config.warnings, ...warnings] } };
+		return {
+			ok: true,
+			config: { ...config.config, source: "config", warnings: [...config.config.warnings, ...warnings] },
+		};
 	}
 
 	// No config: fall back to the built-in tiny model defaults, filtered.

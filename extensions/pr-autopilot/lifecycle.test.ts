@@ -72,5 +72,4 @@ describe("pr-autopilot lifecycle", () => {
 		lc.endRun(runToken);
 		assert.equal(lc.isCurrent(runToken), false);
 	});
-
 });

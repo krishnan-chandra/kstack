@@ -2,7 +2,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { changeKindLabel, type ChangeKind } from "../plan-implement/change-kind.ts";
+import { type ChangeKind, changeKindLabel } from "../plan-implement/change-kind.ts";
 import type { DeliveryRecommendation, RouteId } from "./types.ts";
 
 export interface RouteCardDetails {
@@ -23,17 +23,22 @@ export function registerRouteCardRenderer(pi: ExtensionAPI): void {
 		const details = message.details as RouteCardDetails | undefined;
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 		if (!expanded) {
-			const header = theme.fg("accent", "◆ Kstack Router") +
+			const header =
+				theme.fg("accent", "◆ Kstack Router") +
 				theme.fg("muted", ` — ${details?.routeLabel ?? "unknown route"}`) +
 				(details?.overrode ? theme.fg("warning", " — overridden") : "") +
-				(details?.dispatchStatus === "failed" ? theme.fg("error", " — dispatch failed")
-					: details?.dispatchStatus === "dispatched" ? theme.fg("success", " — dispatched") : "") +
+				(details?.dispatchStatus === "failed"
+					? theme.fg("error", " — dispatch failed")
+					: details?.dispatchStatus === "dispatched"
+						? theme.fg("success", " — dispatched")
+						: "") +
 				theme.fg("dim", " (Ctrl+O to expand)");
 			box.addChild(new Text(header, 0, 0));
 			return box;
 		}
 		const lines: string[] = [
-			theme.fg("accent", "◆ Kstack Router"), "",
+			theme.fg("accent", "◆ Kstack Router"),
+			"",
 			`Route: ${details?.routeLabel ?? "unknown"} (${details?.route ?? "?"})`,
 			...(details?.delivery ? [`Delivery: ${details.delivery === "stack" ? "stacked PRs" : "single PR"}`] : []),
 			...(details?.worktree ? ["Location: managed Git worktree"] : []),
@@ -41,7 +46,8 @@ export function registerRouteCardRenderer(pi: ExtensionAPI): void {
 			...(details?.modelSource ? [`Classifier: ${details.modelSource}`] : []),
 			...(details?.confidence ? [`Confidence: ${details.confidence}`] : []),
 			...(details?.overrode ? [theme.fg("warning", "User overrode recommendation")] : []),
-			...(details?.dispatchStatus ? [`Status: ${details.dispatchStatus}`] : []), "",
+			...(details?.dispatchStatus ? [`Status: ${details.dispatchStatus}`] : []),
+			"",
 			typeof message.content === "string" ? message.content : "(structured content)",
 		];
 		box.addChild(new Text(lines.join("\n"), 0, 0));

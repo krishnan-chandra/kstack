@@ -104,8 +104,12 @@ export function formatDuration(ms: number): string {
 }
 
 export function summarizeToolCall(toolName: string, args: Record<string, unknown> | undefined): string {
-	const raw = (args?.path as string) ?? (args?.filePath as string) ?? (args?.pattern as string) ??
-		(args?.command as string) ?? Object.values(args ?? {}).find((value): value is string => typeof value === "string");
+	const raw =
+		(args?.path as string) ??
+		(args?.filePath as string) ??
+		(args?.pattern as string) ??
+		(args?.command as string) ??
+		Object.values(args ?? {}).find((value): value is string => typeof value === "string");
 	if (!raw) return toolName;
 	const compact = raw.includes("/") ? (raw.split("/").filter(Boolean).pop() ?? raw) : raw;
 	return `${toolName} ${compact.length > 48 ? `${compact.slice(0, 47)}…` : compact}`;
@@ -116,7 +120,10 @@ function emptyUsage(): ChildUsage {
 }
 
 function assistantText(message: { content?: { type?: string; text?: string }[] } | undefined): string {
-	return (message?.content ?? []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("");
+	return (message?.content ?? [])
+		.filter((part) => part.type === "text" && part.text)
+		.map((part) => part.text)
+		.join("");
 }
 
 export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult> {
@@ -167,12 +174,18 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 				if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
 				else child.kill(signal);
 			} catch {
-				try { child.kill(signal); } catch { /* already exited */ }
+				try {
+					child.kill(signal);
+				} catch {
+					/* already exited */
+				}
 			}
 		};
 		const escalate = () => {
 			if (graceTimer) return;
-			graceTimer = setTimeout(() => { if (!closed) killTree("SIGKILL"); }, killGraceMs);
+			graceTimer = setTimeout(() => {
+				if (!closed) killTree("SIGKILL");
+			}, killGraceMs);
 			graceTimer.unref?.();
 		};
 		const stop = () => {
@@ -181,7 +194,10 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			killTree("SIGTERM");
 			escalate();
 		};
-		const abort = () => { aborting = true; stop(); };
+		const abort = () => {
+			aborting = true;
+			stop();
+		};
 		const finish = (result: ChildRunResult) => {
 			if (settled) return;
 			settled = true;
@@ -194,89 +210,147 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		const armIdle = () => {
 			if (deps.idleTimeoutMs === undefined) return;
 			if (idleTimer) clearTimeout(idleTimer);
-			idleTimer = setTimeout(() => { idleTimedOut = true; stop(); }, deps.idleTimeoutMs);
+			idleTimer = setTimeout(() => {
+				idleTimedOut = true;
+				stop();
+			}, deps.idleTimeoutMs);
 			idleTimer.unref?.();
 		};
 
-		const parser = new JsonLineParser((event) => {
-			if (event.type === "message_start" && event.message?.role === "assistant") { preview = ""; emit(); return; }
-			if (event.type === "message_update") {
-				const delta = event.assistantMessageEvent;
-				if (delta?.type === "text_delta" && delta.delta) {
-					preview = truncateTailUtf8(preview + delta.delta, PREVIEW_CAP);
+		const parser = new JsonLineParser(
+			(event) => {
+				if (event.type === "message_start" && event.message?.role === "assistant") {
+					preview = "";
 					emit();
-					options.onEvent?.({ kind: "text_delta", delta: delta.delta, at: Date.now() });
+					return;
 				}
-				return;
-			}
-			if (event.type === "tool_execution_start" && event.toolName) {
-				activity = summarizeToolCall(event.toolName, event.args);
-				emit();
-				if (lastToolStartAt !== undefined) {
-					options.onEvent?.({ kind: "tool_end", at: Date.now() });
+				if (event.type === "message_update") {
+					const delta = event.assistantMessageEvent;
+					if (delta?.type === "text_delta" && delta.delta) {
+						preview = truncateTailUtf8(preview + delta.delta, PREVIEW_CAP);
+						emit();
+						options.onEvent?.({ kind: "text_delta", delta: delta.delta, at: Date.now() });
+					}
+					return;
 				}
-				lastToolStartAt = Date.now();
-				options.onEvent?.({ kind: "tool_start", summary: activity, at: lastToolStartAt });
-				return;
-			}
-			if (event.type === "tool_execution_end") {
-				activity = "thinking";
+				if (event.type === "tool_execution_start" && event.toolName) {
+					activity = summarizeToolCall(event.toolName, event.args);
+					emit();
+					if (lastToolStartAt !== undefined) {
+						options.onEvent?.({ kind: "tool_end", at: Date.now() });
+					}
+					lastToolStartAt = Date.now();
+					options.onEvent?.({ kind: "tool_start", summary: activity, at: lastToolStartAt });
+					return;
+				}
+				if (event.type === "tool_execution_end") {
+					activity = "thinking";
+					emit();
+					const now = Date.now();
+					const durationMs = lastToolStartAt !== undefined ? Math.max(0, now - lastToolStartAt) : undefined;
+					lastToolStartAt = undefined;
+					options.onEvent?.({ kind: "tool_end", durationMs, at: now });
+					return;
+				}
+				if (event.type !== "message_end" || event.message?.role !== "assistant") return;
+				const message = event.message;
+				usage.turns++;
+				const turnUsage: ChildUsage = {
+					input: message.usage?.input ?? 0,
+					output: message.usage?.output ?? 0,
+					cacheRead: message.usage?.cacheRead ?? 0,
+					cacheWrite: message.usage?.cacheWrite ?? 0,
+					cost: message.usage?.cost?.total ?? 0,
+					turns: 1,
+				};
+				usage.input += turnUsage.input;
+				usage.output += turnUsage.output;
+				usage.cacheRead += turnUsage.cacheRead;
+				usage.cacheWrite += turnUsage.cacheWrite;
+				usage.cost += turnUsage.cost;
+				stopReason = message.stopReason ?? stopReason;
+				errorMessage = message.errorMessage ?? errorMessage;
+				const text = assistantText(message);
+				if (text) {
+					finalText = text;
+					preview = truncateTailUtf8(text, PREVIEW_CAP);
+				}
 				emit();
-				const now = Date.now();
-				const durationMs = lastToolStartAt !== undefined ? Math.max(0, now - lastToolStartAt) : undefined;
-				lastToolStartAt = undefined;
-				options.onEvent?.({ kind: "tool_end", durationMs, at: now });
-				return;
-			}
-			if (event.type !== "message_end" || event.message?.role !== "assistant") return;
-			const message = event.message;
-			usage.turns++;
-			const turnUsage: ChildUsage = {
-				input: message.usage?.input ?? 0,
-				output: message.usage?.output ?? 0,
-				cacheRead: message.usage?.cacheRead ?? 0,
-				cacheWrite: message.usage?.cacheWrite ?? 0,
-				cost: message.usage?.cost?.total ?? 0,
-				turns: 1,
-			};
-			usage.input += turnUsage.input;
-			usage.output += turnUsage.output;
-			usage.cacheRead += turnUsage.cacheRead;
-			usage.cacheWrite += turnUsage.cacheWrite;
-			usage.cost += turnUsage.cost;
-			stopReason = message.stopReason ?? stopReason;
-			errorMessage = message.errorMessage ?? errorMessage;
-			const text = assistantText(message);
-			if (text) { finalText = text; preview = truncateTailUtf8(text, PREVIEW_CAP); }
-			emit();
-			options.onEvent?.({ kind: "turn_end", turn: usage.turns, text, usage: turnUsage, at: Date.now() });
-		}, { maxLineBytes: lineCap, onOverflow: (maxBytes) => { protocolError = `Child emitted a JSONL stdout line larger than ${maxBytes} bytes.`; } });
+				options.onEvent?.({ kind: "turn_end", turn: usage.turns, text, usage: turnUsage, at: Date.now() });
+			},
+			{
+				maxLineBytes: lineCap,
+				onOverflow: (maxBytes) => {
+					protocolError = `Child emitted a JSONL stdout line larger than ${maxBytes} bytes.`;
+				},
+			},
+		);
 
-		child.stdout.on("data", (data) => { armIdle(); parser.push(data); if (protocolError) stop(); });
-		child.stderr.on("data", (data) => { armIdle(); if (Buffer.byteLength(stderr, "utf8") < stderrCap) stderr = truncateHeadUtf8(stderr + data.toString("utf8"), stderrCap, "stderr"); });
+		child.stdout.on("data", (data) => {
+			armIdle();
+			parser.push(data);
+			if (protocolError) stop();
+		});
+		child.stderr.on("data", (data) => {
+			armIdle();
+			if (Buffer.byteLength(stderr, "utf8") < stderrCap)
+				stderr = truncateHeadUtf8(stderr + data.toString("utf8"), stderrCap, "stderr");
+		});
 		child.on("error", (error) => finish({ status: "failed", error: `Spawn failed: ${error.message}`, usage, stderr }));
 		child.on("close", (code) => {
 			closed = true;
 			parser.flush();
 			if (aborting) return finish({ status: "aborted", usage, activity });
-			if (idleTimedOut) return finish({ status: "failed", error: `Timed out: child produced no output for ${formatDuration(deps.idleTimeoutMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`, usage, stderr, activity });
-			if (runtimeTimedOut) return finish({ status: "failed", error: `Timed out: exceeded max runtime of ${formatDuration(deps.maxRuntimeMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`, usage, stderr, activity });
+			if (idleTimedOut)
+				return finish({
+					status: "failed",
+					error: `Timed out: child produced no output for ${formatDuration(deps.idleTimeoutMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					usage,
+					stderr,
+					activity,
+				});
+			if (runtimeTimedOut)
+				return finish({
+					status: "failed",
+					error: `Timed out: exceeded max runtime of ${formatDuration(deps.maxRuntimeMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					usage,
+					stderr,
+					activity,
+				});
 			if (protocolError) return finish({ status: "failed", error: protocolError, usage, stderr });
 			const exitCode = code ?? 1;
 			if (exitCode !== 0 || stopReason === "error" || stopReason === "aborted" || errorMessage) {
-				return finish({ status: "failed", error: errorMessage || stderr.trim() || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`), usage, stderr });
+				return finish({
+					status: "failed",
+					error: errorMessage || stderr.trim() || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`),
+					usage,
+					stderr,
+				});
 			}
 			const output = truncateHeadUtf8(finalText.trim(), outputCap);
-			if (!output) return finish({ status: "failed", error: `Child produced no output. (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`, usage, stderr });
+			if (!output)
+				return finish({
+					status: "failed",
+					error: `Child produced no output. (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					usage,
+					stderr,
+				});
 			finish({ status: "completed", output, usage });
 		});
 
-		if (options.signal) options.signal.aborted ? abort() : options.signal.addEventListener("abort", abort, { once: true });
+		if (options.signal)
+			options.signal.aborted ? abort() : options.signal.addEventListener("abort", abort, { once: true });
 		armIdle();
 		if (deps.maxRuntimeMs !== undefined) {
-			runtimeTimer = setTimeout(() => { runtimeTimedOut = true; stop(); }, deps.maxRuntimeMs);
+			runtimeTimer = setTimeout(() => {
+				runtimeTimedOut = true;
+				stop();
+			}, deps.maxRuntimeMs);
 			runtimeTimer.unref?.();
 		}
-		if (options.stdin !== undefined && child.stdin) { child.stdin.write(options.stdin); child.stdin.end(); }
+		if (options.stdin !== undefined && child.stdin) {
+			child.stdin.write(options.stdin);
+			child.stdin.end();
+		}
 	});
 }

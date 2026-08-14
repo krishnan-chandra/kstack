@@ -12,20 +12,23 @@ const CATALOG: Record<RouteId, RouteMetadata> = {
 	change: {
 		id: "change",
 		label: "Change",
-		description: "Features, fixes, refactors, prototypes, docs/config changes, and Pi extension implementation. Runs plan → approve → implement → panel review.",
+		description:
+			"Features, fixes, refactors, prototypes, docs/config changes, and Pi extension implementation. Runs plan → approve → implement → panel review.",
 		requires: ["plan-implement", "panel-review"],
 	},
 	arena: {
 		id: "arena",
 		label: "Arena",
-		description: "Spawn N parallel candidates at the same task, cross-judge, graft the winner. First turn is read-only framing.",
+		description:
+			"Spawn N parallel candidates at the same task, cross-judge, graft the winner. First turn is read-only framing.",
 		requires: ["skill:arena"],
 		playbookFile: "arena.md",
 	},
 	swarm: {
 		id: "swarm",
 		label: "Swarm",
-		description: "Fan out parallel workers across independent slices, aggregate results. First turn is read-only framing.",
+		description:
+			"Fan out parallel workers across independent slices, aggregate results. First turn is read-only framing.",
 		requires: ["skill:swarm"],
 		playbookFile: "swarm.md",
 	},

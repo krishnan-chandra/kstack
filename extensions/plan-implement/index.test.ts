@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildPanelReviewOptions, buildStackPanelReviewOptions, parsePlanImplementArgs, validateTask } from "./command.ts";
+import {
+	buildPanelReviewOptions,
+	buildStackPanelReviewOptions,
+	parsePlanImplementArgs,
+	validateTask,
+} from "./command.ts";
 
 describe("plan-implement command helpers", () => {
 	it("validates empty and oversized tasks", () => {
@@ -116,10 +121,7 @@ describe("buildStackPanelReviewOptions", () => {
 	});
 
 	it("bounds the intent", () => {
-		const options = buildStackPanelReviewOptions(
-			"x".repeat(2000),
-			"0123456789abcdef0123456789abcdef01234567",
-		);
+		const options = buildStackPanelReviewOptions("x".repeat(2000), "0123456789abcdef0123456789abcdef01234567");
 		assert.equal(options.intent?.length, "Plan/implement (stacked): ".length + 1000);
 	});
 });

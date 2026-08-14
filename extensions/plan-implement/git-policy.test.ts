@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createCurrentWorkstreamBranch, verifyCommittedWorkstream } from "./git-policy.ts";
 import type { ExecFn } from "./delivery-mode.ts";
+import { createCurrentWorkstreamBranch, verifyCommittedWorkstream } from "./git-policy.ts";
 
 function fakeExec(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {
 	const calls: string[] = [];
@@ -20,7 +20,10 @@ describe("current workstream branch policy", () => {
 		const result = await createCurrentWorkstreamBranch("/repo", "Add search", exec);
 		assert.equal(result.ok, false);
 		assert.match(result.ok ? "" : result.error, /working tree is dirty/i);
-		assert.equal(calls.some((call) => call.startsWith("switch -c")), false);
+		assert.equal(
+			calls.some((call) => call.startsWith("switch -c")),
+			false,
+		);
 	});
 
 	it("creates a unique task branch and records its base", async () => {
@@ -47,7 +50,14 @@ describe("committed workstream postcondition", () => {
 			"rev-parse HEAD": { stdout: `${head}\n` },
 			"status --porcelain=v1 --untracked-files=all": {},
 		});
-		assert.deepEqual(await verifyCommittedWorkstream("/repo", exec, { branch: "kstack/add-search", baseSha: base, requireNewCommit: true }), { ok: true, headSha: head });
+		assert.deepEqual(
+			await verifyCommittedWorkstream("/repo", exec, {
+				branch: "kstack/add-search",
+				baseSha: base,
+				requireNewCommit: true,
+			}),
+			{ ok: true, headSha: head },
+		);
 	});
 
 	it("rejects uncommitted files", async () => {
@@ -57,7 +67,11 @@ describe("committed workstream postcondition", () => {
 			"rev-parse HEAD": { stdout: `${sha}\n` },
 			"status --porcelain=v1 --untracked-files=all": { stdout: " M src/search.ts\n" },
 		});
-		const result = await verifyCommittedWorkstream("/repo", exec, { branch: "kstack/add-search", baseSha: "1".repeat(40), requireNewCommit: false });
+		const result = await verifyCommittedWorkstream("/repo", exec, {
+			branch: "kstack/add-search",
+			baseSha: "1".repeat(40),
+			requireNewCommit: false,
+		});
 		assert.equal(result.ok, false);
 		assert.match(result.ok ? "" : result.error, /uncommitted files/i);
 	});

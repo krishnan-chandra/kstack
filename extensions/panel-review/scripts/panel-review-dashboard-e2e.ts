@@ -115,7 +115,12 @@ const ctx = {
 			}
 			widgets.set(key, content);
 			component = (content as (tui: unknown, theme: unknown) => typeof component)(
-				{ requestRender: () => { renders++; snapshot(); } },
+				{
+					requestRender: () => {
+						renders++;
+						snapshot();
+					},
+				},
 				{ fg: (_c: string, t: string) => t },
 			);
 			snapshot();
@@ -139,7 +144,9 @@ const pi = {
 	registerCommand(_name: string, desc: { handler: (args: string, c: unknown) => Promise<void> }) {
 		handler = desc.handler;
 	},
-	sendMessage: (m: { content: string }) => { sentMessage = m; },
+	sendMessage: (m: { content: string }) => {
+		sentMessage = m;
+	},
 };
 const { default: register } = await import("../index.ts");
 register(pi as never);
@@ -154,12 +161,18 @@ assert.equal(component, undefined, "component disposed");
 assert.ok(!statuses.has("panel-review"), "TUI progress is not duplicated in the footer");
 
 const flat = snapshots.map((s) => s.join("\n"));
-assert.ok(flat.some((s) => /rev-a — (queued|running)/.test(s)), "rev-a visible");
+assert.ok(
+	flat.some((s) => /rev-a — (queued|running)/.test(s)),
+	"rev-a visible",
+);
 assert.ok(
 	flat.some((s) => s.includes("rev-b — queued") && s.includes("rev-a — running")),
 	"rev-b stays queued while rev-a runs (maxConcurrency=1)",
 );
-assert.ok(flat.some((s) => s.includes("No findings")), "live text_delta preview rendered");
+assert.ok(
+	flat.some((s) => s.includes("No findings")),
+	"live text_delta preview rendered",
+);
 assert.ok(!flat.some((s) => s.includes("hidden reasoning")), "thinking deltas never displayed");
 assert.ok(
 	flat.some((s) => s.includes("rev-a — completed") && s.includes("rev-b — running")),
@@ -167,8 +180,14 @@ assert.ok(
 );
 
 const leadLines = flat.filter((s) => s.includes("lead — "));
-assert.ok(leadLines.some((s) => s.includes("lead — running (lead synthesis)")), "lead row visible during synthesis");
-assert.ok(leadLines.some((s) => s.includes("lead — completed")), "lead row completes");
+assert.ok(
+	leadLines.some((s) => s.includes("lead — running (lead synthesis)")),
+	"lead row visible during synthesis",
+);
+assert.ok(
+	leadLines.some((s) => s.includes("lead — completed")),
+	"lead row completes",
+);
 
 // Terminal-injection safety: no raw control bytes in any rendered snapshot.
 for (const snap of snapshots) {

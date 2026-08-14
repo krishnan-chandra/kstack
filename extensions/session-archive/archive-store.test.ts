@@ -1,14 +1,14 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
-import { existsSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { existsSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
 import {
 	ArchiveStoreError,
 	countEntries,
-	finalizeArchived,
 	FtsQueryError,
+	finalizeArchived,
 	getArchiveStats,
 	getSessionRow,
 	importSessionPending,
@@ -16,12 +16,19 @@ import {
 	markError,
 	openArchiveDb,
 	openArchiveDbReadOnly,
+	type PendingImport,
 	readEntries,
 	searchArchive,
-	type PendingImport,
 } from "./archive-store.ts";
 import { parseSessionJsonl, sha256Hex } from "./session-jsonl.ts";
-import { makeTempTree, richSessionJsonl, sessionJsonl, messageEntry, userMessage, TEST_SESSION_ID } from "./test-helpers.ts";
+import {
+	makeTempTree,
+	messageEntry,
+	richSessionJsonl,
+	sessionJsonl,
+	TEST_SESSION_ID,
+	userMessage,
+} from "./test-helpers.ts";
 
 function importFromContent(content: string, overrides: Partial<PendingImport> = {}): PendingImport {
 	const parsed = parseSessionJsonl(content);
@@ -55,7 +62,9 @@ describe("archive-store", () => {
 		// Second open: schema already present, no error.
 		const again = openArchiveDb(tree.dbPath);
 		try {
-			const sessionColumns = again.prepare("PRAGMA table_info(archive_sessions)").all() as unknown as { name: string }[];
+			const sessionColumns = again.prepare("PRAGMA table_info(archive_sessions)").all() as unknown as {
+				name: string;
+			}[];
 			const entryColumns = again.prepare("PRAGMA table_info(archive_entries)").all() as unknown as { name: string }[];
 			assert.ok(!sessionColumns.some((column) => column.name === "header_raw_json"));
 			assert.ok(!entryColumns.some((column) => column.name === "raw_json"));
@@ -111,7 +120,13 @@ describe("archive-store", () => {
 			assert.equal(countEntries(db, TEST_SESSION_ID), 12);
 
 			assert.equal(searchArchive(db, { query: "archiving" }).length, 0);
-			finalizeArchived(db, TEST_SESSION_ID, "/archive/sessions/2026/08/x/session.jsonl", content.length, sha256Hex(content));
+			finalizeArchived(
+				db,
+				TEST_SESSION_ID,
+				"/archive/sessions/2026/08/x/session.jsonl",
+				content.length,
+				sha256Hex(content),
+			);
 			const hits = searchArchive(db, { query: "archiving" });
 			assert.ok(hits.some((h) => h.entry_id === "a1"));
 			assert.ok(hits.some((h) => h.snippet.includes("[")));
@@ -204,7 +219,8 @@ describe("archive-store", () => {
 			db.exec("DROP TABLE archive_entries_fts");
 			assert.throws(
 				() => searchArchive(db, { query: "valid" }),
-				(error: unknown) => error instanceof Error && !(error instanceof FtsQueryError) && /no such table/.test(error.message),
+				(error: unknown) =>
+					error instanceof Error && !(error instanceof FtsQueryError) && /no such table/.test(error.message),
 			);
 		} finally {
 			db.close();
@@ -240,10 +256,7 @@ describe("archive-store", () => {
 			// Same id, different bytes: hard error
 			const other = richSessionJsonl({ id: TEST_SESSION_ID }) + "";
 			const tampered = other.replace("hello archive world", "tampered content here");
-			assert.throws(
-				() => importSessionPending(db, importFromContent(tampered)),
-				ArchiveStoreError,
-			);
+			assert.throws(() => importSessionPending(db, importFromContent(tampered)), ArchiveStoreError);
 		} finally {
 			db.close();
 		}
@@ -256,10 +269,7 @@ describe("archive-store", () => {
 			const contentB = contentA.replace("hello archive world", "different pending bytes");
 			const pendingA = importFromContent(contentA);
 			importSessionPending(db, pendingA);
-			assert.throws(
-				() => importSessionPending(db, importFromContent(contentB)),
-				/different pending archive operation/,
-			);
+			assert.throws(() => importSessionPending(db, importFromContent(contentB)), /different pending archive operation/);
 			assert.throws(
 				() => finalizeArchived(db, TEST_SESSION_ID, pendingA.archivePath, contentB.length, sha256Hex(contentB)),
 				/no longer matches/,
@@ -292,9 +302,7 @@ describe("archive-store", () => {
 			const parsed = parseSessionJsonl(richSessionJsonl());
 			const broken = {
 				...importFromContent(richSessionJsonl()),
-				entries: parsed.entries.map((e, i) =>
-					i === 5 ? { ...e, entryId: parsed.entries[0].entryId } : e,
-				),
+				entries: parsed.entries.map((e, i) => (i === 5 ? { ...e, entryId: parsed.entries[0].entryId } : e)),
 			};
 			assert.throws(() => importSessionPending(db, broken));
 			assert.equal(getSessionRow(db, TEST_SESSION_ID), undefined);
@@ -392,7 +400,9 @@ describe("archive-store", () => {
 		try {
 			assert.throws(() =>
 				db
-					.prepare("INSERT INTO archive_entries (session_id, entry_id, entry_type, timestamp, ordinal, raw_offset, raw_length) VALUES ('ghost', 'e', 'message', 't', 0, 0, 2)")
+					.prepare(
+						"INSERT INTO archive_entries (session_id, entry_id, entry_type, timestamp, ordinal, raw_offset, raw_length) VALUES ('ghost', 'e', 'message', 't', 0, 0, 2)",
+					)
 					.run(),
 			);
 		} finally {
@@ -410,7 +420,11 @@ describe("archive-store", () => {
 				/different pending archive operation/,
 			);
 			const matchCount = (query: string) =>
-				(db.prepare("SELECT COUNT(*) AS n FROM archive_entries_fts WHERE archive_entries_fts MATCH ?").get(query) as { n: number }).n;
+				(
+					db.prepare("SELECT COUNT(*) AS n FROM archive_entries_fts WHERE archive_entries_fts MATCH ?").get(query) as {
+						n: number;
+					}
+				).n;
 			assert.ok(matchCount("hello") > 0);
 			assert.equal(matchCount("goodbye"), 0);
 		} finally {

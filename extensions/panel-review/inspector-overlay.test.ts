@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { PanelDashboardStore, type DashboardTheme, type TerminalText } from "./live-dashboard.ts";
 import {
 	formatTokens,
 	InspectorComponent,
+	type InspectorState,
 	renderInspector,
 	sanitizeMultilineText,
 	wrapAndSanitizeText,
-	type InspectorState,
 } from "./inspector-overlay.ts";
+import { type DashboardTheme, PanelDashboardStore, type TerminalText } from "./live-dashboard.ts";
 import { PanelTranscriptStore } from "./transcript-store.ts";
 
 const fakeTheme: DashboardTheme = {
@@ -112,7 +112,11 @@ describe("renderInspector", () => {
 
 	it("never exceeds terminal width even on narrow viewports", () => {
 		const dashboard = new PanelDashboardStore(() => 1000);
-		dashboard.addReviewer("r1", "very-long-reviewer-label-for-testing", "super-long-provider/model-name-extraordinaire");
+		dashboard.addReviewer(
+			"r1",
+			"very-long-reviewer-label-for-testing",
+			"super-long-provider/model-name-extraordinaire",
+		);
 
 		const transcripts = new PanelTranscriptStore(() => 1000);
 		transcripts.addChild("r1");

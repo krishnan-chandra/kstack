@@ -1,7 +1,7 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createHandoffHandler } from "./index.ts";
+import { describe, it } from "node:test";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
+import { createHandoffHandler } from "./index.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
 
 const SESSION_FILE = "/sessions/old.jsonl";
@@ -604,10 +604,7 @@ describe("handoff model restoration on failed handoff", () => {
 		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
 		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
 		assert.deepEqual(apiCalls.setThinkingLevel, ["high"]);
-		assert.equal(
-			notifications.at(-1)!.message,
-			"New session cancelled; the parent session keeps openai/gpt-5.2:high",
-		);
+		assert.equal(notifications.at(-1)!.message, "New session cancelled; the parent session keeps openai/gpt-5.2:high");
 	});
 });
 
@@ -646,7 +643,9 @@ describe("handoff effort selection", () => {
 		assert.ok(order.indexOf("setModel") < order.indexOf("setThinkingLevel"));
 		assert.ok(order.indexOf("setThinkingLevel") < order.indexOf("newSession"));
 		assert.equal(calls.newSession, 1);
-		assert.ok(notifications.some((n) => n.level === "info" && n.message.includes("Model: anthropic/claude-opus-4-6:medium")));
+		assert.ok(
+			notifications.some((n) => n.level === "info" && n.message.includes("Model: anthropic/claude-opus-4-6:medium")),
+		);
 	});
 
 	it("sets an explicit effort after the model and before newSession", async () => {
@@ -841,9 +840,7 @@ describe("handoff model scoping and override detection", () => {
 		await createHandoffHandler(api)("goal", ctx as never);
 		assert.equal(calls.newSession, 1);
 		assert.ok(
-			notifications.some(
-				(n) => n.level === "warning" && n.message.includes("Could not pin anthropic/claude-opus-4-6"),
-			),
+			notifications.some((n) => n.level === "warning" && n.message.includes("Could not pin anthropic/claude-opus-4-6")),
 		);
 	});
 });

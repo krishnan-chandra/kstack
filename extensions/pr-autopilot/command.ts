@@ -91,7 +91,6 @@ export function parseArgs(input: string): ArgsParse {
 			continue;
 		}
 
-
 		// Bare --mode=check shorthand is handled above via hasEq.
 		if (hasEq) {
 			return { ok: false, error: `Unknown flag "${flag}". Supported: --mode, --pr.` };

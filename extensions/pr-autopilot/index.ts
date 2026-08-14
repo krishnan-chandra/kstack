@@ -17,12 +17,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { AutopilotLifecycle } from "./lifecycle.ts";
-import { resolveModels, loadConfig, modelCliId } from "./config.ts";
-import { parseArgs } from "./command.ts";
-import { runAutopilot, type AutopilotResult, type LifecyclePhase } from "./autopilot.ts";
-import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
+import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
+import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./autopilot.ts";
+import { parseArgs } from "./command.ts";
+import { loadConfig, modelCliId, resolveModels } from "./config.ts";
+import { AutopilotLifecycle } from "./lifecycle.ts";
 import type { AutopilotMode, ExecFn, ExecFnResult } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -45,7 +45,12 @@ interface PhaseDetails {
 
 /** Exec wrapper forwarding the autopilot's per-call cwd/timeout to pi.exec. */
 function makeExec(pi: ExtensionAPI): ExecFn {
-	return (command, args, options) => pi.exec(command, args, { cwd: options.cwd, timeout: options.timeout, signal: options.signal }) as Promise<ExecFnResult>;
+	return (command, args, options) =>
+		pi.exec(command, args, {
+			cwd: options.cwd,
+			timeout: options.timeout,
+			signal: options.signal,
+		}) as Promise<ExecFnResult>;
 }
 
 export default function prAutopilotExtension(pi: ExtensionAPI): void {
@@ -97,7 +102,14 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	});
 
 	/** Send a phase-update message card to the TUI. */
-	function sendPhaseMessage(pi: ExtensionAPI, mode: string, phase: LifecyclePhase, cycles: number, models: string[], content: string): void {
+	function sendPhaseMessage(
+		pi: ExtensionAPI,
+		mode: string,
+		phase: LifecyclePhase,
+		cycles: number,
+		models: string[],
+		content: string,
+	): void {
 		const details: PhaseDetails = {
 			schemaVersion: 1,
 			mode,
@@ -121,7 +133,10 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		cwd = ctx.cwd,
 	): Promise<AutopilotResult> {
 		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({
-			status, mergeReady: false, cyclesCompleted: 0, blockedReasons: [reason],
+			status,
+			mergeReady: false,
+			cyclesCompleted: 0,
+			blockedReasons: [reason],
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
 		});
 		const notify = ctx.ui.notify.bind(ctx.ui);
@@ -227,7 +242,14 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 							"Stop at merge-ready; no merge performed. Use /session-archive to archive this session.",
 						"info",
 					);
-					sendPhaseMessage(pi, mode, "idle", result.cyclesCompleted, modelList, "Looks merge-ready — stopped, not merged.");
+					sendPhaseMessage(
+						pi,
+						mode,
+						"idle",
+						result.cyclesCompleted,
+						modelList,
+						"Looks merge-ready — stopped, not merged.",
+					);
 				} else if (result.status === "cleaned") {
 					notify("PR autopilot cleanup complete. Managed worktree removed; session archive is manual.", "info");
 				} else if (result.status === "blocked") {
@@ -239,7 +261,10 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 				} else if (result.status === "aborted") {
 					notify("PR autopilot aborted.", "info");
 				} else {
-					notify(`PR autopilot ended: ${result.status}. ${result.blockedReasons.join("; ") || ""}`, result.status === "failed" ? "error" : "warning");
+					notify(
+						`PR autopilot ended: ${result.status}. ${result.blockedReasons.join("; ") || ""}`,
+						result.status === "failed" ? "error" : "warning",
+					);
 				}
 			}
 			return result;

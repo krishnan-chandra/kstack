@@ -3,17 +3,17 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LandResult } from "../land/types.ts";
+import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
+import type { ExecFn } from "./delivery-mode.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import { createCurrentWorkstreamBranch, verifyCommittedWorkstream, type WorkstreamCheckpoint } from "./git-policy.ts";
 import type { WorkflowPhase, WorkflowToken } from "./lifecycle.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
-import { createManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
 import { runWorkflow } from "./workflow.ts";
-import type { ExecFn } from "./delivery-mode.ts";
-import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
-import type { LandResult } from "../land/types.ts";
+import { createManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
 
 type Level = "info" | "warning" | "error";
 
@@ -95,19 +95,35 @@ export async function runPostReviewPhases(
 				try {
 					fx.setStatus(`plan-implement: fixer ${implementerModel}…`);
 					const fixer = await executeAgent({
-						role: "fixer", model: implementerModel, promptFile: join(promptsDir, "review-fixer.md"),
-						taskFile, verdictFile, cwd: state.workflowCwd, signal: controller.signal, deps: { timeoutMs },
-						onProgress: ({ role, turns, activity }) => fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
-						mode, workLocation, skillPaths, supplementalPrompts: changePrompts,
+						role: "fixer",
+						model: implementerModel,
+						promptFile: join(promptsDir, "review-fixer.md"),
+						taskFile,
+						verdictFile,
+						cwd: state.workflowCwd,
+						signal: controller.signal,
+						deps: { timeoutMs },
+						onProgress: ({ role, turns, activity }) =>
+							fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
+						mode,
+						workLocation,
+						skillPaths,
+						supplementalPrompts: changePrompts,
 					});
 					if (fx.isCurrent()) {
 						fx.sendPhase(fixer);
 						if (fixer.status !== "completed") {
-							fx.notify(`Review fixer did not complete: ${phaseErrorText(fixer)}`, fixer.status === "aborted" ? "info" : "error");
+							fx.notify(
+								`Review fixer did not complete: ${phaseErrorText(fixer)}`,
+								fixer.status === "aborted" ? "info" : "error",
+							);
 							return;
 						}
 						if (mode === "single" && state.workstreamCheckpoint) {
-							const verified = await verifyCommittedWorkstream(state.workflowCwd, fx.exec, { ...state.workstreamCheckpoint, requireNewCommit: false });
+							const verified = await verifyCommittedWorkstream(state.workflowCwd, fx.exec, {
+								...state.workstreamCheckpoint,
+								requireNewCommit: false,
+							});
 							if (!verified.ok) {
 								fx.notify(`Review fixer postcondition failed: ${verified.error} Publication was not offered.`, "error");
 								return;
@@ -137,10 +153,19 @@ export async function runPostReviewPhases(
 		try {
 			fx.setStatus(`plan-implement: publisher ${implementerModel}…`);
 			publisher = await executeAgent({
-				role: "publisher", model: implementerModel, promptFile: join(promptsDir, "publisher.md"), taskFile, verdictFile,
-				cwd: state.workflowCwd, signal: controller.signal, deps: { timeoutMs },
-				onProgress: ({ role, turns, activity }) => fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
-				mode, workLocation, skillPaths,
+				role: "publisher",
+				model: implementerModel,
+				promptFile: join(promptsDir, "publisher.md"),
+				taskFile,
+				verdictFile,
+				cwd: state.workflowCwd,
+				signal: controller.signal,
+				deps: { timeoutMs },
+				onProgress: ({ role, turns, activity }) =>
+					fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
+				mode,
+				workLocation,
+				skillPaths,
 			});
 			if (fx.isCurrent()) {
 				fx.sendPhase(publisher);
@@ -198,7 +223,20 @@ export async function offerLandContinuation(
 }
 
 export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: PhaseEffects): Promise<void> {
-	const { task, mode, workLocation, initialCwd, promptsDir, plannerModel, implementerModel, timeoutMinutes, skillPaths, changePrompts, trunkSha, worktreePlan } = options;
+	const {
+		task,
+		mode,
+		workLocation,
+		initialCwd,
+		promptsDir,
+		plannerModel,
+		implementerModel,
+		timeoutMinutes,
+		skillPaths,
+		changePrompts,
+		trunkSha,
+		worktreePlan,
+	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
 	const executeAgent = fx.runAgent ?? runAgent;
 	const state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint } = {
@@ -225,8 +263,23 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					if (!controller) return { status: "aborted", role: "planner", model: plannerModel };
 					try {
 						fx.setStatus(`plan-implement: planner ${plannerModel}…`);
-						return await executeAgent({ role: "planner", model: plannerModel, promptFile: join(promptsDir, "planner.md"), taskFile, cwd: initialCwd, signal: controller.signal, deps: { timeoutMs }, onProgress: progress, mode, workLocation, skillPaths, supplementalPrompts: changePrompts });
-					} finally { fx.endChild(controller); }
+						return await executeAgent({
+							role: "planner",
+							model: plannerModel,
+							promptFile: join(promptsDir, "planner.md"),
+							taskFile,
+							cwd: initialCwd,
+							signal: controller.signal,
+							deps: { timeoutMs },
+							onProgress: progress,
+							mode,
+							workLocation,
+							skillPaths,
+							supplementalPrompts: changePrompts,
+						});
+					} finally {
+						fx.endChild(controller);
+					}
 				},
 				onPlan: (plan) => {
 					if (!fx.isCurrent()) return;
@@ -248,9 +301,12 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						fx.notify(`Planner output cannot be approved: ${planValidationError}`, "error");
 						return false;
 					}
-					return fx.confirm("Approve planner output?", mode === "stack"
-						? `Review the Planner card above. Continue with ${implementerModel}, which creates local jj changes and bookmarks?`
-						: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`);
+					return fx.confirm(
+						"Approve planner output?",
+						mode === "stack"
+							? `Review the Planner card above. Continue with ${implementerModel}, which creates local jj changes and bookmarks?`
+							: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`,
+					);
 				},
 				runImplementer: async () => {
 					const controller = fx.beginChild("implementing");
@@ -259,41 +315,106 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						if (worktreePlan && state.workflowCwd === initialCwd) {
 							fx.setStatus("plan-implement: creating managed worktree…");
 							const created = await createManagedWorktree(worktreePlan, fx.exec);
-							if (!created.ok) return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+							if (!created.ok)
+								return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
 							state.workflowCwd = created.plan.path;
-							if (!fx.isCurrent() || controller.signal.aborted) return { status: "aborted", role: "implementer", model: implementerModel };
-							fx.notify(`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.branch}).`, "info");
+							if (!fx.isCurrent() || controller.signal.aborted)
+								return { status: "aborted", role: "implementer", model: implementerModel };
+							fx.notify(
+								`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.branch}).`,
+								"info",
+							);
 						} else if (mode === "single" && !state.workstreamCheckpoint) {
 							fx.setStatus("plan-implement: creating task branch…");
 							const created = await createCurrentWorkstreamBranch(state.workflowCwd, task, fx.exec);
-							if (!created.ok) return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+							if (!created.ok)
+								return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
 							state.workstreamCheckpoint = { branch: created.branch, baseSha: created.baseSha };
 							fx.notify(`Task branch created: ${created.branch}.`, "info");
 						}
 						fx.setStatus(`plan-implement: implementer ${implementerModel}…`);
-						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot) return { status: "failed", role: "implementer", model: implementerModel, error: "Approved plan changed before implementation; the plan is read-only." };
-						const result = await executeAgent({ role: "implementer", model: implementerModel, promptFile: join(promptsDir, "implementer.md"), taskFile, planFile, ledgerFile, cwd: state.workflowCwd, signal: controller.signal, deps: { timeoutMs }, onProgress: progress, mode, workLocation, skillPaths, supplementalPrompts: changePrompts });
+						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
+							return {
+								status: "failed",
+								role: "implementer",
+								model: implementerModel,
+								error: "Approved plan changed before implementation; the plan is read-only.",
+							};
+						const result = await executeAgent({
+							role: "implementer",
+							model: implementerModel,
+							promptFile: join(promptsDir, "implementer.md"),
+							taskFile,
+							planFile,
+							ledgerFile,
+							cwd: state.workflowCwd,
+							signal: controller.signal,
+							deps: { timeoutMs },
+							onProgress: progress,
+							mode,
+							workLocation,
+							skillPaths,
+							supplementalPrompts: changePrompts,
+						});
 						if (result.status !== "completed") return result;
-						if (readFileSync(planFile, "utf8") !== immutablePlanSnapshot) return { status: "failed", role: "implementer", model: implementerModel, error: "Implementer modified the approved plan; the plan is read-only." };
-						const approvedPlan = readFileSync(planFile, "utf8").replace(/^# Approved implementation plan\n\n/, "").replace(/\n$/, "");
+						if (readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
+							return {
+								status: "failed",
+								role: "implementer",
+								model: implementerModel,
+								error: "Implementer modified the approved plan; the plan is read-only.",
+							};
+						const approvedPlan = readFileSync(planFile, "utf8")
+							.replace(/^# Approved implementation plan\n\n/, "")
+							.replace(/\n$/, "");
 						const checked = validateExecutionLedger(approvedPlan, result.output);
 						const ledger = checked.ok ? checked.ledger : extractExecutionLedger(result.output);
 						writeFileSync(ledgerFile, ledger, { encoding: "utf8", mode: 0o600 });
 						const withLedger = { ...result, executionLedger: ledger };
 						if (mode !== "single" || !state.workstreamCheckpoint) return withLedger;
-						const verified = await verifyCommittedWorkstream(state.workflowCwd, fx.exec, { ...state.workstreamCheckpoint, requireNewCommit: true });
-						return verified.ok ? withLedger : { status: "failed", role: "implementer", model: implementerModel, error: verified.error };
-					} finally { fx.endChild(controller); }
+						const verified = await verifyCommittedWorkstream(state.workflowCwd, fx.exec, {
+							...state.workstreamCheckpoint,
+							requireNewCommit: true,
+						});
+						return verified.ok
+							? withLedger
+							: { status: "failed", role: "implementer", model: implementerModel, error: verified.error };
+					} finally {
+						fx.endChild(controller);
+					}
 				},
-				onImplementation: (result) => { if (fx.isCurrent()) { fx.sendPhase(result); fx.setStatus(undefined); } },
+				onImplementation: (result) => {
+					if (fx.isCurrent()) {
+						fx.sendPhase(result);
+						fx.setStatus(undefined);
+					}
+				},
 			});
 			if (fx.isCurrent()) {
-				if (outcome.status === "planner-failed") fx.notify(`Planner did not complete: ${phaseErrorText(outcome.planner)}`, outcome.planner.status === "aborted" ? "info" : "error");
+				if (outcome.status === "planner-failed")
+					fx.notify(
+						`Planner did not complete: ${phaseErrorText(outcome.planner)}`,
+						outcome.planner.status === "aborted" ? "info" : "error",
+					);
 				else if (outcome.status === "rejected") fx.notify("Plan rejected; the implementer was not launched.", "info");
-				else if (outcome.status === "implementer-failed") fx.notify(`Implementer did not complete: ${phaseErrorText(outcome.implementer)} Committed checkpoints may exist on the task branch, and uncommitted partial edits may remain; panel review was not started.`, outcome.implementer.status === "aborted" ? "warning" : "error");
-				else reviewOptions = mode === "stack" && trunkSha
-					? buildStackPanelReviewOptions(task, trunkSha, outcome.planner.output, outcome.implementer.executionLedger)
-					: { ...buildPanelReviewOptions(task, outcome.planner.output, outcome.implementer.executionLedger), ...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: state.workflowCwd } : {}) };
+				else if (outcome.status === "implementer-failed")
+					fx.notify(
+						`Implementer did not complete: ${phaseErrorText(outcome.implementer)} Committed checkpoints may exist on the task branch, and uncommitted partial edits may remain; panel review was not started.`,
+						outcome.implementer.status === "aborted" ? "warning" : "error",
+					);
+				else
+					reviewOptions =
+						mode === "stack" && trunkSha
+							? buildStackPanelReviewOptions(
+									task,
+									trunkSha,
+									outcome.planner.output,
+									outcome.implementer.executionLedger,
+								)
+							: {
+									...buildPanelReviewOptions(task, outcome.planner.output, outcome.implementer.executionLedger),
+									...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: state.workflowCwd } : {}),
+								};
 			}
 		} finally {
 			if (fx.isSessionCurrent()) fx.setStatus(undefined);
@@ -301,12 +422,25 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		}
 
 		if (reviewOptions && fx.isCurrent()) {
-			fx.notify(mode === "stack" ? "Local stack implemented; starting panel review against trunk() base." : worktreePlan ? `Implementation complete in ${state.workflowCwd}; starting panel review against the pinned base.` : "Implementation complete; starting panel review.", "info");
+			fx.notify(
+				mode === "stack"
+					? "Local stack implemented; starting panel review against trunk() base."
+					: worktreePlan
+						? `Implementation complete in ${state.workflowCwd}; starting panel review against the pinned base.`
+						: "Implementation complete; starting panel review.",
+				"info",
+			);
 			try {
 				const request = await fx.requestPanelReview(reviewOptions);
-				if (!request.handled && fx.isCurrent()) fx.notify("panel-review did not accept the in-process review request.", "error");
-				else if (request.handled && request.outcome.status === "completed" && fx.isCurrent()) await runPostReviewPhases(request.outcome.verdict, options, state, fx);
-				else if (request.handled && fx.isCurrent()) fx.notify(`Panel review ended without a verdict (${request.outcome.status}); skipping the fix and publish phases.`, request.outcome.status === "failed" ? "warning" : "info");
+				if (!request.handled && fx.isCurrent())
+					fx.notify("panel-review did not accept the in-process review request.", "error");
+				else if (request.handled && request.outcome.status === "completed" && fx.isCurrent())
+					await runPostReviewPhases(request.outcome.verdict, options, state, fx);
+				else if (request.handled && fx.isCurrent())
+					fx.notify(
+						`Panel review ended without a verdict (${request.outcome.status}); skipping the fix and publish phases.`,
+						request.outcome.status === "failed" ? "warning" : "info",
+					);
 			} catch (error) {
 				if (fx.isCurrent()) fx.notify(`panel-review request failed: ${(error as Error).message}`, "error");
 			}

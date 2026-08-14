@@ -3,9 +3,16 @@
 import { SessionLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
 import type { RouteId } from "./types.ts";
 
-export interface DispatchToken extends SessionToken { readonly dispatchId: string; }
-export interface ActiveDispatch { readonly token: DispatchToken; readonly route: RouteId; }
-export interface ToolSnapshot { tools: string[]; }
+export interface DispatchToken extends SessionToken {
+	readonly dispatchId: string;
+}
+export interface ActiveDispatch {
+	readonly token: DispatchToken;
+	readonly route: RouteId;
+}
+export interface ToolSnapshot {
+	tools: string[];
+}
 
 export class RouterLifecycle extends SessionLifecycle {
 	private dispatchIdCounter = 0;

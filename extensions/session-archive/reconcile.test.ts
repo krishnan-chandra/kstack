@@ -1,10 +1,10 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { inspectArchiveIntegrity, reconcileArchive } from "./reconcile.ts";
-import { finalizeArchived, getSessionRow, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import { describe, it } from "node:test";
 import { archiveDestination } from "./archive-files.ts";
+import { finalizeArchived, getSessionRow, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import { inspectArchiveIntegrity, reconcileArchive } from "./reconcile.ts";
 import { parseSessionJsonl, sha256Hex } from "./session-jsonl.ts";
 import { makeTempTree, richSessionJsonl, TEST_SESSION_ID } from "./test-helpers.ts";
 
@@ -178,7 +178,10 @@ describe("reconcileArchive", () => {
 		writeFileSync(dest, "drifted");
 
 		const issues = inspectArchiveIntegrity(tree.dbPath);
-		assert.deepEqual(issues.map((issue) => issue.sessionId), [TEST_SESSION_ID]);
+		assert.deepEqual(
+			issues.map((issue) => issue.sessionId),
+			[TEST_SESSION_ID],
+		);
 		assert.match(issues[0].message, /hash mismatch/);
 	});
 

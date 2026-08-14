@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isChildModelAvailable, type ChildModelRegistry } from "./model-availability.ts";
+import { type ChildModelRegistry, isChildModelAvailable } from "./model-availability.ts";
 
-function registry(options: { registered?: string[]; found?: boolean; authenticated?: boolean } = {}): ChildModelRegistry {
+function registry(
+	options: { registered?: string[]; found?: boolean; authenticated?: boolean } = {},
+): ChildModelRegistry {
 	const model = { provider: "a", id: "m" };
 	return {
 		getRegisteredProviderIds: () => options.registered ?? [],
-		find: () => options.found === false ? undefined : model,
+		find: () => (options.found === false ? undefined : model),
 		hasConfiguredAuth: () => options.authenticated !== false,
 	};
 }

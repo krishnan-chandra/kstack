@@ -72,16 +72,12 @@ function collectItems(lines: string[], idPattern: RegExp): { items: PlanItem[]; 
 export function extractPlanItems(plan: string): PlanItemsResult {
 	const stepLines = sectionLines(plan, /^##\s+Ordered implementation steps\s*$/i);
 	const criterionLines = sectionLines(plan, /^##\s+Acceptance criteria\s*$/i);
-	const stepResult = collectItems(
-		stepLines,
-		/^\s*(?:\d+[.)]\s+)?\[([^\]]+)\]\s+(.+?)\s*$/,
-	);
-	const criterionResult = collectItems(
-		criterionLines,
-		/^\s*[-*]\s+\[([^\]]+)\]\s+(.+?)\s*$/,
-	);
-	if (stepResult.malformed) return { ok: false, error: `Malformed ordered implementation step: ${stepResult.malformed}` };
-	if (criterionResult.malformed) return { ok: false, error: `Malformed acceptance criterion: ${criterionResult.malformed}` };
+	const stepResult = collectItems(stepLines, /^\s*(?:\d+[.)]\s+)?\[([^\]]+)\]\s+(.+?)\s*$/);
+	const criterionResult = collectItems(criterionLines, /^\s*[-*]\s+\[([^\]]+)\]\s+(.+?)\s*$/);
+	if (stepResult.malformed)
+		return { ok: false, error: `Malformed ordered implementation step: ${stepResult.malformed}` };
+	if (criterionResult.malformed)
+		return { ok: false, error: `Malformed acceptance criterion: ${criterionResult.malformed}` };
 	const steps = stepResult.items;
 	const criteria = criterionResult.items;
 	if (steps.length === 0) {
@@ -94,10 +90,12 @@ export function extractPlanItems(plan: string): PlanItemsResult {
 		return { ok: false, error: "Acceptance criteria must use unique [AC-n] identifiers." };
 	}
 	for (const [index, item] of steps.entries()) {
-		if (item.id !== `STEP-${index + 1}`) return { ok: false, error: "Ordered implementation steps must use consecutive [STEP-n] identifiers." };
+		if (item.id !== `STEP-${index + 1}`)
+			return { ok: false, error: "Ordered implementation steps must use consecutive [STEP-n] identifiers." };
 	}
 	for (const [index, item] of criteria.entries()) {
-		if (item.id !== `AC-${index + 1}`) return { ok: false, error: "Acceptance criteria must use consecutive [AC-n] identifiers." };
+		if (item.id !== `AC-${index + 1}`)
+			return { ok: false, error: "Acceptance criteria must use consecutive [AC-n] identifiers." };
 	}
 	const ids = new Set<string>();
 	for (const item of [...steps, ...criteria]) {
@@ -108,17 +106,22 @@ export function extractPlanItems(plan: string): PlanItemsResult {
 }
 
 /** Create the mutable ledger copied from the approved plan before implementation. */
-export function createExecutionLedger(plan: string): { ok: true; ledger: string; items: PlanItem[] } | { ok: false; error: string } {
+export function createExecutionLedger(
+	plan: string,
+): { ok: true; ledger: string; items: PlanItem[] } | { ok: false; error: string } {
 	const parsed = extractPlanItems(plan);
 	if (!parsed.ok) return parsed;
-	const lines = parsed.items.map((item) => `- [${item.id}] ${item.text} — blocked: implementation status not yet recorded`);
+	const lines = parsed.items.map(
+		(item) => `- [${item.id}] ${item.text} — blocked: implementation status not yet recorded`,
+	);
 	return { ok: true, ledger: ["## Execution Ledger", "", ...lines, ""].join("\n"), items: parsed.items };
 }
 
 function parseLedger(output: string): { ok: true; entries: LedgerEntry[] } | { ok: false; error: string } {
 	const lines = output.split(/\r?\n/);
 	const start = lines.findIndex((line) => /^##\s+Execution Ledger\s*$/i.test(line.trim()));
-	if (start === -1) return { ok: false, error: "Implementer result is missing the required ## Execution Ledger section." };
+	if (start === -1)
+		return { ok: false, error: "Implementer result is missing the required ## Execution Ledger section." };
 	const entries: LedgerEntry[] = [];
 	for (const line of lines.slice(start + 1)) {
 		if (/^#{2,6}\s+/.test(line.trim())) break;
@@ -130,7 +133,8 @@ function parseLedger(output: string): { ok: true; entries: LedgerEntry[] } | { o
 		if ((status === "blocked" || status === "skip") && !reason) {
 			return { ok: false, error: `${match[1]} must include a reason after ${status}:` };
 		}
-		if (status === "done" && reason) return { ok: false, error: `${match[1]} must use exactly "done" without a reason.` };
+		if (status === "done" && reason)
+			return { ok: false, error: `${match[1]} must use exactly "done" without a reason.` };
 		entries.push({
 			id: match[1].toUpperCase(),
 			kind: /^AC-\d+$/i.test(match[1]) ? "criterion" : "step",
@@ -166,21 +170,32 @@ export function validateExecutionLedger(plan: string, output: string): LedgerVal
 	const expectedOrder = expected.items.map((item) => item.id);
 	const seen = new Set<string>();
 	for (const [index, entry] of actual.entries.entries()) {
-		if (entry.id !== expectedOrder[index]) return { ok: false, error: `Execution ledger reordered ${entry.id}; expected ${expectedOrder[index]}.` };
+		if (entry.id !== expectedOrder[index])
+			return { ok: false, error: `Execution ledger reordered ${entry.id}; expected ${expectedOrder[index]}.` };
 		if (seen.has(entry.id)) return { ok: false, error: `Execution ledger repeats ${entry.id}.` };
 		seen.add(entry.id);
 		const item = expectedById.get(entry.id);
-		if (!item) return { ok: false, error: `Execution ledger contains plan item ${entry.id}, which is not in the approved plan.` };
+		if (!item)
+			return {
+				ok: false,
+				error: `Execution ledger contains plan item ${entry.id}, which is not in the approved plan.`,
+			};
 		if (item.kind !== entry.kind || normalizeText(item.text) !== entry.text) {
 			return { ok: false, error: `Execution ledger text for ${entry.id} does not exactly match the approved plan.` };
 		}
 	}
 	const missing = expected.items.filter((item) => !seen.has(item.id));
-	if (missing.length > 0) return { ok: false, error: `Execution ledger omitted approved plan item(s): ${missing.map((item) => item.id).join(", ")}.` };
+	if (missing.length > 0)
+		return {
+			ok: false,
+			error: `Execution ledger omitted approved plan item(s): ${missing.map((item) => item.id).join(", ")}.`,
+		};
 	const canonical = [
 		"## Execution Ledger",
 		"",
-		...actual.entries.map((entry) => `- [${entry.id}] ${entry.text} — ${entry.status}${entry.reason ? `: ${entry.reason}` : ""}`),
+		...actual.entries.map(
+			(entry) => `- [${entry.id}] ${entry.text} — ${entry.status}${entry.reason ? `: ${entry.reason}` : ""}`,
+		),
 		"",
 	].join("\n");
 	return { ok: true, ledger: canonical, entries: actual.entries };

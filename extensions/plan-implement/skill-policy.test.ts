@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ARENA_SKILL_NAME, buildStackSkillPolicy, hasStackedPrsSkill, missingPublishSkills, STACKED_PRS_SKILL_NAME } from "./skill-policy.ts";
+import {
+	ARENA_SKILL_NAME,
+	buildStackSkillPolicy,
+	hasStackedPrsSkill,
+	missingPublishSkills,
+	STACKED_PRS_SKILL_NAME,
+} from "./skill-policy.ts";
 
 function skill(name: string, baseDir = `/skills/${name}`) {
 	return { name, baseDir };

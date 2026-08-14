@@ -1,15 +1,9 @@
-import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	findHandoffSource,
-	clearHandoffParseCache,
-	readHandoffHistory,
-	searchHandoffHistory,
-	type HandoffHistoryFs,
-	type HandoffSource,
-} from "./history-reader.ts";
+import { afterEach, describe, it } from "node:test";
+import { finalizeArchived, importSessionPending, openArchiveDb } from "../session-archive/archive-store.ts";
+import { parseSessionJsonl, sha256Hex } from "../session-archive/session-jsonl.ts";
 import {
 	assistantMessage,
 	makeTempTree,
@@ -18,8 +12,14 @@ import {
 	TEST_SESSION_ID,
 	userMessage,
 } from "../session-archive/test-helpers.ts";
-import { parseSessionJsonl, sha256Hex } from "../session-archive/session-jsonl.ts";
-import { finalizeArchived, importSessionPending, openArchiveDb } from "../session-archive/archive-store.ts";
+import {
+	clearHandoffParseCache,
+	findHandoffSource,
+	type HandoffHistoryFs,
+	type HandoffSource,
+	readHandoffHistory,
+	searchHandoffHistory,
+} from "./history-reader.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -126,7 +126,10 @@ describe("readHandoffHistory", () => {
 	it("invalidates the cache when the active session grows", () => {
 		const { source, env } = fixture();
 		readHandoffHistory(source, {}, env);
-		appendFileSync(source.sessionFile, `${JSON.stringify(messageEntry("u3", "u2", userMessage("appended cache entry")))}\n`);
+		appendFileSync(
+			source.sessionFile,
+			`${JSON.stringify(messageEntry("u3", "u2", userMessage("appended cache entry")))}\n`,
+		);
 
 		const output = readHandoffHistory(source, {}, env);
 

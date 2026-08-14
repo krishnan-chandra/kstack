@@ -1,14 +1,14 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
 	formatModelEffort,
 	formatModelRef,
+	type HandoffEffortLevel,
+	type HandoffModel,
 	isHandoffEffortLevel,
 	parseHandoffArgs,
 	pinHandoffEffort,
 	resolveModelReference,
-	type HandoffEffortLevel,
-	type HandoffModel,
 } from "./model-selection.ts";
 
 const MODELS: HandoffModel[] = [

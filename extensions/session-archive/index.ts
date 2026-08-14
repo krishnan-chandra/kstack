@@ -8,9 +8,9 @@
  * tool can archive, restore, edit, or delete a session.
  */
 
+import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
 	ensureArchiveDirs,
@@ -262,7 +262,9 @@ export default async function (pi: ExtensionAPI) {
 			}),
 			cwd: Type.Optional(Type.String({ description: "Only sessions whose working directory equals this path" })),
 			role: Type.Optional(
-				Type.String({ description: "Only entries with this role (user, assistant, toolResult, bashExecution, custom)" }),
+				Type.String({
+					description: "Only entries with this role (user, assistant, toolResult, bashExecution, custom)",
+				}),
 			),
 			session_id: Type.Optional(Type.String({ description: "Only entries from this archived session id" })),
 			limit: Type.Optional(
@@ -366,7 +368,8 @@ export default async function (pi: ExtensionAPI) {
 				if (chunk >= chunks.length) {
 					throw new Error(`Chunk ${chunk} is out of range; this page has ${chunks.length} chunk(s).`);
 				}
-				const range = entries.length === 0 ? "no entries" : `entries ${offset + 1}–${offset + entries.length} of ${total}`;
+				const range =
+					entries.length === 0 ? "no entries" : `entries ${offset + 1}–${offset + entries.length} of ${total}`;
 				const next =
 					chunk + 1 < chunks.length
 						? `continue with the same offset/limit and chunk ${chunk + 1}`

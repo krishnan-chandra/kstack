@@ -66,7 +66,12 @@ export function managedWorktreeRoot(): string {
 
 async function resolveBase(exec: ExecFn, repoRoot: string): Promise<{ ref: string; sha: string } | undefined> {
 	const remoteOutput = oneLine(await runGit(exec, ["remote"], repoRoot));
-	const remotes = (remoteOutput?.split(/\r?\n/).map((remote) => remote.trim()).filter(Boolean) ?? []).sort();
+	const remotes = (
+		remoteOutput
+			?.split(/\r?\n/)
+			.map((remote) => remote.trim())
+			.filter(Boolean) ?? []
+	).sort();
 	if (remotes.includes("origin")) {
 		remotes.splice(remotes.indexOf("origin"), 1);
 		remotes.unshift("origin");
@@ -86,8 +91,15 @@ async function resolveBase(exec: ExecFn, repoRoot: string): Promise<{ ref: strin
 		`refs/remotes/${remote}/main`,
 		`refs/remotes/${remote}/master`,
 	]);
-	const candidates = [...remoteHeads, ...conventionalRemoteRefs, "refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master", "HEAD"]
-		.filter((value): value is string => Boolean(value));
+	const candidates = [
+		...remoteHeads,
+		...conventionalRemoteRefs,
+		"refs/remotes/origin/main",
+		"refs/remotes/origin/master",
+		"refs/heads/main",
+		"refs/heads/master",
+		"HEAD",
+	].filter((value): value is string => Boolean(value));
 	for (const ref of [...new Set(candidates)]) {
 		const sha = oneLine(await runGit(exec, ["rev-parse", "--verify", `${ref}^{commit}`], repoRoot));
 		if (/^[0-9a-f]{40}$/.test(sha ?? "")) return { ref, sha: sha! };
@@ -108,7 +120,11 @@ export async function planManagedWorktree(
 
 	const commonResult = await runGit(exec, ["rev-parse", "--path-format=absolute", "--git-common-dir"], sourceRepoRoot);
 	const commonRaw = oneLine(commonResult);
-	if (!commonRaw) return { ok: false, error: `Could not resolve the repository's common Git directory: ${commonResult.stderr.trim()}` };
+	if (!commonRaw)
+		return {
+			ok: false,
+			error: `Could not resolve the repository's common Git directory: ${commonResult.stderr.trim()}`,
+		};
 
 	const realpath = deps.realpath ?? realpathSync;
 	let commonGitDir: string;
@@ -120,7 +136,11 @@ export async function planManagedWorktree(
 
 	const base = await resolveBase(exec, sourceRepoRoot);
 	if (!base) {
-		return { ok: false, error: "Could not resolve a worktree base. Configure origin/HEAD, main, or master, or ensure HEAD names a commit." };
+		return {
+			ok: false,
+			error:
+				"Could not resolve a worktree base. Configure origin/HEAD, main, or master, or ensure HEAD names a commit.",
+		};
 	}
 
 	const managedRoot = resolve(deps.managedRoot ?? managedWorktreeRoot());
@@ -135,11 +155,25 @@ export async function planManagedWorktree(
 		const slug = `${baseSlug.slice(0, MAX_SLUG_LENGTH - suffix.length)}${suffix}`;
 		const branch = `kstack/${slug}`;
 		const path = join(managedRoot, repositoryId, slug);
-		const branchLookup = await runGit(exec, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], sourceRepoRoot);
+		const branchLookup = await runGit(
+			exec,
+			["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+			sourceRepoRoot,
+		);
 		if (branchLookup.code !== 0 && !exists(path)) {
 			return {
 				ok: true,
-				plan: { sourceRepoRoot, commonGitDir, managedRoot, repositoryId, slug, branch, path, baseRef: base.ref, baseSha: base.sha },
+				plan: {
+					sourceRepoRoot,
+					commonGitDir,
+					managedRoot,
+					repositoryId,
+					slug,
+					branch,
+					path,
+					baseRef: base.ref,
+					baseSha: base.sha,
+				},
 			};
 		}
 	}
@@ -152,10 +186,17 @@ export async function createManagedWorktree(
 	exec: ExecFn,
 	deps: WorktreeDeps = {},
 ): Promise<WorktreeCreateResult> {
-	const branchLookup = await runGit(exec, ["show-ref", "--verify", "--quiet", `refs/heads/${plan.branch}`], plan.sourceRepoRoot);
+	const branchLookup = await runGit(
+		exec,
+		["show-ref", "--verify", "--quiet", `refs/heads/${plan.branch}`],
+		plan.sourceRepoRoot,
+	);
 	const exists = deps.exists ?? existsSync;
 	if (branchLookup.code === 0 || exists(plan.path)) {
-		return { ok: false, error: `Worktree destination or branch appeared after preflight: ${plan.path} (${plan.branch}). Nothing was overwritten.` };
+		return {
+			ok: false,
+			error: `Worktree destination or branch appeared after preflight: ${plan.path} (${plan.branch}). Nothing was overwritten.`,
+		};
 	}
 
 	try {
@@ -180,10 +221,16 @@ export async function createManagedWorktree(
 	const realpath = deps.realpath ?? realpathSync;
 	try {
 		if (!verifiedRoot || realpath(verifiedRoot) !== realpath(plan.path)) {
-			return { ok: false, error: `Git created the worktree but verification returned an unexpected root: ${verifiedRoot ?? "none"}.` };
+			return {
+				ok: false,
+				error: `Git created the worktree but verification returned an unexpected root: ${verifiedRoot ?? "none"}.`,
+			};
 		}
 	} catch (error) {
-		return { ok: false, error: `Git created the worktree but its path could not be verified: ${(error as Error).message}.` };
+		return {
+			ok: false,
+			error: `Git created the worktree but its path could not be verified: ${(error as Error).message}.`,
+		};
 	}
 	return { ok: true, plan };
 }

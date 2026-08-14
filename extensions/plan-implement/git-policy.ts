@@ -25,8 +25,13 @@ function output(result: ExecFnResult): string {
 
 export async function createCurrentWorkstreamBranch(cwd: string, task: string, exec: ExecFn): Promise<BranchResult> {
 	const status = await git(exec, cwd, ["status", "--porcelain=v1", "--untracked-files=all"]);
-	if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim() || status.stdout.trim()}` };
-	if (output(status)) return { ok: false, error: `The current working tree is dirty; no task branch was created. Rerun with --worktree.\n${output(status)}` };
+	if (status.code !== 0)
+		return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim() || status.stdout.trim()}` };
+	if (output(status))
+		return {
+			ok: false,
+			error: `The current working tree is dirty; no task branch was created. Rerun with --worktree.\n${output(status)}`,
+		};
 
 	const base = await git(exec, cwd, ["rev-parse", "HEAD"]);
 	const baseSha = output(base);
@@ -40,7 +45,11 @@ export async function createCurrentWorkstreamBranch(cwd: string, task: string, e
 		const exists = await git(exec, cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
 		if (exists.code === 0) continue;
 		const created = await git(exec, cwd, ["switch", "-c", branch]);
-		if (created.code !== 0) return { ok: false, error: `Could not create task branch ${branch}: ${created.stderr.trim() || created.stdout.trim()}` };
+		if (created.code !== 0)
+			return {
+				ok: false,
+				error: `Could not create task branch ${branch}: ${created.stderr.trim() || created.stdout.trim()}`,
+			};
 		return { ok: true, branch, baseSha };
 	}
 	return { ok: false, error: `Could not allocate a unique task branch after ${MAX_COLLISION_ATTEMPTS} attempts.` };
@@ -54,18 +63,26 @@ export async function verifyCommittedWorkstream(
 	const branchResult = await git(exec, cwd, ["branch", "--show-current"]);
 	const branch = output(branchResult);
 	if (branchResult.code !== 0 || branch !== expected.branch) {
-		return { ok: false, error: `Workstream postcondition failed: expected branch ${expected.branch}, found ${branch || "detached HEAD"}.` };
+		return {
+			ok: false,
+			error: `Workstream postcondition failed: expected branch ${expected.branch}, found ${branch || "detached HEAD"}.`,
+		};
 	}
 	const headResult = await git(exec, cwd, ["rev-parse", "HEAD"]);
 	const headSha = output(headResult);
 	if (headResult.code !== 0 || !/^[0-9a-f]{40}$/.test(headSha)) {
-		return { ok: false, error: `Workstream postcondition failed: could not resolve HEAD: ${headResult.stderr.trim() || headResult.stdout.trim()}` };
+		return {
+			ok: false,
+			error: `Workstream postcondition failed: could not resolve HEAD: ${headResult.stderr.trim() || headResult.stdout.trim()}`,
+		};
 	}
 	if (expected.requireNewCommit && headSha === expected.baseSha) {
 		return { ok: false, error: "Workstream postcondition failed: implementation created no commits." };
 	}
 	const status = await git(exec, cwd, ["status", "--porcelain=v1", "--untracked-files=all"]);
-	if (status.code !== 0) return { ok: false, error: `Could not verify the working tree: ${status.stderr.trim() || status.stdout.trim()}` };
-	if (output(status)) return { ok: false, error: `Workstream postcondition failed: uncommitted files remain.\n${output(status)}` };
+	if (status.code !== 0)
+		return { ok: false, error: `Could not verify the working tree: ${status.stderr.trim() || status.stdout.trim()}` };
+	if (output(status))
+		return { ok: false, error: `Workstream postcondition failed: uncommitted files remain.\n${output(status)}` };
 	return { ok: true, headSha };
 }

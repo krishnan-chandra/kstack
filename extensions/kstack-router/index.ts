@@ -3,22 +3,22 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ChangeKind } from "../plan-implement/change-kind.ts";
+import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
+import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { parseArgs } from "./args.ts";
-import { getRouteLabel, getRouteDescription, validateCatalog, checkDependencies } from "./catalog.ts";
+import { checkDependencies, getRouteDescription, getRouteLabel, validateCatalog } from "./catalog.ts";
 import { runClassifier } from "./classifier-runner.ts";
 import { loadConfig, resolveClassifierModel } from "./config.ts";
+import { dispatchRoute, getPlaybookForRoute, getRestrictedTools } from "./dispatch.ts";
+import { type DispatchToken, RouterLifecycle } from "./lifecycle.ts";
+import { type RouteCardDetails, registerRouteCardRenderer } from "./route-card.ts";
 import { resolveRoute } from "./route-resolution.ts";
-import { registerRouteCardRenderer, type RouteCardDetails } from "./route-card.ts";
-import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
-import type { ChangeKind } from "../plan-implement/change-kind.ts";
-import { dispatchRoute, getRestrictedTools, getPlaybookForRoute } from "./dispatch.ts";
-import { nameSessionIfUnnamed } from "../shared/session-name.ts";
-import { RouterLifecycle, type DispatchToken } from "./lifecycle.ts";
 import {
 	allowedReadToolsForRoute,
+	type DeliveryRecommendation,
 	isActiveSessionRoute,
 	type RouteId,
-	type DeliveryRecommendation,
 	type RouterConfig,
 } from "./types.ts";
 
@@ -200,7 +200,8 @@ export default function (pi: ExtensionAPI): void {
 			const { route, delivery, changeKind, overrode, modelSource, confidence } = resolution.resolved;
 			const worktree = parsed.args.worktree ?? false;
 
-			const availableCommands = pi.getCommands()
+			const availableCommands = pi
+				.getCommands()
 				.filter((c) => c.source === "extension")
 				.map((c) => c.name);
 			const availableSkills = (ctx.getSystemPromptOptions().skills ?? []).map((s) => s.name);
@@ -299,13 +300,24 @@ export default function (pi: ExtensionAPI): void {
 					details: routeCard,
 				});
 
-				const result = await dispatchRoute(route, task, delivery, worktree, changeKind, dispatchToken, lifecycle, pi, ctx);
+				const result = await dispatchRoute(
+					route,
+					task,
+					delivery,
+					worktree,
+					changeKind,
+					dispatchToken,
+					lifecycle,
+					pi,
+					ctx,
+				);
 				routeCard.dispatchStatus = result.status;
 				pi.sendMessage({
 					customType: "kstack-route",
-					content: result.status === "dispatched"
-						? `Dispatched to ${getRouteLabel(route)}.`
-						: `Dispatch failed: ${(result as { error?: string }).error ?? result.status}`,
+					content:
+						result.status === "dispatched"
+							? `Dispatched to ${getRouteLabel(route)}.`
+							: `Dispatch failed: ${(result as { error?: string }).error ?? result.status}`,
 					display: true,
 					details: routeCard,
 				});
@@ -323,7 +335,6 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 }
-
 
 function readPlaybook(name: string): string {
 	return readFileSync(join(PLAYBOOKS_DIR, name), "utf8");

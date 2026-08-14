@@ -2,9 +2,9 @@ import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-a
 import {
 	Key,
 	type KeybindingsManager,
-	type TUI,
 	matchesKey,
 	stripTerminalSequences,
+	type TUI,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { SessionChoice, SessionChoiceSource } from "./session-choices.ts";
@@ -71,10 +71,7 @@ class SessionMultiSelectComponent<T extends SessionChoiceSource> {
 		}
 		const confirmHint =
 			selectedCount === 0 ? "Enter archive focused session" : `Enter archive ${selectedCount} selected`;
-		lines.push(
-			"",
-			truncateToWidth(this.#theme.fg("dim", `Space toggle · ${confirmHint} · Esc cancel`), safeWidth),
-		);
+		lines.push("", truncateToWidth(this.#theme.fg("dim", `Space toggle · ${confirmHint} · Esc cancel`), safeWidth));
 		return lines;
 	}
 
@@ -105,7 +102,7 @@ export async function selectSessionChoices<T extends SessionChoiceSource>(
 	if (ctx.mode !== "tui") {
 		return selectSessionChoicesWithDialogs(choices, (title, options) => ctx.ui.select(title, options));
 	}
-	return ctx.ui.custom<Array<SessionChoice<T>> | undefined>((tui, theme, keybindings, done) =>
-		new SessionMultiSelectComponent({ choices, tui, theme, keybindings, done }),
+	return ctx.ui.custom<Array<SessionChoice<T>> | undefined>(
+		(tui, theme, keybindings, done) => new SessionMultiSelectComponent({ choices, tui, theme, keybindings, done }),
 	);
 }

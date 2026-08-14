@@ -107,7 +107,10 @@ export function resolveModelReference(models: HandoffModel[], reference: string)
 	if (lastColon === -1) return { status: "not-found" };
 
 	const prefix = trimmed.slice(0, lastColon).trim();
-	const suffix = trimmed.slice(lastColon + 1).trim().toLowerCase();
+	const suffix = trimmed
+		.slice(lastColon + 1)
+		.trim()
+		.toLowerCase();
 	if (prefix === "" || !isHandoffEffortLevel(suffix)) return { status: "not-found" };
 
 	const prefixMatch = matchModelReference(models, prefix);
@@ -134,7 +137,10 @@ function matchModelReference(models: HandoffModel[], reference: string): ModelRe
 	const slashIndex = reference.indexOf("/");
 	if (slashIndex !== -1) {
 		const provider = reference.slice(0, slashIndex).trim().toLowerCase();
-		const pattern = reference.slice(slashIndex + 1).trim().toLowerCase();
+		const pattern = reference
+			.slice(slashIndex + 1)
+			.trim()
+			.toLowerCase();
 		if (provider !== "" && pattern !== "") {
 			const providerModels = models.filter((m) => m.provider.toLowerCase() === provider);
 			matches = providerModels.filter(

@@ -9,7 +9,9 @@ function fakeBus(listener?: (data: unknown) => void) {
 			assert.equal(channel, PANEL_REVIEW_REQUEST_EVENT);
 			listener?.(data);
 		},
-		on() { return () => {}; },
+		on() {
+			return () => {};
+		},
 	};
 }
 
@@ -33,9 +35,15 @@ describe("panel-review in-process API", () => {
 				});
 			}),
 		} as unknown as ExtensionAPI;
-		const result = await requestPanelReview(pi, { intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" }, ctx);
+		const result = await requestPanelReview(
+			pi,
+			{ intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" },
+			ctx,
+		);
 		assert.deepEqual(result, { handled: true, outcome });
-		assert.deepEqual(calls, [{ intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" }]);
+		assert.deepEqual(calls, [
+			{ intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" },
+		]);
 	});
 
 	it("reports unavailable when panel-review has no listener", async () => {
@@ -46,8 +54,15 @@ describe("panel-review in-process API", () => {
 
 	it("allows only one listener to claim a request", () => {
 		const request = { schemaVersion: 2, options: {}, ctx: {} as ExtensionCommandContext, claimed: false };
-		assert.equal(claimPanelReviewRequest(request, async () => ({ status: "declined" as const })), true);
-		assert.equal(claimPanelReviewRequest(request, async () => { throw new Error("should not run"); }), false);
+		assert.equal(
+			claimPanelReviewRequest(request, async () => ({ status: "declined" as const })),
+			true,
+		);
+		assert.equal(
+			claimPanelReviewRequest(request, async () => {
+				throw new Error("should not run");
+			}),
+			false,
+		);
 	});
-
 });

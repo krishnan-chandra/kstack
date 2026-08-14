@@ -37,11 +37,7 @@ export interface PanelRun {
 	aborted: number;
 }
 
-export async function runPanel(
-	specs: ReviewerSpec[],
-	maxConcurrency: number,
-	runOne: RunOne,
-): Promise<PanelRun> {
+export async function runPanel(specs: ReviewerSpec[], maxConcurrency: number, runOne: RunOne): Promise<PanelRun> {
 	const results = await mapWithConcurrencyLimit(specs, maxConcurrency, async (spec, index) => {
 		try {
 			return await runOne(spec, index);

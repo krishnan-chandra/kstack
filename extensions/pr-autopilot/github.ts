@@ -7,13 +7,7 @@
  * output caps.
  */
 
-import type {
-	CheckRun,
-	ExecFn,
-	ExecFnResult,
-	MergeStateStatus,
-	ReviewThread,
-} from "./types.ts";
+import type { CheckRun, ExecFn, ExecFnResult, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
 
 const AUTOPILOT_REPLY_MARKER = "<!-- pr-autopilot -->";
@@ -84,11 +78,7 @@ export async function gh(exec: ExecFn, cwd: string, args: string[], timeout = 15
 }
 
 /** Bound parallel async work (log fetches, etc.) to config.maxConcurrency. */
-export async function mapPool<T, R>(
-	items: readonly T[],
-	limit: number,
-	fn: (item: T) => Promise<R>,
-): Promise<R[]> {
+export async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
 	if (items.length === 0) return [];
 	const results = new Array<R>(items.length);
 	let next = 0;
@@ -147,11 +137,16 @@ export function pickLowestPrNumber(stdout: string): number | undefined {
  */
 export async function findLowestUnmergedPR(exec: ExecFn, cwd: string): Promise<ExecFnResult & { prNumber?: number }> {
 	const result = await gh(exec, cwd, [
-		"pr", "list",
-		"--state", "open",
-		"--author", "@me",
-		"--limit", "50",
-		"--json", "number",
+		"pr",
+		"list",
+		"--state",
+		"open",
+		"--author",
+		"@me",
+		"--limit",
+		"50",
+		"--json",
+		"number",
 	]);
 	if (result.code !== 0) {
 		return { ...result, prNumber: undefined };
@@ -213,10 +208,10 @@ function parseGHPr(raw: unknown): GHPrJson | undefined {
 		headSha,
 		commits: Array.isArray(raw.commits)
 			? raw.commits.flatMap((c) => {
-				if (!isRecord(c)) return [];
-				const oid = asString(c.oid);
-				return oid ? [{ oid }] : [];
-			})
+					if (!isRecord(c)) return [];
+					const oid = asString(c.oid);
+					return oid ? [{ oid }] : [];
+				})
 			: [],
 	};
 }
@@ -226,18 +221,9 @@ function parseGHPr(raw: unknown): GHPrJson | undefined {
  * fields needed by the autopilot: number, title, draft, mergeability,
  * head SHA, base ref, and commit SHAs.
  */
-export async function viewPR(
-	exec: ExecFn,
-	cwd: string,
-	prNumber: number,
-): Promise<ExecFnResult & { pr?: GHPrJson }> {
+export async function viewPR(exec: ExecFn, cwd: string, prNumber: number): Promise<ExecFnResult & { pr?: GHPrJson }> {
 	const fields = "number,title,state,isDraft,mergeable,mergeStateStatus,headRefName,baseRefName,headRefOid,commits";
-	const result = await gh(exec, cwd, [
-		"pr", "view",
-		String(prNumber),
-		"--json", fields,
-		"-q", ".",
-	]);
+	const result = await gh(exec, cwd, ["pr", "view", String(prNumber), "--json", fields, "-q", "."]);
 	if (result.code !== 0 || !result.stdout.trim()) {
 		return { ...result, pr: undefined };
 	}
@@ -246,7 +232,12 @@ export async function viewPR(
 		if (!pr) return { ...result, pr: undefined };
 		return { ...result, pr };
 	} catch (error) {
-		return { code: 1, stdout: "", stderr: `Could not parse gh pr view output: ${(error as Error).message}`, pr: undefined };
+		return {
+			code: 1,
+			stdout: "",
+			stderr: `Could not parse gh pr view output: ${(error as Error).message}`,
+			pr: undefined,
+		};
 	}
 }
 
@@ -344,11 +335,16 @@ async function fetchReviewThreadPage(
 	cursor: string | undefined,
 ): Promise<ExecFnResult & { page: GraphqlPage }> {
 	const args = [
-		"api", "graphql",
-		"-f", `query=${REVIEW_THREADS_QUERY}`,
-		"-F", `owner=${owner}`,
-		"-F", `name=${name}`,
-		"-F", `number=${prNumber}`,
+		"api",
+		"graphql",
+		"-f",
+		`query=${REVIEW_THREADS_QUERY}`,
+		"-F",
+		`owner=${owner}`,
+		"-F",
+		`name=${name}`,
+		"-F",
+		`number=${prNumber}`,
 	];
 	if (cursor) args.push("-F", `cursor=${cursor}`);
 	const result = await gh(exec, cwd, args, 20_000);
@@ -358,7 +354,12 @@ async function fetchReviewThreadPage(
 	try {
 		return { ...result, page: parseReviewThreadsPage(JSON.parse(result.stdout.trim() || "{}")) };
 	} catch (error) {
-		return { code: 1, stdout: "", stderr: `Could not parse review threads: ${(error as Error).message}`, page: { threads: [], hasNextPage: false } };
+		return {
+			code: 1,
+			stdout: "",
+			stderr: `Could not parse review threads: ${(error as Error).message}`,
+			page: { threads: [], hasNextPage: false },
+		};
 	}
 }
 
@@ -444,7 +445,8 @@ export async function getIssueComments(
 	const result = await gh(exec, cwd, [
 		"api",
 		`repos/{owner}/{repo}/issues/${prNumber}/comments`,
-		"--method", "GET",
+		"--method",
+		"GET",
 		"--paginate",
 		"--slurp",
 	]);
@@ -513,11 +515,12 @@ export async function getCheckRuns(
 	cwd: string,
 	prNumber: number,
 ): Promise<ExecFnResult & { checks: CheckRun[] }> {
-	const result = await gh(exec, cwd, [
-		"pr", "checks",
-		String(prNumber),
-		"--json", "name,state,bucket,workflow,link",
-	], 20_000);
+	const result = await gh(
+		exec,
+		cwd,
+		["pr", "checks", String(prNumber), "--json", "name,state,bucket,workflow,link"],
+		20_000,
+	);
 	if (result.code !== 0) {
 		return { ...result, checks: [] };
 	}
@@ -566,17 +569,21 @@ export async function watchChecks(
 	signal?: AbortSignal,
 ): Promise<ExecFnResult> {
 	try {
-		return await exec("gh", ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], { cwd, timeout: timeoutMs, signal });
+		return await exec("gh", ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], {
+			cwd,
+			timeout: timeoutMs,
+			signal,
+		});
 	} catch (error) {
-		return { code: signal?.aborted ? 130 : 1, stdout: "", stderr: signal?.aborted ? "aborted" : (error as Error).message };
+		return {
+			code: signal?.aborted ? 130 : 1,
+			stdout: "",
+			stderr: signal?.aborted ? "aborted" : (error as Error).message,
+		};
 	}
 }
 
-export async function rerunFailedRun(
-	exec: ExecFn,
-	cwd: string,
-	runId: string,
-): Promise<ExecFnResult> {
+export async function rerunFailedRun(exec: ExecFn, cwd: string, runId: string): Promise<ExecFnResult> {
 	return gh(exec, cwd, ["run", "rerun", runId, "--failed"], 30_000);
 }
 
@@ -590,8 +597,10 @@ export async function replyToReviewComment(
 	return gh(exec, cwd, [
 		"api",
 		`repos/{owner}/{repo}/pulls/${prNumber}/comments`,
-		"-f", `body=${autopilotReplyBody(body)}`,
-		"-F", `in_reply_to=${inReplyTo}`,
+		"-f",
+		`body=${autopilotReplyBody(body)}`,
+		"-F",
+		`in_reply_to=${inReplyTo}`,
 	]);
 }
 
@@ -601,23 +610,11 @@ export async function replyToIssueComment(
 	prNumber: number,
 	body: string,
 ): Promise<ExecFnResult> {
-	return gh(exec, cwd, [
-		"pr", "comment",
-		String(prNumber),
-		"--body", autopilotReplyBody(body),
-	]);
+	return gh(exec, cwd, ["pr", "comment", String(prNumber), "--body", autopilotReplyBody(body)]);
 }
 
-export async function resolveReviewThread(
-	exec: ExecFn,
-	cwd: string,
-	threadId: string,
-): Promise<ExecFnResult> {
-	return gh(exec, cwd, [
-		"api", "graphql",
-		"-f", `query=${RESOLVE_THREAD_MUTATION}`,
-		"-f", `id=${threadId}`,
-	]);
+export async function resolveReviewThread(exec: ExecFn, cwd: string, threadId: string): Promise<ExecFnResult> {
+	return gh(exec, cwd, ["api", "graphql", "-f", `query=${RESOLVE_THREAD_MUTATION}`, "-f", `id=${threadId}`]);
 }
 
 export async function markPrReady(exec: ExecFn, cwd: string, prNumber: number): Promise<ExecFnResult> {
@@ -630,7 +627,11 @@ export async function currentBranch(exec: ExecFn, cwd: string): Promise<ExecFnRe
 	return { ...result, branch: result.stdout.trim() || undefined };
 }
 
-export async function currentHead(exec: ExecFn, cwd: string, timeout = 5_000): Promise<ExecFnResult & { sha?: string }> {
+export async function currentHead(
+	exec: ExecFn,
+	cwd: string,
+	timeout = 5_000,
+): Promise<ExecFnResult & { sha?: string }> {
 	const result = await exec("git", ["rev-parse", "HEAD"], { cwd, timeout });
 	if (result.code !== 0) return { ...result, sha: undefined };
 	const sha = result.stdout.trim();
@@ -668,11 +669,7 @@ export type MergeBaseResult =
  * Merge origin/<base> into the frontier head. Never rebases. Aborts if hunks
  * have competing intents (git reports conflicts).
  */
-export async function mergeBaseIntoHead(
-	exec: ExecFn,
-	cwd: string,
-	baseRef: string,
-): Promise<MergeBaseResult> {
+export async function mergeBaseIntoHead(exec: ExecFn, cwd: string, baseRef: string): Promise<MergeBaseResult> {
 	const fetch = await exec("git", ["fetch", "origin", baseRef], { cwd, timeout: 60_000 });
 	if (fetch.code !== 0) return { kind: "failed", error: `git fetch origin ${baseRef} failed: ${fetch.stderr.trim()}` };
 
@@ -686,14 +683,18 @@ export async function mergeBaseIntoHead(
 	}
 
 	const unmerged = await exec("git", ["diff", "--name-only", "--diff-filter=U"], { cwd, timeout: 5_000 });
-	const files = unmerged.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+	const files = unmerged.stdout
+		.split("\n")
+		.map((l) => l.trim())
+		.filter(Boolean);
 	await exec("git", ["merge", "--abort"], { cwd, timeout: 10_000 });
 	return {
 		kind: "needs-human",
 		files,
-		error: files.length > 0
-			? `Merge of origin/${baseRef} conflicted in ${files.join(", ")}. Competing intents need a human.`
-			: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
+		error:
+			files.length > 0
+				? `Merge of origin/${baseRef} conflicted in ${files.join(", ")}. Competing intents need a human.`
+				: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
 	};
 }
 

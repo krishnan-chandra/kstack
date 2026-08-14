@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
-import { buildChildArgs, runAgent, truncateUtf8, type SpawnedProcess } from "./agent-runner.ts";
+import { buildChildArgs, runAgent, type SpawnedProcess, truncateUtf8 } from "./agent-runner.ts";
 
 class FakeProcess implements SpawnedProcess {
 	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
@@ -10,10 +10,20 @@ class FakeProcess implements SpawnedProcess {
 	private events = new EventEmitter();
 	killed = false;
 	kills: string[] = [];
-	on(event: "close" | "error", cb: (...args: any[]) => void): void { this.events.on(event, cb); }
-	kill(signal = "SIGTERM"): boolean { this.killed = true; this.kills.push(signal); return true; }
-	close(code: number | null): void { this.events.emit("close", code); }
-	error(error: Error): void { this.events.emit("error", error); }
+	on(event: "close" | "error", cb: (...args: any[]) => void): void {
+		this.events.on(event, cb);
+	}
+	kill(signal = "SIGTERM"): boolean {
+		this.killed = true;
+		this.kills.push(signal);
+		return true;
+	}
+	close(code: number | null): void {
+		this.events.emit("close", code);
+	}
+	error(error: Error): void {
+		this.events.emit("error", error);
+	}
 }
 
 function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
@@ -40,10 +50,19 @@ describe("plan-implement child runner", () => {
 		assert.ok(planner.includes("--no-prompt-templates"));
 		assert.ok(!planner.includes("--no-skills"));
 		assert.ok(!planner.includes("--no-context-files"));
-		assert.deepEqual(planner.slice(planner.indexOf("--tools"), planner.indexOf("--tools") + 2), ["--tools", "read,grep,find,ls"]);
+		assert.deepEqual(planner.slice(planner.indexOf("--tools"), planner.indexOf("--tools") + 2), [
+			"--tools",
+			"read,grep,find,ls",
+		]);
 		assert.match(planner.at(-1) ?? "", /single-PR/);
 
-		const implementer = buildChildArgs({ role: "implementer", model: "b/i", promptFile: "/p", taskFile: "/t", planFile: "/plan" });
+		const implementer = buildChildArgs({
+			role: "implementer",
+			model: "b/i",
+			promptFile: "/p",
+			taskFile: "/t",
+			planFile: "/plan",
+		});
 		assert.ok(!implementer.includes("--tools"));
 		assert.match(implementer.at(-1) ?? "", /approved plan at \/plan/);
 	});
@@ -77,20 +96,39 @@ describe("plan-implement child runner", () => {
 				verdictFile: role === "fixer" ? "/verdict.md" : undefined,
 				supplementalPrompts: [principles, proofObligations],
 			});
-			const promptFlags = args.reduce<number[]>((indices, value, index) => value === "--append-system-prompt" ? [...indices, index] : indices, []);
-			assert.deepEqual(promptFlags.map((index) => args[index + 1]), ["/role.md", principles, proofObligations]);
+			const promptFlags = args.reduce<number[]>(
+				(indices, value, index) => (value === "--append-system-prompt" ? [...indices, index] : indices),
+				[],
+			);
+			assert.deepEqual(
+				promptFlags.map((index) => args[index + 1]),
+				["/role.md", principles, proofObligations],
+			);
 		}
 	});
 
 	it("does not add workflow guidance when no supplemental prompts are supplied", () => {
-		const args = buildChildArgs({ role: "publisher", model: "a/model", promptFile: "/publisher.md", taskFile: "/task.md", verdictFile: "/verdict.md" });
+		const args = buildChildArgs({
+			role: "publisher",
+			model: "a/model",
+			promptFile: "/publisher.md",
+			taskFile: "/task.md",
+			verdictFile: "/verdict.md",
+		});
 		const promptFlags = args.filter((value) => value === "--append-system-prompt");
 		assert.equal(promptFlags.length, 1);
 	});
 
 	it("stack mode disables skill discovery and re-adds every provided skill except arena", () => {
 		const skillPaths = ["/skills/create-skill", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
-		const planner = buildChildArgs({ role: "planner", model: "a/p", promptFile: "/p", taskFile: "/t", mode: "stack", skillPaths });
+		const planner = buildChildArgs({
+			role: "planner",
+			model: "a/p",
+			promptFile: "/p",
+			taskFile: "/t",
+			mode: "stack",
+			skillPaths,
+		});
 		const noSkillsAt = planner.indexOf("--no-skills");
 		assert.ok(noSkillsAt !== -1, "planner disables skill discovery");
 		// Every skill path is re-added after --no-skills.
@@ -103,7 +141,15 @@ describe("plan-implement child runner", () => {
 		assert.equal(planner[noSkillsAt + 1], "--skill");
 		assert.match(planner.at(-1) ?? "", /stacked-PR/);
 
-		const implementer = buildChildArgs({ role: "implementer", model: "b/i", promptFile: "/p", taskFile: "/t", planFile: "/plan", mode: "stack", skillPaths });
+		const implementer = buildChildArgs({
+			role: "implementer",
+			model: "b/i",
+			promptFile: "/p",
+			taskFile: "/t",
+			planFile: "/plan",
+			mode: "stack",
+			skillPaths,
+		});
 		assert.ok(implementer.includes("--no-skills"));
 		for (const path of skillPaths) assert.ok(implementer.includes(path));
 		assert.match(implementer.at(-1) ?? "", /stacked-PR delivery/);
@@ -122,7 +168,13 @@ describe("plan-implement child runner", () => {
 		assert.match(fixer.at(-1) ?? "", /address the actionable findings/);
 		assert.ok(!fixer.includes("/plan"));
 
-		const publisher = buildChildArgs({ role: "publisher", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v" });
+		const publisher = buildChildArgs({
+			role: "publisher",
+			model: "a/i",
+			promptFile: "/p",
+			taskFile: "/t",
+			verdictFile: "/v",
+		});
 		assert.ok(!publisher.includes("--tools"));
 		assert.match(publisher.at(-1) ?? "", /panel-review verdict at \/v/);
 		assert.match(publisher.at(-1) ?? "", /draft pull request/);
@@ -131,12 +183,28 @@ describe("plan-implement child runner", () => {
 
 	it("fixer and publisher get stack-mode notes and re-added skills in stack mode", () => {
 		const skillPaths = ["/skills/write-pr", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
-		const fixer = buildChildArgs({ role: "fixer", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v", mode: "stack", skillPaths });
+		const fixer = buildChildArgs({
+			role: "fixer",
+			model: "a/i",
+			promptFile: "/p",
+			taskFile: "/t",
+			verdictFile: "/v",
+			mode: "stack",
+			skillPaths,
+		});
 		assert.ok(fixer.includes("--no-skills"));
 		for (const path of skillPaths) assert.ok(fixer.includes(path));
 		assert.match(fixer.at(-1) ?? "", /amend the local stack/);
 
-		const publisher = buildChildArgs({ role: "publisher", model: "a/i", promptFile: "/p", taskFile: "/t", verdictFile: "/v", mode: "stack", skillPaths });
+		const publisher = buildChildArgs({
+			role: "publisher",
+			model: "a/i",
+			promptFile: "/p",
+			taskFile: "/t",
+			verdictFile: "/v",
+			mode: "stack",
+			skillPaths,
+		});
 		assert.match(publisher.at(-1) ?? "", /jj-stacked-prs skill for publishing the local stack/);
 	});
 
@@ -176,12 +244,16 @@ describe("plan-implement child runner", () => {
 
 	it("reports synchronous spawn failures", async () => {
 		const process = new FakeProcess();
-		const result = await runAgent(options(process, {
-			deps: {
-				spawnImpl: () => { throw new Error("spawn denied"); },
-				piInvocation: (args: string[]) => ({ command: "pi", args }),
-			},
-		}));
+		const result = await runAgent(
+			options(process, {
+				deps: {
+					spawnImpl: () => {
+						throw new Error("spawn denied");
+					},
+					piInvocation: (args: string[]) => ({ command: "pi", args }),
+				},
+			}),
+		);
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /spawn denied/);
 	});
@@ -198,23 +270,30 @@ describe("plan-implement child runner", () => {
 	it("spawns a mutation child in the selected managed worktree", async () => {
 		const process = new FakeProcess();
 		let spawnedCwd: unknown;
-		const promise = runAgent(options(process, {
-			role: "implementer",
-			planFile: "/tmp/plan.md",
-			cwd: "/managed/repo/change",
-			deps: {
-				spawnImpl: (_command: string, _args: string[], spawnOptions: Record<string, unknown>) => {
-					spawnedCwd = spawnOptions.cwd;
-					return process;
+		const promise = runAgent(
+			options(process, {
+				role: "implementer",
+				planFile: "/tmp/plan.md",
+				cwd: "/managed/repo/change",
+				deps: {
+					spawnImpl: (_command: string, _args: string[], spawnOptions: Record<string, unknown>) => {
+						spawnedCwd = spawnOptions.cwd;
+						return process;
+					},
+					piInvocation: (args: string[]) => ({ command: "pi", args }),
+					timeoutMs: 1000,
 				},
-				piInvocation: (args: string[]) => ({ command: "pi", args }),
-				timeoutMs: 1000,
-			},
-		}));
-		process.stdout.emit("data", Buffer.from(JSON.stringify({
-			type: "message_end",
-			message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
-		}) + "\n"));
+			}),
+		);
+		process.stdout.emit(
+			"data",
+			Buffer.from(
+				JSON.stringify({
+					type: "message_end",
+					message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
+				}) + "\n",
+			),
+		);
 		process.close(0);
 		assert.equal((await promise).status, "completed");
 		assert.equal(spawnedCwd, "/managed/repo/change");
@@ -223,10 +302,20 @@ describe("plan-implement child runner", () => {
 	it("returns the final assistant output and usage", async () => {
 		const process = new FakeProcess();
 		const promise = runAgent(options(process));
-		process.stdout.emit("data", Buffer.from(JSON.stringify({
-			type: "message_end",
-			message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "final plan" }], usage: { input: 3, output: 4, cost: { total: 0.1 } } },
-		}) + "\n"));
+		process.stdout.emit(
+			"data",
+			Buffer.from(
+				JSON.stringify({
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "stop",
+						content: [{ type: "text", text: "final plan" }],
+						usage: { input: 3, output: 4, cost: { total: 0.1 } },
+					},
+				}) + "\n",
+			),
+		);
 		process.close(0);
 		const result = await promise;
 		assert.equal(result.status, "completed");
@@ -248,10 +337,15 @@ describe("plan-implement child runner", () => {
 
 		const provider = new FakeProcess();
 		const providerPromise = runAgent(options(provider));
-		provider.stdout.emit("data", Buffer.from(JSON.stringify({
-			type: "message_end",
-			message: { role: "assistant", stopReason: "error", errorMessage: "quota exceeded", content: [] },
-		}) + "\n"));
+		provider.stdout.emit(
+			"data",
+			Buffer.from(
+				JSON.stringify({
+					type: "message_end",
+					message: { role: "assistant", stopReason: "error", errorMessage: "quota exceeded", content: [] },
+				}) + "\n",
+			),
+		);
 		provider.close(0);
 		const providerResult = await providerPromise;
 		assert.equal(providerResult.status, "failed");
@@ -281,7 +375,16 @@ describe("plan-implement child runner", () => {
 
 	it("kills and reports timeout", async () => {
 		const process = new FakeProcess();
-		const promise = runAgent(options(process, { deps: { spawnImpl: () => process, piInvocation: (args: string[]) => ({ command: "pi", args }), timeoutMs: 5, killGraceMs: 100 } }));
+		const promise = runAgent(
+			options(process, {
+				deps: {
+					spawnImpl: () => process,
+					piInvocation: (args: string[]) => ({ command: "pi", args }),
+					timeoutMs: 5,
+					killGraceMs: 100,
+				},
+			}),
+		);
 		await new Promise((resolve) => setTimeout(resolve, 15));
 		assert.deepEqual(process.kills, ["SIGTERM"]);
 		process.close(null);
@@ -292,15 +395,17 @@ describe("plan-implement child runner", () => {
 
 	it("terminates a child whose JSONL line exceeds the stdout cap", async () => {
 		const process = new FakeProcess();
-		const promise = runAgent(options(process, {
-			deps: {
-				spawnImpl: () => process,
-				piInvocation: (args: string[]) => ({ command: "pi", args }),
-				timeoutMs: 1000,
-				killGraceMs: 100,
-				stdoutLineCapBytes: 16,
-			},
-		}));
+		const promise = runAgent(
+			options(process, {
+				deps: {
+					spawnImpl: () => process,
+					piInvocation: (args: string[]) => ({ command: "pi", args }),
+					timeoutMs: 1000,
+					killGraceMs: 100,
+					stdoutLineCapBytes: 16,
+				},
+			}),
+		);
 		process.stdout.emit("data", Buffer.from("x".repeat(17)));
 		assert.deepEqual(process.kills, ["SIGTERM"]);
 		process.close(null);

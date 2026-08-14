@@ -17,7 +17,10 @@ export class WorkflowLifecycle extends SessionRunLifecycle {
 		return token;
 	}
 
-	beginChild(token: WorkflowToken, phase: "planning" | "implementing" | "fixing" | "publishing"): AbortController | undefined {
+	beginChild(
+		token: WorkflowToken,
+		phase: "planning" | "implementing" | "fixing" | "publishing",
+	): AbortController | undefined {
 		if (!this.isCurrent(token) || this.childAbort) return undefined;
 		const controller = new AbortController();
 		this.childAbort = controller;

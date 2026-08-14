@@ -3,15 +3,17 @@
  * movement (atomic rename with a verified copy fallback for EXDEV).
  */
 
+import { randomBytes } from "node:crypto";
 import {
 	chmodSync,
+	closeSync,
 	copyFileSync,
 	existsSync,
+	fsyncSync,
 	lstatSync,
 	mkdirSync,
 	openSync,
-	fsyncSync,
-	closeSync,
+	readFileSync,
 	readSync,
 	realpathSync,
 	renameSync,
@@ -20,9 +22,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { randomBytes } from "node:crypto";
 import { sha256Hex } from "./session-jsonl.ts";
-import { readFileSync } from "node:fs";
 
 export class ArchiveFileError extends Error {
 	constructor(message: string) {
@@ -92,11 +92,7 @@ export function isPathInside(child: string, parent: string): boolean {
  * Prove the source is a regular, non-symlink .jsonl file inside the active
  * session directory and outside the archive root. Returns the canonical path.
  */
-export function canonicalizeActiveSource(
-	sourcePath: string,
-	activeSessionDir: string,
-	archiveRoot: string,
-): string {
+export function canonicalizeActiveSource(sourcePath: string, activeSessionDir: string, archiveRoot: string): string {
 	if (!isAbsolute(sourcePath)) {
 		throw new ArchiveFileError(`session file path is not absolute: ${sourcePath}`);
 	}

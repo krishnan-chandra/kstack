@@ -1,10 +1,19 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import {
-	archiveDestination,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { describe, it } from "node:test";
+import {
 	ArchiveFileError,
+	archiveDestination,
 	canonicalizeActiveSource,
 	chmodReadOnly,
 	getAgentDir,

@@ -1,7 +1,8 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { describe, it } from "node:test";
+import { archiveDestination, hashFile } from "./archive-files.ts";
 import {
 	archiveCurrentSession,
 	archiveInactiveSession,
@@ -9,9 +10,15 @@ import {
 	type FreshSessionHandle,
 } from "./archive-ops.ts";
 import { getSessionRow, openArchiveDb, searchArchive } from "./archive-store.ts";
-import { archiveDestination, hashFile } from "./archive-files.ts";
 import { sha256Hex } from "./session-jsonl.ts";
-import { makeTempTree, messageEntry, richSessionJsonl, sessionJsonl, TEST_SESSION_ID, userMessage } from "./test-helpers.ts";
+import {
+	makeTempTree,
+	messageEntry,
+	richSessionJsonl,
+	sessionJsonl,
+	TEST_SESSION_ID,
+	userMessage,
+} from "./test-helpers.ts";
 
 const CREATED = "2026-08-11T08:48:02.226Z";
 
@@ -20,11 +27,7 @@ interface FakeCall {
 	detail?: string;
 }
 
-function makeFakeCtx(overrides: {
-	confirmResult?: boolean;
-	newSessionCancelled?: boolean;
-	calls?: FakeCall[];
-}) {
+function makeFakeCtx(overrides: { confirmResult?: boolean; newSessionCancelled?: boolean; calls?: FakeCall[] }) {
 	const calls: FakeCall[] = overrides.calls ?? [];
 	return {
 		calls,
@@ -137,14 +140,17 @@ describe("archiveCurrentSession lifecycle", () => {
 		});
 		assert.equal(result.status, "cancelled");
 		assert.ok(existsSync(source));
-		assert.ok(!existsSync(tree.dbPath) || (() => {
-			const db = openArchiveDb(tree.dbPath);
-			try {
-				return getSessionRow(db, TEST_SESSION_ID) === undefined;
-			} finally {
-				db.close();
-			}
-		})());
+		assert.ok(
+			!existsSync(tree.dbPath) ||
+				(() => {
+					const db = openArchiveDb(tree.dbPath);
+					try {
+						return getSessionRow(db, TEST_SESSION_ID) === undefined;
+					} finally {
+						db.close();
+					}
+				})(),
+		);
 		assert.ok(!fake.calls.some((c) => c.kind === "newSession"));
 	});
 
@@ -200,9 +206,7 @@ describe("archiveCurrentSession lifecycle", () => {
 
 	it("archives an unnamed current session and leaves the archive row unnamed", async () => {
 		const tree = makeTempTree();
-		const content = sessionJsonl([
-			messageEntry("u1", null, userMessage("hello archive world")),
-		]);
+		const content = sessionJsonl([messageEntry("u1", null, userMessage("hello archive world"))]);
 		const source = tree.writeSession(TEST_SESSION_ID, content);
 		const fake = makeFakeCtx({});
 

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, describe, it } from "node:test";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, validateRouterConfig, resolveClassifierModel, getKstackPath } from "./config.ts";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { getKstackPath, loadConfig, resolveClassifierModel, validateRouterConfig } from "./config.ts";
 
 describe("kstack-router config validation", () => {
 	it("accepts empty config", () => {
@@ -67,7 +67,9 @@ describe("kstack-router config loading", () => {
 	afterEach(() => {
 		try {
 			if (existsSync(configPath)) unlinkSync(configPath);
-			try { unlinkSync(configPath); } catch {}
+			try {
+				unlinkSync(configPath);
+			} catch {}
 		} catch {}
 	});
 
@@ -83,9 +85,13 @@ describe("kstack-router config loading", () => {
 	});
 
 	it("loads valid config", () => {
-		writeFileSync(configPath, JSON.stringify({
-			"kstack-router": { classifier: { model: "p/m", thinking: "low" }, timeoutSeconds: 90 },
-		}), "utf8");
+		writeFileSync(
+			configPath,
+			JSON.stringify({
+				"kstack-router": { classifier: { model: "p/m", thinking: "low" }, timeoutSeconds: 90 },
+			}),
+			"utf8",
+		);
 		const result = loadConfig({ PI_CODING_AGENT_DIR: tempDir });
 		assert.equal(result.status, "loaded");
 		if (result.status === "loaded") {
@@ -96,9 +102,13 @@ describe("kstack-router config loading", () => {
 	});
 
 	it("returns invalid for bad config", () => {
-		writeFileSync(configPath, JSON.stringify({
-			"kstack-router": { classifier: { model: 42 } },
-		}), "utf8");
+		writeFileSync(
+			configPath,
+			JSON.stringify({
+				"kstack-router": { classifier: { model: 42 } },
+			}),
+			"utf8",
+		);
 		const result = loadConfig({ PI_CODING_AGENT_DIR: tempDir });
 		assert.equal(result.status, "invalid");
 	});
@@ -140,10 +150,7 @@ describe("resolveClassifierModel", () => {
 	});
 
 	it("returns error when configured model is unavailable", () => {
-		const result = resolveClassifierModel(
-			{ classifier: { model: "unavailable/model" } },
-			deps,
-		);
+		const result = resolveClassifierModel({ classifier: { model: "unavailable/model" } }, deps);
 		assert.ok("error" in result);
 	});
 

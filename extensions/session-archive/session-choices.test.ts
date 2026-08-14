@@ -17,7 +17,10 @@ describe("archive session choices", () => {
 			session("11111111-aaaa", "Archive picker cleanup"),
 			session("22222222-bbbb", "Handoff tests"),
 		]);
-		assert.deepEqual(choices.map((choice) => choice.label), ["Archive picker cleanup", "Handoff tests"]);
+		assert.deepEqual(
+			choices.map((choice) => choice.label),
+			["Archive picker cleanup", "Handoff tests"],
+		);
 	});
 
 	it("includes unnamed sessions with a bounded first-message summary", () => {
@@ -26,11 +29,10 @@ describe("archive session choices", () => {
 			session("22222222-bbbb", "Named"),
 			session("33333333-cccc", undefined, undefined, ""),
 		]);
-		assert.deepEqual(choices.map((choice) => choice.label), [
-			"(unnamed) — Investigate archive behavior",
-			"Named",
-			"(unnamed)",
-		]);
+		assert.deepEqual(
+			choices.map((choice) => choice.label),
+			["(unnamed) — Investigate archive behavior", "Named", "(unnamed)"],
+		);
 	});
 
 	it("adds timestamps only to duplicate labels and ids only to exact collisions", () => {
@@ -39,10 +41,13 @@ describe("archive session choices", () => {
 			session("22222222-bbbb", "Investigation", "2026-08-12T18:00:00.000Z"),
 			session("33333333-cccc", "Investigation"),
 		]);
-		assert.deepEqual(choices.map((choice) => choice.label), [
-			"Investigation — 2026-08-12T17:00:00.000Z",
-			"Investigation — 2026-08-12T18:00:00.000Z",
-			"Investigation — 2026-08-12T17:00:00.000Z — 33333333",
-		]);
+		assert.deepEqual(
+			choices.map((choice) => choice.label),
+			[
+				"Investigation — 2026-08-12T17:00:00.000Z",
+				"Investigation — 2026-08-12T18:00:00.000Z",
+				"Investigation — 2026-08-12T17:00:00.000Z — 33333333",
+			],
+		);
 	});
 });

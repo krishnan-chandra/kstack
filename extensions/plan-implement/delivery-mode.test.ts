@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { preflightStack, type ExecFn, type ExecFnResult } from "./delivery-mode.ts";
+import { type ExecFn, type ExecFnResult, preflightStack } from "./delivery-mode.ts";
 
 const FULL_SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -12,12 +12,14 @@ function fail(stderr: string, code = 1): ExecFnResult {
 }
 
 /** Build injected jj/git exec fakes controlled by behavior flags. */
-function fakes(opts: {
-	jjVersion?: ExecFnResult | Error;
-	workspace?: ExecFnResult;
-	gitTop?: ExecFnResult;
-	trunk?: ExecFnResult;
-} = {}): { jj: ExecFn; git: ExecFn } {
+function fakes(
+	opts: {
+		jjVersion?: ExecFnResult | Error;
+		workspace?: ExecFnResult;
+		gitTop?: ExecFnResult;
+		trunk?: ExecFnResult;
+	} = {},
+): { jj: ExecFn; git: ExecFn } {
 	const jj: ExecFn = async (command, args) => {
 		if (args[0] === "--version") {
 			if (opts.jjVersion instanceof Error) throw opts.jjVersion;

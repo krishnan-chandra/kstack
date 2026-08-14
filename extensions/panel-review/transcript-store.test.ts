@@ -29,7 +29,7 @@ describe("PanelTranscriptStore", () => {
 	});
 
 	it("streams text deltas into the live tail and freezes on turn_end", () => {
-		let clock = 1000;
+		const clock = 1000;
 		// throttleMs = 0 for synchronous test verification
 		const store = new PanelTranscriptStore(() => clock, 0);
 		store.addChild("r1");
@@ -159,7 +159,7 @@ describe("PanelTranscriptStore", () => {
 	});
 
 	it("adds lifecycle notes with injected clock", () => {
-		let clock = 5000;
+		const clock = 5000;
 		const store = new PanelTranscriptStore(() => clock);
 		store.addChild("r1");
 

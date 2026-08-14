@@ -7,19 +7,14 @@
 
 import { readFileSync } from "node:fs";
 import {
-	canonicalizeActiveSource,
 	archiveDestination,
+	canonicalizeActiveSource,
 	chmodReadOnly,
 	moveToArchive,
 	pathsReferToSameFile,
 } from "./archive-files.ts";
-import { parseSessionJsonlBytes, sha256Hex, type ParsedSession } from "./session-jsonl.ts";
-import {
-	discardPendingImport,
-	finalizeArchived,
-	importSessionPending,
-	openArchiveDb,
-} from "./archive-store.ts";
+import { discardPendingImport, finalizeArchived, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import { type ParsedSession, parseSessionJsonlBytes, sha256Hex } from "./session-jsonl.ts";
 
 interface ArchiveDeps {
 	dbPath: string;
@@ -64,9 +59,7 @@ interface ArchiveCurrentOptions {
 	confirm: (title: string, message: string) => Promise<boolean>;
 	notify: (message: string, level: "info" | "warning" | "error") => void;
 	/** Mirrors ctx.newSession: resolves after replacement, cancelled=true if vetoed. */
-	startNewSession: (
-		withSession: (fresh: FreshSessionHandle) => Promise<void>,
-	) => Promise<{ cancelled: boolean }>;
+	startNewSession: (withSession: (fresh: FreshSessionHandle) => Promise<void>) => Promise<{ cancelled: boolean }>;
 }
 
 interface StagedArchive {
@@ -324,10 +317,7 @@ export async function archiveInactiveSession(options: ArchiveInactiveOptions): P
 		const stagedOrRejected = stageSession(options.sourcePath, options.sessionDir, deps);
 		if ("rejected" in stagedOrRejected) return stagedOrRejected.rejected;
 		const staged = stagedOrRejected.staged;
-		if (
-			options.currentSessionFile &&
-			pathsReferToSameFile(staged.canonicalSource, options.currentSessionFile)
-		) {
+		if (options.currentSessionFile && pathsReferToSameFile(staged.canonicalSource, options.currentSessionFile)) {
 			return {
 				status: "rejected",
 				message: "Refusing to archive the currently active session here; use /session-archive instead.",

@@ -1,5 +1,5 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
 	MAX_TEXT_CONTENT_CHARS,
 	parseSessionJsonl,
@@ -34,7 +34,7 @@ describe("parseSessionJsonl", () => {
 		const content = sessionJsonl([
 			messageEntry("u1", null, userMessage("héllo 👋")),
 			messageEntry("u2", "u1", userMessage("second")),
-		]).replace("\n{\"type\":\"message\"", "\n  \n{\"type\":\"message\"");
+		]).replace('\n{"type":"message"', '\n  \n{"type":"message"');
 		const bytes = Buffer.from(content);
 		for (const entry of parseSessionJsonlBytes(bytes).entries) {
 			const raw = bytes.subarray(entry.rawOffset, entry.rawOffset + entry.rawLength).toString("utf8");
@@ -52,11 +52,19 @@ describe("parseSessionJsonl", () => {
 			SessionParseError,
 		);
 		assert.throws(
-			() => parseSessionJsonl(sessionJsonl([messageEntry("dup", null, userMessage("a")), messageEntry("dup", null, userMessage("b"))])),
+			() =>
+				parseSessionJsonl(
+					sessionJsonl([messageEntry("dup", null, userMessage("a")), messageEntry("dup", null, userMessage("b"))]),
+				),
 			/duplicate entry id/,
 		);
 		assert.throws(
-			() => parseSessionJsonl(sessionJsonl([{ type: "message", parentId: null, timestamp: "2026-08-11T08:49:00.000Z", message: userMessage("x") }])),
+			() =>
+				parseSessionJsonl(
+					sessionJsonl([
+						{ type: "message", parentId: null, timestamp: "2026-08-11T08:49:00.000Z", message: userMessage("x") },
+					]),
+				),
 			/"id"/,
 		);
 		assert.throws(
@@ -67,7 +75,11 @@ describe("parseSessionJsonl", () => {
 
 	it("rejects invalid UTF-8 and non-v3 sessions", () => {
 		const valid = Buffer.from(sessionJsonl([]));
-		const corrupted = Buffer.concat([valid.subarray(0, valid.length - 2), Buffer.from([0xff]), valid.subarray(valid.length - 2)]);
+		const corrupted = Buffer.concat([
+			valid.subarray(0, valid.length - 2),
+			Buffer.from([0xff]),
+			valid.subarray(valid.length - 2),
+		]);
 		assert.throws(() => parseSessionJsonlBytes(corrupted), /not valid UTF-8/);
 		for (const version of [1, 2, 4]) {
 			assert.throws(() => parseSessionJsonl(sessionJsonl([], { version })), /unsupported session version/);

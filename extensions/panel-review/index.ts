@@ -6,11 +6,11 @@ import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-wo
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
-import { openInspector, type OpenInspectorResult } from "./inspector-overlay.ts";
-import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
+import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
+import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
-import { resolvePanel, runReviewPipeline, type PipelineDashboard, type VerdictDetails } from "./run-phases.ts";
+import { type PipelineDashboard, resolvePanel, runReviewPipeline, type VerdictDetails } from "./run-phases.ts";
 import { PanelTranscriptStore } from "./transcript-store.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
@@ -68,7 +68,8 @@ export default function (pi: ExtensionAPI): void {
 		if (!expanded) {
 			const statuses = details?.reviewerStatuses ?? [];
 			const okCount = statuses.filter((status) => status.status === "completed").length;
-			const header = theme.fg("success", "■ Panel review") +
+			const header =
+				theme.fg("success", "■ Panel review") +
 				theme.fg("muted", ` — ${okCount}/${statuses.length} reviewers completed`) +
 				(details?.truncated ? theme.fg("warning", " — scope truncated") : "") +
 				(details && !details.synthesized ? theme.fg("warning", " — synthesis failed") : "") +
@@ -83,7 +84,8 @@ export default function (pi: ExtensionAPI): void {
 	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
 		let runToken: PanelToken | undefined;
 		const session = lifecycle.currentSessionToken();
-		const isLive = () => runToken ? lifecycle.isCurrent(runToken) : Boolean(session && lifecycle.isSessionCurrent(session));
+		const isLive = () =>
+			runToken ? lifecycle.isCurrent(runToken) : Boolean(session && lifecycle.isSessionCurrent(session));
 		const notify = (message: string, level: "info" | "warning" | "error") => {
 			if (isLive()) ctx.ui.notify(message, level);
 		};
@@ -149,11 +151,16 @@ export default function (pi: ExtensionAPI): void {
 		try {
 			scope = collectScope(repoRoot, base, intent);
 			if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
-				notify(`No reviewable changes against ${scope.baseRef} (${scope.baseSha.slice(0, 8)}). Commit, stage, or modify files first — or pass --base for a wider range.`, "info");
+				notify(
+					`No reviewable changes against ${scope.baseRef} (${scope.baseSha.slice(0, 8)}). Commit, stage, or modify files first — or pass --base for a wider range.`,
+					"info",
+				);
 				return { status: "no-changes" };
 			}
 			const resolution = panel.resolution;
-			const reviewerList = resolution.reviewers.map((reviewer) => `  ${reviewer.label}: ${modelCliId(reviewer)}`).join("\n");
+			const reviewerList = resolution.reviewers
+				.map((reviewer) => `  ${reviewer.label}: ${modelCliId(reviewer)}`)
+				.join("\n");
 			const confirmed = await ctx.ui.confirm(
 				"Run panel review?",
 				`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
@@ -162,7 +169,9 @@ export default function (pi: ExtensionAPI): void {
 					`Reviewers:\n${reviewerList}\nSynthesis: ${resolution.synthesis.cliId}\n\n` +
 					"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, no extensions or skills). The repository is never modified. " +
 					`A child silent for ${resolution.timeoutMinutes} min is killed as stalled (hard cap ${resolution.maxRuntimeMinutes} min); press Ctrl+Shift+X to abort mid-run.` +
-					(scope.contextFilesTouched ? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with --no-context-files to keep the reviewed content out of their instructions." : ""),
+					(scope.contextFilesTouched
+						? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with --no-context-files to keep the reviewed content out of their instructions."
+						: ""),
 			);
 			if (!confirmed) return { status: "declined" };
 			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
@@ -178,12 +187,15 @@ export default function (pi: ExtensionAPI): void {
 					notify,
 					setCompactStatus,
 					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
-					setActiveAbort: (controller) => { activeAbort = controller; },
+					setActiveAbort: (controller) => {
+						activeAbort = controller;
+					},
 					clearActiveAbort: (controller) => {
 						if (activeAbort === controller) activeAbort = undefined;
 					},
 					waitForIdle: () => ctx.waitForIdle(),
-					sendVerdict: (verdict, details) => pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),
+					sendVerdict: (verdict, details) =>
+						pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),
 				},
 			);
 		} finally {
@@ -199,7 +211,8 @@ export default function (pi: ExtensionAPI): void {
 	};
 
 	pi.registerCommand("panel-review", {
-		description: "Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
+		description:
+			"Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) return ctx.ui.notify(parsed.error, "error");
@@ -252,5 +265,9 @@ function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]
 }
 
 function defaultGitExecSafe(args: string[], cwd: string): string {
-	try { return defaultGitExec(args, cwd); } catch { return ""; }
+	try {
+		return defaultGitExec(args, cwd);
+	} catch {
+		return "";
+	}
 }

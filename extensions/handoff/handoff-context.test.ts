@@ -1,10 +1,6 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-	buildReferenceHandoffPrompt,
-	DEFAULT_HANDOFF_GOAL,
-	formatHistoryReference,
-} from "./handoff-context.ts";
+import { describe, it } from "node:test";
+import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
 
 const SESSION_FILE =
 	"/Users/x/.pi/agent/sessions/--proj--/2026-08-11T00-00-00-000Z_11111111-2222-3333-4444-555555555555.jsonl";

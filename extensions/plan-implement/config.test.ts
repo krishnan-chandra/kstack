@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DEFAULT_IMPLEMENTERS, DEFAULT_PLANNERS, loadConfig, modelCliId, resolveRoles, validateConfig } from "./config.ts";
+import {
+	DEFAULT_IMPLEMENTERS,
+	DEFAULT_PLANNERS,
+	loadConfig,
+	modelCliId,
+	resolveRoles,
+	validateConfig,
+} from "./config.ts";
 
 describe("plan-implement config", () => {
 	it("validates distinct role models and defaults planner thinking", () => {
@@ -21,8 +28,14 @@ describe("plan-implement config", () => {
 
 	it("rejects low planner thinking, same models, and invalid timeouts", () => {
 		const base = { planner: { model: "a/planner", thinking: "high" }, implementer: { model: "b/worker" } };
-		assert.match((validateConfig({ ...base, planner: { ...base.planner, thinking: "low" } }) as { error: string }).error, /high, xhigh, or max/);
-		assert.match((validateConfig({ ...base, implementer: { model: "a/planner" } }) as { error: string }).error, /different models/);
+		assert.match(
+			(validateConfig({ ...base, planner: { ...base.planner, thinking: "low" } }) as { error: string }).error,
+			/high, xhigh, or max/,
+		);
+		assert.match(
+			(validateConfig({ ...base, implementer: { model: "a/planner" } }) as { error: string }).error,
+			/different models/,
+		);
 		assert.match((validateConfig({ ...base, timeoutMinutes: 0 }) as { error: string }).error, /1 to 60/);
 	});
 
@@ -77,7 +90,10 @@ describe("plan-implement config", () => {
 		try {
 			writeFileSync(
 				join(dir, "kstack.json"),
-				JSON.stringify({ other: { ignored: true }, "plan-implement": { planner: { model: "a/p", thinking: "high" }, implementer: { model: "b/i" } } }),
+				JSON.stringify({
+					other: { ignored: true },
+					"plan-implement": { planner: { model: "a/p", thinking: "high" }, implementer: { model: "b/i" } },
+				}),
 			);
 			const result = loadConfig({ PI_CODING_AGENT_DIR: dir });
 			assert.equal(result.status, "loaded");
