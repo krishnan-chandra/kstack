@@ -1,6 +1,8 @@
 import { loadKstackSection, type ThinkingLevel } from "../shared/kstack-config.ts";
 import { LIMITS, type FastImplementConfig, type ResolvedRole, type RoleSpec } from "./types.ts";
 
+export { modelCliId } from "../shared/model-spec.ts";
+
 /**
  * Fast mode has no independent planner or reviewer, so the implementer model
  * set is the only quality control. Only these model/thinking pairs may run.
@@ -36,4 +38,3 @@ export function resolveRole(config: FastImplementConfig | null, available: (prov
 	if (!spec) return { ok: false, error: `No authenticated child-compatible fast implementer is available. Tried: ${candidates.map((candidate) => candidate.model).join(", ")}.` };
 	return { ok: true, role: { implementer: spec, timeoutMinutes: config?.timeoutMinutes ?? LIMITS.defaultTimeoutMinutes, source: config ? "config" : "default" } };
 }
-export function modelCliId(role: RoleSpec): string { return role.thinking ? `${role.model}:${role.thinking}` : role.model; }

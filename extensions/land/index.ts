@@ -1,17 +1,14 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
+import { makeExec } from "../shared/git-exec.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
 import { findOpenPullRequestByHead } from "./github.ts";
 import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { abortableSleep } from "./sleep.ts";
-import type { ExecFn, LandOptions, LandResult, MergeMethod } from "./types.ts";
-
-function makeExec(pi: ExtensionAPI): ExecFn {
-	return (command, args, options) => pi.exec(command, args, options);
-}
+import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 
 async function currentBranch(pi: ExtensionAPI, cwd: string): Promise<string | undefined> {
 	const out = await pi.exec("git", ["branch", "--show-current"], { cwd, timeout: 15_000 });

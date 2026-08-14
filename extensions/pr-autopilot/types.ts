@@ -9,6 +9,8 @@
  * recorded in kstack.json.
  */
 
+import type { ExecFn, ExecFnOptions, ExecFnResult } from "../shared/git-exec.ts";
+
 /** Autopilot modes — the explicit user-facing entry points. */
 export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
 
@@ -159,25 +161,7 @@ export interface AutopilotDeps {
 	gh: (args: string[], cwd: string) => Promise<ExecFnResult>;
 }
 
-/** Minimal exec result shared across the extension. */
-export interface ExecFnResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-/**
- * Exec function signature, matching the pattern used by plan-implement's
- * delivery-mode: (command, args, options) => Promise<ExecFnResult>.
- */
-export interface ExecFnOptions {
-	cwd: string;
-	timeout: number;
-	/** Optional cancellation for long-running subprocesses. */
-	signal?: AbortSignal;
-}
-
-export type ExecFn = (command: string, args: string[], options: ExecFnOptions) => Promise<ExecFnResult>;
+export type { ExecFn, ExecFnOptions, ExecFnResult };
 
 /** Config guardrails the autopilot enforces to stay "tiny-model-only". */
 export const LIMITS = {

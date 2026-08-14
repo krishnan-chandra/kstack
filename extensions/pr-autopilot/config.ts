@@ -33,6 +33,7 @@ import {
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
 export { getAgentDir, getKstackPath };
+export { modelCliId } from "../shared/model-spec.ts";
 
 export type ConfigLoad =
 	| { status: "loaded"; config: ResolvedAutopilotConfig; path: string }
@@ -280,7 +281,3 @@ export function resolveModels(
 	};
 }
 
-/** Format a model spec as a Pi CLI id (provider/model[:thinking]). */
-export function modelCliId(spec: AutopilotModelSpec): string {
-	return spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
-}

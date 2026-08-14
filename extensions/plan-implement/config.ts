@@ -10,6 +10,7 @@ import {
 import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
 
 export { getAgentDir, getKstackPath };
+export { modelCliId } from "../shared/model-spec.ts";
 
 const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
 
@@ -101,10 +102,6 @@ export interface ResolveDeps {
 function isAvailable(spec: RoleSpec, deps: ResolveDeps): boolean {
 	const slash = spec.model.indexOf("/");
 	return deps.available(spec.model.slice(0, slash), spec.model.slice(slash + 1));
-}
-
-export function modelCliId(spec: RoleSpec): string {
-	return spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
 }
 
 export function resolveRoles(

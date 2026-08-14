@@ -11,19 +11,21 @@
  * Config:  "pr-autopilot" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
+import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./autopilot.ts";
 import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
 import { AutopilotLifecycle } from "./lifecycle.ts";
-import type { AutopilotMode, ExecFn, ExecFnResult } from "./types.ts";
+import type { AutopilotMode } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
@@ -31,26 +33,12 @@ const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 /** Tiny models the autopilot is allowed to use — the exclusive child agent set. */
 export { DEFAULT_TINY_MODELS } from "./config.ts";
 
-function readPrompt(name: string): string {
-	return readFileSync(join(PROMPTS_DIR, name), "utf8");
-}
-
 interface PhaseDetails {
 	schemaVersion: 1;
 	mode: string;
 	status: string;
 	cycles: number;
 	models: string[];
-}
-
-/** Exec wrapper forwarding the autopilot's per-call cwd/timeout to pi.exec. */
-function makeExec(pi: ExtensionAPI): ExecFn {
-	return (command, args, options) =>
-		pi.exec(command, args, {
-			cwd: options.cwd,
-			timeout: options.timeout,
-			signal: options.signal,
-		}) as Promise<ExecFnResult>;
 }
 
 export default function prAutopilotExtension(pi: ExtensionAPI): void {
@@ -201,8 +189,8 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			tempDir = mkdtempSync(join(tmpdir(), "pi-pr-autopilot-"));
 			const triagerPromptFile = join(tempDir, "triager-prompt.md");
 			const fixerPromptFile = join(tempDir, "fixer-prompt.md");
-			writeFileSync(triagerPromptFile, readPrompt("triager.md"), { encoding: "utf8", mode: 0o600 });
-			writeFileSync(fixerPromptFile, readPrompt("fixer.md"), { encoding: "utf8", mode: 0o600 });
+			writeFileSync(triagerPromptFile, readPromptAsset(PROMPTS_DIR, "triager.md"), { encoding: "utf8", mode: 0o600 });
+			writeFileSync(fixerPromptFile, readPromptAsset(PROMPTS_DIR, "fixer.md"), { encoding: "utf8", mode: 0o600 });
 
 			const updateStatus = (phase: LifecyclePhase, cycles = 0) => {
 				if (lifecycle.isCurrent(runToken)) {
