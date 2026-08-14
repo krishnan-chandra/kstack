@@ -1,4 +1,4 @@
-import type { ExecFn, ExecFnResult } from "./delivery-mode.ts";
+import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 import { slugifyWorktreeTask } from "./worktree.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;

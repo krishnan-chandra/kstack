@@ -1,12 +1,13 @@
 /** Canonical route catalog IDs and shared types for the kstack-router. */
 
-import { type ChangeKind, isChangeKind } from "../plan-implement/change-kind.ts";
+import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 
-export { type ChangeKind, isChangeKind } from "../plan-implement/change-kind.ts";
+export { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 
 export type RouteId =
 	| "investigate"
 	| "change"
+	| "fast-change"
 	| "arena"
 	| "swarm"
 	| "skill-authoring"
@@ -17,6 +18,7 @@ export type RouteId =
 export const ALL_ROUTES: readonly RouteId[] = [
 	"investigate",
 	"change",
+	"fast-change",
 	"arena",
 	"swarm",
 	"skill-authoring",

@@ -1,6 +1,6 @@
 /** Route decision pipeline, isolated from Pi command and UI contexts. */
 
-import type { ChangeKind } from "../plan-implement/change-kind.ts";
+import type { ChangeKind } from "../shared/change-kind.ts";
 import { getRouteLabel } from "./catalog.ts";
 import { buildRouteAlternatives, formatRecommendation } from "./classification.ts";
 import type { ClassifierRunResult } from "./classifier-runner.ts";
@@ -109,7 +109,9 @@ export async function resolveRoute(
 				}
 				route = selected;
 				overrode = route !== recommendation.route;
-				if (!overrode && recommendation.delivery && !delivery) delivery = recommendation.delivery;
+				// Classifier delivery applies only to the full change route;
+				// fast-change is always single-PR.
+				if (!overrode && route === "change" && recommendation.delivery && !delivery) delivery = recommendation.delivery;
 				if (!overrode && recommendation.changeKind && !parsedArgs.changeKind) changeKind = recommendation.changeKind;
 			} else {
 				fx.notify(
@@ -129,11 +131,15 @@ export async function resolveRoute(
 		}
 	}
 
-	if (parsedArgs.changeKind && route !== "change") {
-		return { failed: "--change-kind is only valid with --route change." };
+	if (parsedArgs.changeKind && route !== "change" && route !== "fast-change") {
+		return { failed: "--change-kind is only valid with the change or fast-change routes." };
 	}
-	if (worktree && route !== "change") {
-		return { failed: "--worktree is only valid with the change route." };
+	if (worktree && route !== "change" && route !== "fast-change") {
+		return { failed: "--worktree is only valid with the change or fast-change routes." };
+	}
+	if (route === "fast-change") {
+		if (delivery === "stack") return { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." };
+		delivery = "single";
 	}
 	if (route === "change" && !delivery) {
 		if (!overrode) {

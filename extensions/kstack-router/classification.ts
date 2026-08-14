@@ -92,7 +92,7 @@ export function parseClassifierOutput(
 		// Fast classifiers sometimes fill every field shown in the output
 		// template. A valid non-change route should not be discarded because
 		// its inapplicable, otherwise-valid changeKind was echoed.
-		if (envelope.route === "change") changeKind = envelope.changeKind;
+		if (envelope.route === "change" || envelope.route === "fast-change") changeKind = envelope.changeKind;
 	}
 
 	// Reject unknown keys.
@@ -112,7 +112,10 @@ export function parseClassifierOutput(
 				error: `Invalid delivery: ${JSON.stringify(envelope.delivery)}. Must be "single" or "stack".`,
 			};
 		}
-		delivery = envelope.delivery;
+		// Delivery only applies to the full change route. fast-change is always
+		// single-PR, and fast classifiers sometimes echo every template field, so
+		// an inapplicable delivery is dropped rather than rejected.
+		if (envelope.route === "change") delivery = envelope.delivery;
 	}
 
 	// Reject model-supplied commands or parameters.

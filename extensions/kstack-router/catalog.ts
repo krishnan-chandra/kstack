@@ -16,6 +16,12 @@ const CATALOG: Record<RouteId, RouteMetadata> = {
 			"Features, fixes, refactors, prototypes, docs/config changes, and Pi extension implementation. Runs plan → approve → implement → panel review.",
 		requires: ["plan-implement", "panel-review"],
 	},
+	"fast-change": {
+		id: "fast-change",
+		label: "Fast change",
+		description: "Implement an explicit, bounded, low-risk change with one confirmed child and local commits. Skips independent planning and review.",
+		requires: ["fast-implement"],
+	}, 
 	arena: {
 		id: "arena",
 		label: "Arena",

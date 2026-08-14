@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import type { ExecFn, ExecFnResult } from "./delivery-mode.ts";
+import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
 const MAX_SLUG_LENGTH = 48;

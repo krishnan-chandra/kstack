@@ -20,6 +20,7 @@ describe("kstack-router catalog", () => {
 		assert.deepEqual(ids, [
 			"arena",
 			"change",
+			"fast-change",
 			"investigate",
 			"review",
 			"session-pickup",

@@ -9,7 +9,7 @@ compatibility: A repository checkout with its normal test commands. Writes tests
 
 When fixing a bug with a clear, cheap test path, make the broken behavior executable before changing production code. The goal is a focused regression test that fails before the fix and passes after it.
 
-This is the same proof obligation as the plan-implement [bug-fix playbook](../../extensions/plan-implement/playbooks/bug-fix.md). Keep the two in sync: cheap failing-before evidence, the same check after the fix, and an explicit reason when a new test is not worth it. For a risky small change whose harm is outside the test, use [`blast-radius`](../blast-radius/SKILL.md) after the regression is green.
+This is the same proof obligation as the plan-implement [bug-fix playbook](../../extensions/shared/playbooks/bug-fix.md). Keep the two in sync: cheap failing-before evidence, the same check after the fix, and an explicit reason when a new test is not worth it. For a risky small change whose harm is outside the test, use [`blast-radius`](../blast-radius/SKILL.md) after the regression is green.
 
 Do not force a test when it would be impractical. If the available test would require broad harness setup, brittle mocks, slow end-to-end infrastructure, production-only state, vague reproduction steps, or large unrelated fixture churn, skip adding a new test and use the closest useful verification instead.
 

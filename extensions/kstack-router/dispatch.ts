@@ -1,9 +1,10 @@
 /** Deterministic dispatch for each route. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { requestFastImplement } from "../fast-implement/api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPlanImplement } from "../plan-implement/api.ts";
-import type { ChangeKind } from "../plan-implement/change-kind.ts";
+import type { ChangeKind } from "../shared/change-kind.ts";
 import { getRoutePlaybook } from "./catalog.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
@@ -52,6 +53,14 @@ export async function dispatchRoute(
 			}
 		}
 
+		case "fast-change": {
+			if (delivery === "stack") return { status: "failed", error: "fast-change supports only single-PR workstreams. Use the change route for stacks." };
+			try {
+				const result = await requestFastImplement(pi, task, worktree ? "worktree" : "current", changeKind, ctx);
+				return result.handled ? { status: "dispatched" } : { status: "failed", error: "fast-implement extension is not loaded or did not accept the request." };
+			} catch (err) { return { status: "failed", error: `fast-implement dispatch failed: ${(err as Error).message}` }; }
+		}
+
 		case "review": {
 			try {
 				const result = await requestPanelReview(pi, { intent: task }, ctx);
@@ -88,7 +97,7 @@ export async function dispatchRoute(
 				status: "failed",
 				error:
 					"This task does not fit a supported route. Kstack Router supports: " +
-					"investigate (read-only research), change (plan → implement → review), " +
+					"investigate (read-only research), change (plan → implement → review), fast-change (one-shot bounded implementation), " +
 					"arena (parallel candidate comparison), swarm (parallel independent slices), " +
 					"skill-authoring (create/test skills), session-pickup (recover context), " +
 					"review (read-only panel review). Use --route to pick one explicitly.",
