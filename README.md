@@ -257,6 +257,12 @@ Run the full JavaScript and TypeScript test suite from the repository root:
 npm test
 ```
 
+Check TypeScript types before submitting changes:
+
+```bash
+npm run typecheck
+```
+
 For focused runs, use the individual test commands:
 
 ```bash
