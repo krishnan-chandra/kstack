@@ -18,7 +18,7 @@
 import { THINKING_LEVELS } from "../shared/kstack-config.ts";
 
 /** Canonical Pi thinking/effort levels accepted by `/handoff --model <ref>:<effort>`. */
-export const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
+const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
 
 export type HandoffEffortLevel = (typeof HANDOFF_EFFORT_LEVELS)[number];
 
@@ -29,14 +29,9 @@ export interface HandoffModel {
 	name?: string;
 }
 
-export interface ParsedHandoffArgs {
-	goal: string;
-	modelRef?: string;
-}
+type HandoffParseResult = { ok: true; goal: string; modelRef?: string } | { ok: false; error: string };
 
-export type HandoffParseResult = { ok: true; goal: string; modelRef?: string } | { ok: false; error: string };
-
-export type ModelResolution =
+type ModelResolution =
 	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel }
 	| { status: "not-found" }
 	| { status: "ambiguous"; matches: HandoffModel[] };
@@ -171,7 +166,7 @@ export function formatModelEffort(model: HandoffModel, effort?: string): string 
 	return effort ? `${ref}:${effort}` : ref;
 }
 
-export interface ThinkingLevelApi {
+interface ThinkingLevelApi {
 	getThinkingLevel(): string;
 	setThinkingLevel(level: HandoffEffortLevel): void;
 }

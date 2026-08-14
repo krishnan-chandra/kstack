@@ -5,22 +5,22 @@
  * that the implementer did not silently drop a step or acceptance criterion.
  */
 
-export type PlanItemKind = "step" | "criterion";
-export type LedgerStatus = "done" | "blocked" | "skip";
+type PlanItemKind = "step" | "criterion";
+type LedgerStatus = "done" | "blocked" | "skip";
 
-export interface PlanItem {
+interface PlanItem {
 	id: string;
 	kind: PlanItemKind;
 	text: string;
 }
 
-export interface LedgerEntry extends PlanItem {
+interface LedgerEntry extends PlanItem {
 	status: LedgerStatus;
 	reason?: string;
 }
 
-export type PlanItemsResult = { ok: true; items: PlanItem[] } | { ok: false; error: string };
-export type LedgerValidation = { ok: true; ledger: string; entries: LedgerEntry[] } | { ok: false; error: string };
+type PlanItemsResult = { ok: true; items: PlanItem[] } | { ok: false; error: string };
+type LedgerValidation = { ok: true; ledger: string; entries: LedgerEntry[] } | { ok: false; error: string };
 
 function normalizeText(text: string): string {
 	return text.replace(/\s+/g, " ").trim();
@@ -69,7 +69,7 @@ function collectItems(lines: string[], idPattern: RegExp): { items: PlanItem[]; 
 }
 
 /** Extract the explicitly formatted steps and acceptance criteria from a plan. */
-export function extractPlanItems(plan: string): PlanItemsResult {
+function extractPlanItems(plan: string): PlanItemsResult {
 	const stepLines = sectionLines(plan, /^##\s+Ordered implementation steps\s*$/i);
 	const criterionLines = sectionLines(plan, /^##\s+Acceptance criteria\s*$/i);
 	const stepResult = collectItems(stepLines, /^\s*(?:\d+[.)]\s+)?\[([^\]]+)\]\s+(.+?)\s*$/);

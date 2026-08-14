@@ -13,6 +13,7 @@ interface FastImplementPayload {
 	ctx: ExtensionCommandContext;
 }
 
+/* exported: request-channel contract */
 export interface FastImplementEvent extends RequestEnvelope<FastImplementPayload, void, 1> {}
 
 const channel = createRequestChannel<FastImplementPayload, void, 1>({

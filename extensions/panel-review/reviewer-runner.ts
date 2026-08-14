@@ -35,7 +35,7 @@ export function buildChildArgs(opts: {
 		opts.task,
 	];
 }
-export interface RunReviewerOptions {
+interface RunReviewerOptions {
 	spec: ReviewerSpec;
 	model: string;
 	promptFile: string;

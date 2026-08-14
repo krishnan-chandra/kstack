@@ -64,7 +64,7 @@ import {
 } from "./types.ts";
 import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 
-export interface PushResult {
+interface PushResult {
 	ok: boolean;
 	headSha?: string;
 	error?: string;
@@ -358,17 +358,17 @@ function parseDecision(raw: unknown, fixable: unknown): ThreadDecision | undefin
 	return undefined;
 }
 
-export interface ParsedCheck {
+interface ParsedCheck {
 	name: string;
 	cls: FailureClass;
 	action: string;
 }
-export type ParsedThread =
+type ParsedThread =
 	| { id: string; decision: "fix"; cls: FailureClass; action: string; reply: string }
 	| { id: string; decision: "dismiss"; action: string; reply: string }
 	| { id: string; decision: "ask"; action: string };
 
-export interface ParsedTriage {
+interface ParsedTriage {
 	checks: ParsedCheck[];
 	threads: ParsedThread[];
 	conflicts: boolean;

@@ -13,13 +13,6 @@ import {
 	type RouteId,
 } from "./types.ts";
 
-export interface ClassificationResult {
-	route: RouteId;
-	confidence: ClassifierEnvelope["confidence"];
-	rationale: string;
-	delivery?: DeliveryRecommendation;
-}
-
 /**
  * Validate and parse a classifier envelope from raw classifier output.
  *
@@ -137,7 +130,7 @@ export function parseClassifierOutput(
 	};
 }
 
-export interface RouteRecommendation {
+interface RouteRecommendation {
 	route: RouteId;
 	confidence: ClassifierEnvelope["confidence"];
 	rationale: string;

@@ -10,7 +10,7 @@ const TRUNK_TEMPLATE = 'commit_id ++ "\\n"';
 const MIN_JJ_MAJOR = 0;
 const MIN_JJ_MINOR = 44;
 
-export interface StackPreflight {
+interface StackPreflight {
 	ok: true;
 	/** Immutable Git SHA trunk() resolved to; used as the panel-review --base. */
 	trunkSha: string;
@@ -18,7 +18,7 @@ export interface StackPreflight {
 	workspaceRoot: string;
 }
 
-export interface PreflightError {
+interface PreflightError {
 	ok: false;
 	error: string;
 }

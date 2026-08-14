@@ -4,10 +4,10 @@ import type { SkillRef } from "./types.ts";
 
 export const ARENA_SKILL_NAME = "arena";
 export const STACKED_PRS_SKILL_NAME = "jj-stacked-prs";
-export const WRITE_PR_SKILL_NAME = "write-pr";
-export const FIND_REVIEWERS_SKILL_NAME = "find-reviewers";
+const WRITE_PR_SKILL_NAME = "write-pr";
+const FIND_REVIEWERS_SKILL_NAME = "find-reviewers";
 
-export interface SkillPolicyResult {
+interface SkillPolicyResult {
 	ok: true;
 	/** Skills to pass to children via repeated --skill (Arena excluded). */
 	skills: SkillRef[];
@@ -17,7 +17,7 @@ export interface SkillPolicyResult {
 	stackedPrsIncluded: boolean;
 }
 
-export interface SkillPolicyError {
+interface SkillPolicyError {
 	ok: false;
 	error: string;
 }

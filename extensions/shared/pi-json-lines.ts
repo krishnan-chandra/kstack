@@ -3,14 +3,14 @@
 import { StringDecoder } from "node:string_decoder";
 
 /** Delta-only assistant stream event from JSON-mode `message_update`. */
-export interface PiAssistantMessageEvent {
+interface PiAssistantMessageEvent {
 	type?: string;
 	contentIndex?: number;
 	delta?: string;
 	content?: string;
 }
 
-export interface PiJsonEvent {
+interface PiJsonEvent {
 	type?: string;
 	toolCallId?: string;
 	toolName?: string;
@@ -33,7 +33,7 @@ export interface PiJsonEvent {
 	};
 }
 
-export interface JsonLineParserOptions {
+interface JsonLineParserOptions {
 	maxLineBytes?: number;
 	onOverflow?: (maxLineBytes: number) => void;
 }

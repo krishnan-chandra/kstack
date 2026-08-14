@@ -79,11 +79,11 @@ function validateModelSpec(
 	return { ok: true, spec: { label, model: fields.model, thinking: fields.thinking ?? "low" } };
 }
 
-export interface ValidateConfigResult {
+interface ValidateConfigResult {
 	ok: true;
 	config: Omit<ResolvedAutopilotConfig, "source" | "warnings">;
 }
-export interface ValidateConfigError {
+interface ValidateConfigError {
 	ok: false;
 	error: string;
 }

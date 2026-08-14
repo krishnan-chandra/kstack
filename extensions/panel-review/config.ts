@@ -38,9 +38,9 @@ import type { PanelConfig, ReviewerSpec } from "./types.ts";
 export { modelCliId } from "../shared/model-spec.ts";
 export { getAgentDir, getKstackPath, THINKING_LEVELS };
 
-export const MIN_REVIEWERS = 2;
-export const MAX_REVIEWERS = 5;
-export const DEFAULT_MAX_CONCURRENCY = 5;
+const MIN_REVIEWERS = 2;
+const MAX_REVIEWERS = 5;
+const DEFAULT_MAX_CONCURRENCY = 5;
 export const DEFAULT_TIMEOUT_MINUTES = 10;
 export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
 
@@ -190,7 +190,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 		: { status: "invalid", path: section.path, error: result.error };
 }
 
-export interface ModelLike {
+interface ModelLike {
 	provider: string;
 	id: string;
 }
@@ -204,11 +204,11 @@ export interface ResolveDeps {
 	activeModel?: ModelLike;
 }
 
-export type ReviewerResolution =
+type ReviewerResolution =
 	| { ok: true; reviewers: ReviewerSpec[]; maxConcurrency: number; warnings: string[] }
 	| { ok: false; error: string };
 
-export type SynthesisResolution =
+type SynthesisResolution =
 	| { ok: true; model: string; thinking?: string; source: "config" | "default" | "active"; warnings: string[] }
 	| { ok: false; error: string };
 

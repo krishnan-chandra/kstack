@@ -14,6 +14,7 @@ interface PrAutopilotPayload {
 	cwd?: string;
 }
 
+/* exported: request-channel contract */
 export interface PrAutopilotRequest extends RequestEnvelope<PrAutopilotPayload, AutopilotResult, 1> {}
 
 const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
@@ -33,6 +34,7 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		(!("cwd" in value) || value.cwd === undefined || (typeof value.cwd === "string" && value.cwd.length > 0)),
 });
 
+/* exported: request-channel contract */
 export function isPrAutopilotRequest(value: unknown): value is PrAutopilotRequest {
 	return channel.isRequest(value);
 }

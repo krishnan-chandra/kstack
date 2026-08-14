@@ -21,7 +21,7 @@ export const MAX_CHILD_ENTRIES = 1000;
 export const MAX_ENTRY_TEXT_BYTES = 8 * 1024; // 8 KiB
 export const EVICTION_NOTICE = "… earlier transcript dropped (cap 128 KiB)";
 
-export function getEntryByteLength(entry: TranscriptEntry): number {
+function getEntryByteLength(entry: TranscriptEntry): number {
 	switch (entry.kind) {
 		case "text":
 		case "note":

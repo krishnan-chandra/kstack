@@ -11,6 +11,7 @@ interface LandPayload {
 	ctx: ExtensionCommandContext;
 }
 
+/* exported: request-channel contract */
 export interface LandRequest extends RequestEnvelope<LandPayload, LandResult, 1> {}
 
 const channel = createRequestChannel<LandPayload, LandResult, 1>({

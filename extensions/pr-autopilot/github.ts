@@ -14,12 +14,12 @@ import { LIMITS } from "./types.ts";
 const AUTOPILOT_REPLY_MARKER = "<!-- pr-autopilot -->";
 const LEGACY_REPLY_MARKER = "<!-- pr-babysit -->";
 
-export function autopilotReplyBody(body: string): string {
+function autopilotReplyBody(body: string): string {
 	if (body.includes(AUTOPILOT_REPLY_MARKER)) return body;
 	return `${AUTOPILOT_REPLY_MARKER}\n${body}`;
 }
 
-export function isAutopilotReply(body: string): boolean {
+function isAutopilotReply(body: string): boolean {
 	return body.includes(AUTOPILOT_REPLY_MARKER) || body.includes(LEGACY_REPLY_MARKER);
 }
 
@@ -79,7 +79,7 @@ export async function gh(exec: ExecFn, cwd: string, args: string[], timeout = 15
 }
 
 /** Resolve the repo owner/name for the current checkout. */
-export async function resolveRepo(exec: ExecFn, cwd: string): Promise<ExecFnResult & { repo?: string }> {
+async function resolveRepo(exec: ExecFn, cwd: string): Promise<ExecFnResult & { repo?: string }> {
 	const result = await gh(exec, cwd, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
 	if (result.code !== 0 || !result.stdout.trim()) {
 		return { ...result, repo: undefined };
@@ -375,7 +375,7 @@ export async function getReviewThreads(
 	return { ...last, threads };
 }
 
-export interface RawIssueComment {
+interface RawIssueComment {
 	id: number;
 	commenter: string;
 	body: string;
@@ -642,7 +642,7 @@ export function isForbiddenStagingPath(path: string): boolean {
 	return false;
 }
 
-export type MergeBaseResult =
+type MergeBaseResult =
 	| { kind: "clean"; headSha: string }
 	| { kind: "already-current" }
 	| { kind: "needs-human"; files: string[]; error: string }

@@ -21,7 +21,7 @@ export function buildChildArgs(model: string, promptFile: string, taskFile: stri
 		`Read the user task at ${taskFile}, inspect the repository, implement it, run focused verification, and commit coherent changes. Do not push, publish, open a PR, or land.`,
 	];
 }
-export interface FastRunEffects {
+interface FastRunEffects {
 	exec: ExecFn;
 	runChild?: typeof runChildAgent;
 	deps?: ChildRunnerDeps;

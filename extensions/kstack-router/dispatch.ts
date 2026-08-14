@@ -9,7 +9,7 @@ import { getRoutePlaybook } from "./catalog.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 
-export type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
+type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
 
 /**
  * Dispatch the task to the appropriate handler based on the selected route.

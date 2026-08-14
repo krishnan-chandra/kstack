@@ -6,11 +6,11 @@ import type { RouteId } from "./types.ts";
 export interface DispatchToken extends SessionToken {
 	readonly dispatchId: string;
 }
-export interface ActiveDispatch {
+interface ActiveDispatch {
 	readonly token: DispatchToken;
 	readonly route: RouteId;
 }
-export interface ToolSnapshot {
+interface ToolSnapshot {
 	tools: string[];
 }
 

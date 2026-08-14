@@ -17,3 +17,4 @@ jobs:
 			- run: npm run typecheck
 			- run: npx biome ci .
 			- run: npm test
+			- run: npm run check:exports

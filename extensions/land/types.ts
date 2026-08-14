@@ -2,7 +2,7 @@ import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 
 export type MergeMethod = "merge" | "squash" | "rebase";
 export type ReadinessMode = "check" | "watch";
-export interface LandTarget {
+interface LandTarget {
 	kind: "single";
 	prNumber: number;
 }
@@ -29,7 +29,7 @@ export interface LandResult {
 	recoveryOperationId?: string;
 	blockers: string[];
 }
-export type { ExecFn, ExecFnOptions as ExecOptions, ExecFnResult as ExecResult } from "../shared/git-exec.ts";
+export type { ExecFn, ExecFnResult as ExecResult } from "../shared/git-exec.ts";
 export const LIMITS = {
 	queryMs: 15_000,
 	mergeMs: 60_000,

@@ -21,10 +21,10 @@ export interface ManagedWorktreePlan {
 	baseSha: string;
 }
 
-export type WorktreePlanResult = { ok: true; plan: ManagedWorktreePlan } | { ok: false; error: string };
-export type WorktreeCreateResult = { ok: true; plan: ManagedWorktreePlan } | { ok: false; error: string };
+type WorktreePlanResult = { ok: true; plan: ManagedWorktreePlan } | { ok: false; error: string };
+type WorktreeCreateResult = { ok: true; plan: ManagedWorktreePlan } | { ok: false; error: string };
 
-export interface WorktreeDeps {
+interface WorktreeDeps {
 	exists?: (path: string) => boolean;
 	realpath?: (path: string) => string;
 	mkdir?: (path: string) => void;
@@ -60,7 +60,7 @@ export function slugifyWorktreeTask(task: string): string {
 	return slug || "change";
 }
 
-export function managedWorktreeRoot(): string {
+function managedWorktreeRoot(): string {
 	return join(homedir(), ".pi", "kstack", "worktrees");
 }
 

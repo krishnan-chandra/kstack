@@ -27,12 +27,7 @@ export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
 	return join(getAgentDir(env), "kstack.json");
 }
 
-export type SectionLoad<T> =
-	| { status: "loaded"; config: T; path: string }
-	| { status: "missing"; path: string }
-	| { status: "invalid"; path: string; error: string };
-
-export type RawSectionLoad =
+type RawSectionLoad =
 	| { status: "found"; value: unknown; path: string; root: Record<string, unknown> }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };

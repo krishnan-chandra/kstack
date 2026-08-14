@@ -27,7 +27,7 @@ export function untrustedFenceNote(): string {
 }
 
 /** Security / privacy / auth / billing / data / migration / concurrency: never guess. */
-export function isSensitiveComment(body: string): boolean {
+function isSensitiveComment(body: string): boolean {
 	return SENSITIVE_RE.test(body);
 }
 

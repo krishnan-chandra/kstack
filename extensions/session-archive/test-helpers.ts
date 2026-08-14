@@ -165,7 +165,7 @@ export function richSessionJsonl(header: Record<string, unknown> = {}): string {
 	);
 }
 
-export interface TempTree {
+interface TempTree {
 	root: string;
 	agentDir: string;
 	archiveRoot: string;

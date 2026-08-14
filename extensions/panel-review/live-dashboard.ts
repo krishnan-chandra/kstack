@@ -91,7 +91,7 @@ const fallbackTerminalText: TerminalText = {
 
 export type DashboardStatus = "queued" | "running" | "completed" | "failed" | "aborted";
 
-export type DashboardRole = "reviewer" | "lead";
+type DashboardRole = "reviewer" | "lead";
 
 export interface DashboardRow {
 	id: string;

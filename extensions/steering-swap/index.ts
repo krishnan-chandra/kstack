@@ -21,7 +21,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 
-export type SwapDecision = "queueFollowUp" | "steer" | "passthrough";
+type SwapDecision = "queueFollowUp" | "steer" | "passthrough";
 
 export function decideSwap(input: {
 	busy: boolean;
@@ -72,7 +72,7 @@ export function applySwap(host: SwapHost, decision: SwapDecision): boolean {
 	return false;
 }
 
-export class SteeringSwapEditor extends CustomEditor {
+class SteeringSwapEditor extends CustomEditor {
 	private readonly matcher: KeybindingsManager;
 	private readonly isBusy: () => boolean;
 

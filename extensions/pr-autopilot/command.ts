@@ -4,7 +4,7 @@ import type { AutopilotMode } from "./types.ts";
 
 export type ArgsParse = { ok: true; args: ParsedArgs } | { ok: false; error: string };
 
-export interface ParsedArgs {
+interface ParsedArgs {
 	mode: AutopilotMode;
 	/** Explicit PR number, or undefined to auto-detect the lowest unmerged. */
 	pr?: number;

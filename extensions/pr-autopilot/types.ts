@@ -59,7 +59,7 @@ export interface CheckRun {
 }
 
 /** Where a review item came from. */
-export type ThreadSource = "review-thread" | "issue-comment";
+type ThreadSource = "review-thread" | "issue-comment";
 
 /**
  * An unresolved review thread or an issue comment that still needs a decision.
@@ -118,26 +118,6 @@ export interface PRState {
 	hasUnresolvedThreads: boolean;
 }
 
-/**
- * Outcome of one autopilot cycle iteration. The state machine keys off this to
- * decide whether to fix-and-push again, declare merge-ready, or report a
- * blocker.
- */
-export interface CycleResult {
-	/** Did the PR reach a merge-ready state on this cycle? */
-	mergeReady: boolean;
-	/** Threads that were addressed (and pushed). */
-	addressedThreads: string[];
-	/** Threads that remain after the cycle. */
-	pendingThreads: string[];
-	/** Failures classified but not fixable by the autopilot. */
-	blockedFailures: { name: string; cls: FailureClass; reason: string }[];
-	/** Whether a push was performed this cycle. */
-	pushed: boolean;
-	/** The new head SHA after any push, or the unchanged head. */
-	headSha: string;
-}
-
 /** Persisted across ticks so a later drive/watch resume does not re-handle work. */
 export interface AutopilotPersistedState {
 	repoKey: string;
@@ -154,11 +134,6 @@ export interface AutopilotPersistedState {
 /** Lifecycle token to guard against overlapping autopilot runs. */
 export interface AutopilotToken {
 	readonly generation: number;
-}
-
-/** One cycle of the autopilot state machine's dependencies, for testability. */
-export interface AutopilotDeps {
-	gh: (args: string[], cwd: string) => Promise<ExecFnResult>;
 }
 
 export type { ExecFn, ExecFnOptions, ExecFnResult };

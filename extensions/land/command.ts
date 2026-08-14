@@ -1,5 +1,6 @@
 import type { MergeMethod, ReadinessMode } from "./types.ts";
-export interface LandArgs {
+
+interface LandArgs {
 	pr?: number;
 	method?: MergeMethod;
 	readiness: ReadinessMode;
