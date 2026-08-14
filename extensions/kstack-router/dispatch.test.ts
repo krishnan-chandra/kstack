@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { dispatchRoute, getRestrictedTools } from "./dispatch.ts";
 import { RouterLifecycle } from "./lifecycle.ts";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 describe("getRestrictedTools", () => {
-	const active = ["read", "grep", "find", "ls", "bash", "edit", "write", "read_handoff_history", "search_session_archive"];
+	const active = [
+		"read",
+		"grep",
+		"find",
+		"ls",
+		"bash",
+		"edit",
+		"write",
+		"read_handoff_history",
+		"search_session_archive",
+	];
 
 	it("intersects with the base read-only allowlist", () => {
 		assert.deepEqual(getRestrictedTools("investigate", active), ["read", "grep", "find", "ls"]);

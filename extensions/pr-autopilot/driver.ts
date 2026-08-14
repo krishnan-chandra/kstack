@@ -18,16 +18,33 @@
  *   cleanup  — remove the managed worktree and branch after confirmation.
  */
 
-import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runAgent } from "./agent-runner.ts";
+import {
+	applyForceAsk,
+	applyThreadReplies,
+	doCommitAndPush,
+	fetchPRState,
+	loadPersistedState,
+	maxFixCycles,
+	parseTriage,
+	prepareMutationCheckout,
+	repoPersistKey,
+	runChildRole,
+	runCleanup,
+	savePersistedState,
+	summarizeTriage,
+} from "./autopilot-operations.ts";
 import {
 	attachFailedLogs,
 	currentBranch,
 	currentHead,
 	findLowestUnmergedPR,
+	type GHPrJson,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
@@ -38,19 +55,41 @@ import {
 	parsePorcelainPaths,
 	replyToIssueComment,
 	replyToReviewComment,
-	resolveReviewThread,
 	rerunFailedRun,
+	resolveReviewThread,
 	viewPR,
 	watchChecks,
-	type GHPrJson,
 } from "./github.ts";
-import { runAgent } from "./agent-runner.ts";
-import { LIMITS, type AutopilotAgentRole, type AutopilotModelSpec, type AutopilotMode, type AutopilotPersistedState, type CheckRun, type ExecFn, type FailureClass, type PRState, type ResolvedAutopilotConfig, type ReviewThread, type ThreadDecision, type UsageSummary } from "./types.ts";
-import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
-
 /** Lifecycle phases surfaced to the parent UI for status display. */
-import { emptyUsage, isCodeReady, isMergeReady, describeBlockers, buildTriagerTask, buildFixerTask, pickModel, resolveTargetPR, hasPendingChecks, hasFailingChecks, type FixMode } from "./pr-state.ts";
-import { repoPersistKey, loadPersistedState, fetchPRState, runCleanup, prepareMutationCheckout, savePersistedState, runChildRole, parseTriage, applyForceAsk, summarizeTriage, doCommitAndPush, applyThreadReplies, maxFixCycles } from "./autopilot-operations.ts";
+import {
+	buildFixerTask,
+	buildTriagerTask,
+	describeBlockers,
+	emptyUsage,
+	type FixMode,
+	hasFailingChecks,
+	hasPendingChecks,
+	isCodeReady,
+	isMergeReady,
+	pickModel,
+	resolveTargetPR,
+} from "./pr-state.ts";
+import {
+	type AutopilotAgentRole,
+	type AutopilotMode,
+	type AutopilotModelSpec,
+	type AutopilotPersistedState,
+	type CheckRun,
+	type ExecFn,
+	type FailureClass,
+	LIMITS,
+	type PRState,
+	type ResolvedAutopilotConfig,
+	type ReviewThread,
+	type ThreadDecision,
+	type UsageSummary,
+} from "./types.ts";
+import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 export type LifecyclePhase =
 	| "idle"
 	| "discovering"
@@ -132,13 +171,19 @@ export async function runAutopilot(
 	if (mode === "check") {
 		setPhase("checking");
 		const persisted = await ops.loadPersistedState(repoKey, prNumber);
-		const state = await fetchPRState(exec, cwd, prNumber, null, { concurrency: config.maxConcurrency, handledThreadIds: persisted.handledThreadIds });
+		const state = await fetchPRState(exec, cwd, prNumber, null, {
+			concurrency: config.maxConcurrency,
+			handledThreadIds: persisted.handledThreadIds,
+		});
 		setPhase("idle");
 		if (typeof state === "string") {
 			notify(state, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [state], usage };
 		}
-		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, { concurrency: config.maxConcurrency, handledThreadIds: persisted.handledThreadIds });
+		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, {
+			concurrency: config.maxConcurrency,
+			handledThreadIds: persisted.handledThreadIds,
+		});
 		if (typeof verified === "string") {
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [verified], usage };
 		}
@@ -149,14 +194,27 @@ export async function runAutopilot(
 		} else {
 			notify(`PR #${prNumber} is not ready: ${describeBlockers(verified)}.`, "warning");
 		}
-		return { status: ready ? "merge-ready" : "incomplete", prState: verified, mergeReady: ready, cyclesCompleted: 0, blockedReasons: ready ? [] : [describeBlockers(verified)], usage };
+		return {
+			status: ready ? "merge-ready" : "incomplete",
+			prState: verified,
+			mergeReady: ready,
+			cyclesCompleted: 0,
+			blockedReasons: ready ? [] : [describeBlockers(verified)],
+			usage,
+		};
 	}
 
 	if (mode === "cleanup") {
 		setPhase("cleaning");
 		const ok = await runCleanup(exec, cwd, confirm, notify);
 		setPhase("idle");
-		return { status: ok ? "cleaned" : "blocked", mergeReady: false, cyclesCompleted: 0, blockedReasons: ok ? [] : ["cleanup not confirmed"], usage };
+		return {
+			status: ok ? "cleaned" : "blocked",
+			mergeReady: false,
+			cyclesCompleted: 0,
+			blockedReasons: ok ? [] : ["cleanup not confirmed"],
+			usage,
+		};
 	}
 
 	let state: PRState | null = null;
@@ -182,12 +240,26 @@ export async function runAutopilot(
 			);
 			if (!mark) {
 				blockedReasons.push("code-ready but still a draft (mark-ready not confirmed)");
-				return { status: "incomplete", prState: snapshot, mergeReady: false, cyclesCompleted: cycle, blockedReasons: [...blockedReasons], usage };
+				return {
+					status: "incomplete",
+					prState: snapshot,
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: [...blockedReasons],
+					usage,
+				};
 			}
 			const readyResult = await markPrReady(exec, cwd, prNumber);
 			if (readyResult.code !== 0) {
 				blockedReasons.push(`could not mark ready: ${readyResult.stderr.trim()}`);
-				return { status: "blocked", prState: snapshot, mergeReady: false, cyclesCompleted: cycle, blockedReasons: [...blockedReasons], usage };
+				return {
+					status: "blocked",
+					prState: snapshot,
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: [...blockedReasons],
+					usage,
+				};
 			}
 		}
 		setPhase("settling", cycle);
@@ -200,7 +272,10 @@ export async function runAutopilot(
 			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [settled], usage };
 		}
 		if (settled.headSha !== snapshot.headSha) {
-			notify(`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} during verification; rechecking.`, "warning");
+			notify(
+				`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} during verification; rechecking.`,
+				"warning",
+			);
 			state = settled;
 			return undefined;
 		}
@@ -212,12 +287,25 @@ export async function runAutopilot(
 		verifiedHeadSha = settled.headSha;
 		setPhase("idle", cycle);
 		notify(`PR #${prNumber} looks merge-ready after a fresh status read. Not merging.`, "info");
-		return { status: "merge-ready", prState: settled, mergeReady: true, cyclesCompleted: cycle, blockedReasons: [], usage };
+		return {
+			status: "merge-ready",
+			prState: settled,
+			mergeReady: true,
+			cyclesCompleted: cycle,
+			blockedReasons: [],
+			usage,
+		};
 	};
 
 	while (cycle < maxCycles) {
 		if (signal.aborted) {
-			return { status: "aborted", mergeReady: false, cyclesCompleted: cycle, blockedReasons: ["aborted by user"], usage };
+			return {
+				status: "aborted",
+				mergeReady: false,
+				cyclesCompleted: cycle,
+				blockedReasons: ["aborted by user"],
+				usage,
+			};
 		}
 
 		const fetched = await refresh();
@@ -237,12 +325,26 @@ export async function runAutopilot(
 		const checkout = await prepareMutationCheckout(exec, cwd, state);
 		if (!checkout.ok) {
 			notify(checkout.error, "error");
-			return { status: "blocked", prState: state, mergeReady: false, cyclesCompleted: cycle, blockedReasons: [checkout.error], usage };
+			return {
+				status: "blocked",
+				prState: state,
+				mergeReady: false,
+				cyclesCompleted: cycle,
+				blockedReasons: [checkout.error],
+				usage,
+			};
 		}
 
-		if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY" || state.mergeStateStatus === "BEHIND") {
+		if (
+			state.mergeable === "conflicting" ||
+			state.mergeStateStatus === "DIRTY" ||
+			state.mergeStateStatus === "BEHIND"
+		) {
 			setPhase("merging-base", cycle);
-			notify(`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging origin/${state.baseRef} (no rebase).`, "info");
+			notify(
+				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging origin/${state.baseRef} (no rebase).`,
+				"info",
+			);
 			const merged = await mergeBaseIntoHead(exec, cwd, state.baseRef);
 			switch (merged.kind) {
 				case "already-current":
@@ -280,10 +382,19 @@ export async function runAutopilot(
 
 		if (hasPendingChecks(state) && !hasFailingChecks(state) && !state.hasUnresolvedThreads) {
 			setPhase("watching", cycle);
-			notify(`PR #${prNumber}: nothing actionable and checks are still running. Watching CI instead of inventing work.`, "info");
+			notify(
+				`PR #${prNumber}: nothing actionable and checks are still running. Watching CI instead of inventing work.`,
+				"info",
+			);
 			const watched = await watchChecks(exec, cwd, prNumber, LIMITS.watchTimeoutMinutes * 60_000, signal);
 			if (signal.aborted) {
-				return { status: "aborted", mergeReady: false, cyclesCompleted: cycle, blockedReasons: ["aborted by user"], usage };
+				return {
+					status: "aborted",
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: ["aborted by user"],
+					usage,
+				};
 			}
 			if (watched.code !== 0) {
 				notify(`CI watch ended: ${watched.stderr.trim() || "a check failed or the watch timed out"}.`, "warning");
@@ -305,7 +416,8 @@ export async function runAutopilot(
 		const model = pickModel(config.models, cycle);
 		const taskFile = join(promptDir, `triager-${cycle + 1}.md`);
 		await writeFile(taskFile, buildTriagerTask(state), { mode: 0o600 });
-		const triagerResult = await ops.runChildRole("triager",
+		const triagerResult = await ops.runChildRole(
+			"triager",
 			{
 				model: model.model,
 				thinking: model.thinking,
@@ -366,13 +478,22 @@ export async function runAutopilot(
 			}
 		}
 
-		const staleOrInfra = parsed.checks.filter((c) => c.cls === "stale-base" || c.cls === "infra" || c.cls === "unknown");
+		const staleOrInfra = parsed.checks.filter(
+			(c) => c.cls === "stale-base" || c.cls === "infra" || c.cls === "unknown",
+		);
 		const codeChecks = parsed.checks.filter((c) => c.cls === "code");
 		const fixThreads = parsed.threads.filter((t) => t.decision === "fix");
 		const dismissThreads = parsed.threads.filter((t) => t.decision === "dismiss");
 
 		const commentsFirst = mode === "threads" || fixThreads.length > 0 || dismissThreads.length > 0;
-		const fixMode: FixMode = mode === "threads" ? "threads" : commentsFirst && codeChecks.length > 0 ? "threads" : codeChecks.length > 0 ? "ci" : "threads";
+		const fixMode: FixMode =
+			mode === "threads"
+				? "threads"
+				: commentsFirst && codeChecks.length > 0
+					? "threads"
+					: codeChecks.length > 0
+						? "ci"
+						: "threads";
 
 		if (fixThreads.length === 0 && dismissThreads.length === 0 && codeChecks.length === 0) {
 			if (askThreads.length > 0) break;
@@ -391,7 +512,8 @@ export async function runAutopilot(
 			setPhase("fixing", cycle);
 			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
 			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode), { mode: 0o600 });
-			const fixerResult = await ops.runChildRole("fixer",
+			const fixerResult = await ops.runChildRole(
+				"fixer",
 				{
 					model: fixerModel.model,
 					thinking: fixerModel.thinking,
@@ -415,12 +537,20 @@ export async function runAutopilot(
 			const confirmed = await confirm(
 				`Push fixes to PR #${prNumber}?`,
 				`Cycle ${cycle + 1} fixer (${fixerModel.label}) completed.\n` +
-					"Integrating origin/" + state.headRef + ", staging only touched paths, then pushing.\n" +
+					"Integrating origin/" +
+					state.headRef +
+					", staging only touched paths, then pushing.\n" +
 					"The autopilot will NOT rebase, restack, merge the PR, or touch merge settings.",
 			);
 			if (!confirmed) {
 				notify("Push not confirmed. Stopping.", "info");
-				return { status: "incomplete", mergeReady: false, cyclesCompleted: cycle, blockedReasons: ["push not confirmed"], usage };
+				return {
+					status: "incomplete",
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: ["push not confirmed"],
+					usage,
+				};
 			}
 			const pushResult = await doCommitAndPush(exec, cwd, state.headRef, state.headSha, prNumber, fixerOutput);
 			if (pushResult.ok && pushResult.error === "no changes to commit") {
@@ -430,7 +560,10 @@ export async function runAutopilot(
 				blockedReasons.push(`push failed: ${pushResult.error}`);
 				break;
 			} else {
-				notify(`Pushed to ${state.headRef} (new HEAD: ${pushResult.headSha?.slice(0, 8) ?? "?"}). Prior CI on the old SHA is stale.`, "info");
+				notify(
+					`Pushed to ${state.headRef} (new HEAD: ${pushResult.headSha?.slice(0, 8) ?? "?"}). Prior CI on the old SHA is stale.`,
+					"info",
+				);
 				verifiedHeadSha = null;
 				persisted = { ...persisted, headSha: pushResult.headSha ?? "" };
 				pushedAFix = true;
@@ -439,9 +572,20 @@ export async function runAutopilot(
 
 		setPhase("replying", cycle);
 		const repliedThreadIds = [...persisted.repliedThreadIds];
-		const handled = await applyThreadReplies(exec, cwd, state, parsed, { resolveFix: pushedAFix, repliedThreadIds }, notify);
+		const handled = await applyThreadReplies(
+			exec,
+			cwd,
+			state,
+			parsed,
+			{ resolveFix: pushedAFix, repliedThreadIds },
+			notify,
+		);
 		if (handled.length > 0) {
-			persisted = { ...persisted, handledThreadIds: [...persisted.handledThreadIds, ...handled], repliedThreadIds: repliedThreadIds.filter((id) => !handled.includes(id)) };
+			persisted = {
+				...persisted,
+				handledThreadIds: [...persisted.handledThreadIds, ...handled],
+				repliedThreadIds: repliedThreadIds.filter((id) => !handled.includes(id)),
+			};
 			notify(`Replied and resolved ${handled.length} thread(s).`, "info");
 		} else {
 			persisted = { ...persisted, repliedThreadIds };
@@ -452,12 +596,25 @@ export async function runAutopilot(
 			const recheck = await refresh();
 			setPhase("idle", cycle + 1);
 			if (typeof recheck === "string") {
-				return { status: "incomplete", mergeReady: false, cyclesCompleted: cycle + 1, blockedReasons: [recheck], usage };
+				return {
+					status: "incomplete",
+					mergeReady: false,
+					cyclesCompleted: cycle + 1,
+					blockedReasons: [recheck],
+					usage,
+				};
 			}
 			const done = await declareReady(recheck);
 			if (done) return done;
 			notify(`PR #${prNumber} still not ready after threads: ${describeBlockers(recheck)}.`, "warning");
-			return { status: "incomplete", prState: recheck, mergeReady: false, cyclesCompleted: cycle + 1, blockedReasons: [describeBlockers(recheck)], usage };
+			return {
+				status: "incomplete",
+				prState: recheck,
+				mergeReady: false,
+				cyclesCompleted: cycle + 1,
+				blockedReasons: [describeBlockers(recheck)],
+				usage,
+			};
 		}
 
 		if (askThreads.length > 0 && fixThreads.length === 0 && codeChecks.length === 0) {

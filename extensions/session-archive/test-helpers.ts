@@ -1,15 +1,12 @@
 /** Shared fixtures for session-archive tests. */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const TEST_SESSION_ID = "019ff001-deb2-7696-997e-8684026835d1";
 
-export function sessionJsonl(
-	entries: Record<string, unknown>[],
-	header: Record<string, unknown> = {},
-): string {
+export function sessionJsonl(entries: Record<string, unknown>[], header: Record<string, unknown> = {}): string {
 	const head = {
 		type: "session",
 		version: 3,
@@ -44,7 +41,14 @@ export function assistantMessage(text: string): Record<string, unknown> {
 		],
 		provider: "openai",
 		model: "gpt-5.6-sol",
-		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		usage: {
+			input: 1,
+			output: 1,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 2,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
 		stopReason: "stop",
 		timestamp: 1786438183625,
 	};
@@ -54,7 +58,14 @@ export function assistantMessage(text: string): Record<string, unknown> {
 export function richSessionJsonl(header: Record<string, unknown> = {}): string {
 	return sessionJsonl(
 		[
-			{ type: "model_change", id: "m0", parentId: null, timestamp: "2026-08-11T08:48:03.000Z", provider: "openai", modelId: "gpt-5.6-sol" },
+			{
+				type: "model_change",
+				id: "m0",
+				parentId: null,
+				timestamp: "2026-08-11T08:48:03.000Z",
+				provider: "openai",
+				modelId: "gpt-5.6-sol",
+			},
 			messageEntry("u1", "m0", userMessage("hello archive world")),
 			messageEntry("a1", "u1", assistantMessage("hi there, archiving works")),
 			{
@@ -134,8 +145,21 @@ export function richSessionJsonl(header: Record<string, unknown> = {}): string {
 					timestamp: 1786438183628,
 				},
 			},
-			{ type: "session_info", id: "n1", parentId: "img1", timestamp: "2026-08-11T08:54:00.000Z", name: "archive test session" },
-			{ type: "label", id: "l1", parentId: "n1", timestamp: "2026-08-11T08:55:00.000Z", targetId: "u1", label: "checkpoint-one" },
+			{
+				type: "session_info",
+				id: "n1",
+				parentId: "img1",
+				timestamp: "2026-08-11T08:54:00.000Z",
+				name: "archive test session",
+			},
+			{
+				type: "label",
+				id: "l1",
+				parentId: "n1",
+				timestamp: "2026-08-11T08:55:00.000Z",
+				targetId: "u1",
+				label: "checkpoint-one",
+			},
 		],
 		header,
 	);

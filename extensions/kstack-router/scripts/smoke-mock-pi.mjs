@@ -17,7 +17,7 @@
 
 import assert from "node:assert/strict";
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -216,7 +216,9 @@ await scenario("investigate gates tools, injects playbook once, restores on sett
 	// The task was delivered as a user message (triggers the agent turn).
 	assert.deepEqual(env.state.userMessages, ["Explain the archive indexing"]);
 	// A route card was displayed without triggering a turn itself.
-	assert.ok(env.state.messages.some((m) => m.customType === "kstack-route" && m.details?.dispatchStatus === "dispatched"));
+	assert.ok(
+		env.state.messages.some((m) => m.customType === "kstack-route" && m.details?.dispatchStatus === "dispatched"),
+	);
 
 	// First turn: playbook + principles injected into the system prompt.
 	const injected = await simulateTurn(env, "Explain the archive indexing");
@@ -286,7 +288,9 @@ await scenario("rejects a change-kind override when the final route is not chang
 	const env = setup();
 	const handler = env.state.commands.get("kstack").handler;
 	await handler("--route investigate --change-kind feature Explain the archive", env.ctx);
-	assert.ok(env.state.notifications.some((n) => n.level === "warning" && /only valid with --route change/.test(n.message)));
+	assert.ok(
+		env.state.notifications.some((n) => n.level === "warning" && /only valid with --route change/.test(n.message)),
+	);
 	assert.equal(env.state.messages.length, 0);
 });
 

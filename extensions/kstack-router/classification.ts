@@ -1,15 +1,15 @@
 /** Route classification logic: recommendation, validation, and manual fallback. */
 
-import { getRouteLabel, getRouteDescription, getAllRoutes } from "./catalog.ts";
+import { getAllRoutes, getRouteDescription, getRouteLabel } from "./catalog.ts";
 import {
+	type ChangeKind,
 	CLASSIFIER_SENTINEL_END,
 	CLASSIFIER_SENTINEL_START,
+	type ClassifierEnvelope,
 	DEFAULTS,
+	type DeliveryRecommendation,
 	isChangeKind,
 	isRouteId,
-	type ChangeKind,
-	type ClassifierEnvelope,
-	type DeliveryRecommendation,
 	type RouteId,
 } from "./types.ts";
 
@@ -30,7 +30,9 @@ export interface ClassificationResult {
  *
  * Returns the parsed envelope on success or a description of the failure.
  */
-export function parseClassifierOutput(output: string): { ok: true; envelope: ClassifierEnvelope } | { ok: false; error: string } {
+export function parseClassifierOutput(
+	output: string,
+): { ok: true; envelope: ClassifierEnvelope } | { ok: false; error: string } {
 	const trimmed = output.trim();
 
 	// Find sentinel boundaries.
@@ -105,7 +107,10 @@ export function parseClassifierOutput(output: string): { ok: true; envelope: Cla
 	let delivery: DeliveryRecommendation;
 	if (envelope.delivery !== undefined) {
 		if (envelope.delivery !== "single" && envelope.delivery !== "stack") {
-			return { ok: false, error: `Invalid delivery: ${JSON.stringify(envelope.delivery)}. Must be "single" or "stack".` };
+			return {
+				ok: false,
+				error: `Invalid delivery: ${JSON.stringify(envelope.delivery)}. Must be "single" or "stack".`,
+			};
 		}
 		delivery = envelope.delivery;
 	}
@@ -140,10 +145,7 @@ export interface RouteRecommendation {
 /**
  * Build a human-readable route recommendation display.
  */
-export function formatRecommendation(
-	recommendation: RouteRecommendation,
-	modelSource: string,
-): string {
+export function formatRecommendation(recommendation: RouteRecommendation, modelSource: string): string {
 	const confidenceMap: Record<string, string> = {
 		high: "✓ High confidence",
 		medium: "~ Medium confidence",

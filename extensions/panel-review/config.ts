@@ -30,8 +30,15 @@
  * unavailable.
  */
 
-import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import {
+	getAgentDir,
+	getKstackPath,
+	loadKstackSection,
+	MODEL_ID_RE,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
+
 export { getAgentDir, getKstackPath, THINKING_LEVELS };
 
 export const MIN_REVIEWERS = 2;
@@ -142,7 +149,10 @@ function validateTimeouts(
 ): { ok: true; timeoutMinutes: number; maxRuntimeMinutes: number } | { ok: false; error: string } {
 	const timeoutMinutes = obj.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES;
 	if (typeof timeoutMinutes !== "number" || !Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) {
-		return { ok: false, error: '"timeoutMinutes" must be a positive number (per-child idle limit; output resets the timer).' };
+		return {
+			ok: false,
+			error: '"timeoutMinutes" must be a positive number (per-child idle limit; output resets the timer).',
+		};
 	}
 	const maxRuntimeMinutes = obj.maxRuntimeMinutes ?? DEFAULT_MAX_RUNTIME_MINUTES;
 	if (typeof maxRuntimeMinutes !== "number" || !Number.isFinite(maxRuntimeMinutes) || maxRuntimeMinutes <= 0) {
@@ -154,11 +164,14 @@ function validateTimeouts(
 	return { ok: true, timeoutMinutes, maxRuntimeMinutes };
 }
 
-function validateSynthesis(obj: Record<string, unknown>): { ok: true; spec: { model: string; thinking?: string } } | { ok: false; error: string } {
+function validateSynthesis(
+	obj: Record<string, unknown>,
+): { ok: true; spec: { model: string; thinking?: string } } | { ok: false; error: string } {
 	if (typeof obj.synthesis !== "object" || obj.synthesis === null || Array.isArray(obj.synthesis)) {
 		return {
 			ok: false,
-			error: '"synthesis" is required: {"model": "provider/model", "thinking"?} — the model that merges reviewer reports into the verdict.',
+			error:
+				'"synthesis" is required: {"model": "provider/model", "thinking"?} — the model that merges reviewer reports into the verdict.',
 		};
 	}
 	const s = obj.synthesis as Record<string, unknown>;
@@ -189,7 +202,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	const section = loadKstackSection("panel-review", env);
 	if (section.status !== "found") return section;
 	const result = validateConfig(section.value);
-	return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error };
+	return result.ok
+		? { status: "loaded", config: result.config, path: section.path }
+		: { status: "invalid", path: section.path, error: result.error };
 }
 
 /** Model the CLI accepts: "provider/model" with optional ":thinking" suffix. */
@@ -225,7 +240,10 @@ export type SynthesisResolution =
  * Without one, the built-in small, fast DEFAULT_SYNTHESIS model is used,
  * falling back to the active model with a warning.
  */
-export function resolveSynthesisModel(config: Pick<PanelConfig, "synthesis"> | null, deps: ResolveDeps): SynthesisResolution {
+export function resolveSynthesisModel(
+	config: Pick<PanelConfig, "synthesis"> | null,
+	deps: ResolveDeps,
+): SynthesisResolution {
 	const warnings: string[] = [];
 	if (config) {
 		const slash = config.synthesis.model.indexOf("/");
@@ -258,14 +276,20 @@ export function resolveSynthesisModel(config: Pick<PanelConfig, "synthesis"> | n
 			warnings,
 		};
 	}
-	return { ok: false, error: `No model available for synthesis (${DEFAULT_SYNTHESIS.model} unavailable and no active model).` };
+	return {
+		ok: false,
+		error: `No model available for synthesis (${DEFAULT_SYNTHESIS.model} unavailable and no active model).`,
+	};
 }
 
 /**
  * Resolve the reviewer panel from config, falling back to scoped models and
  * finally to the active model (two independent runs, reduced diversity).
  */
-export function resolveReviewers(config: Pick<PanelConfig, "reviewers" | "maxConcurrency"> | null, deps: ResolveDeps): ReviewerResolution {
+export function resolveReviewers(
+	config: Pick<PanelConfig, "reviewers" | "maxConcurrency"> | null,
+	deps: ResolveDeps,
+): ReviewerResolution {
 	const warnings: string[] = [];
 
 	if (config) {

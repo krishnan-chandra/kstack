@@ -39,11 +39,13 @@ describe("github parsers", () => {
 
 	describe("parsePrChecksJson", () => {
 		it("maps gh pr checks buckets", () => {
-			const checks = parsePrChecksJson(JSON.stringify([
-				{ name: "lint", state: "SUCCESS", bucket: "pass", link: "https://github.com/o/r/actions/runs/99" },
-				{ name: "test", state: "FAILURE", bucket: "fail", link: "https://github.com/o/r/actions/runs/100" },
-				{ name: "build", state: "PENDING", bucket: "pending" },
-			]));
+			const checks = parsePrChecksJson(
+				JSON.stringify([
+					{ name: "lint", state: "SUCCESS", bucket: "pass", link: "https://github.com/o/r/actions/runs/99" },
+					{ name: "test", state: "FAILURE", bucket: "fail", link: "https://github.com/o/r/actions/runs/100" },
+					{ name: "build", state: "PENDING", bucket: "pending" },
+				]),
+			);
 			assert.equal(checks.length, 3);
 			assert.equal(checks[0].conclusion, "success");
 			assert.equal(checks[0].runId, "99");
@@ -54,10 +56,12 @@ describe("github parsers", () => {
 		});
 
 		it("keeps cancelled checks distinct from neutral checks", () => {
-			const checks = parsePrChecksJson(JSON.stringify([
-				{ name: "cancelled", state: "CANCELLED", bucket: "cancel" },
-				{ name: "allowed-neutral", state: "NEUTRAL", bucket: "neutral" },
-			]));
+			const checks = parsePrChecksJson(
+				JSON.stringify([
+					{ name: "cancelled", state: "CANCELLED", bucket: "cancel" },
+					{ name: "allowed-neutral", state: "NEUTRAL", bucket: "neutral" },
+				]),
+			);
 			assert.equal(checks[0].status, "cancelled");
 			assert.equal(checks[0].conclusion, "cancelled");
 			assert.equal(checks[1].status, "neutral");
@@ -107,11 +111,13 @@ describe("github parsers", () => {
 
 	describe("parseIssueComments", () => {
 		it("maps REST issue comments", () => {
-			const comments = parseIssueComments(JSON.stringify([
-				{ id: 9, user: { login: "bugbot" }, body: "npe", html_url: "https://example/9" },
-				{ id: 10, user: { login: "me" }, body: "<!-- pr-autopilot -->\nAddressed." },
-				{ id: 11, user: { login: "me" }, body: "<!-- pr-babysit -->\nlegacy reply" },
-			]));
+			const comments = parseIssueComments(
+				JSON.stringify([
+					{ id: 9, user: { login: "bugbot" }, body: "npe", html_url: "https://example/9" },
+					{ id: 10, user: { login: "me" }, body: "<!-- pr-autopilot -->\nAddressed." },
+					{ id: 11, user: { login: "me" }, body: "<!-- pr-babysit -->\nlegacy reply" },
+				]),
+			);
 			assert.equal(comments.length, 1);
 			const thread = issueCommentToThread(comments[0]);
 			assert.equal(thread.id, "issue-comment-9");
@@ -120,11 +126,16 @@ describe("github parsers", () => {
 		});
 
 		it("accepts slurped pagination and keeps page order", () => {
-			const comments = parseIssueComments(JSON.stringify([
-				[{ id: 1, user: { login: "first" }, body: "first page" }],
-				[{ id: 2, user: { login: "second" }, body: "second page" }],
-			]));
-			assert.deepEqual(comments.map((comment) => comment.id), [1, 2]);
+			const comments = parseIssueComments(
+				JSON.stringify([
+					[{ id: 1, user: { login: "first" }, body: "first page" }],
+					[{ id: 2, user: { login: "second" }, body: "second page" }],
+				]),
+			);
+			assert.deepEqual(
+				comments.map((comment) => comment.id),
+				[1, 2],
+			);
 		});
 
 		it("filters autopilot replies before retaining the newest bounded set", () => {

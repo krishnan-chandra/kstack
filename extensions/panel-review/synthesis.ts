@@ -167,7 +167,11 @@ export function renderRawReports(results: ReviewerResult[]): string {
 	for (const result of results) {
 		parts.push(`### Reviewer ${result.label} — ${result.model} (${result.status})`);
 		parts.push("");
-		parts.push(result.status === "completed" ? result.output : `_${result.status}: ${"error" in result ? result.error : "aborted"}_`);
+		parts.push(
+			result.status === "completed"
+				? result.output
+				: `_${result.status}: ${"error" in result ? result.error : "aborted"}_`,
+		);
 		parts.push("");
 	}
 	return parts.join("\n");

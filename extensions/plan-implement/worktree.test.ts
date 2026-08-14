@@ -13,9 +13,11 @@ function fakeGit(options: { occupiedBranches?: Set<string>; addResult?: ExecFnRe
 	const calls: Array<{ args: string[]; cwd: string }> = [];
 	const exec: ExecFn = async (_command, args, execOptions) => {
 		calls.push({ args, cwd: execOptions.cwd });
-		if (args.join(" ") === "rev-parse --show-toplevel") return result(0, `${execOptions.cwd === "/start" ? "/repo" : execOptions.cwd}\n`);
+		if (args.join(" ") === "rev-parse --show-toplevel")
+			return result(0, `${execOptions.cwd === "/start" ? "/repo" : execOptions.cwd}\n`);
 		if (args.join(" ") === "rev-parse --path-format=absolute --git-common-dir") return result(0, "/repo/.git\n");
-		if (args.join(" ") === "symbolic-ref --quiet refs/remotes/origin/HEAD") return result(0, "refs/remotes/origin/main\n");
+		if (args.join(" ") === "symbolic-ref --quiet refs/remotes/origin/HEAD")
+			return result(0, "refs/remotes/origin/main\n");
 		if (args[0] === "rev-parse" && args[1] === "--verify") return result(0, `${BASE_SHA}\n`);
 		if (args[0] === "show-ref") {
 			const branch = args.at(-1)!.replace("refs/heads/", "");
@@ -55,13 +57,17 @@ describe("managed Git worktrees", () => {
 			if (args.join(" ") === "rev-parse --show-toplevel") return result(0, "/repo\n");
 			if (args.join(" ") === "rev-parse --path-format=absolute --git-common-dir") return result(0, "/repo/.git\n");
 			if (args.join(" ") === "remote") return result(0, "upstream\n");
-			if (args.join(" ") === "symbolic-ref --quiet refs/remotes/upstream/HEAD") return result(0, "refs/remotes/upstream/trunk\n");
-			if (args.join(" ") === "rev-parse --verify refs/remotes/upstream/trunk^{commit}") return result(0, `${BASE_SHA}\n`);
+			if (args.join(" ") === "symbolic-ref --quiet refs/remotes/upstream/HEAD")
+				return result(0, "refs/remotes/upstream/trunk\n");
+			if (args.join(" ") === "rev-parse --verify refs/remotes/upstream/trunk^{commit}")
+				return result(0, `${BASE_SHA}\n`);
 			if (args[0] === "show-ref") return result(1);
 			return result(1, "", `unexpected in ${options.cwd}: ${args.join(" ")}`);
 		};
 		const planned = await planManagedWorktree("/repo", "Add search", exec, {
-			managedRoot: "/managed", realpath: (path) => path, exists: () => false,
+			managedRoot: "/managed",
+			realpath: (path) => path,
+			exists: () => false,
 		});
 		assert.equal(planned.ok, true);
 		if (planned.ok) assert.equal(planned.plan.baseRef, "refs/remotes/upstream/trunk");
@@ -95,15 +101,27 @@ describe("managed Git worktrees", () => {
 		});
 		assert.equal(created.ok, true);
 		assert.deepEqual(made, [`/managed/${planned.plan.repositoryId}`]);
-		assert.ok(calls.some((call) => call.args.join(" ") === `worktree add --no-guess-remote -b ${planned.plan.branch} ${planned.plan.path} ${BASE_SHA}`));
+		assert.ok(
+			calls.some(
+				(call) =>
+					call.args.join(" ") ===
+					`worktree add --no-guess-remote -b ${planned.plan.branch} ${planned.plan.path} ${BASE_SHA}`,
+			),
+		);
 	});
 
 	it("revalidates collisions immediately before creation", async () => {
 		const { exec } = fakeGit({ occupiedBranches: new Set(["kstack/add-search"]) });
 		const plan = {
-			sourceRepoRoot: "/repo", commonGitDir: "/repo/.git", managedRoot: "/managed", repositoryId: "repo-12345678",
-			slug: "add-search", branch: "kstack/add-search", path: "/managed/repo-12345678/add-search",
-			baseRef: "refs/remotes/origin/main", baseSha: BASE_SHA,
+			sourceRepoRoot: "/repo",
+			commonGitDir: "/repo/.git",
+			managedRoot: "/managed",
+			repositoryId: "repo-12345678",
+			slug: "add-search",
+			branch: "kstack/add-search",
+			path: "/managed/repo-12345678/add-search",
+			baseRef: "refs/remotes/origin/main",
+			baseSha: BASE_SHA,
 		};
 		const created = await createManagedWorktree(plan, exec, { exists: () => false, mkdir: () => {} });
 		assert.equal(created.ok, false);

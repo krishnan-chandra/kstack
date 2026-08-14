@@ -1,5 +1,9 @@
 import type { MergeMethod, ReadinessMode } from "./types.ts";
-export interface LandArgs { pr?: number; method?: MergeMethod; readiness: ReadinessMode }
+export interface LandArgs {
+	pr?: number;
+	method?: MergeMethod;
+	readiness: ReadinessMode;
+}
 const METHODS: ReadonlySet<string> = new Set(["merge", "squash", "rebase"]);
 const READINESS: ReadonlySet<string> = new Set(["check", "watch"]);
 export function parseLandArgs(text: string): { ok: true; args: LandArgs } | { ok: false; error: string } {

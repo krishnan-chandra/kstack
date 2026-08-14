@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { CHANGE_KINDS, changeKindLabel, changeKindPlaybookFile, isChangeKind } from "./change-kind.ts";
 
 const PLAYBOOKS_DIR = join(dirname(fileURLToPath(import.meta.url)), "playbooks");

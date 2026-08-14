@@ -1,17 +1,14 @@
 /** Deterministic dispatch for each route. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPlanImplement } from "../plan-implement/api.ts";
 import type { ChangeKind } from "../plan-implement/change-kind.ts";
-import { requestPanelReview } from "../panel-review/api.ts";
 import { getRoutePlaybook } from "./catalog.ts";
-import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
+import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 
-export type DispatchResult =
-	| { status: "dispatched" }
-	| { status: "failed"; error: string }
-	| { status: "aborted" };
+export type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
 
 /**
  * Dispatch the task to the appropriate handler based on the selected route.

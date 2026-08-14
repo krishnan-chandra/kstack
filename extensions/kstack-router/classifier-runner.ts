@@ -1,31 +1,76 @@
 /** Thin classifier adapter around the shared child-agent lifecycle. */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getPiInvocation, runChildAgent, type SpawnImpl, type SpawnedProcess } from "../shared/child-agent-runner.ts";
+import { getPiInvocation, runChildAgent, type SpawnedProcess, type SpawnImpl } from "../shared/child-agent-runner.ts";
 import { parseClassifierOutput } from "./classification.ts";
-import { DEFAULTS, type ClassifierEnvelope } from "./types.ts";
+import { type ClassifierEnvelope, DEFAULTS } from "./types.ts";
+
+export type { SpawnedProcess, SpawnImpl };
 export { getPiInvocation };
-export type { SpawnImpl, SpawnedProcess };
+
 const PROMPT_FILE = join(dirname(fileURLToPath(import.meta.url)), "prompts", "classifier.md");
 const STDOUT_LINE_CAP_BYTES = 1024 * 1024;
 const STDERR_CAP_BYTES = 4 * 1024;
 const KILL_GRACE_MS = 5000;
-export interface ClassifierUsage { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number; }
+export interface ClassifierUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	turns: number;
+}
 export type ClassifierRunResult =
 	| { status: "completed"; envelope: ClassifierEnvelope; model: string; usage: ClassifierUsage }
 	| { status: "failed"; error: string; stderr: string }
 	| { status: "aborted" };
 export interface ClassifierRunnerOptions {
-	model: string; task: string; thinking?: string; signal?: AbortSignal; timeoutSeconds?: number; stderrCapBytes?: number; promptFile?: string; killGraceMs?: number; spawnImpl?: SpawnImpl;
+	model: string;
+	task: string;
+	thinking?: string;
+	signal?: AbortSignal;
+	timeoutSeconds?: number;
+	stderrCapBytes?: number;
+	promptFile?: string;
+	killGraceMs?: number;
+	spawnImpl?: SpawnImpl;
 }
-export function buildClassifierChildArgs(model: string, options: { promptFile?: string; thinking?: string } = {}): string[] {
-	return ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-tools", "--no-approve", "--model", model, ...(options.thinking ? ["--thinking", options.thinking] : []), "--append-system-prompt", options.promptFile ?? PROMPT_FILE];
+export function buildClassifierChildArgs(
+	model: string,
+	options: { promptFile?: string; thinking?: string } = {},
+): string[] {
+	return [
+		"--mode",
+		"json",
+		"-p",
+		"--no-session",
+		"--no-extensions",
+		"--no-skills",
+		"--no-prompt-templates",
+		"--no-context-files",
+		"--no-tools",
+		"--no-approve",
+		"--model",
+		model,
+		...(options.thinking ? ["--thinking", options.thinking] : []),
+		"--append-system-prompt",
+		options.promptFile ?? PROMPT_FILE,
+	];
 }
 export async function runClassifier(options: ClassifierRunnerOptions): Promise<ClassifierRunResult> {
 	const timeoutSeconds = options.timeoutSeconds ?? DEFAULTS.timeoutSeconds;
 	const result = await runChildAgent({
-		args: buildClassifierChildArgs(options.model, options), cwd: process.cwd(), stdin: options.task, signal: options.signal,
-		deps: { spawnImpl: options.spawnImpl, maxRuntimeMs: timeoutSeconds * 1000, stderrCapBytes: options.stderrCapBytes ?? STDERR_CAP_BYTES, stdoutLineCapBytes: STDOUT_LINE_CAP_BYTES, killGraceMs: options.killGraceMs ?? KILL_GRACE_MS },
+		args: buildClassifierChildArgs(options.model, options),
+		cwd: process.cwd(),
+		stdin: options.task,
+		signal: options.signal,
+		deps: {
+			spawnImpl: options.spawnImpl,
+			maxRuntimeMs: timeoutSeconds * 1000,
+			stderrCapBytes: options.stderrCapBytes ?? STDERR_CAP_BYTES,
+			stdoutLineCapBytes: STDOUT_LINE_CAP_BYTES,
+			killGraceMs: options.killGraceMs ?? KILL_GRACE_MS,
+		},
 	});
 	if (result.status === "aborted") return { status: "aborted" };
 	if (result.status === "failed") {

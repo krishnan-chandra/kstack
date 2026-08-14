@@ -19,7 +19,13 @@ function fakeBus(listener?: (data: unknown) => void) {
 
 describe("plan-implement in-process API", () => {
 	it("claims synchronously and awaits completion", async () => {
-		const calls: { task: string; mode: DeliveryMode; workLocation: WorkLocation; changeKind: ChangeKind; ctx: ExtensionCommandContext }[] = [];
+		const calls: {
+			task: string;
+			mode: DeliveryMode;
+			workLocation: WorkLocation;
+			changeKind: ChangeKind;
+			ctx: ExtensionCommandContext;
+		}[] = [];
 		const ctx = {} as ExtensionCommandContext;
 		const pi = {
 			events: fakeBus((data) => {
@@ -31,7 +37,9 @@ describe("plan-implement in-process API", () => {
 		} as unknown as ExtensionAPI;
 		const result = await requestPlanImplement(pi, "Add feature X", "single", "worktree", "feature", ctx);
 		assert.deepEqual(result, { handled: true });
-		assert.deepEqual(calls, [{ task: "Add feature X", mode: "single", workLocation: "worktree", changeKind: "feature", ctx }]);
+		assert.deepEqual(calls, [
+			{ task: "Add feature X", mode: "single", workLocation: "worktree", changeKind: "feature", ctx },
+		]);
 	});
 
 	it("keeps the legacy caller signature and missing workLocation payload compatible", async () => {
@@ -67,15 +75,39 @@ describe("plan-implement in-process API", () => {
 			ctx: {} as ExtensionCommandContext,
 			claimed: false,
 		};
-		assert.equal(claimPlanImplementRequest(request, async () => {}), true);
-		assert.equal(claimPlanImplementRequest(request, async () => {}), false);
+		assert.equal(
+			claimPlanImplementRequest(request, async () => {}),
+			true,
+		);
+		assert.equal(
+			claimPlanImplementRequest(request, async () => {}),
+			false,
+		);
 	});
 
 	it("refuses claim on malformed request", () => {
-		assert.equal(claimPlanImplementRequest(null, async () => {}), false);
-		assert.equal(claimPlanImplementRequest({ schemaVersion: 1, task: 42 }, async () => {}), false);
-		assert.equal(claimPlanImplementRequest({ schemaVersion: 1, task: "test", mode: "invalid" }, async () => {}), false);
-		assert.equal(claimPlanImplementRequest({ schemaVersion: 1, task: "test", mode: "stack", workLocation: "worktree", changeKind: "generic", ctx: {} }, async () => {}), false);
-		assert.equal(claimPlanImplementRequest({ schemaVersion: 2, task: "test", mode: "single" }, async () => {}), false);
+		assert.equal(
+			claimPlanImplementRequest(null, async () => {}),
+			false,
+		);
+		assert.equal(
+			claimPlanImplementRequest({ schemaVersion: 1, task: 42 }, async () => {}),
+			false,
+		);
+		assert.equal(
+			claimPlanImplementRequest({ schemaVersion: 1, task: "test", mode: "invalid" }, async () => {}),
+			false,
+		);
+		assert.equal(
+			claimPlanImplementRequest(
+				{ schemaVersion: 1, task: "test", mode: "stack", workLocation: "worktree", changeKind: "generic", ctx: {} },
+				async () => {},
+			),
+			false,
+		);
+		assert.equal(
+			claimPlanImplementRequest({ schemaVersion: 2, task: "test", mode: "single" }, async () => {}),
+			false,
+		);
 	});
 });

@@ -7,10 +7,21 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, lstatSync, mkdtempSync, openSync, readSync, closeSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	closeSync,
+	lstatSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	readSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { LIMITS, type BaseResolution, type BaseStrategy, type ScopeBundle } from "./types.ts";
+import { type BaseResolution, type BaseStrategy, LIMITS, type ScopeBundle } from "./types.ts";
 
 export type { ScopeBundle } from "./types.ts";
 
@@ -255,8 +266,11 @@ export function collectScope(
 		}
 		if (remaining > 256) {
 			const cut = truncateUtf8(text, remaining - 128);
-			sections.push(cut.text + "\n\n[BUNDLE TRUNCATED: content exceeded the bundle budget. " +
-				"Inspect named files directly with read-only tools.]\n");
+			sections.push(
+				cut.text +
+					"\n\n[BUNDLE TRUNCATED: content exceeded the bundle budget. " +
+					"Inspect named files directly with read-only tools.]\n",
+			);
 			used = budget;
 		}
 		truncated = true;
@@ -347,10 +361,10 @@ export function collectScope(
 	// changeset itself modifies one, injection becomes a prompt-injection
 	// channel and children must run with --no-context-files instead.
 	const contextFilesTouched =
-		nameStatus
-			.split("\n")
-			.some((line) => line.split("\t").slice(1).some(touchesContextFile)) ||
-		statusEntries.some((e) => touchesContextFile(e.path) || (e.origPath !== undefined && touchesContextFile(e.origPath)));
+		nameStatus.split("\n").some((line) => line.split("\t").slice(1).some(touchesContextFile)) ||
+		statusEntries.some(
+			(e) => touchesContextFile(e.path) || (e.origPath !== undefined && touchesContextFile(e.origPath)),
+		);
 	return {
 		path: bundlePath,
 		dir,

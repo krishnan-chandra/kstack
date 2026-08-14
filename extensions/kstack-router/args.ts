@@ -1,10 +1,15 @@
 /** Pure argument parser for the /kstack command. */
 
-import { DEFAULTS, isChangeKind, isRouteId, type ChangeKind, type DeliveryRecommendation, type RouterArgs } from "./types.ts";
+import {
+	type ChangeKind,
+	DEFAULTS,
+	type DeliveryRecommendation,
+	isChangeKind,
+	isRouteId,
+	type RouterArgs,
+} from "./types.ts";
 
-export type ArgsParse =
-	| { ok: true; args: RouterArgs }
-	| { ok: false; error: string };
+export type ArgsParse = { ok: true; args: RouterArgs } | { ok: false; error: string };
 
 /**
  * Parse /kstack leading options. Supports:
@@ -68,13 +73,19 @@ export function parseArgs(input: string): ArgsParse {
 			i++;
 			const value = tokens[i];
 			if (!value || value.startsWith("--") || !isChangeKind(value)) {
-				return { ok: false, error: "--change-kind requires one of: bug-fix, feature, refactor, performance, prototype, generic." };
+				return {
+					ok: false,
+					error: "--change-kind requires one of: bug-fix, feature, refactor, performance, prototype, generic.",
+				};
 			}
 			changeKind = value;
 			continue;
 		}
 
-		return { ok: false, error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack, --worktree, --change-kind <kind>.` };
+		return {
+			ok: false,
+			error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack, --worktree, --change-kind <kind>.`,
+		};
 	}
 
 	if (delivery === "stack" && worktree) {

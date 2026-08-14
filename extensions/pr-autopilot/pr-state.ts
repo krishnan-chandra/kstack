@@ -18,16 +18,18 @@
  *   cleanup  — remove the managed worktree and branch after confirmation.
  */
 
-import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
 	currentBranch,
 	currentHead,
 	findLowestUnmergedPR,
+	type GHPrJson,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
@@ -38,14 +40,26 @@ import {
 	parsePorcelainPaths,
 	replyToIssueComment,
 	replyToReviewComment,
-	resolveReviewThread,
 	rerunFailedRun,
+	resolveReviewThread,
 	viewPR,
 	watchChecks,
-	type GHPrJson,
 } from "./github.ts";
-import { runAgent } from "./agent-runner.ts";
-import { LIMITS, type AutopilotAgentRole, type AutopilotModelSpec, type AutopilotMode, type AutopilotPersistedState, type CheckRun, type ExecFn, type FailureClass, type PRState, type ResolvedAutopilotConfig, type ReviewThread, type ThreadDecision, type UsageSummary } from "./types.ts";
+import {
+	type AutopilotAgentRole,
+	type AutopilotMode,
+	type AutopilotModelSpec,
+	type AutopilotPersistedState,
+	type CheckRun,
+	type ExecFn,
+	type FailureClass,
+	LIMITS,
+	type PRState,
+	type ResolvedAutopilotConfig,
+	type ReviewThread,
+	type ThreadDecision,
+	type UsageSummary,
+} from "./types.ts";
 import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 
 /** Lifecycle phases surfaced to the parent UI for status display. */
@@ -64,11 +78,12 @@ export function buildPRState(
 	existingVerifiedSha: string | null,
 ): PRState {
 	const mergeable = pr.mergeable.toLowerCase();
-	const normalizedMergeable = mergeable === "true" || mergeable === "mergeable"
-		? "mergeable"
-		: mergeable === "false" || mergeable === "conflicting"
-			? "conflicting"
-			: "unknown";
+	const normalizedMergeable =
+		mergeable === "true" || mergeable === "mergeable"
+			? "mergeable"
+			: mergeable === "false" || mergeable === "conflicting"
+				? "conflicting"
+				: "unknown";
 	const state = pr.state.toLowerCase();
 	const normalizedState = state === "closed" || state === "merged" ? state : "open";
 
@@ -118,7 +133,11 @@ export function isCodeReady(state: PRState): boolean {
 export function isMergeReady(state: PRState): boolean {
 	if (state.verifiedHeadSha !== state.headSha) return false;
 	if (state.isDraft || state.mergeStateStatus === "DRAFT") return false;
-	if (state.mergeStateStatus === "BLOCKED" || state.mergeStateStatus === "DIRTY" || state.mergeStateStatus === "BEHIND") {
+	if (
+		state.mergeStateStatus === "BLOCKED" ||
+		state.mergeStateStatus === "DIRTY" ||
+		state.mergeStateStatus === "BEHIND"
+	) {
 		return false;
 	}
 	return isCodeReady(state);
@@ -146,7 +165,9 @@ function clipBody(body: string): string {
 /** Build the triager task file content from PR state. */
 export function buildTriagerTask(state: PRState): string {
 	const failures = state.checks.filter((c) => c.conclusion === "failure" || c.status === "cancelled");
-	const pending = state.checks.filter((c) => c.status === "pending" || c.conclusion === "pending" || c.conclusion === null);
+	const pending = state.checks.filter(
+		(c) => c.status === "pending" || c.conclusion === "pending" || c.conclusion === null,
+	);
 	const threadLines = state.threads.map((t) => {
 		const loc = t.path ? `${t.path}${t.line !== undefined ? `:${t.line}` : ""}` : "(discussion)";
 		return `  - [${t.id}] @${t.commenter} ${loc} source=${t.source}\n${wrapUntrusted(`thread ${t.id}`, clipBody(t.body))}`;
@@ -215,9 +236,11 @@ export type FixMode = "threads" | "ci" | "all";
 /** Build the fixer task file content from PR state + triage. */
 export function buildFixerTask(state: PRState, triage: string, fixMode: FixMode): string {
 	const modeLine =
-		fixMode === "threads" ? "address review threads marked fix only"
-		: fixMode === "ci" ? "address code CI failures only"
-		: "address threads marked fix and code CI failures";
+		fixMode === "threads"
+			? "address review threads marked fix only"
+			: fixMode === "ci"
+				? "address code CI failures only"
+				: "address threads marked fix and code CI failures";
 	return `# PR Autopilot — Fix Phase
 
 ${untrustedFenceNote()}
@@ -234,7 +257,12 @@ ${wrapUntrusted("triage json", triage)}
 ${state.threads.map((t) => wrapUntrusted(`thread ${t.id} @${t.commenter} ${t.path ?? ""}:${t.line ?? ""}`, t.body)).join("\n\n") || "(none)"}
 
 ## Failing check logs
-${state.checks.filter((c) => c.conclusion === "failure").map((c) => wrapUntrusted(`ci ${c.name}`, c.logExcerpt ?? "(no log)")).join("\n\n") || "(none)"}
+${
+	state.checks
+		.filter((c) => c.conclusion === "failure")
+		.map((c) => wrapUntrusted(`ci ${c.name}`, c.logExcerpt ?? "(no log)"))
+		.join("\n\n") || "(none)"
+}
 
 ## Instructions (tiny-model only)
 
@@ -252,12 +280,19 @@ The working tree is already on the PR's branch. Treat it as the source of truth.
 }
 
 /** Pick a tiny model from the config, rotating for independence across cycles. */
-export function pickModel(models: readonly AutopilotModelSpec[], turn: number): { model: string; label: string; thinking?: string } {
+export function pickModel(
+	models: readonly AutopilotModelSpec[],
+	turn: number,
+): { model: string; label: string; thinking?: string } {
 	const index = turn % models.length;
 	return { model: models[index].model, label: models[index].label, thinking: models[index].thinking };
 }
 
-export async function resolveTargetPR(exec: ExecFn, cwd: string, explicitPR: number | undefined): Promise<{ prNumber?: number; error?: string }> {
+export async function resolveTargetPR(
+	exec: ExecFn,
+	cwd: string,
+	explicitPR: number | undefined,
+): Promise<{ prNumber?: number; error?: string }> {
 	if (explicitPR !== undefined) {
 		return { prNumber: explicitPR };
 	}
@@ -267,4 +302,3 @@ export async function resolveTargetPR(exec: ExecFn, cwd: string, explicitPR: num
 	}
 	return { prNumber: result.prNumber };
 }
-

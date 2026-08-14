@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveRoute, type RouteResolutionEffects } from "./route-resolution.ts";
 import type { ClassifierRunResult } from "./classifier-runner.ts";
+import { type RouteResolutionEffects, resolveRoute } from "./route-resolution.ts";
 import type { RouteId, RouterArgs } from "./types.ts";
 
 const completed: ClassifierRunResult = {
@@ -18,12 +18,9 @@ const completed: ClassifierRunResult = {
 	usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
 };
 
-function effects(options: {
-	classifier?: ClassifierRunResult;
-	routes?: RouteId[];
-	choices?: string[];
-	current?: () => boolean;
-} = {}) {
+function effects(
+	options: { classifier?: ClassifierRunResult; routes?: RouteId[]; choices?: string[]; current?: () => boolean } = {},
+) {
 	const calls: string[] = [];
 	const routes = [...(options.routes ?? [])];
 	const choices = [...(options.choices ?? [])];
@@ -61,10 +58,16 @@ async function resolve(args: RouterArgs, fx: RouteResolutionEffects, resolution 
 test("an explicit route skips classification", async () => {
 	const { fx, calls } = effects();
 	const result = await resolve({ route: "investigate", task: "do work" }, fx);
-	assert.deepEqual(result, { resolved: {
-		route: "investigate", delivery: undefined, changeKind: "generic", overrode: false,
-		modelSource: "explicit --route", confidence: undefined,
-	} });
+	assert.deepEqual(result, {
+		resolved: {
+			route: "investigate",
+			delivery: undefined,
+			changeKind: "generic",
+			overrode: false,
+			modelSource: "explicit --route",
+			confidence: undefined,
+		},
+	});
 	assert.equal(calls.includes("classifier"), false);
 });
 
@@ -104,10 +107,15 @@ test("classifier failure falls back to manual selection", async () => {
 
 test("missing classifier model uses the no-classifier manual prompt", async () => {
 	const { fx, calls } = effects({ routes: ["review"] });
-	const result = await resolveRoute({
-		parsedArgs: { task: "do work" }, task: "do work", routerConfig: null,
-		classifierResolution: { ok: false, error: "No model available for routing classification." },
-	}, fx);
+	const result = await resolveRoute(
+		{
+			parsedArgs: { task: "do work" },
+			task: "do work",
+			routerConfig: null,
+			classifierResolution: { ok: false, error: "No model available for routing classification." },
+		},
+		fx,
+	);
 	assert.ok("resolved" in result && result.resolved.route === "review");
 	assert.ok(calls.includes("route:No classifier available. Select a route:"));
 	assert.ok(calls.includes("notify:No model available for routing classification."));
@@ -140,18 +148,29 @@ test("cancelling delivery selection cancels resolution", async () => {
 
 test("a manually overridden change defaults to single without prompting", async () => {
 	const manualFx = effects({ routes: ["change"] });
-	const result = await resolveRoute({
-		parsedArgs: { task: "do work" }, task: "do work", routerConfig: null,
-		classifierResolution: { ok: false, error: "none" },
-	}, manualFx.fx);
+	const result = await resolveRoute(
+		{
+			parsedArgs: { task: "do work" },
+			task: "do work",
+			routerConfig: null,
+			classifierResolution: { ok: false, error: "none" },
+		},
+		manualFx.fx,
+	);
 	assert.ok("resolved" in result && result.resolved.delivery === "single");
-	assert.equal(manualFx.calls.some((call) => call.startsWith("option:")), false);
+	assert.equal(
+		manualFx.calls.some((call) => call.startsWith("option:")),
+		false,
+	);
 });
 
 test("session invalidation after route selection cancels further work", async () => {
 	let checks = 0;
-	const { fx, calls } = effects({ routes: ["change"], current: () => ++checks === 1 ? false : false });
+	const { fx, calls } = effects({ routes: ["change"], current: () => (++checks === 1 ? false : false) });
 	const result = await resolve({ task: "do work" }, fx);
 	assert.deepEqual(result, { cancelled: true });
-	assert.equal(calls.some((call) => call.startsWith("option:")), false);
+	assert.equal(
+		calls.some((call) => call.startsWith("option:")),
+		false,
+	);
 });

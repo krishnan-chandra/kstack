@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { runAutopilot, type DriverOps } from "./driver.ts";
+import { type DriverOps, runAutopilot } from "./driver.ts";
 import type { AutopilotPersistedState, ExecFn, ExecFnResult, ResolvedAutopilotConfig } from "./types.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -60,27 +60,51 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		const key = `${command} ${args.join(" ")}`;
 		calls.push(key);
 		if (command === "gh" && args[0] === "pr" && args[1] === "view") {
-			return ok(JSON.stringify({
-				number: 42,
-				title: "Fix the thing",
-				state: "OPEN",
-				isDraft: false,
-				mergeable: scenario.mergeable ?? "true",
-				mergeStateStatus: scenario.mergeStateStatus ?? "CLEAN",
-				headRefName: BRANCH,
-				baseRefName: "main",
-				headRefOid: SHA,
-				commits: [{ oid: SHA }],
-			}));
+			return ok(
+				JSON.stringify({
+					number: 42,
+					title: "Fix the thing",
+					state: "OPEN",
+					isDraft: false,
+					mergeable: scenario.mergeable ?? "true",
+					mergeStateStatus: scenario.mergeStateStatus ?? "CLEAN",
+					headRefName: BRANCH,
+					baseRefName: "main",
+					headRefOid: SHA,
+					commits: [{ oid: SHA }],
+				}),
+			);
 		}
 		if (command === "gh" && args[0] === "repo" && args[1] === "view") return ok("owner/repo\n");
 		if (command === "gh" && args[0] === "api" && args[1] === "graphql") {
-			const nodes = scenario.thread ? [{
-				id: scenario.thread.id,
-				isResolved: false,
-				comments: { nodes: [{ databaseId: 7, body: scenario.thread.body, path: "src/a.ts", line: 1, author: { login: "reviewer" } }] },
-			}] : [];
-			return ok(JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } }));
+			const nodes = scenario.thread
+				? [
+						{
+							id: scenario.thread.id,
+							isResolved: false,
+							comments: {
+								nodes: [
+									{
+										databaseId: 7,
+										body: scenario.thread.body,
+										path: "src/a.ts",
+										line: 1,
+										author: { login: "reviewer" },
+									},
+								],
+							},
+						},
+					]
+				: [];
+			return ok(
+				JSON.stringify({
+					data: {
+						repository: {
+							pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } },
+						},
+					},
+				}),
+			);
 		}
 		if (command === "gh" && args[0] === "api" && args[1]?.includes("/issues/42/comments")) return ok("[]");
 		if (command === "gh" && args[0] === "pr" && args[1] === "checks" && args.includes("--watch")) return ok();
@@ -101,17 +125,34 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 	};
 	let persisted: AutopilotPersistedState | undefined;
 	const ops: DriverOps = {
-		loadPersistedState: async (repoKey, prNumber) => persisted ?? {
-			repoKey, prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [],
+		loadPersistedState: async (repoKey, prNumber) =>
+			persisted ?? {
+				repoKey,
+				prNumber,
+				headSha: "",
+				handledThreadIds: [],
+				repliedThreadIds: [],
+				flakeRetried: [],
+			},
+		savePersistedState: async (state) => {
+			persisted = structuredClone(state);
 		},
-		savePersistedState: async (state) => { persisted = structuredClone(state); },
 		runChildRole: async (role) => {
 			roles.push(role);
-			return { ok: true, output: role === "triager" ? (scenario.triage ?? triage()) : (scenario.fixer ?? "fixed\nVERIFY_OK"), usage };
+			return {
+				ok: true,
+				output: role === "triager" ? (scenario.triage ?? triage()) : (scenario.fixer ?? "fixed\nVERIFY_OK"),
+				usage,
+			};
 		},
 	};
 	return {
-		cwd, calls, roles, unexpected, exec, ops,
+		cwd,
+		calls,
+		roles,
+		unexpected,
+		exec,
+		ops,
 		handlers: {
 			setPhase: () => {},
 			notify: () => {},
@@ -133,23 +174,30 @@ function triage(options: { checks?: unknown[]; threads?: unknown[] } = {}): stri
 
 async function run(mode: "check" | "drive", scenario: Scenario = {}) {
 	const harness = await createHarness(scenario);
-	const result = await runAutopilot(mode, {
-		config,
-		exec: harness.exec,
-		cwd: harness.cwd,
-		explicitPR: 42,
-		promptDir: harness.cwd,
-		triagerPromptFile: join(harness.cwd, "triager.md"),
-		fixerPromptFile: join(harness.cwd, "fixer.md"),
-	}, harness.handlers, new AbortController().signal, harness.ops);
+	const result = await runAutopilot(
+		mode,
+		{
+			config,
+			exec: harness.exec,
+			cwd: harness.cwd,
+			explicitPR: 42,
+			promptDir: harness.cwd,
+			triagerPromptFile: join(harness.cwd, "triager.md"),
+			fixerPromptFile: join(harness.cwd, "fixer.md"),
+		},
+		harness.handlers,
+		new AbortController().signal,
+		harness.ops,
+	);
 	assert.deepEqual(harness.unexpected, []);
 	return { harness, result };
 }
 
 function mutatingCalls(calls: string[]): string[] {
-	return calls.filter((call) =>
-		/^(git (add|commit|push))/.test(call) ||
-		(call.startsWith("gh api ") && (call.includes("--method POST") || call.includes("resolveReviewThread"))),
+	return calls.filter(
+		(call) =>
+			/^(git (add|commit|push))/.test(call) ||
+			(call.startsWith("gh api ") && (call.includes("--method POST") || call.includes("resolveReviewThread"))),
 	);
 }
 
@@ -215,7 +263,10 @@ test("VERIFY_FAIL from a fixer is never pushed", async (t) => {
 	assert.equal(result.status, "blocked");
 	assert.equal(result.mergeReady, false);
 	assert.ok(result.blockedReasons.some((reason) => reason.includes("VERIFY_FAIL")));
-	assert.equal(harness.calls.some((call) => call.startsWith("git push")), false);
+	assert.equal(
+		harness.calls.some((call) => call.startsWith("git push")),
+		false,
+	);
 });
 
 test("declining a fix push returns incomplete", async (t) => {
@@ -227,7 +278,10 @@ test("declining a fix push returns incomplete", async (t) => {
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "incomplete");
 	assert.deepEqual(result.blockedReasons, ["push not confirmed"]);
-	assert.equal(harness.calls.some((call) => call.startsWith("git push")), false);
+	assert.equal(
+		harness.calls.some((call) => call.startsWith("git push")),
+		false,
+	);
 });
 
 test("drive mode stops at its configured cycle bound", async (t) => {

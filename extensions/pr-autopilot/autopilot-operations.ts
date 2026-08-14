@@ -18,16 +18,18 @@
  *   cleanup  — remove the managed worktree and branch after confirmation.
  */
 
-import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
 	currentBranch,
 	currentHead,
 	findLowestUnmergedPR,
+	type GHPrJson,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
@@ -38,18 +40,29 @@ import {
 	parsePorcelainPaths,
 	replyToIssueComment,
 	replyToReviewComment,
-	resolveReviewThread,
 	rerunFailedRun,
+	resolveReviewThread,
 	viewPR,
 	watchChecks,
-	type GHPrJson,
 } from "./github.ts";
-import { runAgent } from "./agent-runner.ts";
-import { LIMITS, type AutopilotAgentRole, type AutopilotModelSpec, type AutopilotMode, type AutopilotPersistedState, type CheckRun, type ExecFn, type FailureClass, type PRState, type ResolvedAutopilotConfig, type ReviewThread, type ThreadDecision, type UsageSummary } from "./types.ts";
-import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
-
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import { buildPRState } from "./pr-state.ts";
+import {
+	type AutopilotAgentRole,
+	type AutopilotMode,
+	type AutopilotModelSpec,
+	type AutopilotPersistedState,
+	type CheckRun,
+	type ExecFn,
+	type FailureClass,
+	LIMITS,
+	type PRState,
+	type ResolvedAutopilotConfig,
+	type ReviewThread,
+	type ThreadDecision,
+	type UsageSummary,
+} from "./types.ts";
+import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 
 export interface PushResult {
 	ok: boolean;
@@ -75,9 +88,15 @@ export async function loadPersistedState(repoKey: string, prNumber: number): Pro
 			return emptyPersistedState(repoKey, prNumber);
 		}
 		const obj = raw as Record<string, unknown>;
-		const handled = Array.isArray(obj.handledThreadIds) ? obj.handledThreadIds.filter((id): id is string => typeof id === "string") : [];
-		const replied = Array.isArray(obj.repliedThreadIds) ? obj.repliedThreadIds.filter((id): id is string => typeof id === "string") : [];
-		const flake = Array.isArray(obj.flakeRetried) ? obj.flakeRetried.filter((id): id is string => typeof id === "string") : [];
+		const handled = Array.isArray(obj.handledThreadIds)
+			? obj.handledThreadIds.filter((id): id is string => typeof id === "string")
+			: [];
+		const replied = Array.isArray(obj.repliedThreadIds)
+			? obj.repliedThreadIds.filter((id): id is string => typeof id === "string")
+			: [];
+		const flake = Array.isArray(obj.flakeRetried)
+			? obj.flakeRetried.filter((id): id is string => typeof id === "string")
+			: [];
 		return {
 			repoKey,
 			prNumber,
@@ -122,20 +141,25 @@ export async function fetchPRState(
 		["checks", checksResult],
 	] as const;
 	for (const [label, result] of failures) {
-		if (result.code !== 0) return `Could not fetch ${label} for PR #${prNumber}: ${result.stderr.trim() || "unknown GitHub error"}`;
+		if (result.code !== 0)
+			return `Could not fetch ${label} for PR #${prNumber}: ${result.stderr.trim() || "unknown GitHub error"}`;
 	}
 
 	const checks = await attachFailedLogs(exec, cwd, checksResult.checks, opts.concurrency);
-	const threads = filterHandledThreads(
-		[...threadsResult.threads, ...issueResult.threads],
-		opts.handledThreadIds,
-	);
+	const threads = filterHandledThreads([...threadsResult.threads, ...issueResult.threads], opts.handledThreadIds);
 	return buildPRState(prResult.pr, threads, checks, existingVerifiedSha);
 }
 
 export async function runChildRole(
 	role: "triager" | "fixer",
-	opts: { model: string; thinking?: string; promptFile: string; taskFile: string; timeoutMinutes: number; maxRuntimeMinutes: number },
+	opts: {
+		model: string;
+		thinking?: string;
+		promptFile: string;
+		taskFile: string;
+		timeoutMinutes: number;
+		maxRuntimeMinutes: number;
+	},
 	ctx: { cwd: string; signal?: AbortSignal },
 ): Promise<{ ok: true; output: string; usage: UsageSummary } | { ok: false; error: string; usage: UsageSummary }> {
 	const result = await runAgent({
@@ -162,25 +186,39 @@ export async function runChildRole(
 	};
 }
 
-export async function prepareMutationCheckout(exec: ExecFn, cwd: string, state: PRState): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function prepareMutationCheckout(
+	exec: ExecFn,
+	cwd: string,
+	state: PRState,
+): Promise<{ ok: true } | { ok: false; error: string }> {
 	const [branch, head, status] = await Promise.all([
 		currentBranch(exec, cwd),
 		currentHead(exec, cwd),
 		exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 }),
 	]);
 	if (branch.branch !== state.headRef) {
-		return { ok: false, error: `Selected PR #${state.number} uses ${state.headRef}, but the checkout is on ${branch.branch ?? "a detached HEAD"}. Open its managed worktree first.` };
+		return {
+			ok: false,
+			error: `Selected PR #${state.number} uses ${state.headRef}, but the checkout is on ${branch.branch ?? "a detached HEAD"}. Open its managed worktree first.`,
+		};
 	}
 	if (head.sha !== state.headSha) {
-		return { ok: false, error: `Local HEAD ${head.sha ?? "could not be read"} does not match PR #${state.number} head ${state.headSha}. Synchronize the PR worktree first.` };
+		return {
+			ok: false,
+			error: `Local HEAD ${head.sha ?? "could not be read"} does not match PR #${state.number} head ${state.headSha}. Synchronize the PR worktree first.`,
+		};
 	}
 	if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
-	if (status.stdout.trim()) return { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." };
+	if (status.stdout.trim())
+		return { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." };
 	const integrated = await integrateRemoteHead(exec, cwd, state.headRef);
 	if (!integrated.ok) return integrated;
 	const synchronizedHead = await currentHead(exec, cwd);
 	if (synchronizedHead.sha !== state.headSha) {
-		return { ok: false, error: `The remote PR head advanced to ${synchronizedHead.sha ?? "an unreadable SHA"}; refresh GitHub state before editing.` };
+		return {
+			ok: false,
+			error: `The remote PR head advanced to ${synchronizedHead.sha ?? "an unreadable SHA"}; refresh GitHub state before editing.`,
+		};
 	}
 	return { ok: true };
 }
@@ -214,7 +252,10 @@ export async function doCommitAndPush(
 		exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 }),
 	]);
 	if (branch.branch !== headRef || head.sha !== expectedHeadSha) {
-		return { ok: false, error: `The fixer changed checkout identity (expected ${headRef}@${expectedHeadSha}, found ${branch.branch ?? "detached"}@${head.sha ?? "unknown"}). Refusing to publish.` };
+		return {
+			ok: false,
+			error: `The fixer changed checkout identity (expected ${headRef}@${expectedHeadSha}, found ${branch.branch ?? "detached"}@${head.sha ?? "unknown"}). Refusing to publish.`,
+		};
 	}
 	if (status.code !== 0) return { ok: false, error: `Could not inspect fixer changes: ${status.stderr.trim()}` };
 	const paths = parsePorcelainPaths(status.stdout);
@@ -224,7 +265,10 @@ export async function doCommitAndPush(
 	const allowed = paths.filter((p) => !isForbiddenStagingPath(p));
 	if (forbidden.length > 0) {
 		const restoreError = await restoreForbiddenPaths(exec, cwd, forbidden);
-		return { ok: false, error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restoreError ? ` Automatic restoration failed: ${restoreError}` : " Those changes were restored."}` };
+		return {
+			ok: false,
+			error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restoreError ? ` Automatic restoration failed: ${restoreError}` : " Those changes were restored."}`,
+		};
 	}
 	if (allowed.length === 0) return { ok: true, error: "no changes to commit" };
 
@@ -233,7 +277,11 @@ export async function doCommitAndPush(
 
 	const commit = await exec(
 		"git",
-		["commit", "-m", `Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`],
+		[
+			"commit",
+			"-m",
+			`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
+		],
 		{ cwd, timeout: 10_000 },
 	);
 	if (commit.code !== 0) return { ok: false, error: `git commit failed: ${commit.stderr.trim()}` };
@@ -255,7 +303,10 @@ export async function runCleanup(
 	const branch = branchResult.stdout.trim();
 
 	if (!branch.startsWith("kstack/")) {
-		notify(`Current branch ${branch || "(detached)"} is not a managed kstack worktree. Cleanup is a no-op for non-managed branches.`, "warning");
+		notify(
+			`Current branch ${branch || "(detached)"} is not a managed kstack worktree. Cleanup is a no-op for non-managed branches.`,
+			"warning",
+		);
 		return true;
 	}
 
@@ -270,7 +321,10 @@ export async function runCleanup(
 	);
 	if (!confirmed) return false;
 
-	const commonDirResult = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, timeout: 5_000 });
+	const commonDirResult = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+		cwd,
+		timeout: 5_000,
+	});
 	const commonDir = commonDirResult.stdout.trim();
 	if (commonDirResult.code !== 0 || !commonDir) {
 		notify(`Could not locate the owning repository: ${commonDirResult.stderr.trim()}`, "error");
@@ -304,7 +358,11 @@ function parseDecision(raw: unknown, fixable: unknown): ThreadDecision | undefin
 	return undefined;
 }
 
-export interface ParsedCheck { name: string; cls: FailureClass; action: string }
+export interface ParsedCheck {
+	name: string;
+	cls: FailureClass;
+	action: string;
+}
 export type ParsedThread =
 	| { id: string; decision: "fix"; cls: FailureClass; action: string; reply: string }
 	| { id: string; decision: "dismiss"; action: string; reply: string }
@@ -390,7 +448,11 @@ export function applyForceAsk(state: PRState, parsed: ParsedTriage): ParsedTriag
 		const source = byId.get(thread.id);
 		if (!source || !shouldForceAsk(source.body)) return thread;
 		if (thread.decision === "ask") return thread;
-		return { id: thread.id, decision: "ask" as const, action: thread.action || "Forced ask: sensitive or untrusted comment." };
+		return {
+			id: thread.id,
+			decision: "ask" as const,
+			action: thread.action || "Forced ask: sensitive or untrusted comment.",
+		};
 	});
 	for (const source of state.threads) {
 		if (!shouldForceAsk(source.body)) continue;
@@ -428,9 +490,11 @@ export async function applyThreadReplies(
 		const source = byId.get(thread.id);
 		if (!source) continue;
 		const reply = thread.decision === "fix" || thread.decision === "dismiss" ? thread.reply : "";
-		const body = reply.trim() || (thread.decision === "dismiss"
-			? `Dismissing: ${thread.action}`
-			: `Addressed in a follow-up commit. ${thread.action}`);
+		const body =
+			reply.trim() ||
+			(thread.decision === "dismiss"
+				? `Dismissing: ${thread.action}`
+				: `Addressed in a follow-up commit. ${thread.action}`);
 		if (source.source === "review-thread") {
 			if (source.replyToId !== undefined && !opts.repliedThreadIds.includes(thread.id)) {
 				const posted = await replyToReviewComment(exec, cwd, state.number, source.replyToId, body);

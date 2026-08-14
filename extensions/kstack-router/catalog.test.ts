@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { validateCatalog, getAllRoutes, getRouteMetadata, checkDependencies } from "./catalog.ts";
+import { fileURLToPath } from "node:url";
+import { checkDependencies, getAllRoutes, getRouteMetadata, validateCatalog } from "./catalog.ts";
 import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -111,7 +111,10 @@ describe("kstack-router catalog", () => {
 		assert.match(principles, /## Writable workstreams/);
 		assert.match(principles, /dedicated `kstack\/<task-slug>` branch/);
 		assert.match(principles, /commits coherent, verified increments/);
-		assert.match(principles, /Read-only routes[\s\S]*`investigate`, `review`, `session-pickup`[\s\S]*do not create branches/);
+		assert.match(
+			principles,
+			/Read-only routes[\s\S]*`investigate`, `review`, `session-pickup`[\s\S]*do not create branches/,
+		);
 		assert.match(principles, /Local branch creation and incremental commits are part of writable/);
 	});
 

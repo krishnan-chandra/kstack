@@ -6,7 +6,10 @@ export interface LandDeps {
 	exec: ExecFn;
 	cwd: string;
 	signal: AbortSignal;
-	runAutopilot(mode: "check" | "watch", pr: number): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
+	runAutopilot(
+		mode: "check" | "watch",
+		pr: number,
+	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
 	selectMethod(allowed: MergeMethod[]): Promise<MergeMethod | undefined>;
 	confirmMerge(preview: string): Promise<boolean>;
 	now(): number;
@@ -14,7 +17,14 @@ export interface LandDeps {
 }
 
 function empty(status: LandResult["status"], blocker: string): LandResult {
-	return { status, frontiers: [], autopilotRan: false, remainingBookmarks: [], completedMutations: [], blockers: [blocker] };
+	return {
+		status,
+		frontiers: [],
+		autopilotRan: false,
+		remainingBookmarks: [],
+		completedMutations: [],
+		blockers: [blocker],
+	};
 }
 
 export async function runLand(options: LandOptions, deps: LandDeps): Promise<LandResult> {
@@ -31,34 +41,101 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 		if (!readiness.handled) return empty("blocked", "pr-autopilot extension is unavailable.");
 		const autopilot = readiness.outcome;
 		autopilotStatus = autopilot.status;
-		const base = { frontiers: [], autopilotRan: true, autopilotStatus, remainingBookmarks: [], completedMutations: [], blockers: [] };
-		if (autopilot.status !== "merge-ready" || !autopilot.mergeReady || !autopilot.prState || autopilot.prState.verifiedHeadSha !== autopilot.prState.headSha) {
-			return { ...base, status: "blocked", blockers: autopilot.blockedReasons.length ? autopilot.blockedReasons : ["Autopilot did not produce exact-head merge-ready evidence."] };
+		const base = {
+			frontiers: [],
+			autopilotRan: true,
+			autopilotStatus,
+			remainingBookmarks: [],
+			completedMutations: [],
+			blockers: [],
+		};
+		if (
+			autopilot.status !== "merge-ready" ||
+			!autopilot.mergeReady ||
+			!autopilot.prState ||
+			autopilot.prState.verifiedHeadSha !== autopilot.prState.headSha
+		) {
+			return {
+				...base,
+				status: "blocked",
+				blockers: autopilot.blockedReasons.length
+					? autopilot.blockedReasons
+					: ["Autopilot did not produce exact-head merge-ready evidence."],
+			};
 		}
 
 		const ready = await getPullRequest(deps.exec, deps.cwd, initial.number, deps.signal);
-		if (ready.state !== "OPEN" || ready.isDraft || ready.headOid !== autopilot.prState.headSha || ready.headRef !== autopilot.prState.headRef) {
-			return { ...base, status: "blocked", blockers: ["GitHub no longer matches autopilot's exact-head readiness evidence."] };
+		if (
+			ready.state !== "OPEN" ||
+			ready.isDraft ||
+			ready.headOid !== autopilot.prState.headSha ||
+			ready.headRef !== autopilot.prState.headRef
+		) {
+			return {
+				...base,
+				status: "blocked",
+				blockers: ["GitHub no longer matches autopilot's exact-head readiness evidence."],
+			};
 		}
-		const method = options.method ?? await deps.selectMethod(repo.allowedMethods);
+		const method = options.method ?? (await deps.selectMethod(repo.allowedMethods));
 		if (!method) return { ...base, status: "declined", blockers: ["No merge method selected."] };
-		if (!repo.allowedMethods.includes(method)) return { ...base, status: "blocked", blockers: [`Repository does not allow ${method} merges.`] };
+		if (!repo.allowedMethods.includes(method))
+			return { ...base, status: "blocked", blockers: [`Repository does not allow ${method} merges.`] };
 
-		frontier = { prNumber: ready.number, url: ready.url, expectedHeadSha: ready.headOid, method, state: "not-attempted" };
-		const confirmed = await deps.confirmMerge(`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`);
-		if (!confirmed) return { ...base, status: "declined", frontiers: [frontier], blockers: ["Merge confirmation declined."] };
+		frontier = {
+			prNumber: ready.number,
+			url: ready.url,
+			expectedHeadSha: ready.headOid,
+			method,
+			state: "not-attempted",
+		};
+		const confirmed = await deps.confirmMerge(
+			`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`,
+		);
+		if (!confirmed)
+			return { ...base, status: "declined", frontiers: [frontier], blockers: ["Merge confirmation declined."] };
 
 		const revalidated = await getPullRequest(deps.exec, deps.cwd, ready.number, deps.signal);
-		if (revalidated.state !== "OPEN" || revalidated.isDraft || revalidated.headOid !== frontier.expectedHeadSha || revalidated.headRef !== ready.headRef) {
-			return { ...base, status: "blocked", frontiers: [frontier], blockers: ["PR changed after confirmation; merge was not attempted."] };
+		if (
+			revalidated.state !== "OPEN" ||
+			revalidated.isDraft ||
+			revalidated.headOid !== frontier.expectedHeadSha ||
+			revalidated.headRef !== ready.headRef
+		) {
+			return {
+				...base,
+				status: "blocked",
+				frontiers: [frontier],
+				blockers: ["PR changed after confirmation; merge was not attempted."],
+			};
 		}
 		await mergePullRequest(deps.exec, deps.cwd, ready.number, method, ready.headOid, deps.signal);
 		acceptedMutation = true;
 		completedMutations.push(`GitHub accepted merge/queue request for PR #${ready.number}`);
 
-		const verified = await waitForMerge(deps.exec, deps.cwd, ready.number, ready.headRef, ready.headOid, deps, deps.signal);
-		if (!verified.merged) return { ...base, status: "partially-landed", frontiers: [{ ...frontier, state: "queued" }], completedMutations, blockers: ["GitHub accepted the request, but remote MERGED state was not verified before stopping."] };
-		return { ...base, status: "landed", frontiers: [{ ...frontier, state: "landed" }], completedMutations: [...completedMutations, `Verified PR #${ready.number} merged remotely`] };
+		const verified = await waitForMerge(
+			deps.exec,
+			deps.cwd,
+			ready.number,
+			ready.headRef,
+			ready.headOid,
+			deps,
+			deps.signal,
+		);
+		if (!verified.merged)
+			return {
+				...base,
+				status: "partially-landed",
+				frontiers: [{ ...frontier, state: "queued" }],
+				completedMutations,
+				blockers: ["GitHub accepted the request, but remote MERGED state was not verified before stopping."],
+			};
+		return {
+			...base,
+			status: "landed",
+			frontiers: [{ ...frontier, state: "landed" }],
+			completedMutations: [...completedMutations, `Verified PR #${ready.number} merged remotely`],
+		};
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
 		if (acceptedMutation && frontier) {
@@ -69,10 +146,13 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 				autopilotStatus,
 				remainingBookmarks: [],
 				completedMutations,
-				blockers: [deps.signal.aborted ? "Verification was aborted after GitHub accepted the merge/queue request." : reason],
+				blockers: [
+					deps.signal.aborted ? "Verification was aborted after GitHub accepted the merge/queue request." : reason,
+				],
 			};
 		}
-		if (deps.signal.aborted) return empty("aborted", "Landing was aborted before GitHub accepted a merge/queue request.");
+		if (deps.signal.aborted)
+			return empty("aborted", "Landing was aborted before GitHub accepted a merge/queue request.");
 		return empty("failed", reason);
 	}
 }

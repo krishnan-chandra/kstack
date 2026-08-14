@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseClassifierOutput, formatRecommendation, buildRouteAlternatives } from "./classification.ts";
-import { CLASSIFIER_SENTINEL_START, CLASSIFIER_SENTINEL_END } from "./types.ts";
+import { buildRouteAlternatives, formatRecommendation, parseClassifierOutput } from "./classification.ts";
+import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
 
 function buildEnvelope(body: string): string {
 	return `${CLASSIFIER_SENTINEL_START}\n${body}\n${CLASSIFIER_SENTINEL_END}`;
@@ -9,12 +9,14 @@ function buildEnvelope(body: string): string {
 
 describe("parseClassifierOutput", () => {
 	it("parses valid envelope", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "investigate",
-			confidence: "high",
-			rationale: "This is a research task.",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "investigate",
+				confidence: "high",
+				rationale: "This is a research task.",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) {
@@ -25,13 +27,15 @@ describe("parseClassifierOutput", () => {
 	});
 
 	it("parses envelope with delivery", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "change",
-			confidence: "high",
-			rationale: "Feature work.",
-			delivery: "single",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "change",
+				confidence: "high",
+				rationale: "Feature work.",
+				delivery: "single",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) {
@@ -41,39 +45,45 @@ describe("parseClassifierOutput", () => {
 	});
 
 	it("parses a change-kind for change work", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "change",
-			confidence: "high",
-			rationale: "Regression in the parser.",
-			changeKind: "bug-fix",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "change",
+				confidence: "high",
+				rationale: "Regression in the parser.",
+				changeKind: "bug-fix",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) assert.equal(result.envelope.changeKind, "bug-fix");
 	});
 
 	it("ignores an echoed change-kind outside the change route", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "investigate",
-			confidence: "high",
-			rationale: "Research.",
-			changeKind: "feature",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "investigate",
+				confidence: "high",
+				rationale: "Research.",
+				changeKind: "feature",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) assert.equal(result.envelope.changeKind, undefined);
 	});
 
 	it("parses envelope with stack delivery", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "change",
-			confidence: "medium",
-			rationale: "Large feature that benefits from stacking.",
-			delivery: "stack",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "change",
+				confidence: "medium",
+				rationale: "Large feature that benefits from stacking.",
+				delivery: "stack",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) {
@@ -82,7 +92,9 @@ describe("parseClassifierOutput", () => {
 	});
 
 	it("rejects missing sentinels", () => {
-		const result = parseClassifierOutput(JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "high", rationale: "test" }));
+		const result = parseClassifierOutput(
+			JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "high", rationale: "test" }),
+		);
 		assert.ok(!result.ok);
 	});
 
@@ -99,61 +111,75 @@ describe("parseClassifierOutput", () => {
 	});
 
 	it("rejects unknown schemaVersion", () => {
-		const output = buildEnvelope(JSON.stringify({ schemaVersion: 2, route: "investigate", confidence: "high", rationale: "test" }));
+		const output = buildEnvelope(
+			JSON.stringify({ schemaVersion: 2, route: "investigate", confidence: "high", rationale: "test" }),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
 
 	it("rejects unknown route", () => {
-		const output = buildEnvelope(JSON.stringify({ schemaVersion: 1, route: "unknown", confidence: "high", rationale: "test" }));
+		const output = buildEnvelope(
+			JSON.stringify({ schemaVersion: 1, route: "unknown", confidence: "high", rationale: "test" }),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
 
 	it("rejects invalid confidence", () => {
-		const output = buildEnvelope(JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "certain", rationale: "test" }));
+		const output = buildEnvelope(
+			JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "certain", rationale: "test" }),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
 
 	it("rejects missing rationale", () => {
-		const output = buildEnvelope(JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "high", rationale: "" }));
+		const output = buildEnvelope(
+			JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "high", rationale: "" }),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
 
 	it("rejects oversized rationale", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "investigate",
-			confidence: "high",
-			rationale: "x".repeat(501),
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "investigate",
+				confidence: "high",
+				rationale: "x".repeat(501),
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
 
 	it("rejects unknown keys (injection protection)", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "change",
-			confidence: "high",
-			rationale: "test",
-			command: "rm -rf /",
-			model: "gpt-5",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "change",
+				confidence: "high",
+				rationale: "test",
+				command: "rm -rf /",
+				model: "gpt-5",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
 
 	it("rejects invalid delivery", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "change",
-			confidence: "high",
-			rationale: "test",
-			delivery: "both",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "change",
+				confidence: "high",
+				rationale: "test",
+				delivery: "both",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(!result.ok);
 	});
@@ -165,12 +191,14 @@ describe("parseClassifierOutput", () => {
 	});
 
 	it("clamps unsupported to low confidence", () => {
-		const output = buildEnvelope(JSON.stringify({
-			schemaVersion: 1,
-			route: "unsupported",
-			confidence: "high",
-			rationale: "This is autonomous.",
-		}));
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "unsupported",
+				confidence: "high",
+				rationale: "This is autonomous.",
+			}),
+		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) {
@@ -190,23 +218,29 @@ describe("parseClassifierOutput", () => {
 
 describe("formatRecommendation", () => {
 	it("produces readable output", () => {
-		const text = formatRecommendation({
-			route: "investigate",
-			confidence: "high",
-			rationale: "Clear research task.",
-		}, "default model");
+		const text = formatRecommendation(
+			{
+				route: "investigate",
+				confidence: "high",
+				rationale: "Clear research task.",
+			},
+			"default model",
+		);
 		assert.ok(text.includes("Investigate"));
 		assert.ok(text.includes("High confidence"));
 		assert.ok(text.includes("Clear research task."));
 	});
 
 	it("includes delivery when provided", () => {
-		const text = formatRecommendation({
-			route: "change",
-			confidence: "high",
-			rationale: "Feature work.",
-			delivery: "stack",
-		}, "config");
+		const text = formatRecommendation(
+			{
+				route: "change",
+				confidence: "high",
+				rationale: "Feature work.",
+				delivery: "stack",
+			},
+			"config",
+		);
 		assert.ok(text.includes("stacked PRs"));
 	});
 });

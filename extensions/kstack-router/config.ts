@@ -1,7 +1,14 @@
 /** Router configuration from kstack.json. */
 
-import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import {
+	getAgentDir,
+	getKstackPath,
+	loadKstackSection,
+	MODEL_ID_RE,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
+
 export { getAgentDir, getKstackPath };
 
 export type ConfigLoad =
@@ -23,7 +30,10 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 		}
 		const classifier = obj.classifier as Record<string, unknown>;
 		if (typeof classifier.model !== "string" || !MODEL_ID_RE.test(classifier.model)) {
-			return { ok: false, error: `"kstack-router.classifier.model" must be "provider/model", got ${JSON.stringify(classifier.model)}.` };
+			return {
+				ok: false,
+				error: `"kstack-router.classifier.model" must be "provider/model", got ${JSON.stringify(classifier.model)}.`,
+			};
 		}
 		const thinking = classifier.thinking as string | undefined;
 		if (thinking !== undefined && !(THINKING_LEVELS as readonly string[]).includes(thinking)) {
@@ -33,7 +43,12 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 	}
 
 	if (obj.timeoutSeconds !== undefined) {
-		if (typeof obj.timeoutSeconds !== "number" || !Number.isFinite(obj.timeoutSeconds) || obj.timeoutSeconds < 1 || obj.timeoutSeconds > 600) {
+		if (
+			typeof obj.timeoutSeconds !== "number" ||
+			!Number.isFinite(obj.timeoutSeconds) ||
+			obj.timeoutSeconds < 1 ||
+			obj.timeoutSeconds > 600
+		) {
 			return { ok: false, error: '"kstack-router.timeoutSeconds" must be a number between 1 and 600.' };
 		}
 		config.timeoutSeconds = obj.timeoutSeconds;
@@ -46,7 +61,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	const section = loadKstackSection("kstack-router", env);
 	if (section.status !== "found") return section;
 	const result = validateRouterConfig(section.value);
-	return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error };
+	return result.ok
+		? { status: "loaded", config: result.config, path: section.path }
+		: { status: "invalid", path: section.path, error: result.error };
 }
 
 export interface ClassifierModelResolution {

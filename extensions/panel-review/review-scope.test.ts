@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { collectScope, parsePorcelainZ, readUntracked, resolveBase, touchesContextFile, truncateUtf8, type GitExec } from "./review-scope.ts";
+import {
+	collectScope,
+	type GitExec,
+	parsePorcelainZ,
+	readUntracked,
+	resolveBase,
+	touchesContextFile,
+	truncateUtf8,
+} from "./review-scope.ts";
 
 /** Fake git: map "args joined" prefixes to stdout; throw on unknown. */
 function fakeGit(responses: Record<string, string>): GitExec {
@@ -140,27 +148,26 @@ describe("collectScope", () => {
 		return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 	}
 
-	const gitFor = (root: string, diff: string): GitExec => (args) => {
-		const key = args.join(" ");
-		if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
-		if (key.startsWith("rev-parse HEAD")) return "headsha\n";
-		if (key.startsWith("diff --find-renames --find-copies")) return diff;
-		if (key.startsWith("diff --name-status")) return diff.trim() ? "M\ttracked.ts\n" : "";
-		if (key.startsWith("status --porcelain")) return "M  tracked.ts\0?? untracked.ts\0?? blob.bin\0";
-		if (key.startsWith("log --format=%s")) return "subject one\nsubject two\n";
-		throw new Error(`unexpected: ${key}`);
-	};
+	const gitFor =
+		(root: string, diff: string): GitExec =>
+		(args) => {
+			const key = args.join(" ");
+			if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+			if (key.startsWith("rev-parse HEAD")) return "headsha\n";
+			if (key.startsWith("diff --find-renames --find-copies")) return diff;
+			if (key.startsWith("diff --name-status")) return diff.trim() ? "M\ttracked.ts\n" : "";
+			if (key.startsWith("status --porcelain")) return "M  tracked.ts\0?? untracked.ts\0?? blob.bin\0";
+			if (key.startsWith("log --format=%s")) return "subject one\nsubject two\n";
+			throw new Error(`unexpected: ${key}`);
+		};
 
 	it("writes a mode-0600 bundle with intent, diff, and untracked contents", () => {
 		const { root, cleanup } = makeRepo();
 		let bundleDir: string | undefined;
 		try {
-			const scope = collectScope(
-				root,
-				{ ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" },
-				"Test intent",
-				{ exec: gitFor(root, "diff --git a/tracked.ts b/tracked.ts\n+line\n") },
-			);
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "Test intent", {
+				exec: gitFor(root, "diff --git a/tracked.ts b/tracked.ts\n+line\n"),
+			});
 			bundleDir = scope.dir;
 			const content = readFileSync(scope.path, "utf8");
 			assert.match(content, /Test intent/);
@@ -205,12 +212,9 @@ describe("collectScope", () => {
 		const { root, cleanup } = makeRepo();
 		let bundleDir: string | undefined;
 		try {
-			const scope = collectScope(
-				root,
-				{ ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" },
-				"i",
-				{ exec: gitFor(root, "diff --git a/tracked.ts b/tracked.ts\n+line\n") },
-			);
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", {
+				exec: gitFor(root, "diff --git a/tracked.ts b/tracked.ts\n+line\n"),
+			});
 			bundleDir = scope.dir;
 			assert.equal(scope.contextFilesTouched, false);
 		} finally {
@@ -288,12 +292,10 @@ describe("collectScope", () => {
 		let bundleDir: string | undefined;
 		try {
 			const bigDiff = `diff --git ${"x".repeat(100_000)}`;
-			const scope = collectScope(
-				root,
-				{ ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" },
-				"big",
-				{ exec: gitFor(root, bigDiff), bundleBytes: 8 * 1024 },
-			);
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "big", {
+				exec: gitFor(root, bigDiff),
+				bundleBytes: 8 * 1024,
+			});
 			bundleDir = scope.dir;
 			assert.equal(scope.truncated, true);
 			const content = readFileSync(scope.path, "utf8");

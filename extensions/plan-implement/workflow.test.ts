@@ -5,7 +5,13 @@ import { runWorkflow } from "./workflow.ts";
 
 const usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
 const plan: AgentRunResult = { status: "completed", role: "planner", model: "a/p", output: "the plan", usage };
-const implementation: AgentRunResult = { status: "completed", role: "implementer", model: "b/i", output: "done", usage };
+const implementation: AgentRunResult = {
+	status: "completed",
+	role: "implementer",
+	model: "b/i",
+	output: "done",
+	usage,
+};
 
 describe("runWorkflow", () => {
 	it("passes the exact approved plan to the implementer in order", async () => {
@@ -25,10 +31,14 @@ describe("runWorkflow", () => {
 		let later = false;
 		const result = await runWorkflow({
 			runPlanner: async () => ({ status: "failed", role: "planner", model: "a/p", error: "bad" }),
-			onPlan: () => { later = true; },
+			onPlan: () => {
+				later = true;
+			},
 			approvePlan: async () => (later = true),
-			runImplementer: async () => (later = true, implementation),
-			onImplementation: () => { later = true; },
+			runImplementer: async () => ((later = true), implementation),
+			onImplementation: () => {
+				later = true;
+			},
 		});
 		assert.equal(result.status, "planner-failed");
 		assert.equal(later, false);
@@ -40,7 +50,7 @@ describe("runWorkflow", () => {
 			runPlanner: async () => plan,
 			onPlan: () => {},
 			approvePlan: async () => false,
-			runImplementer: async () => (implemented = true, implementation),
+			runImplementer: async () => ((implemented = true), implementation),
 			onImplementation: () => {},
 		});
 		assert.equal(result.status, "rejected");
@@ -54,7 +64,9 @@ describe("runWorkflow", () => {
 			onPlan: () => {},
 			approvePlan: async () => true,
 			runImplementer: async () => ({ status: "aborted", role: "implementer", model: "b/i" }),
-			onImplementation: () => { displayed = true; },
+			onImplementation: () => {
+				displayed = true;
+			},
 		});
 		assert.equal(result.status, "implementer-failed");
 		assert.equal(displayed, true);

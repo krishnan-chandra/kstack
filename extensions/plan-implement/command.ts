@@ -1,8 +1,8 @@
 /** Pure task validation, command parsing, and panel-review options. */
 
 import type { PanelArgs } from "../panel-review/types.ts";
-import { isChangeKind, type ChangeKind } from "./change-kind.ts";
-import { LIMITS, type DeliveryMode, type WorkLocation } from "./types.ts";
+import { type ChangeKind, isChangeKind } from "./change-kind.ts";
+import { type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
 const DELIVERY_FLAGS = new Set(["--single", "--stack"]);
 
@@ -23,7 +23,9 @@ export function validateTask(task: string): { ok: true; task: string } | { ok: f
  */
 export function parsePlanImplementArgs(
 	args: string,
-): { ok: true; mode: DeliveryMode; workLocation: WorkLocation; changeKind?: ChangeKind; task: string } | { ok: false; error: string } {
+):
+	| { ok: true; mode: DeliveryMode; workLocation: WorkLocation; changeKind?: ChangeKind; task: string }
+	| { ok: false; error: string } {
 	const trimmed = args.trim();
 	if (!trimmed) return { ok: true, mode: "single", workLocation: "current", task: "" };
 
@@ -75,7 +77,11 @@ export function parsePlanImplementArgs(
 	}
 
 	if (mode === "stack" && workLocation === "worktree") {
-		return { ok: false, error: "--stack and --worktree cannot currently be combined. Use --stack in the jj workspace or --single --worktree." };
+		return {
+			ok: false,
+			error:
+				"--stack and --worktree cannot currently be combined. Use --stack in the jj workspace or --single --worktree.",
+		};
 	}
 	return { ok: true, mode, workLocation, changeKind, task: tokens.slice(i).join(" ") };
 }

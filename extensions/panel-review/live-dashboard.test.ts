@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	codePointWidth,
+	type DashboardTheme,
 	mountPanelDashboard,
 	PanelDashboardComponent,
 	PanelDashboardStore,
 	renderDashboard,
 	sanitizeDisplayText,
-	type DashboardTheme,
 } from "./live-dashboard.ts";
 
 const ESC = "\u001b";

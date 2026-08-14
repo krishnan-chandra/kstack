@@ -1,7 +1,14 @@
 /** Unified kstack.json configuration and role-model resolution. */
 
-import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import {
+	getAgentDir,
+	getKstackPath,
+	loadKstackSection,
+	MODEL_ID_RE,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
 import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
+
 export { getAgentDir, getKstackPath };
 
 const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
@@ -24,7 +31,10 @@ export type ConfigLoad =
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
 
-function validateRole(raw: unknown, role: "planner" | "implementer"): { ok: true; spec: RoleSpec } | { ok: false; error: string } {
+function validateRole(
+	raw: unknown,
+	role: "planner" | "implementer",
+): { ok: true; spec: RoleSpec } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: `"${role}" must be {"model":"provider/model","thinking"?}.` };
 	}
@@ -79,7 +89,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	const section = loadKstackSection("plan-implement", env);
 	if (section.status !== "found") return section;
 	const result = validateConfig(section.value);
-	return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error };
+	return result.ok
+		? { status: "loaded", config: result.config, path: section.path }
+		: { status: "invalid", path: section.path, error: result.error };
 }
 
 export interface ResolveDeps {
@@ -95,7 +107,10 @@ export function modelCliId(spec: RoleSpec): string {
 	return spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
 }
 
-export function resolveRoles(config: PlanImplementConfig | null, deps: ResolveDeps): { ok: true; roles: ResolvedRoles } | { ok: false; error: string } {
+export function resolveRoles(
+	config: PlanImplementConfig | null,
+	deps: ResolveDeps,
+): { ok: true; roles: ResolvedRoles } | { ok: false; error: string } {
 	if (config) {
 		const missing = [config.planner, config.implementer].filter((spec) => !isAvailable(spec, deps));
 		if (missing.length > 0) {
@@ -108,11 +123,17 @@ export function resolveRoles(config: PlanImplementConfig | null, deps: ResolveDe
 	}
 	const planner = DEFAULT_PLANNERS.find((spec) => isAvailable(spec, deps));
 	if (!planner) {
-		return { ok: false, error: `No high-reason planner model is available. Tried: ${DEFAULT_PLANNERS.map((x) => x.model).join(", ")}.` };
+		return {
+			ok: false,
+			error: `No high-reason planner model is available. Tried: ${DEFAULT_PLANNERS.map((x) => x.model).join(", ")}.`,
+		};
 	}
 	const implementer = DEFAULT_IMPLEMENTERS.find((spec) => isAvailable(spec, deps) && spec.model !== planner.model);
 	if (!implementer) {
-		return { ok: false, error: `No distinct implementer model is available. Tried: ${DEFAULT_IMPLEMENTERS.map((x) => x.model).join(", ")}.` };
+		return {
+			ok: false,
+			error: `No distinct implementer model is available. Tried: ${DEFAULT_IMPLEMENTERS.map((x) => x.model).join(", ")}.`,
+		};
 	}
 	return {
 		ok: true,

@@ -6,9 +6,9 @@
  * in finally, so nothing survives session replacement.
  */
 
-import { DatabaseSync } from "node:sqlite";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { ParsedEntry, ParsedSessionHeader } from "./session-jsonl.ts";
 
 export class ArchiveStoreError extends Error {
@@ -155,9 +155,7 @@ export function importSessionPending(db: DatabaseSync, input: PendingImport): "i
 	try {
 		const existing = db
 			.prepare("SELECT state, sha256, archive_path FROM archive_sessions WHERE session_id = ?")
-			.get(input.header.id) as
-				| { state: string; sha256: string; archive_path: string | null }
-				| undefined;
+			.get(input.header.id) as { state: string; sha256: string; archive_path: string | null } | undefined;
 
 		if (existing?.state === "archived") {
 			if (existing.sha256 !== input.sha256 || existing.archive_path !== input.archivePath) {
@@ -172,9 +170,7 @@ export function importSessionPending(db: DatabaseSync, input: PendingImport): "i
 			existing?.state === "pending" &&
 			(existing.sha256 !== input.sha256 || existing.archive_path !== input.archivePath)
 		) {
-			throw new ArchiveStoreError(
-				`session ${input.header.id} already has a different pending archive operation`,
-			);
+			throw new ArchiveStoreError(`session ${input.header.id} already has a different pending archive operation`);
 		}
 
 		const indexedName = latestSessionName(input.entries);
@@ -255,28 +251,24 @@ export function finalizeArchived(
 		}
 		if (existing.state === "archived") {
 			if (existing.archive_path !== archivePath || existing.sha256 !== sha256) {
-				throw new ArchiveStoreError(
-					`session ${sessionId} is archived at a different path or with different content`,
-				);
+				throw new ArchiveStoreError(`session ${sessionId} is archived at a different path or with different content`);
 			}
 			db.exec("COMMIT");
 			return "already-archived";
 		}
 		if (existing.state !== "pending") {
-			throw new ArchiveStoreError(
-				`cannot finalize session ${sessionId} from state ${existing.state}`,
-			);
+			throw new ArchiveStoreError(`cannot finalize session ${sessionId} from state ${existing.state}`);
 		}
 		if (existing.archive_path !== archivePath || existing.sha256 !== sha256) {
-			throw new ArchiveStoreError(
-				`pending session ${sessionId} no longer matches this finalization operation`,
-			);
+			throw new ArchiveStoreError(`pending session ${sessionId} no longer matches this finalization operation`);
 		}
-		const update = db.prepare(
-			`UPDATE archive_sessions
+		const update = db
+			.prepare(
+				`UPDATE archive_sessions
 			   SET state='archived', archived_at=?, file_size=?, last_error=NULL
 			 WHERE session_id=? AND state='pending' AND archive_path=? AND sha256=?`,
-		).run(new Date().toISOString(), fileSize, sessionId, archivePath, sha256);
+			)
+			.run(new Date().toISOString(), fileSize, sessionId, archivePath, sha256);
 		if (update.changes !== 1) {
 			throw new ArchiveStoreError(`session ${sessionId} changed while it was being finalized`);
 		}
@@ -288,12 +280,7 @@ export function finalizeArchived(
 	}
 }
 
-export function discardPendingImport(
-	db: DatabaseSync,
-	sessionId: string,
-	archivePath: string,
-	sha256: string,
-): void {
+export function discardPendingImport(db: DatabaseSync, sessionId: string, archivePath: string, sha256: string): void {
 	db.prepare(
 		"DELETE FROM archive_sessions WHERE session_id = ? AND state = 'pending' AND archive_path = ? AND sha256 = ?",
 	).run(sessionId, archivePath, sha256);
@@ -332,16 +319,11 @@ function boundedInteger(value: number | undefined, fallback: number, minimum: nu
 	return Math.min(Math.max(Math.floor(value), minimum), maximum);
 }
 
-export function listSessionRows(
-	db: DatabaseSync,
-	opts: { state?: string; limit?: number } = {},
-): ArchiveSessionRow[] {
+export function listSessionRows(db: DatabaseSync, opts: { state?: string; limit?: number } = {}): ArchiveSessionRow[] {
 	const limit = boundedInteger(opts.limit, 100, 1, 1000);
 	if (opts.state) {
 		return db
-			.prepare(
-				"SELECT * FROM archive_sessions WHERE state = ? ORDER BY created_at DESC LIMIT ?",
-			)
+			.prepare("SELECT * FROM archive_sessions WHERE state = ? ORDER BY created_at DESC LIMIT ?")
 			.all(opts.state, limit) as unknown as ArchiveSessionRow[];
 	}
 	return db
@@ -431,18 +413,13 @@ interface ArchiveEntryRow {
 }
 
 export function countEntries(db: DatabaseSync, sessionId: string): number {
-	const row = db
-		.prepare("SELECT COUNT(*) AS n FROM archive_entries WHERE session_id = ?")
-		.get(sessionId) as { n: number };
+	const row = db.prepare("SELECT COUNT(*) AS n FROM archive_entries WHERE session_id = ?").get(sessionId) as {
+		n: number;
+	};
 	return row.n;
 }
 
-export function readEntries(
-	db: DatabaseSync,
-	sessionId: string,
-	offset: number,
-	limit: number,
-): ArchiveEntryRow[] {
+export function readEntries(db: DatabaseSync, sessionId: string, offset: number, limit: number): ArchiveEntryRow[] {
 	const safeOffset = boundedInteger(offset, 0, 0, 2_147_483_647);
 	const safeLimit = boundedInteger(limit, 50, 1, 200);
 	return db
@@ -465,9 +442,10 @@ interface ArchiveStats {
 }
 
 export function getArchiveStats(db: DatabaseSync): ArchiveStats {
-	const byState = db
-		.prepare("SELECT state, COUNT(*) AS n FROM archive_sessions GROUP BY state")
-		.all() as unknown as { state: string; n: number }[];
+	const byState = db.prepare("SELECT state, COUNT(*) AS n FROM archive_sessions GROUP BY state").all() as unknown as {
+		state: string;
+		n: number;
+	}[];
 	const entries = db.prepare("SELECT COUNT(*) AS n FROM archive_entries").get() as { n: number };
 	const count = (state: string) => byState.find((r) => r.state === state)?.n ?? 0;
 	return {

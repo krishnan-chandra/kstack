@@ -7,20 +7,20 @@ import {
 	buildTriagerTask,
 	classifyBlockers,
 	describeBlockers,
+	fetchPRState,
 	isCodeReady,
 	isMergeReady,
-	fetchPRState,
+	loadPersistedState,
 	parseTriage,
 	persistPath,
 	pickModel,
 	prepareMutationCheckout,
-	loadPersistedState,
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot.ts";
 import { DEFAULT_TINY_MODELS } from "./config.ts";
-import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
 import type { GHPrJson } from "./github.ts";
+import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
 	return {
@@ -112,7 +112,12 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("returns false when there are unresolved threads", () => {
-			const state = buildPRState(makePr({ mergeable: "true" }), [makeThread("1")], [makeCheck("lint", "success")], null);
+			const state = buildPRState(
+				makePr({ mergeable: "true" }),
+				[makeThread("1")],
+				[makeCheck("lint", "success")],
+				null,
+			);
 			assert.equal(isMergeReady(state), false);
 		});
 
@@ -128,13 +133,23 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("returns false when checks are still pending", () => {
-			const state = buildPRState(makePr({ mergeable: "true", mergeStateStatus: "UNKNOWN" }), [], [makeCheck("lint", null, "pending")], null);
+			const state = buildPRState(
+				makePr({ mergeable: "true", mergeStateStatus: "UNKNOWN" }),
+				[],
+				[makeCheck("lint", null, "pending")],
+				null,
+			);
 			assert.equal(isMergeReady(state), false);
 			assert.equal(isCodeReady(state), false);
 		});
 
 		it("returns false when conflicts", () => {
-			const state = buildPRState(makePr({ mergeable: "false", mergeStateStatus: "DIRTY" }), [], [makeCheck("lint", "success")], null);
+			const state = buildPRState(
+				makePr({ mergeable: "false", mergeStateStatus: "DIRTY" }),
+				[],
+				[makeCheck("lint", "success")],
+				null,
+			);
 			assert.equal(isMergeReady(state), false);
 		});
 
@@ -160,7 +175,12 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("names pending checks", () => {
-			const state = buildPRState(makePr({ mergeStateStatus: "UNKNOWN" }), [], [makeCheck("lint", null, "pending")], null);
+			const state = buildPRState(
+				makePr({ mergeStateStatus: "UNKNOWN" }),
+				[],
+				[makeCheck("lint", null, "pending")],
+				null,
+			);
 			assert.match(describeBlockers(state), /pending/);
 		});
 	});
@@ -169,7 +189,8 @@ describe("pr-autopilot state machine", () => {
 		it("rejects a checkout on a different branch", async () => {
 			const exec: ExecFn = async (command, args) => {
 				if (command === "git" && args[0] === "branch") return { code: 0, stdout: "kstack/other\n", stderr: "" };
-				if (command === "git" && args[0] === "rev-parse") return { code: 0, stdout: makePr().headSha + "\n", stderr: "" };
+				if (command === "git" && args[0] === "rev-parse")
+					return { code: 0, stdout: makePr().headSha + "\n", stderr: "" };
 				return { code: 0, stdout: "", stderr: "" };
 			};
 			const state = buildPRState(makePr(), [], [], null);
@@ -187,7 +208,10 @@ describe("pr-autopilot state machine", () => {
 				return { code: 0, stdout: "", stderr: "" };
 			};
 			const result = await prepareMutationCheckout(exec, "/repo", buildPRState(pr, [], [], null));
-			assert.deepEqual(result, { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." });
+			assert.deepEqual(result, {
+				ok: false,
+				error: "The PR worktree must be clean before pr-autopilot can mutate it.",
+			});
 		});
 	});
 
@@ -265,13 +289,15 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("accepts legacy fixable booleans", () => {
-			const result = parseTriage(JSON.stringify({
-				checks: [],
-				threads: [{ id: "t1", fixable: true, action: "nits", cls: "code" }],
-				conflicts: false,
-				draft: false,
-				summary: "ok",
-			}));
+			const result = parseTriage(
+				JSON.stringify({
+					checks: [],
+					threads: [{ id: "t1", fixable: true, action: "nits", cls: "code" }],
+					conflicts: false,
+					draft: false,
+					summary: "ok",
+				}),
+			);
 			assert.equal("error" in result, false);
 			if (!("error" in result)) assert.equal(result.threads[0].decision, "fix");
 		});
@@ -297,10 +323,12 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("classifies no ask threads when all are fix", () => {
-			const parsed = parseTriage(JSON.stringify({
-				...sampleTriage,
-				threads: [{ id: "t1", decision: "fix", cls: "code", action: "Fix", reply: "done" }],
-			}));
+			const parsed = parseTriage(
+				JSON.stringify({
+					...sampleTriage,
+					threads: [{ id: "t1", decision: "fix", cls: "code", action: "Fix", reply: "done" }],
+				}),
+			);
 			if ("error" in parsed) throw new Error(parsed.error);
 			assert.equal(classifyBlockers(parsed).hasAskThreads, false);
 			assert.equal(classifyBlockers(parsed).hasUnfixableCI, true);
@@ -310,13 +338,15 @@ describe("pr-autopilot state machine", () => {
 	describe("applyForceAsk", () => {
 		it("overrides a fix decision on a security comment", () => {
 			const state = buildPRState(makePr(), [makeThread("t1", "this is a security issue in auth")], [], null);
-			const parsed = parseTriage(JSON.stringify({
-				checks: [],
-				threads: [{ id: "t1", decision: "fix", cls: "code", action: "patch it", reply: "fixed" }],
-				conflicts: false,
-				draft: false,
-				summary: "fix",
-			}));
+			const parsed = parseTriage(
+				JSON.stringify({
+					checks: [],
+					threads: [{ id: "t1", decision: "fix", cls: "code", action: "patch it", reply: "fixed" }],
+					conflicts: false,
+					draft: false,
+					summary: "fix",
+				}),
+			);
 			if ("error" in parsed) throw new Error(parsed.error);
 			const forced = applyForceAsk(state, parsed);
 			assert.equal(forced.threads[0].decision, "ask");
@@ -325,13 +355,15 @@ describe("pr-autopilot state machine", () => {
 
 	describe("summarizeTriage", () => {
 		it("produces a one-line summary", () => {
-			const result = summarizeTriage(JSON.stringify({
-				checks: [{ name: "lint", cls: "code", action: "fix" }],
-				threads: [{ id: "t1", decision: "fix", cls: "code", action: "fix", reply: "ok" }],
-				conflicts: false,
-				draft: false,
-				summary: "Fix the lint error.",
-			}));
+			const result = summarizeTriage(
+				JSON.stringify({
+					checks: [{ name: "lint", cls: "code", action: "fix" }],
+					threads: [{ id: "t1", decision: "fix", cls: "code", action: "fix", reply: "ok" }],
+					conflicts: false,
+					draft: false,
+					summary: "Fix the lint error.",
+				}),
+			);
 			assert.match(result, /1 checks, 1 threads/);
 			assert.match(result, /Fix the lint error/);
 		});
@@ -345,7 +377,10 @@ describe("pr-autopilot state machine", () => {
 		const state = buildPRState(
 			makePr(),
 			[makeThread("1", "please rename this")],
-			[makeCheck("lint", "success"), { name: "test", status: "failure", conclusion: "failure", logExcerpt: "Error: expected 1" }],
+			[
+				makeCheck("lint", "success"),
+				{ name: "test", status: "failure", conclusion: "failure", logExcerpt: "Error: expected 1" },
+			],
 			"0123456789abcdef0123456789abcdef01234567",
 		);
 
@@ -360,7 +395,11 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("buildFixerTask includes triage and forbids workflow edits", () => {
-			const fixer = buildFixerTask(state, '{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}', "all");
+			const fixer = buildFixerTask(
+				state,
+				'{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}',
+				"all",
+			);
 			assert.match(fixer, /PR #42/);
 			assert.match(fixer, /Fix Phase/);
 			assert.match(fixer, /VERIFY_FAIL/);
@@ -368,12 +407,20 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("fixer task for threads mode says threads only", () => {
-			const fixer = buildFixerTask(state, '{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}', "threads");
+			const fixer = buildFixerTask(
+				state,
+				'{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}',
+				"threads",
+			);
 			assert.match(fixer, /review threads marked fix only/);
 		});
 
 		it("fixer task for ci mode says CI only", () => {
-			const fixer = buildFixerTask(state, '{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}', "ci");
+			const fixer = buildFixerTask(
+				state,
+				'{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}',
+				"ci",
+			);
 			assert.match(fixer, /code CI failures only/);
 		});
 	});

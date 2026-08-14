@@ -140,7 +140,10 @@ export function parseSessionJsonl(content: string): ParsedSession {
 		throw new SessionParseError('first line must be a {"type":"session"} header', headerLine.lineNumber);
 	}
 	if (rawHeader.version !== 3) {
-		throw new SessionParseError(`unsupported session version: ${String(rawHeader.version)} (expected 3)`, headerLine.lineNumber);
+		throw new SessionParseError(
+			`unsupported session version: ${String(rawHeader.version)} (expected 3)`,
+			headerLine.lineNumber,
+		);
 	}
 	const header: ParsedSessionHeader = {
 		id: requireString(rawHeader.id, "id", headerLine.lineNumber),

@@ -14,8 +14,8 @@
  * template expansion, and compaction queueing keep working.
  */
 import {
-	CustomEditor,
 	type AppKeybinding,
+	CustomEditor,
 	type ExtensionAPI,
 	type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";

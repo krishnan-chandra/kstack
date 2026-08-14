@@ -33,10 +33,7 @@ export interface ResolvedRoute {
 	confidence?: string;
 }
 
-export type RouteResolution =
-	| { resolved: ResolvedRoute }
-	| { cancelled: true }
-	| { failed: string };
+export type RouteResolution = { resolved: ResolvedRoute } | { cancelled: true } | { failed: string };
 
 export async function resolveRoute(
 	input: {
@@ -63,11 +60,12 @@ export async function resolveRoute(
 		} else if ("error" in classifierResolution) {
 			fx.notify(classifierResolution.error, "warning");
 		} else {
-			modelSource = classifierResolution.source === "config"
-				? "configured"
-				: classifierResolution.source === "default"
-					? "built-in default"
-					: "active model (not ideal)";
+			modelSource =
+				classifierResolution.source === "config"
+					? "configured"
+					: classifierResolution.source === "default"
+						? "built-in default"
+						: "active model (not ideal)";
 			if (classifierResolution.warning) fx.notify(classifierResolution.warning, "warning");
 			fx.notify(`Running classifier (${modelSource})…`, "info");
 
@@ -114,7 +112,10 @@ export async function resolveRoute(
 				if (!overrode && recommendation.delivery && !delivery) delivery = recommendation.delivery;
 				if (!overrode && recommendation.changeKind && !parsedArgs.changeKind) changeKind = recommendation.changeKind;
 			} else {
-				fx.notify(`Classifier did not produce a valid route (${classifierResult.error}). Please pick a route manually.`, "warning");
+				fx.notify(
+					`Classifier did not produce a valid route (${classifierResult.error}). Please pick a route manually.`,
+					"warning",
+				);
 				route = await selectManualRoute("Select a route:", fx);
 				if (!fx.isSessionCurrent() || !route) return { cancelled: true };
 				overrode = true;
@@ -148,8 +149,11 @@ export async function resolveRoute(
 }
 
 async function selectManualRoute(title: string, fx: RouteResolutionEffects): Promise<RouteId | undefined> {
-	return fx.selectRoute(title, buildRouteAlternatives().map((alternative) => ({
-		route: alternative.id,
-		label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
-	})));
+	return fx.selectRoute(
+		title,
+		buildRouteAlternatives().map((alternative) => ({
+			route: alternative.id,
+			label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
+		})),
+	);
 }

@@ -13,27 +13,20 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { matchesKey, type Component } from "@earendil-works/pi-tui";
+import { type Component, matchesKey } from "@earendil-works/pi-tui";
+import { type ChildUsage, formatDuration } from "../shared/child-agent-runner.ts";
 import {
-	formatDuration,
-	type ChildUsage,
-} from "../shared/child-agent-runner.ts";
-import {
-	PanelDashboardStore,
-	rowElapsedSeconds,
-	sanitizeDisplayText,
-	STATUS_ICON,
-	stripTerminalSequencesFallback,
 	type DashboardRow,
 	type DashboardStatus,
 	type DashboardTheme,
+	type PanelDashboardStore,
+	rowElapsedSeconds,
+	STATUS_ICON,
+	sanitizeDisplayText,
+	stripTerminalSequencesFallback,
 	type TerminalText,
 } from "./live-dashboard.ts";
-import {
-	EVICTION_NOTICE,
-	PanelTranscriptStore,
-	type TranscriptEntry,
-} from "./transcript-store.ts";
+import { EVICTION_NOTICE, type PanelTranscriptStore, type TranscriptEntry } from "./transcript-store.ts";
 
 export interface InspectorState {
 	selectedIndex: number;
@@ -208,11 +201,7 @@ export function renderInspector(
 	// Line 2: Meta line
 	const safeModel = sanitizeDisplayText(selectedRow.model, text);
 	const elapsed = rowElapsedSeconds(selectedRow, dashboard.nowMs());
-	const metaParts: string[] = [
-		safeModel,
-		selectedRow.status,
-		`${selectedRow.turns}t`,
-	];
+	const metaParts: string[] = [safeModel, selectedRow.status, `${selectedRow.turns}t`];
 	if (elapsed !== undefined) metaParts.push(`${elapsed}s`);
 
 	let totalCost = 0;
@@ -225,14 +214,7 @@ export function renderInspector(
 	const metaLine = theme.fg("dim", `— ${metaParts.join(" · ")} —`);
 
 	// Body lines
-	const allBodyLines = computeInspectorBodyLines(
-		dashboard,
-		transcripts,
-		clampedIndex,
-		width,
-		theme,
-		text,
-	);
+	const allBodyLines = computeInspectorBodyLines(dashboard, transcripts, clampedIndex, width, theme, text);
 
 	// Last line: Key help
 	const helpText = `←→/tab child · ↑↓ PgUp PgDn scroll · f follow [${state.follow ? "ON" : "OFF"}] · esc close`;
@@ -338,15 +320,7 @@ export class InspectorComponent implements Component {
 		this.lastWidth = width;
 		const termRows = this.tui.terminal?.rows ?? 24;
 		const height = Math.max(8, Math.floor(termRows * 0.8));
-		return renderInspector(
-			this.dashboard,
-			this.transcripts,
-			this.state,
-			width,
-			height,
-			this.theme,
-			this.text,
-		);
+		return renderInspector(this.dashboard, this.transcripts, this.state, width, height, this.theme, this.text);
 	}
 
 	invalidate(): void {
@@ -489,26 +463,29 @@ export function openInspector(
 		}
 	};
 
-	ctx.ui.custom<void>(
-		(tui, theme, _kb, done) => {
-			doneFn = () => done(undefined);
-			component = new InspectorComponent(dashboard, transcripts, tui, theme, close, onAbort, text);
-			return component;
-		},
-		{
-			overlay: true,
-			overlayOptions: {
-				width: "80%",
-				maxHeight: "80%",
-				anchor: "center",
+	ctx.ui
+		.custom<void>(
+			(tui, theme, _kb, done) => {
+				doneFn = () => done(undefined);
+				component = new InspectorComponent(dashboard, transcripts, tui, theme, close, onAbort, text);
+				return component;
 			},
-		},
-	).catch(() => {}).finally(() => {
-		doneFn = undefined;
-		component?.dispose();
-		component = undefined;
-		closedResolve();
-	});
+			{
+				overlay: true,
+				overlayOptions: {
+					width: "80%",
+					maxHeight: "80%",
+					anchor: "center",
+				},
+			},
+		)
+		.catch(() => {})
+		.finally(() => {
+			doneFn = undefined;
+			component?.dispose();
+			component = undefined;
+			closedResolve();
+		});
 
 	return { close, closed };
 }

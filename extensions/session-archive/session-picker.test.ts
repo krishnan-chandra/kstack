@@ -15,9 +15,15 @@ describe("SessionSelectionModel", () => {
 		model.toggleCurrent();
 		model.move(-1);
 		model.toggleCurrent();
-		assert.deepEqual(model.selectedChoices().map((choice) => choice.label), ["Beta", "Gamma"]);
+		assert.deepEqual(
+			model.selectedChoices().map((choice) => choice.label),
+			["Beta", "Gamma"],
+		);
 		model.toggleCurrent();
-		assert.deepEqual(model.selectedChoices().map((choice) => choice.label), ["Gamma"]);
+		assert.deepEqual(
+			model.selectedChoices().map((choice) => choice.label),
+			["Gamma"],
+		);
 	});
 
 	it("wraps one-row navigation and clamps page navigation", () => {
@@ -42,10 +48,16 @@ describe("SessionSelectionModel", () => {
 	it("uses the focused session when Enter confirms an empty selection", () => {
 		const model = new SessionSelectionModel(choices);
 		model.move(1);
-		assert.deepEqual(model.confirmedChoices().map((choice) => choice.label), ["Beta"]);
+		assert.deepEqual(
+			model.confirmedChoices().map((choice) => choice.label),
+			["Beta"],
+		);
 		model.toggleCurrent();
 		model.move(1);
-		assert.deepEqual(model.confirmedChoices().map((choice) => choice.label), ["Beta"]);
+		assert.deepEqual(
+			model.confirmedChoices().map((choice) => choice.label),
+			["Beta"],
+		);
 	});
 });
 
@@ -53,13 +65,19 @@ describe("RPC session multi-selection", () => {
 	it("collects multiple choices before explicit completion", async () => {
 		const answers = ["Beta", "Alpha", "Archive selected (2)"];
 		const selected = await selectSessionChoicesWithDialogs(choices, async () => answers.shift());
-		assert.deepEqual(selected?.map((choice) => choice.label), ["Alpha", "Beta"]);
+		assert.deepEqual(
+			selected?.map((choice) => choice.label),
+			["Alpha", "Beta"],
+		);
 	});
 
 	it("cancels without a selection and finishes when every choice is selected", async () => {
 		assert.equal(await selectSessionChoicesWithDialogs(choices, async () => undefined), undefined);
 		const answers = ["Alpha", "Beta", "Gamma"];
 		const selected = await selectSessionChoicesWithDialogs(choices, async () => answers.shift());
-		assert.deepEqual(selected?.map((choice) => choice.label), ["Alpha", "Beta", "Gamma"]);
+		assert.deepEqual(
+			selected?.map((choice) => choice.label),
+			["Alpha", "Beta", "Gamma"],
+		);
 	});
 });

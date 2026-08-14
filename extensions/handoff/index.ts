@@ -25,28 +25,19 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import {
-	buildReferenceHandoffPrompt,
-	DEFAULT_HANDOFF_GOAL,
-	formatHistoryReference,
-} from "./handoff-context.ts";
-import {
-	findHandoffSource,
-	readHandoffHistory,
-	searchHandoffHistory,
-	type HandoffSource,
-} from "./history-reader.ts";
+import { deriveSessionName } from "../shared/session-name.ts";
+import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
+import { findHandoffSource, type HandoffSource, readHandoffHistory, searchHandoffHistory } from "./history-reader.ts";
 import {
 	formatModelEffort,
 	formatModelRef,
+	type HandoffEffortLevel,
+	type HandoffModel,
 	isHandoffEffortLevel,
 	parseHandoffArgs,
 	pinHandoffEffort,
 	resolveModelReference,
-	type HandoffEffortLevel,
-	type HandoffModel,
 } from "./model-selection.ts";
-import { deriveSessionName } from "../shared/session-name.ts";
 
 /**
  * Build the command handler separately so lifecycle behavior is easy to test.
@@ -245,14 +236,12 @@ export function createHandoffHandler(api: HandoffApi) {
 					const expectedModel = targetModel ?? previousModel;
 					const expectedEffort = appliedEffort;
 					const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
-					const effortMismatch = Boolean(
-						expectedEffort && actualEffort && actualEffort !== expectedEffort,
-					);
+					const effortMismatch = Boolean(expectedEffort && actualEffort && actualEffort !== expectedEffort);
 					if ((modelMismatch || effortMismatch) && actual) {
 						const actualLabel = formatModelEffort(actual, actualEffort);
 						const expectedLabel = expectedModel
 							? formatModelEffort(expectedModel, expectedEffort)
-							: expectedEffort ?? "the requested selection";
+							: (expectedEffort ?? "the requested selection");
 						const reason = targetModel
 							? "a startup --model/--thinking flag or model scoping overrides handoff selection"
 							: "a startup --model/--thinking flag or model scoping overrides inheritance";
@@ -285,9 +274,7 @@ export function createHandoffHandler(api: HandoffApi) {
 						try {
 							hasAuth = (await fresh.modelRegistry.getProviderAuth(actual.provider)) !== undefined;
 						} catch (err) {
-							leavePromptInEditor(
-								`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`,
-							);
+							leavePromptInEditor(`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`);
 							return;
 						}
 					}
@@ -322,10 +309,7 @@ function sameModel(a: HandoffModel, b: HandoffModel): boolean {
 	return a.provider === b.provider && a.id === b.id;
 }
 
-function readEffort(
-	fromContext: unknown,
-	api: Pick<HandoffApi, "getThinkingLevel">,
-): HandoffEffortLevel | undefined {
+function readEffort(fromContext: unknown, api: Pick<HandoffApi, "getThinkingLevel">): HandoffEffortLevel | undefined {
 	if (typeof fromContext === "string" && isHandoffEffortLevel(fromContext)) return fromContext;
 	try {
 		const fromApi = api.getThinkingLevel();

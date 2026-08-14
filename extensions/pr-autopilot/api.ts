@@ -19,11 +19,16 @@ export interface PrAutopilotRequest {
 export function isPrAutopilotRequest(value: unknown): value is PrAutopilotRequest {
 	if (typeof value !== "object" || value === null) return false;
 	const request = value as Partial<PrAutopilotRequest>;
-	return request.schemaVersion === 1 && MODES.has(request.mode ?? "") &&
-		Number.isSafeInteger(request.prNumber) && (request.prNumber ?? 0) > 0 &&
-		typeof request.ctx === "object" && request.ctx !== null &&
+	return (
+		request.schemaVersion === 1 &&
+		MODES.has(request.mode ?? "") &&
+		Number.isSafeInteger(request.prNumber) &&
+		(request.prNumber ?? 0) > 0 &&
+		typeof request.ctx === "object" &&
+		request.ctx !== null &&
 		(request.cwd === undefined || (typeof request.cwd === "string" && request.cwd.length > 0)) &&
-		typeof request.claimed === "boolean";
+		typeof request.claimed === "boolean"
+	);
 }
 
 export function claimPrAutopilotRequest(

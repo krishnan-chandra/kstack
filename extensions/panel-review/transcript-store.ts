@@ -8,12 +8,7 @@
  * Ephemeral only — nothing here is written to the session or disk.
  */
 
-import {
-	truncateHeadUtf8,
-	truncateTailUtf8,
-	type ChildEvent,
-	type ChildUsage,
-} from "../shared/child-agent-runner.ts";
+import { type ChildEvent, type ChildUsage, truncateHeadUtf8, truncateTailUtf8 } from "../shared/child-agent-runner.ts";
 
 export type TranscriptEntry =
 	| { kind: "note"; text: string; at: number }

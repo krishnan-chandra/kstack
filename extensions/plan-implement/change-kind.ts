@@ -1,13 +1,6 @@
 /** Change-kind taxonomy and auditable playbook asset lookup. */
 
-export const CHANGE_KINDS = [
-	"bug-fix",
-	"feature",
-	"refactor",
-	"performance",
-	"prototype",
-	"generic",
-] as const;
+export const CHANGE_KINDS = ["bug-fix", "feature", "refactor", "performance", "prototype", "generic"] as const;
 
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 

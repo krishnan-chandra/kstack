@@ -14,7 +14,11 @@ export interface ExecFnResult {
 }
 
 /** Injected command runner so the preflight is unit-testable without real jj/git. */
-export type ExecFn = (command: string, args: string[], options: { cwd: string; timeout?: number }) => Promise<ExecFnResult>;
+export type ExecFn = (
+	command: string,
+	args: string[],
+	options: { cwd: string; timeout?: number },
+) => Promise<ExecFnResult>;
 
 export interface StackPreflight {
 	ok: true;
@@ -36,11 +40,7 @@ export interface PreflightError {
  *  - the directory is not a colocated Git worktree;
  *  - trunk() does not resolve to exactly one Git-backed commit.
  */
-export async function preflightStack(
-	cwd: string,
-	jj: ExecFn,
-	git: ExecFn,
-): Promise<StackPreflight | PreflightError> {
+export async function preflightStack(cwd: string, jj: ExecFn, git: ExecFn): Promise<StackPreflight | PreflightError> {
 	const timeout = 8000;
 
 	// jj present and new enough?
@@ -85,18 +85,20 @@ export async function preflightStack(
 	}
 
 	// trunk() resolves to exactly one commit?
-	const trunkLog = await jj(
-		"jj",
-		["log", "-r", "trunk()", "--no-graph", "--no-pager", "-T", TRUNK_TEMPLATE],
-		{ cwd, timeout },
-	);
+	const trunkLog = await jj("jj", ["log", "-r", "trunk()", "--no-graph", "--no-pager", "-T", TRUNK_TEMPLATE], {
+		cwd,
+		timeout,
+	});
 	if (trunkLog.code !== 0) {
 		return {
 			ok: false,
 			error: `Could not resolve the trunk() revset. Ensure a remote main/master/trunk branch exists. jj said: ${trunkLog.stderr.trim() || trunkLog.stdout.trim()}`,
 		};
 	}
-	const ids = trunkLog.stdout.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+	const ids = trunkLog.stdout
+		.split("\n")
+		.map((l) => l.trim())
+		.filter((l) => l.length > 0);
 	if (ids.length === 0) {
 		return { ok: false, error: "trunk() resolved to no commits; ensure a remote main/master/trunk branch." };
 	}
@@ -105,7 +107,10 @@ export async function preflightStack(
 	}
 	const trunkSha = ids[0];
 	if (!SHA_RE.test(trunkSha)) {
-		return { ok: false, error: `trunk() resolved to a non-Git commit id "${trunkSha}"; a colocated Git-backed commit is required.` };
+		return {
+			ok: false,
+			error: `trunk() resolved to a non-Git commit id "${trunkSha}"; a colocated Git-backed commit is required.`,
+		};
 	}
 	return { ok: true, trunkSha, workspaceRoot };
 }

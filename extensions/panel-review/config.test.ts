@@ -3,7 +3,16 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { DEFAULT_PANEL, DEFAULT_SYNTHESIS, getKstackPath, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel, validateConfig } from "./config.ts";
+import {
+	DEFAULT_PANEL,
+	DEFAULT_SYNTHESIS,
+	getKstackPath,
+	loadConfig,
+	modelCliId,
+	resolveReviewers,
+	resolveSynthesisModel,
+	validateConfig,
+} from "./config.ts";
 
 describe("validateConfig", () => {
 	it("accepts a valid config", () => {
@@ -173,10 +182,8 @@ describe("modelCliId", () => {
 	});
 });
 
-const find =
-	(available: string[]) =>
-	(provider: string, modelId: string) =>
-		available.includes(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined;
+const find = (available: string[]) => (provider: string, modelId: string) =>
+	available.includes(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined;
 
 describe("resolveReviewers", () => {
 	it("uses config reviewers and reports unavailable models", () => {
@@ -227,10 +234,7 @@ describe("resolveReviewers", () => {
 	it("falls through to scoped models when fewer than two defaults are available", () => {
 		const r = resolveReviewers(null, {
 			find: find([DEFAULT_PANEL[0].model]),
-			scopedModels: [
-				{ model: { provider: "anthropic", id: "m1" } },
-				{ model: { provider: "openai", id: "m2" } },
-			],
+			scopedModels: [{ model: { provider: "anthropic", id: "m1" } }, { model: { provider: "openai", id: "m2" } }],
 		});
 		assert.ok(r.ok);
 		assert.deepEqual(

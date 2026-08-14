@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_SYNTHESIS, type ConfigLoad, type ResolveDeps } from "./config.ts";
-import { resolvePanel, runReviewPipeline, type ReviewPipelineEffects, type ReviewPipelineOps } from "./run-phases.ts";
+import { type ConfigLoad, DEFAULT_SYNTHESIS, type ResolveDeps } from "./config.ts";
+import { type ReviewPipelineEffects, type ReviewPipelineOps, resolvePanel, runReviewPipeline } from "./run-phases.ts";
 import type { PanelConfig, ScopeBundle } from "./types.ts";
 
 const panelConfig: PanelConfig = {
@@ -18,7 +18,7 @@ const panelConfig: PanelConfig = {
 function deps(available: string[], active = { provider: "active", id: "model" }): ResolveDeps {
 	const models = new Set(available);
 	return {
-		find: (provider, modelId) => models.has(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined,
+		find: (provider, modelId) => (models.has(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined),
 		scopedModels: [],
 		activeModel: active,
 	};
@@ -29,10 +29,7 @@ function loaded(config = panelConfig): ConfigLoad {
 }
 
 test("invalid configuration returns its original path and error", () => {
-	const result = resolvePanel(
-		{ status: "invalid", path: "/agent/kstack.json", error: "bad reviewers" },
-		deps([]),
-	);
+	const result = resolvePanel({ status: "invalid", path: "/agent/kstack.json", error: "bad reviewers" }, deps([]));
 	assert.deepEqual(result, {
 		ok: false,
 		error: "Invalid /agent/kstack.json: bad reviewers",
@@ -51,7 +48,7 @@ test("missing config falls back from unavailable synthesis to first reviewer", (
 	const result = resolvePanel(
 		{ status: "missing", path: "/agent/kstack.json" },
 		{
-			find: (provider, modelId) => available.has(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined,
+			find: (provider, modelId) => (available.has(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined),
 			scopedModels: [],
 		},
 	);
@@ -70,10 +67,7 @@ test("synthesis thinking is included in the CLI model id", () => {
 });
 
 test("reviewer warnings precede synthesis warnings", () => {
-	const result = resolvePanel(
-		{ status: "missing", path: "/agent/kstack.json" },
-		deps([DEFAULT_SYNTHESIS.model]),
-	);
+	const result = resolvePanel({ status: "missing", path: "/agent/kstack.json" }, deps([DEFAULT_SYNTHESIS.model]));
 	assert.equal(result.ok, true);
 	if (result.ok) {
 		assert.match(result.resolution.warnings[0] ?? "", /Default panel models unavailable/);
@@ -91,10 +85,7 @@ test("loaded timeout values are preserved", () => {
 });
 
 test("missing config uses default timeout values", () => {
-	const result = resolvePanel(
-		{ status: "missing", path: "/agent/kstack.json" },
-		deps([DEFAULT_SYNTHESIS.model]),
-	);
+	const result = resolvePanel({ status: "missing", path: "/agent/kstack.json" }, deps([DEFAULT_SYNTHESIS.model]));
 	assert.equal(result.ok, true);
 	if (result.ok) {
 		assert.equal(result.resolution.timeoutMinutes, 10);
@@ -124,26 +115,43 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 			failed: 2,
 			aborted: 0,
 		}),
-		runReviewer: async () => { throw new Error("reviewer runner should be owned by the fake panel"); },
+		runReviewer: async () => {
+			throw new Error("reviewer runner should be owned by the fake panel");
+		},
 	};
 	const scope: ScopeBundle = {
-		path: "/tmp/bundle.md", dir: "/tmp", repoRoot: "/repo", headSha: "head", baseSha: "base",
-		baseRef: "main", baseStrategy: "main", fileCount: 1, diffBytes: 1, untrackedCount: 0,
-		binaryCount: 0, truncated: false, contextFilesTouched: false, generatedAt: "now",
+		path: "/tmp/bundle.md",
+		dir: "/tmp",
+		repoRoot: "/repo",
+		headSha: "head",
+		baseSha: "base",
+		baseRef: "main",
+		baseStrategy: "main",
+		fileCount: 1,
+		diffBytes: 1,
+		untrackedCount: 0,
+		binaryCount: 0,
+		truncated: false,
+		contextFilesTouched: false,
+		generatedAt: "now",
 	};
-	const result = await runReviewPipeline({
-		scope,
-		intent: "review",
-		options: {},
-		resolution: {
-			reviewers: panelConfig.reviewers,
-			maxConcurrency: 2,
-			warnings: [],
-			synthesis: { model: "test/lead", cliId: "test/lead" },
-			timeoutMinutes: 1,
-			maxRuntimeMinutes: 2,
+	const result = await runReviewPipeline(
+		{
+			scope,
+			intent: "review",
+			options: {},
+			resolution: {
+				reviewers: panelConfig.reviewers,
+				maxConcurrency: 2,
+				warnings: [],
+				synthesis: { model: "test/lead", cliId: "test/lead" },
+				timeoutMinutes: 1,
+				maxRuntimeMinutes: 2,
+			},
 		},
-	}, fx, ops);
+		fx,
+		ops,
+	);
 	assert.equal(result.status, "failed");
 	if (result.status === "failed") {
 		assert.match(result.error, /one \(test\/one\): failed — timeout/);
@@ -182,27 +190,44 @@ test("an older pipeline cannot clear a newer run's abort controller", async () =
 				aborted: 0,
 			};
 		},
-		runReviewer: async () => { throw new Error("reviewer runner should be owned by the fake panel"); },
+		runReviewer: async () => {
+			throw new Error("reviewer runner should be owned by the fake panel");
+		},
 	};
 	const scope: ScopeBundle = {
-		path: "/tmp/bundle.md", dir: "/tmp", repoRoot: "/repo", headSha: "head", baseSha: "base",
-		baseRef: "main", baseStrategy: "main", fileCount: 1, diffBytes: 1, untrackedCount: 0,
-		binaryCount: 0, truncated: false, contextFilesTouched: false, generatedAt: "now",
+		path: "/tmp/bundle.md",
+		dir: "/tmp",
+		repoRoot: "/repo",
+		headSha: "head",
+		baseSha: "base",
+		baseRef: "main",
+		baseStrategy: "main",
+		fileCount: 1,
+		diffBytes: 1,
+		untrackedCount: 0,
+		binaryCount: 0,
+		truncated: false,
+		contextFilesTouched: false,
+		generatedAt: "now",
 	};
 
-	await runReviewPipeline({
-		scope,
-		intent: "review",
-		options: {},
-		resolution: {
-			reviewers: panelConfig.reviewers,
-			maxConcurrency: 2,
-			warnings: [],
-			synthesis: { model: "test/lead", cliId: "test/lead" },
-			timeoutMinutes: 1,
-			maxRuntimeMinutes: 2,
+	await runReviewPipeline(
+		{
+			scope,
+			intent: "review",
+			options: {},
+			resolution: {
+				reviewers: panelConfig.reviewers,
+				maxConcurrency: 2,
+				warnings: [],
+				synthesis: { model: "test/lead", cliId: "test/lead" },
+				timeoutMinutes: 1,
+				maxRuntimeMinutes: 2,
+			},
 		},
-	}, fx, ops);
+		fx,
+		ops,
+	);
 
 	assert.equal(activeAbort, replacementAbort);
 });

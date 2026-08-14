@@ -59,7 +59,11 @@ describe("buildSynthesisInput", () => {
 	});
 
 	it("discloses scope truncation", () => {
-		const { input } = buildSynthesisInput({ intent: "x", scope: { ...scope, truncated: true }, results: [completed("A", "ok")] });
+		const { input } = buildSynthesisInput({
+			intent: "x",
+			scope: { ...scope, truncated: true },
+			results: [completed("A", "ok")],
+		});
 		assert.match(input, /Bundle truncated: yes/);
 		assert.match(input, /may be incomplete/);
 		assert.ok(!/manifest is complete/.test(input));
