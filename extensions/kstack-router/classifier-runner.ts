@@ -1,7 +1,13 @@
 /** Thin classifier adapter around the shared child-agent lifecycle. */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getPiInvocation, runChildAgent, type SpawnedProcess, type SpawnImpl } from "../shared/child-agent-runner.ts";
+import {
+	childIsolationArgs,
+	getPiInvocation,
+	runChildAgent,
+	type SpawnedProcess,
+	type SpawnImpl,
+} from "../shared/child-agent-runner.ts";
 import { parseClassifierOutput } from "./classification.ts";
 import { type ClassifierEnvelope, DEFAULTS } from "./types.ts";
 
@@ -40,16 +46,7 @@ export function buildClassifierChildArgs(
 	options: { promptFile?: string; thinking?: string } = {},
 ): string[] {
 	return [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-		"--no-extensions",
-		"--no-skills",
-		"--no-prompt-templates",
-		"--no-context-files",
-		"--no-tools",
-		"--no-approve",
+		...childIsolationArgs({ noContextFiles: true, noToolsNoApprove: true }),
 		"--model",
 		model,
 		...(options.thinking ? ["--thinking", options.thinking] : []),

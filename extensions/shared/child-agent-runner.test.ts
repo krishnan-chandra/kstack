@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
-import { type ChildEvent, runChildAgent, type SpawnedProcess } from "./child-agent-runner.ts";
+import { type ChildEvent, childIsolationArgs, runChildAgent, type SpawnedProcess } from "./child-agent-runner.ts";
 
 class FakeProcess implements SpawnedProcess {
 	stdin = {
@@ -68,6 +68,71 @@ function run(child: FakeProcess, overrides: Record<string, unknown> = {}) {
 		},
 	});
 }
+
+describe("childIsolationArgs", () => {
+	it("returns the default isolation prefix with skills disabled", () => {
+		assert.deepEqual(childIsolationArgs(), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+		]);
+	});
+
+	it("keeps skills when noSkills is false", () => {
+		assert.deepEqual(childIsolationArgs({ noSkills: false }), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--no-extensions",
+			"--no-prompt-templates",
+		]);
+	});
+
+	it("adds --no-context-files after prompt-template isolation", () => {
+		assert.deepEqual(childIsolationArgs({ noContextFiles: true }), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+		]);
+	});
+
+	it("adds classifier tool isolation after context-file isolation", () => {
+		assert.deepEqual(childIsolationArgs({ noContextFiles: true, noToolsNoApprove: true }), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+			"--no-tools",
+			"--no-approve",
+		]);
+	});
+
+	it("can keep skills while still disabling context files", () => {
+		assert.deepEqual(childIsolationArgs({ noSkills: false, noContextFiles: true }), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--no-extensions",
+			"--no-prompt-templates",
+			"--no-context-files",
+		]);
+	});
+});
 
 describe("runChildAgent", () => {
 	it("completes with final output and accumulated usage", async () => {

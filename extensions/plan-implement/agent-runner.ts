@@ -2,6 +2,7 @@
 
 import {
 	type ChildRunnerDeps,
+	childIsolationArgs,
 	getPiInvocation,
 	runChildAgent,
 	type SpawnedProcess,
@@ -85,13 +86,8 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 	}
 
 	return [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-		"--no-extensions",
-		"--no-prompt-templates",
-		...(stackMode ? ["--no-skills", ...skillFlags] : []),
+		...childIsolationArgs({ noSkills: stackMode }),
+		...skillFlags,
 		...(options.role === "planner" ? ["--tools", "read,grep,find,ls"] : []),
 		"--model",
 		options.model,

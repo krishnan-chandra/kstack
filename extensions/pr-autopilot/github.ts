@@ -7,6 +7,7 @@
  * output caps.
  */
 
+import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import type { CheckRun, ExecFn, ExecFnResult, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
 
@@ -75,24 +76,6 @@ export async function gh(exec: ExecFn, cwd: string, args: string[], timeout = 15
 	} catch (error) {
 		return { code: 1, stdout: "", stderr: (error as Error).message };
 	}
-}
-
-/** Bound parallel async work (log fetches, etc.) to config.maxConcurrency. */
-export async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-	if (items.length === 0) return [];
-	const results = new Array<R>(items.length);
-	let next = 0;
-	const workerCount = Math.max(1, Math.min(limit, items.length));
-	const workers = Array.from({ length: workerCount }, async () => {
-		while (true) {
-			const index = next;
-			next += 1;
-			if (index >= items.length) return;
-			results[index] = await fn(items[index]);
-		}
-	});
-	await Promise.all(workers);
-	return results;
 }
 
 /** Resolve the repo owner/name for the current checkout. */
@@ -544,7 +527,7 @@ export async function attachFailedLogs(
 ): Promise<CheckRun[]> {
 	const failing = checks.filter((c) => c.conclusion === "failure" && c.runId);
 	if (failing.length === 0) return checks;
-	const logs = await mapPool(failing, concurrency, async (check) => {
+	const logs = await mapWithConcurrencyLimit(failing, concurrency, async (check) => {
 		const runId = check.runId;
 		if (!runId) return { id: check.name, log: undefined };
 		return { id: `${check.name}:${runId}`, log: await fetchFailedLog(exec, cwd, runId) };

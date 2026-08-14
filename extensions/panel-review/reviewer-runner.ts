@@ -2,6 +2,7 @@
 import {
 	type ChildEvent,
 	type ChildRunnerDeps,
+	childIsolationArgs,
 	formatDuration,
 	getPiInvocation,
 	runChildAgent,
@@ -24,14 +25,7 @@ export function buildChildArgs(opts: {
 	noContextFiles?: boolean;
 }): string[] {
 	return [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-		"--no-extensions",
-		"--no-skills",
-		"--no-prompt-templates",
-		...(opts.noContextFiles ? ["--no-context-files"] : []),
+		...childIsolationArgs({ noContextFiles: opts.noContextFiles ?? false }),
 		"--tools",
 		"read,grep,find,ls",
 		"--model",
