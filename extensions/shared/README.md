@@ -13,6 +13,7 @@
 | `model-spec.ts` | Formats configured model references for the Pi CLI. |
 | `pi-json-lines.ts` | Parses and bounds Pi JSONL output. |
 | `prompt-assets.ts` | Reads bundled prompt and playbook Markdown assets. |
+| `request-channel.ts` | Implements synchronous claim-once invocation between loaded extensions. |
 | `session-lifecycle.ts` | Provides generation-counted session and abortable-run lifecycle guards. |
 | `session-name.ts` | Derives and assigns workflow session names. |
 | `worktree.ts` | Plans and creates managed Git worktrees. |

@@ -1,42 +1,49 @@
 /** In-process request contract for invoking plan-implement from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { ChangeKind } from "../shared/change-kind.ts";
-import { isChangeKind } from "../shared/change-kind.ts";
+import { isChangeKind, type ChangeKind } from "../shared/change-kind.ts";
+import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import type { DeliveryMode, WorkLocation } from "./types.ts";
 
 export const PLAN_IMPLEMENT_REQUEST_EVENT = "kstack:plan-implement:request";
 
-export interface PlanImplementRequest {
-	schemaVersion: 1;
+interface PlanImplementPayload {
 	task: string;
 	mode: DeliveryMode;
 	/** Omitted by pre-worktree callers; omission means the current working tree. */
 	workLocation?: WorkLocation;
 	changeKind: ChangeKind;
 	ctx: ExtensionCommandContext;
-	claimed: boolean;
-	completion?: Promise<void>;
 }
+
+export interface PlanImplementRequest extends RequestEnvelope<PlanImplementPayload, void, 1> {}
 
 function isWorkLocation(value: unknown): value is WorkLocation {
 	return value === "current" || value === "worktree";
 }
 
+const channel = createRequestChannel<PlanImplementPayload, void, 1>({
+	event: PLAN_IMPLEMENT_REQUEST_EVENT,
+	schemaVersion: 1,
+	isPayload: (value): value is PlanImplementPayload =>
+		typeof value === "object" &&
+		value !== null &&
+		"task" in value &&
+		typeof value.task === "string" &&
+		"ctx" in value &&
+		typeof value.ctx === "object" &&
+		value.ctx !== null &&
+		"mode" in value &&
+		(value.mode === "single" || value.mode === "stack") &&
+		(!("workLocation" in value) || value.workLocation === undefined || isWorkLocation(value.workLocation)) &&
+		!(value.mode === "stack" && "workLocation" in value && value.workLocation === "worktree") &&
+		"changeKind" in value &&
+		typeof value.changeKind === "string" &&
+		isChangeKind(value.changeKind),
+});
+
 export function isPlanImplementRequest(value: unknown): value is PlanImplementRequest {
-	if (typeof value !== "object" || value === null) return false;
-	const request = value as Partial<PlanImplementRequest>;
-	return (
-		request.schemaVersion === 1 &&
-		typeof request.task === "string" &&
-		typeof request.ctx === "object" &&
-		request.ctx !== null &&
-		(request.mode === "single" || request.mode === "stack") &&
-		(request.workLocation === undefined || isWorkLocation(request.workLocation)) &&
-		!(request.mode === "stack" && request.workLocation === "worktree") &&
-		typeof request.changeKind === "string" &&
-		isChangeKind(request.changeKind)
-	);
+	return channel.isRequest(value);
 }
 
 export function claimPlanImplementRequest(
@@ -49,10 +56,9 @@ export function claimPlanImplementRequest(
 		ctx: ExtensionCommandContext,
 	) => Promise<void>,
 ): boolean {
-	if (!isPlanImplementRequest(value) || value.claimed) return false;
-	value.claimed = true;
-	value.completion = run(value.task, value.mode, value.workLocation ?? "current", value.changeKind, value.ctx);
-	return true;
+	return channel.claim(value, (payload) =>
+		run(payload.task, payload.mode, payload.workLocation ?? "current", payload.changeKind, payload.ctx),
+	);
 }
 
 /** Backward-compatible signature used before managed worktree support. */
@@ -91,9 +97,6 @@ export async function requestPlanImplement(
 	const ctx = modern ? maybeCtx : changeKindOrCtx;
 	if (typeof changeKind !== "string" || !isChangeKind(changeKind) || typeof ctx !== "object" || ctx === null)
 		return { handled: false };
-	const request: PlanImplementRequest = { schemaVersion: 1, task, mode, workLocation, changeKind, ctx, claimed: false };
-	pi.events.emit(PLAN_IMPLEMENT_REQUEST_EVENT, request);
-	if (!request.claimed || !request.completion) return { handled: false };
-	await request.completion;
-	return { handled: true };
+	const result = await channel.request(pi, { task, mode, workLocation, changeKind, ctx });
+	return result.handled ? { handled: true } : { handled: false };
 }

@@ -47,8 +47,8 @@ describe("plan-implement in-process API", () => {
 		let received: WorkLocation | undefined;
 		const pi = {
 			events: fakeBus((data) => {
-				const request = data as { workLocation?: WorkLocation };
-				delete request.workLocation;
+				const request = data as { payload: { workLocation?: WorkLocation } };
+				delete request.payload.workLocation;
 				claimPlanImplementRequest(data, async (_task, _mode, workLocation) => {
 					received = workLocation;
 				});
@@ -68,11 +68,13 @@ describe("plan-implement in-process API", () => {
 	it("allows only one listener to claim a request", () => {
 		const request = {
 			schemaVersion: 1 as const,
-			task: "test",
-			mode: "single" as DeliveryMode,
-			workLocation: "current" as WorkLocation,
-			changeKind: "generic" as ChangeKind,
-			ctx: {} as ExtensionCommandContext,
+			payload: {
+				task: "test",
+				mode: "single" as DeliveryMode,
+				workLocation: "current" as WorkLocation,
+				changeKind: "generic" as ChangeKind,
+				ctx: {} as ExtensionCommandContext,
+			},
 			claimed: false,
 		};
 		assert.equal(
@@ -91,22 +93,32 @@ describe("plan-implement in-process API", () => {
 			false,
 		);
 		assert.equal(
-			claimPlanImplementRequest({ schemaVersion: 1, task: 42 }, async () => {}),
-			false,
-		);
-		assert.equal(
-			claimPlanImplementRequest({ schemaVersion: 1, task: "test", mode: "invalid" }, async () => {}),
+			claimPlanImplementRequest({ schemaVersion: 1, payload: { task: 42 }, claimed: false }, async () => {}),
 			false,
 		);
 		assert.equal(
 			claimPlanImplementRequest(
-				{ schemaVersion: 1, task: "test", mode: "stack", workLocation: "worktree", changeKind: "generic", ctx: {} },
+				{ schemaVersion: 1, payload: { task: "test", mode: "invalid" }, claimed: false },
 				async () => {},
 			),
 			false,
 		);
 		assert.equal(
-			claimPlanImplementRequest({ schemaVersion: 2, task: "test", mode: "single" }, async () => {}),
+			claimPlanImplementRequest(
+				{
+					schemaVersion: 1,
+					payload: { task: "test", mode: "stack", workLocation: "worktree", changeKind: "generic", ctx: {} },
+					claimed: false,
+				},
+				async () => {},
+			),
+			false,
+		);
+		assert.equal(
+			claimPlanImplementRequest(
+				{ schemaVersion: 2, payload: { task: "test", mode: "single" }, claimed: false },
+				async () => {},
+			),
 			false,
 		);
 	});

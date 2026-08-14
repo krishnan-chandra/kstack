@@ -1,50 +1,63 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import type { LandOptions, LandResult } from "./types.ts";
+
 export const LAND_REQUEST_EVENT = "kstack:land:request";
-export interface LandRequest {
-	schemaVersion: 1;
+const READINESS_MODES = new Set<unknown>(["check", "watch"]);
+const MERGE_METHODS = new Set<unknown>(["merge", "squash", "rebase"]);
+
+interface LandPayload {
 	options: LandOptions;
 	ctx: ExtensionCommandContext;
-	claimed: boolean;
-	completion?: Promise<LandResult>;
 }
+
+export interface LandRequest extends RequestEnvelope<LandPayload, LandResult, 1> {}
+
+const channel = createRequestChannel<LandPayload, LandResult, 1>({
+	event: LAND_REQUEST_EVENT,
+	schemaVersion: 1,
+	isPayload: (value): value is LandPayload => {
+		if (typeof value !== "object" || value === null || !("options" in value) || !("ctx" in value)) return false;
+		const options = value.options;
+		if (typeof value.ctx !== "object" || value.ctx === null || typeof options !== "object" || options === null)
+			return false;
+		if ("cwd" in options && options.cwd !== undefined && (typeof options.cwd !== "string" || options.cwd.length === 0))
+			return false;
+		if (
+			!("readiness" in options) ||
+			!READINESS_MODES.has(options.readiness) ||
+			("method" in options && options.method !== undefined && !MERGE_METHODS.has(options.method))
+		)
+			return false;
+		if (!("target" in options)) return false;
+		const target = options.target;
+		return (
+			typeof target === "object" &&
+			target !== null &&
+			"kind" in target &&
+			target.kind === "single" &&
+			"prNumber" in target &&
+			Number.isSafeInteger(target.prNumber) &&
+			Number(target.prNumber) > 0
+		);
+	},
+});
+
 export function isLandRequest(value: unknown): value is LandRequest {
-	if (typeof value !== "object" || value === null) return false;
-	const r = value as Partial<LandRequest>;
-	const o = r.options;
-	if (
-		r.schemaVersion !== 1 ||
-		typeof r.claimed !== "boolean" ||
-		typeof r.ctx !== "object" ||
-		r.ctx === null ||
-		typeof o !== "object" ||
-		o === null
-	)
-		return false;
-	if (o.cwd !== undefined && (typeof o.cwd !== "string" || o.cwd.length === 0)) return false;
-	if (
-		!(["check", "watch"] as unknown[]).includes(o.readiness) ||
-		(o.method !== undefined && !(["merge", "squash", "rebase"] as unknown[]).includes(o.method))
-	)
-		return false;
-	return o.target?.kind === "single" && Number.isSafeInteger(o.target.prNumber) && o.target.prNumber > 0;
+	return channel.isRequest(value);
 }
+
 export function claimLandRequest(
 	value: unknown,
 	run: (options: LandOptions, ctx: ExtensionCommandContext) => Promise<LandResult>,
 ): boolean {
-	if (!isLandRequest(value) || value.claimed) return false;
-	value.claimed = true;
-	value.completion = run(value.options, value.ctx);
-	return true;
+	return channel.claim(value, ({ options, ctx }) => run(options, ctx));
 }
-export async function requestLand(
+
+export function requestLand(
 	pi: ExtensionAPI,
 	options: LandOptions,
 	ctx: ExtensionCommandContext,
 ): Promise<{ handled: false } | { handled: true; outcome: LandResult }> {
-	const request: LandRequest = { schemaVersion: 1, options, ctx, claimed: false };
-	pi.events.emit(LAND_REQUEST_EVENT, request);
-	if (!request.claimed || !request.completion) return { handled: false };
-	return { handled: true, outcome: await request.completion };
+	return channel.request(pi, { options, ctx });
 }

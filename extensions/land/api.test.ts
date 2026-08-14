@@ -36,8 +36,10 @@ test("rejects malformed and removed stack requests", () => {
 	assert.equal(
 		isLandRequest({
 			schemaVersion: 1,
-			options: { target: { kind: "stack", topBookmark: "x" }, readiness: "check" },
-			ctx: {},
+			payload: {
+				options: { target: { kind: "stack", topBookmark: "x" }, readiness: "check" },
+				ctx: {},
+			},
 			claimed: false,
 		}),
 		false,
@@ -45,8 +47,10 @@ test("rejects malformed and removed stack requests", () => {
 	assert.equal(
 		isLandRequest({
 			schemaVersion: 1,
-			options: { target: { kind: "single", prNumber: 0 }, readiness: "check" },
-			ctx: {},
+			payload: {
+				options: { target: { kind: "single", prNumber: 0 }, readiness: "check" },
+				ctx: {},
+			},
 			claimed: false,
 		}),
 		false,
