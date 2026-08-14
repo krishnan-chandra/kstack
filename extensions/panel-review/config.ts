@@ -234,7 +234,7 @@ export interface ResolveDeps {
 	/** Resolve "provider/model" against the registry; return undefined when unavailable. */
 	find: (provider: string, modelId: string) => ModelLike | undefined;
 	/** Scoped models for the session (may be empty = unscoped). */
-	scopedModels: { model: ModelLike; thinkingLevel?: string }[];
+	scopedModels: readonly { model: ModelLike; thinkingLevel?: string }[];
 	/** Currently active model. */
 	activeModel?: ModelLike;
 }
@@ -253,7 +253,7 @@ export type SynthesisResolution =
  * Without one, the built-in small, fast DEFAULT_SYNTHESIS model is used,
  * falling back to the active model with a warning.
  */
-export function resolveSynthesisModel(config: PanelConfig | null, deps: ResolveDeps): SynthesisResolution {
+export function resolveSynthesisModel(config: Pick<PanelConfig, "synthesis"> | null, deps: ResolveDeps): SynthesisResolution {
 	const warnings: string[] = [];
 	if (config) {
 		const slash = config.synthesis.model.indexOf("/");
@@ -293,7 +293,7 @@ export function resolveSynthesisModel(config: PanelConfig | null, deps: ResolveD
  * Resolve the reviewer panel from config, falling back to scoped models and
  * finally to the active model (two independent runs, reduced diversity).
  */
-export function resolveReviewers(config: PanelConfig | null, deps: ResolveDeps): ReviewerResolution {
+export function resolveReviewers(config: Pick<PanelConfig, "reviewers" | "maxConcurrency"> | null, deps: ResolveDeps): ReviewerResolution {
 	const warnings: string[] = [];
 
 	if (config) {

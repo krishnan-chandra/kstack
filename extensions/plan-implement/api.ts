@@ -83,7 +83,7 @@ export async function requestPlanImplement(
 	const workLocation: WorkLocation = modern ? workLocationOrChangeKind : "current";
 	const changeKind = modern ? changeKindOrCtx : workLocationOrChangeKind;
 	const ctx = modern ? maybeCtx : changeKindOrCtx;
-	if (!isChangeKind(changeKind) || typeof ctx !== "object" || ctx === null) return { handled: false };
+	if (typeof changeKind !== "string" || !isChangeKind(changeKind) || typeof ctx !== "object" || ctx === null) return { handled: false };
 	const request: PlanImplementRequest = { schemaVersion: 1, task, mode, workLocation, changeKind, ctx, claimed: false };
 	pi.events.emit(PLAN_IMPLEMENT_REQUEST_EVENT, request);
 	if (!request.claimed || !request.completion) return { handled: false };

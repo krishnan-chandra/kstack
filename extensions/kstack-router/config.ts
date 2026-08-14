@@ -33,7 +33,7 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 
 	if (obj.classifier !== undefined) {
 		if (typeof obj.classifier !== "object" || obj.classifier === null || Array.isArray(obj.classifier)) {
-			return { ok: false, error: '"kstack-router.classifier" must be an object {"model": "...", "thinking"?}.', config };
+			return { ok: false, error: '"kstack-router.classifier" must be an object {"model": "...", "thinking"?}.' };
 		}
 		const classifier = obj.classifier as Record<string, unknown>;
 		if (typeof classifier.model !== "string" || !MODEL_ID_RE.test(classifier.model)) {

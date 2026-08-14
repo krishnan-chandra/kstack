@@ -43,7 +43,7 @@ import {
 	type GHPrJson,
 } from "./github.ts";
 import { runAgent } from "./agent-runner.ts";
-import { LIMITS, type AutopilotAgentRole, type AutopilotMode, type AutopilotPersistedState, type CheckRun, type ExecFn, type FailureClass, type PRState, type ResolvedAutopilotConfig, type ReviewThread, type ThreadDecision, type UsageSummary } from "./types.ts";
+import { LIMITS, type AutopilotAgentRole, type AutopilotModelSpec, type AutopilotMode, type AutopilotPersistedState, type CheckRun, type ExecFn, type FailureClass, type PRState, type ResolvedAutopilotConfig, type ReviewThread, type ThreadDecision, type UsageSummary } from "./types.ts";
 import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 
 /** Lifecycle phases surfaced to the parent UI for status display. */
@@ -280,7 +280,7 @@ The working tree is already on the PR's branch. Treat it as the source of truth.
 }
 
 /** Pick a tiny model from the config, rotating for independence across cycles. */
-export function pickModel(models: ResolvedAutopilotConfig["models"], _role: AutopilotAgentRole, turn: number): { model: string; label: string; thinking?: string } {
+export function pickModel(models: readonly AutopilotModelSpec[], _role: AutopilotAgentRole, turn: number): { model: string; label: string; thinking?: string } {
 	const index = turn % models.length;
 	return { model: models[index].model, label: models[index].label, thinking: models[index].thinking };
 }

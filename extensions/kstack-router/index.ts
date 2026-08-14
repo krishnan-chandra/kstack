@@ -117,7 +117,7 @@ export default function (pi: ExtensionAPI): void {
 			...(details?.overrode ? [theme.fg("warning", "User overrode recommendation")] : []),
 			...(details?.dispatchStatus ? [`Status: ${details.dispatchStatus}`] : []),
 			"",
-			message.content,
+			typeof message.content === "string" ? message.content : "(structured content)",
 		];
 		box.addChild(new Text(lines.join("\n"), 0, 0));
 		return box;

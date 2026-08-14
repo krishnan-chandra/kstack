@@ -61,9 +61,12 @@ import { deriveSessionName } from "../shared/session-name.ts";
  * session's actual model and thinking level and warns instead of claiming
  * success.
  */
-export function createHandoffHandler(
-	api: Pick<ExtensionAPI, "setModel" | "getThinkingLevel" | "setThinkingLevel">,
-) {
+type HandoffApi = Pick<ExtensionAPI, "setModel"> & {
+	getThinkingLevel(): string;
+	setThinkingLevel(level: string): void;
+};
+
+export function createHandoffHandler(api: HandoffApi) {
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("handoff requires interactive mode", "error");
@@ -86,7 +89,7 @@ export function createHandoffHandler(
 		let targetModel: HandoffModel | undefined;
 		let requestedEffort: HandoffEffortLevel | undefined;
 		if (parsed.modelRef !== undefined) {
-			const scoped = (ctx.scopedModels ?? []) as Array<{ model: HandoffModel }>;
+			const scoped = ctx.scopedModels ?? [];
 			const scopedActive = scoped.length > 0;
 			const catalogue: HandoffModel[] = scopedActive
 				? scoped.map((s) => s.model)
@@ -147,7 +150,7 @@ export function createHandoffHandler(
 		if (targetModel) {
 			let switched = false;
 			try {
-				switched = await api.setModel(targetModel);
+				switched = await api.setModel(targetModel as Parameters<ExtensionAPI["setModel"]>[0]);
 			} catch (err) {
 				ctx.ui.notify(
 					`Could not switch to ${formatModelRef(targetModel)}: ${err instanceof Error ? err.message : String(err)}`,
@@ -237,7 +240,7 @@ export function createHandoffHandler(
 					// started on. A startup --model / --thinking flag or active
 					// model scoping can override the switch made above; never
 					// claim otherwise.
-					const actual = fresh.model as HandoffModel | undefined;
+					const actual = fresh.model;
 					const actualEffort = readFreshEffort(fresh.thinkingLevel);
 					const expectedModel = targetModel ?? previousModel;
 					const expectedEffort = appliedEffort;
@@ -321,7 +324,7 @@ function sameModel(a: HandoffModel, b: HandoffModel): boolean {
 
 function readEffort(
 	fromContext: unknown,
-	api: Pick<ExtensionAPI, "getThinkingLevel">,
+	api: Pick<HandoffApi, "getThinkingLevel">,
 ): HandoffEffortLevel | undefined {
 	if (typeof fromContext === "string" && isHandoffEffortLevel(fromContext)) return fromContext;
 	try {
@@ -337,7 +340,7 @@ function readFreshEffort(fromContext: unknown): HandoffEffortLevel | undefined {
 }
 
 async function restoreParentState(
-	api: Pick<ExtensionAPI, "setModel" | "setThinkingLevel">,
+	api: Pick<HandoffApi, "setModel" | "setThinkingLevel">,
 	state: {
 		targetModel: HandoffModel | undefined;
 		previousModel: HandoffModel | undefined;
@@ -348,7 +351,7 @@ async function restoreParentState(
 	const { targetModel, previousModel, previousEffort, effortChanged } = state;
 	if (targetModel && previousModel && !sameModel(previousModel, targetModel)) {
 		try {
-			await api.setModel(previousModel);
+			await api.setModel(previousModel as Parameters<ExtensionAPI["setModel"]>[0]);
 		} catch {
 			// Best effort; the parent keeps the requested model.
 		}

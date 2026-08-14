@@ -355,6 +355,8 @@ describe("handoff model selection", () => {
 				order.push("setModel");
 				throw new Error("settings unavailable");
 			},
+			getThinkingLevel: () => "",
+			setThinkingLevel: () => {},
 		};
 		const { ctx, calls } = makeFakeCtx(order, { model: PARENT_MODEL });
 		await createHandoffHandler(failing)("goal", ctx as never);

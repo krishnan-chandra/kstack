@@ -25,6 +25,15 @@ export interface AutopilotModelSpec {
 	thinking?: string;
 }
 
+export interface UsageSummary {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	turns: number;
+}
+
 /** Resolved pr-autopilot configuration after availability checking. */
 export interface ResolvedAutopilotConfig {
 	models: AutopilotModelSpec[];

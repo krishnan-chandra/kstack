@@ -69,7 +69,7 @@ export function validateConfig(raw: unknown): { ok: true; config: PlanImplementC
 	if (planner.spec.model === implementer.spec.model) {
 		return { ok: false, error: "Planner and implementer must use different models." };
 	}
-	let timeoutMinutes = LIMITS.defaultTimeoutMinutes;
+	let timeoutMinutes: number = LIMITS.defaultTimeoutMinutes;
 	if (value.timeoutMinutes !== undefined) {
 		if (
 			typeof value.timeoutMinutes !== "number" ||
