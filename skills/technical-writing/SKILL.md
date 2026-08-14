@@ -1,6 +1,6 @@
 ---
 name: technical-writing
-description: Write or review clear technical documentation using Diátaxis structure, Google developer style, STE instruction rules, and Global English clarity. Use for docs, RFCs, READMEs, guides, reference pages, release notes, PR descriptions, and commit messages, including when the user asks to explain, document, polish, or make technical writing easier to follow.
+description: Write or review clear technical prose using Diátaxis structure, Google developer style, STE instruction rules, and Global English clarity. Use whenever the user asks to add, preserve, update, rewrite, or review code comments, docstrings, docs, RFCs, READMEs, guides, reference pages, release notes, PR descriptions, or commit messages, or to explain, document, polish, or clarify technical writing.
 license: MIT
 ---
 
