@@ -38,8 +38,8 @@ test("applyPiDefaults merges managed preferences without removing existing confi
   });
   assert.deepEqual(readJson(join(agentDir, "keybindings.json")), {
     "app.clear": "ctrl+u",
-    "tui.input.submit": "alt+enter",
-    "app.message.followUp": "enter",
+    "tui.input.submit": "enter",
+    "app.message.followUp": "alt+enter",
   });
 });
 
@@ -65,8 +65,8 @@ test("install registers the package before merging defaults into Pi's updated se
     followUpMode: "all",
   });
   assert.deepEqual(readJson(join(agentDir, "keybindings.json")), {
-    "tui.input.submit": "alt+enter",
-    "app.message.followUp": "enter",
+    "tui.input.submit": "enter",
+    "app.message.followUp": "alt+enter",
   });
 });
 

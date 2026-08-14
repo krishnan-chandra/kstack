@@ -10,6 +10,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 
 | Extension | Description |
 | --- | --- |
+| [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>` routes tasks through a classifier to the appropriate workflow and proof-obligation playbook. |
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including a multi-selected batch of inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally on a chosen or inherited model and effort, then gives read-only tools for normalized, on-demand access to the linked session's active or archived history. |
@@ -132,8 +133,10 @@ settings and keybindings while making the tracked values authoritative:
 
 - Thinking blocks are hidden.
 - All queued steering and follow-up messages are delivered together.
-- Enter queues follow-up messages while Pi is working.
-- Alt+Enter sends steering messages while Pi is working.
+- Keybindings stay at Pi's stock values; the `steering-swap` extension swaps
+  Enter and Alt+Enter in the main editor while Pi is working, so Enter queues
+  follow-up messages and Alt+Enter steers. Enter keeps stock behavior for idle
+  submission, autocomplete, inline prompts, and selectors.
 
 Rerunning the installer is safe and reapplies these defaults. It refuses to
 modify either config file if existing JSON is malformed.
@@ -272,6 +275,7 @@ For focused runs, use the individual test commands:
 
 ```bash
 node --test install.test.mjs
+node --test extensions/steering-swap/*.test.ts
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
 node --test extensions/panel-review/*.test.ts
