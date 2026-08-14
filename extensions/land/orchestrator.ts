@@ -25,7 +25,7 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 	try {
 		const repo = await getRepository(deps.exec, deps.cwd, deps.signal);
 		const initial = await getPullRequest(deps.exec, deps.cwd, options.target.prNumber, deps.signal);
-		if (initial.state !== "OPEN" || initial.isDraft) return empty("blocked", `PR #${initial.number} is ${initial.isDraft ? "draft" : initial.state.toLowerCase()}.`);
+		if (initial.state !== "OPEN") return empty("blocked", `PR #${initial.number} is ${initial.state.toLowerCase()}.`);
 
 		const readiness = await deps.runAutopilot(options.readiness, initial.number);
 		if (!readiness.handled) return empty("blocked", "pr-autopilot extension is unavailable.");

@@ -13,6 +13,7 @@ import { createManagedWorktree, type ManagedWorktreePlan } from "./worktree.ts";
 import { runWorkflow } from "./workflow.ts";
 import type { ExecFn } from "./delivery-mode.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
+import type { LandResult } from "../land/types.ts";
 
 type Level = "info" | "warning" | "error";
 
@@ -28,6 +29,8 @@ export interface PhaseEffects {
 	endChild(controller: AbortController): void;
 	exec: ExecFn;
 	requestPanelReview(options: PanelArgs): Promise<{ handled: false } | { handled: true; outcome: PanelReviewOutcome }>;
+	resolvePublishedPr(cwd: string): Promise<{ ok: true; prNumber: number } | { ok: false; error: string }>;
+	requestLand(prNumber: number, cwd: string): Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
 }
 
 export interface ApprovedWorkflowOptions {
@@ -130,9 +133,10 @@ export async function runPostReviewPhases(
 		if (!fx.isCurrent() || !publishConfirmed) return;
 		const controller = fx.beginChild("publishing");
 		if (!controller) return;
+		let publisher: AgentRunResult | undefined;
 		try {
 			fx.setStatus(`plan-implement: publisher ${implementerModel}…`);
-			const publisher = await executeAgent({
+			publisher = await executeAgent({
 				role: "publisher", model: implementerModel, promptFile: join(promptsDir, "publisher.md"), taskFile, verdictFile,
 				cwd: state.workflowCwd, signal: controller.signal, deps: { timeoutMs },
 				onProgress: ({ role, turns, activity }) => fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
@@ -151,9 +155,46 @@ export async function runPostReviewPhases(
 			fx.endChild(controller);
 			if (fx.isCurrent()) fx.setStatus(undefined);
 		}
+		if (mode === "single" && publisher?.status === "completed" && fx.isCurrent()) {
+			await offerLandContinuation(options, state, fx);
+		}
 	} finally {
 		removePrivateDir(reviewDir, "review-phase", fx);
 	}
+}
+
+export async function offerLandContinuation(
+	options: Pick<ApprovedWorkflowOptions, "mode">,
+	state: { workflowCwd: string },
+	fx: PhaseEffects,
+): Promise<void> {
+	if (options.mode !== "single" || !fx.isCurrent()) return;
+	const resolved = await fx.resolvePublishedPr(state.workflowCwd);
+	if (!fx.isCurrent()) return;
+	if (!resolved.ok) {
+		fx.notify(`Landing not offered: ${resolved.error}`, "warning");
+		return;
+	}
+	const confirmed = await fx.confirm(
+		`Continue to landing PR #${resolved.prNumber}?`,
+		`Optional final phase: /land runs pr-autopilot readiness in watch mode, then asks again before any merge.\n` +
+			`PR: #${resolved.prNumber} (resolved from the workflow branch in ${state.workflowCwd})\n` +
+			"Landing has its own exact-head confirmation; declining there still performs no merge.\n" +
+			"Decline to finish plan-implement at the draft PR, as before.",
+	);
+	if (!confirmed || !fx.isCurrent()) return;
+	const landed = await fx.requestLand(resolved.prNumber, state.workflowCwd);
+	if (!fx.isCurrent()) return;
+	if (!landed.handled) {
+		fx.notify("Landing not started: the land extension is not loaded.", "warning");
+		return;
+	}
+	const outcome = landed.outcome;
+	const summary = outcome.blockers.length > 0 ? ` — ${outcome.blockers.join("; ")}` : "";
+	fx.notify(
+		`Landing ${outcome.status}${summary}`,
+		["failed", "blocked", "partially-landed", "aborted"].includes(outcome.status) ? "warning" : "info",
+	);
 }
 
 export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: PhaseEffects): Promise<void> {

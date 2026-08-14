@@ -1,9 +1,40 @@
-export class LandLifecycle {
-	private generation = 0; private running = false; private controller?: AbortController;
-	startSession(): void { this.generation++; this.running = false; this.controller?.abort(); this.controller = undefined; }
-	begin(): { generation: number; signal: AbortSignal } | undefined { if (this.running) return; this.running = true; this.controller = new AbortController(); return { generation: this.generation, signal: this.controller.signal }; }
-	end(token: { generation: number }): void { if (token.generation === this.generation) { this.controller?.abort(); this.running = false; this.controller = undefined; } }
-	abort(): boolean { if (!this.controller || this.controller.signal.aborted) return false; this.controller.abort(); return true; }
-	shutdown(): void { this.abort(); this.generation++; this.running = false; }
-	isRunning(): boolean { return this.running; }
+import { SessionRunLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
+
+export interface LandRunToken extends SessionToken {
+	readonly signal: AbortSignal;
+}
+
+export class LandLifecycle extends SessionRunLifecycle {
+	private controller: AbortController | undefined;
+
+	begin(): LandRunToken | undefined {
+		const session = this.currentSessionToken();
+		if (!session || !this.beginRun(session)) return undefined;
+		this.controller = new AbortController();
+		return { ...session, signal: this.controller.signal };
+	}
+
+	end(token: LandRunToken): void {
+		if (!this.isCurrent(token)) return;
+		this.controller = undefined;
+		this.endRun(token);
+	}
+
+	abort(): boolean {
+		if (!this.controller || this.controller.signal.aborted) return false;
+		this.controller.abort();
+		return true;
+	}
+
+	protected override onStart(): void {
+		this.abort();
+		this.controller = undefined;
+		super.onStart();
+	}
+
+	protected override onShutdown(): void {
+		this.abort();
+		this.controller = undefined;
+		super.onShutdown();
+	}
 }

@@ -6,6 +6,7 @@ export function isLandRequest(value: unknown): value is LandRequest {
 	if (typeof value !== "object" || value === null) return false;
 	const r = value as Partial<LandRequest>; const o = r.options;
 	if (r.schemaVersion !== 1 || typeof r.claimed !== "boolean" || typeof r.ctx !== "object" || r.ctx === null || typeof o !== "object" || o === null) return false;
+	if (o.cwd !== undefined && (typeof o.cwd !== "string" || o.cwd.length === 0)) return false;
 	if (!(["check", "watch"] as unknown[]).includes(o.readiness) || (o.method !== undefined && !(["merge", "squash", "rebase"] as unknown[]).includes(o.method))) return false;
 	return o.target?.kind === "single" && Number.isSafeInteger(o.target.prNumber) && o.target.prNumber > 0;
 }

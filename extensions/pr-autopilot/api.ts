@@ -11,6 +11,7 @@ export interface PrAutopilotRequest {
 	mode: AutopilotMode;
 	prNumber: number;
 	ctx: ExtensionCommandContext;
+	cwd?: string;
 	claimed: boolean;
 	completion?: Promise<AutopilotResult>;
 }
@@ -20,16 +21,18 @@ export function isPrAutopilotRequest(value: unknown): value is PrAutopilotReques
 	const request = value as Partial<PrAutopilotRequest>;
 	return request.schemaVersion === 1 && MODES.has(request.mode ?? "") &&
 		Number.isSafeInteger(request.prNumber) && (request.prNumber ?? 0) > 0 &&
-		typeof request.ctx === "object" && request.ctx !== null && typeof request.claimed === "boolean";
+		typeof request.ctx === "object" && request.ctx !== null &&
+		(request.cwd === undefined || (typeof request.cwd === "string" && request.cwd.length > 0)) &&
+		typeof request.claimed === "boolean";
 }
 
 export function claimPrAutopilotRequest(
 	value: unknown,
-	run: (mode: AutopilotMode, prNumber: number, ctx: ExtensionCommandContext) => Promise<AutopilotResult>,
+	run: (mode: AutopilotMode, prNumber: number, ctx: ExtensionCommandContext, cwd: string) => Promise<AutopilotResult>,
 ): boolean {
 	if (!isPrAutopilotRequest(value) || value.claimed) return false;
 	value.claimed = true;
-	value.completion = run(value.mode, value.prNumber, value.ctx);
+	value.completion = run(value.mode, value.prNumber, value.ctx, value.cwd ?? value.ctx.cwd);
 	return true;
 }
 
@@ -38,8 +41,9 @@ export async function requestPrAutopilot(
 	mode: AutopilotMode,
 	prNumber: number,
 	ctx: ExtensionCommandContext,
+	cwd?: string,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
-	const request: PrAutopilotRequest = { schemaVersion: 1, mode, prNumber, ctx, claimed: false };
+	const request: PrAutopilotRequest = { schemaVersion: 1, mode, prNumber, ctx, cwd, claimed: false };
 	pi.events.emit(PRAUTOPILOT_REQUEST_EVENT, request);
 	if (!request.claimed || !request.completion) return { handled: false };
 	return { handled: true, outcome: await request.completion };
