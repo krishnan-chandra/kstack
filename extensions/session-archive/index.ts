@@ -271,7 +271,7 @@ export default async function (pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params) {
 			if (!fileExists(dbPath)) {
-				return { content: [{ type: "text" as const, text: "No archived sessions match." }] };
+				return { content: [{ type: "text" as const, text: "No archived sessions match." }], details: {} };
 			}
 			const db = openArchiveDbReadOnly(dbPath);
 			try {
@@ -283,7 +283,7 @@ export default async function (pi: ExtensionAPI) {
 					limit: params.limit,
 				});
 				if (hits.length === 0) {
-					return { content: [{ type: "text" as const, text: "No archived sessions match." }] };
+					return { content: [{ type: "text" as const, text: "No archived sessions match." }], details: {} };
 				}
 				const text = hits
 					.map(
@@ -297,7 +297,7 @@ export default async function (pi: ExtensionAPI) {
 				const output = truncated.truncated
 					? `${truncated.content}\n\n[Search output truncated after ${hits.length} matched rows. Refine the query or lower the limit.]`
 					: truncated.content;
-				return { content: [{ type: "text" as const, text: output }] };
+				return { content: [{ type: "text" as const, text: output }], details: {} };
 			} finally {
 				db.close();
 			}
@@ -377,7 +377,7 @@ export default async function (pi: ExtensionAPI) {
 					`Session ${session.session_id} (${session.state}) — ${session.name ?? "(unnamed)"} — ${session.cwd}\n` +
 					`${range} — chunk ${chunk + 1} of ${chunks.length} — ${next}`;
 				const header = truncateHead(rawHeader, { maxBytes: 4096, maxLines: 10 }).content;
-				return { content: [{ type: "text" as const, text: `${header}\n\n${chunks[chunk]}` }] };
+				return { content: [{ type: "text" as const, text: `${header}\n\n${chunks[chunk]}` }], details: {} };
 			} finally {
 				db.close();
 			}

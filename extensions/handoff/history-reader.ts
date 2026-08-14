@@ -188,7 +188,7 @@ function pageOutput(
 	sourceKind: "active" | "archived",
 	cwd: string,
 	total: number,
-	views: ReturnType<typeof parsedEntryView>[],
+	views: Array<ReturnType<typeof parsedEntryView> | ReturnType<typeof archiveEntryView>>,
 	offset: number,
 	limit: number,
 	chunkIndex: number,

@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 import { SessionSelectionModel, selectSessionChoicesWithDialogs } from "./session-selection.ts";
 
 const choices = [
-	{ label: "Alpha", session: { path: "/sessions/a.jsonl" } },
-	{ label: "Beta", session: { path: "/sessions/b.jsonl" } },
-	{ label: "Gamma", session: { path: "/sessions/c.jsonl" } },
+	{ label: "Alpha", session: { path: "/sessions/a.jsonl", id: "a", modified: new Date(0) } },
+	{ label: "Beta", session: { path: "/sessions/b.jsonl", id: "b", modified: new Date(0) } },
+	{ label: "Gamma", session: { path: "/sessions/c.jsonl", id: "c", modified: new Date(0) } },
 ];
 
 describe("SessionSelectionModel", () => {

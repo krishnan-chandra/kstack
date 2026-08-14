@@ -48,7 +48,7 @@ export async function runPanel(
 		} catch (err) {
 			// A throwing runner must not take down siblings.
 			const model = spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
-			return { status: "failed", label: spec.label, model, error: (err as Error).message };
+			return { status: "failed" as const, label: spec.label, model, error: (err as Error).message };
 		}
 	});
 	return {

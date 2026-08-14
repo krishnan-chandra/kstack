@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { LIMITS, type BaseResolution, type BaseStrategy, type ScopeBundle } from "./types.ts";
 
+export type { ScopeBundle } from "./types.ts";
+
 /** Run git with the given args in cwd and return stdout (never a shell). */
 export type GitExec = (args: string[], cwd: string) => string;
 
@@ -366,4 +368,3 @@ export function collectScope(
 		generatedAt,
 	};
 }
-

@@ -47,7 +47,7 @@ export type ReviewerResult =
 			/** Last known child activity (e.g. "read bundle.md", "thinking"). */
 			activity?: string;
 	  }
-	| { status: "aborted"; label: string; model: string };
+	| { status: "aborted"; label: string; model: string; usage?: UsageSummary; activity?: string };
 
 export interface PanelArgs {
 	base?: string;

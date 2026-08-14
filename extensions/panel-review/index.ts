@@ -179,7 +179,9 @@ export default function (pi: ExtensionAPI) {
 				}
 				notify(`${synthResolution.error} Using the first reviewer model instead.`, "warning");
 			}
-			for (const warning of synthResolution.warnings) notify(warning, "warning");
+			if (synthResolution.ok) {
+				for (const warning of synthResolution.warnings) notify(warning, "warning");
+			}
 			const synthesisModel = synthResolution.ok ? synthResolution.model : resolution.reviewers[0].model;
 			const synthesisThinking = synthResolution.ok ? synthResolution.thinking : undefined;
 			const synthesisCliId = synthesisThinking ? `${synthesisModel}:${synthesisThinking}` : synthesisModel;
