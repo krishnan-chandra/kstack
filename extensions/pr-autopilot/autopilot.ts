@@ -19,6 +19,8 @@
  */
 
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
@@ -132,7 +134,7 @@ function hasPendingChecks(state: PRState): boolean {
 }
 
 function hasFailingChecks(state: PRState): boolean {
-	return state.checks.some((c) => c.conclusion === "failure" || c.status === "failure");
+	return state.checks.some((c) => c.conclusion === "failure" || c.status === "failure" || c.status === "cancelled");
 }
 
 /** Green checks, no unresolved threads, not conflicting. Drafts can still be code-ready. */
@@ -159,7 +161,7 @@ export function describeBlockers(state: PRState): string {
 	if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY") issues.push("conflicts");
 	if (state.mergeStateStatus === "BEHIND") issues.push("behind base");
 	if (state.hasUnresolvedThreads) issues.push(`unresolved threads (${state.threads.length})`);
-	const failing = state.checks.filter((c) => c.conclusion === "failure");
+	const failing = state.checks.filter((c) => c.conclusion === "failure" || c.status === "cancelled");
 	if (failing.length > 0) issues.push(`${failing.length} failing check(s)`);
 	if (hasPendingChecks(state) && failing.length === 0) issues.push("checks pending");
 	if (state.mergeStateStatus === "BLOCKED") issues.push("merge blocked");
@@ -173,7 +175,7 @@ function clipBody(body: string): string {
 
 /** Build the triager task file content from PR state. */
 export function buildTriagerTask(state: PRState): string {
-	const failures = state.checks.filter((c) => c.conclusion === "failure");
+	const failures = state.checks.filter((c) => c.conclusion === "failure" || c.status === "cancelled");
 	const pending = state.checks.filter((c) => c.status === "pending" || c.conclusion === "pending" || c.conclusion === null);
 	const threadLines = state.threads.map((t) => {
 		const loc = t.path ? `${t.path}${t.line !== undefined ? `:${t.line}` : ""}` : "(discussion)";
@@ -296,21 +298,30 @@ export async function resolveTargetPR(exec: ExecFn, cwd: string, explicitPR: num
 	return { prNumber: result.prNumber };
 }
 
-function persistPath(prNumber: number): string {
-	return join(tmpdir(), `pi-pr-autopilot-state-${prNumber}.json`);
+export function repoPersistKey(cwd: string): string {
+	return createHash("sha256").update(realpathSync(cwd)).digest("hex").slice(0, 12);
 }
 
-export async function loadPersistedState(prNumber: number): Promise<AutopilotPersistedState> {
+export function persistPath(repoKey: string, prNumber: number): string {
+	return join(tmpdir(), `pi-pr-autopilot-state-${repoKey}-${prNumber}.json`);
+}
+
+function emptyPersistedState(repoKey: string, prNumber: number): AutopilotPersistedState {
+	return { repoKey, prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
+}
+
+export async function loadPersistedState(repoKey: string, prNumber: number): Promise<AutopilotPersistedState> {
 	try {
-		const raw: unknown = JSON.parse(await readFile(persistPath(prNumber), "utf8"));
+		const raw: unknown = JSON.parse(await readFile(persistPath(repoKey, prNumber), "utf8"));
 		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-			return { prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
+			return emptyPersistedState(repoKey, prNumber);
 		}
 		const obj = raw as Record<string, unknown>;
 		const handled = Array.isArray(obj.handledThreadIds) ? obj.handledThreadIds.filter((id): id is string => typeof id === "string") : [];
 		const replied = Array.isArray(obj.repliedThreadIds) ? obj.repliedThreadIds.filter((id): id is string => typeof id === "string") : [];
 		const flake = Array.isArray(obj.flakeRetried) ? obj.flakeRetried.filter((id): id is string => typeof id === "string") : [];
 		return {
+			repoKey,
 			prNumber,
 			headSha: typeof obj.headSha === "string" ? obj.headSha : "",
 			handledThreadIds: handled,
@@ -318,12 +329,12 @@ export async function loadPersistedState(prNumber: number): Promise<AutopilotPer
 			flakeRetried: flake,
 		};
 	} catch {
-		return { prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
+		return emptyPersistedState(repoKey, prNumber);
 	}
 }
 
 export async function savePersistedState(state: AutopilotPersistedState): Promise<void> {
-	await writeFile(persistPath(state.prNumber), JSON.stringify(state), { mode: 0o600 });
+	await writeFile(persistPath(state.repoKey, state.prNumber), JSON.stringify(state), { mode: 0o600 });
 }
 
 function filterHandledThreads(threads: ReviewThread[], handled: string[]): ReviewThread[] {
@@ -770,11 +781,12 @@ export async function runAutopilot(
 		return { status: "blocked", mergeReady: false, cyclesCompleted: 0, blockedReasons: [msg], usage };
 	}
 	const prNumber = target.prNumber;
+	const repoKey = repoPersistKey(cwd);
 	notify(`Driving PR #${prNumber} in ${mode} mode. Models: ${config.models.map((m) => m.label).join(", ")}`, "info");
 
 	if (mode === "check") {
 		setPhase("checking");
-		const persisted = await loadPersistedState(prNumber);
+		const persisted = await loadPersistedState(repoKey, prNumber);
 		const state = await fetchPRState(exec, cwd, prNumber, null, { concurrency: config.maxConcurrency, handledThreadIds: persisted.handledThreadIds });
 		setPhase("idle");
 		if (typeof state === "string") {
@@ -806,7 +818,7 @@ export async function runAutopilot(
 	let verifiedHeadSha: string | null = null;
 	let cycle = 0;
 	const maxCycles = maxFixCycles(mode);
-	let persisted = await loadPersistedState(prNumber);
+	let persisted = await loadPersistedState(repoKey, prNumber);
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking");

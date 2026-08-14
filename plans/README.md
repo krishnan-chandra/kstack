@@ -18,10 +18,10 @@ not numbered and not superseded by anything below.
 |------|-------|----------|--------|------------|--------|
 | 001  | Fix cross-process schema race in session-archive | P1 | S | — | DONE |
 | 002  | Add root package.json and test scripts | P1 | S | 001 | DONE |
-| 003  | Add a typecheck gate and fix all type errors | P1 | L | 002 | TODO |
+| 003  | Add a typecheck gate and fix all type errors | P1 | L | 002 | DONE |
 | 004  | Extract one shared child-agent runner | P2 | L | 003 | DONE |
 | 005  | Extract one shared kstack.json config loader | P2 | M | 003 | DONE |
-| 006  | Fix pr-autopilot GitHub state-reading bugs | P2 | M | — | TODO |
+| 006  | Fix pr-autopilot GitHub state-reading bugs | P2 | M | — | DONE |
 | 007  | Guard panel-review against concurrent runs | P2 | S | — | TODO |
 | 008  | Slim plan-implement/index.ts into phase modules | P3 | M | 003, 004 | TODO |
 | 009  | Split the pr-autopilot driver module | P3 | M | 004 | TODO |

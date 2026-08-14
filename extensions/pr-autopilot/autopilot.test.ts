@@ -11,8 +11,11 @@ import {
 	isMergeReady,
 	fetchPRState,
 	parseTriage,
+	persistPath,
 	pickModel,
 	prepareMutationCheckout,
+	loadPersistedState,
+	savePersistedState,
 	summarizeTriage,
 } from "./autopilot.ts";
 import { DEFAULT_TINY_MODELS } from "./config.ts";
@@ -118,6 +121,12 @@ describe("pr-autopilot state machine", () => {
 			assert.equal(isMergeReady(state), false);
 		});
 
+		it("treats cancelled checks as actionable failures", () => {
+			const state = buildPRState(makePr(), [], [makeCheck("build", "cancelled", "cancelled")], null);
+			assert.equal(isCodeReady(state), false);
+			assert.match(describeBlockers(state), /failing check/);
+		});
+
 		it("returns false when checks are still pending", () => {
 			const state = buildPRState(makePr({ mergeable: "true", mergeStateStatus: "UNKNOWN" }), [], [makeCheck("lint", null, "pending")], null);
 			assert.equal(isMergeReady(state), false);
@@ -204,6 +213,27 @@ describe("pr-autopilot state machine", () => {
 			assert.equal(pickModel(models, "triager", 1).label, "gemini");
 			assert.equal(pickModel(models, "triager", 2).label, "deepseek");
 			assert.equal(pickModel(models, "triager", 3).label, "luna");
+		});
+	});
+
+	describe("persisted state", () => {
+		it("uses distinct paths for the same PR in different repositories", () => {
+			assert.notEqual(persistPath("repo-a", 5), persistPath("repo-b", 5));
+		});
+
+		it("round-trips handled thread ids with its repository key", async () => {
+			const repoKey = `test-${process.pid}-${Date.now()}`;
+			await savePersistedState({
+				repoKey,
+				prNumber: 5,
+				headSha: "abc",
+				handledThreadIds: ["thread-1"],
+				repliedThreadIds: [],
+				flakeRetried: [],
+			});
+			const loaded = await loadPersistedState(repoKey, 5);
+			assert.deepEqual(loaded.handledThreadIds, ["thread-1"]);
+			assert.equal(loaded.repoKey, repoKey);
 		});
 	});
 
