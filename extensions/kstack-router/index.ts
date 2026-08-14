@@ -1,26 +1,16 @@
-/**
- * Kstack Router — the package's front door.
- *
- * /kstack [--route <id>] [--single|--stack] [--worktree] [--] <task>
- *
- * Routes tasks through a classifier or explicit --route selection, then
- * dispatches to the appropriate workflow (plan-implement, panel-review,
- * active session with restricted tools, etc.). The classifier is advisory;
- * the user always confirms or overrides.
- */
-
+/** Kstack Router — the package's front door. */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseArgs } from "./args.ts";
 import { getRouteLabel, getRouteDescription, validateCatalog, checkDependencies } from "./catalog.ts";
-import { formatRecommendation, buildRouteAlternatives } from "./classification.ts";
 import { runClassifier } from "./classifier-runner.ts";
 import { loadConfig, resolveClassifierModel } from "./config.ts";
+import { resolveRoute } from "./route-resolution.ts";
+import { registerRouteCardRenderer, type RouteCardDetails } from "./route-card.ts";
 import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
-import { changeKindLabel, type ChangeKind } from "../plan-implement/change-kind.ts";
+import type { ChangeKind } from "../plan-implement/change-kind.ts";
 import { dispatchRoute, getRestrictedTools, getPlaybookForRoute } from "./dispatch.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { RouterLifecycle, type DispatchToken } from "./lifecycle.ts";
@@ -29,23 +19,11 @@ import {
 	isActiveSessionRoute,
 	type RouteId,
 	type DeliveryRecommendation,
+	type RouterConfig,
 } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PLAYBOOKS_DIR = join(EXTENSION_DIR, "playbooks");
-
-interface RouteCardDetails {
-	schemaVersion: 1;
-	route: RouteId;
-	routeLabel: string;
-	delivery: DeliveryRecommendation;
-	worktree?: boolean;
-	changeKind?: ChangeKind;
-	modelSource?: string;
-	confidence?: string;
-	overrode: boolean;
-	dispatchStatus?: string;
-}
 
 /** One-shot correlation between a dispatched active-session route and the user turn it triggers. */
 interface PendingDispatch {
@@ -85,43 +63,7 @@ export default function (pi: ExtensionAPI): void {
 		if (snapshot) restoreTools(snapshot.tools);
 	});
 
-	// --- Message renderer for route cards ---
-	pi.registerMessageRenderer("kstack-route", (message, { expanded, outputPad }, theme) => {
-		const details = message.details as RouteCardDetails | undefined;
-		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
-
-		if (!expanded) {
-			const header =
-				theme.fg("accent", "◆ Kstack Router") +
-				theme.fg("muted", ` — ${details?.routeLabel ?? "unknown route"}`) +
-				(details?.overrode ? theme.fg("warning", " — overridden") : "") +
-				(details?.dispatchStatus === "failed"
-					? theme.fg("error", " — dispatch failed")
-					: details?.dispatchStatus === "dispatched"
-						? theme.fg("success", " — dispatched")
-						: "") +
-				theme.fg("dim", " (Ctrl+O to expand)");
-			box.addChild(new Text(header, 0, 0));
-			return box;
-		}
-
-		const lines: string[] = [
-			theme.fg("accent", "◆ Kstack Router"),
-			"",
-			`Route: ${details?.routeLabel ?? "unknown"} (${details?.route ?? "?"})`,
-			...(details?.delivery ? [`Delivery: ${details.delivery === "stack" ? "stacked PRs" : "single PR"}`] : []),
-			...(details?.worktree ? ["Location: managed Git worktree"] : []),
-			...(details?.changeKind ? [`Change kind: ${changeKindLabel(details.changeKind)}`] : []),
-			...(details?.modelSource ? [`Classifier: ${details.modelSource}`] : []),
-			...(details?.confidence ? [`Confidence: ${details.confidence}`] : []),
-			...(details?.overrode ? [theme.fg("warning", "User overrode recommendation")] : []),
-			...(details?.dispatchStatus ? [`Status: ${details.dispatchStatus}`] : []),
-			"",
-			typeof message.content === "string" ? message.content : "(structured content)",
-		];
-		box.addChild(new Text(lines.join("\n"), 0, 0));
-		return box;
-	});
+	registerRouteCardRenderer(pi);
 
 	// --- Shortcut: abort classifier ---
 	pi.registerShortcut("ctrl+shift+k", {
@@ -135,7 +77,6 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	// --- before_agent_start: inject principles + playbook for the one pending active-session dispatch ---
 	pi.on("before_agent_start", (event) => {
 		if (!pendingDispatch) return;
 		const { token, route } = pendingDispatch;
@@ -164,7 +105,6 @@ export default function (pi: ExtensionAPI): void {
 		return { systemPrompt: `${event.systemPrompt}\n\n---\n\n${parts.join("\n\n---\n\n")}` };
 	});
 
-	// --- agent_settled: end the active-session dispatch and restore tools ---
 	pi.on("agent_settled", (_event, ctx) => {
 		const active = lifecycle.getActiveDispatch();
 		if (!active || !isActiveSessionRoute(active.route)) return;
@@ -172,7 +112,6 @@ export default function (pi: ExtensionAPI): void {
 		ctx.ui.setStatus("kstack-router", undefined);
 	});
 
-	// --- Command handler ---
 	pi.registerCommand("kstack", {
 		description:
 			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>. " +
@@ -217,171 +156,50 @@ export default function (pi: ExtensionAPI): void {
 				}
 			}
 
-			// The downstream plan-implement entry point uses the same
-			// name-if-unnamed rule, so routed changes preserve this name.
 			nameSessionIfUnnamed(pi, task);
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(sessionToken)) return;
 
-			// Resolve route.
-			let route: RouteId | undefined = parsed.args.route;
-			const worktree = parsed.args.worktree ?? false;
-			let delivery: DeliveryRecommendation = parsed.args.delivery ?? (worktree ? "single" : undefined);
-			let changeKind: ChangeKind = parsed.args.changeKind ?? "generic";
-			let overrode = false;
-			let modelSource = "explicit --route";
-			let confidence: string | undefined;
-
-			if (!route) {
-				// Run the classifier.
+			// Resolve route and user overrides behind narrow, testable effects.
+			let routerConfig: RouterConfig | null = null;
+			let classifierResolution: ReturnType<typeof resolveClassifierModel> | undefined;
+			if (!parsed.args.route) {
 				const configLoad = loadConfig();
 				if (configLoad.status === "invalid") {
 					notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
 					return;
 				}
-				const routerConfig = configLoad.status === "loaded" ? configLoad.config : null;
-
-				const classifierResolution = resolveClassifierModel(routerConfig, {
+				routerConfig = configLoad.status === "loaded" ? configLoad.config : null;
+				classifierResolution = resolveClassifierModel(routerConfig, {
 					available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
 					activeModelId: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 				});
-
-				if ("error" in classifierResolution) {
-					notify(classifierResolution.error, "warning");
-					// Fall through to manual selection.
-				} else {
-					modelSource = classifierResolution.source === "config"
-						? "configured"
-						: classifierResolution.source === "default"
-							? "built-in default"
-							: "active model (not ideal)";
-
-					if (classifierResolution.warning) {
-						notify(classifierResolution.warning, "warning");
-					}
-
-					notify(`Running classifier (${modelSource})…`, "info");
-
-					const classifierController = lifecycle.beginClassifier(sessionToken);
-					if (!classifierController) {
-						notify("A classifier or dispatch is already running.", "warning");
-						return;
-					}
-
-					ctx.ui.setStatus("kstack-router", "kstack-router: classifying…");
-					const classifierResult = await runClassifier({
-						model: classifierResolution.modelId,
-						thinking: classifierResolution.thinking,
-						task,
-						signal: classifierController.signal,
-						timeoutSeconds: routerConfig?.timeoutSeconds,
-					});
-					lifecycle.endClassifier(sessionToken);
-					ctx.ui.setStatus("kstack-router", undefined);
-
-					if (classifierResult.status === "aborted") {
-						notify("Classification aborted.", "info");
-						return;
-					}
-
-					if (classifierResult.status === "completed") {
-						confidence = classifierResult.envelope.confidence;
-						const recommendation = {
-							route: classifierResult.envelope.route,
-							confidence: classifierResult.envelope.confidence,
-							rationale: classifierResult.envelope.rationale,
-							delivery: classifierResult.envelope.delivery,
-							changeKind: classifierResult.envelope.changeKind,
-						};
-
-						// Show the recommendation.
-						notify(formatRecommendation(recommendation, modelSource), "info");
-
-						// User may override.
-						const alternatives = buildRouteAlternatives(recommendation.route);
-						const selected = await selectRoute(ctx, "Accept route or choose another?", [
-							{ route: recommendation.route, label: `✓ Accept: ${getRouteLabel(recommendation.route)}` },
-							...alternatives.map((alternative) => ({
-								route: alternative.id,
-								label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
-							})),
-						]);
-						if (!lifecycle.isSessionCurrent(sessionToken)) return;
-						if (!selected) {
-							notify("Routing cancelled.", "info");
-							return;
-						}
-						route = selected;
-						overrode = route !== recommendation.route;
-						if (!overrode && recommendation.delivery && !delivery) {
-							delivery = recommendation.delivery;
-						}
-						if (!overrode && recommendation.changeKind && !parsed.args.changeKind) {
-							changeKind = recommendation.changeKind;
-						}
-					} else {
-						// Classifier failed; offer manual selection.
-						notify(`Classifier did not produce a valid route (${classifierResult.status === "failed" ? classifierResult.error : "unknown error"}). Please pick a route manually.`, "warning");
-						const alternatives = buildRouteAlternatives();
-						route = await selectRoute(
-							ctx,
-							"Select a route:",
-							alternatives.map((alternative) => ({
-								route: alternative.id,
-								label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
-							})),
-						);
-						if (!lifecycle.isSessionCurrent(sessionToken) || !route) return;
-						overrode = true;
-					}
-				}
-
-				// If no classifier model and no manual selection resolved, fall back to manual.
-				if (!route) {
-					const alternatives = buildRouteAlternatives();
-					route = await selectRoute(
-						ctx,
-						"No classifier available. Select a route:",
-						alternatives.map((alternative) => ({
-							route: alternative.id,
-							label: `${alternative.label}: ${alternative.description.slice(0, 60)}…`,
-						})),
-					);
-					if (!lifecycle.isSessionCurrent(sessionToken) || !route) return;
-					overrode = true;
-				}
 			}
-
-			if (!route) return; // User cancelled.
-
-			if (parsed.args.changeKind && route !== "change") {
-				notify("--change-kind is only valid with --route change.", "warning");
+			const resolution = await resolveRoute(
+				{ parsedArgs: parsed.args, task, routerConfig, classifierResolution },
+				{
+					notify,
+					selectRoute: async (title, options) => {
+						const routesByLabel = new Map(options.map((option) => [option.label, option.route]));
+						const selected = await ctx.ui.select(title, [...routesByLabel.keys(), "Cancel"], {});
+						return selected && selected !== "Cancel" ? routesByLabel.get(selected) : undefined;
+					},
+					selectOption: (title, options) => ctx.ui.select(title, options, {}),
+					runClassifier,
+					isSessionCurrent: () => lifecycle.isSessionCurrent(sessionToken),
+					beginClassifier: () => lifecycle.beginClassifier(sessionToken),
+					endClassifier: () => lifecycle.endClassifier(sessionToken),
+					setStatus: (text) => ctx.ui.setStatus("kstack-router", text),
+				},
+			);
+			if ("cancelled" in resolution) return;
+			if ("failed" in resolution) {
+				notify(resolution.failed, "warning");
 				return;
 			}
-			if (worktree && route !== "change") {
-				notify("--worktree is only valid with the change route.", "warning");
-				return;
-			}
+			const { route, delivery, changeKind, overrode, modelSource, confidence } = resolution.resolved;
+			const worktree = parsed.args.worktree ?? false;
 
-			// For "change" route without explicit delivery: use classifier recommendation
-			// or default to single.
-			if (route === "change" && !delivery) {
-				if (!overrode) {
-					// The classifier may have recommended a delivery; if not, ask.
-					const choice = await ctx.ui.select(
-						"Delivery mode for change?",
-						["single (default)", "stack", "Cancel"],
-						{},
-					);
-					if (!lifecycle.isSessionCurrent(sessionToken)) return;
-					if (!choice || choice === "Cancel") return;
-					delivery = choice === "stack" ? "stack" : "single";
-				} else {
-					delivery = "single";
-				}
-			}
-
-			// Check dependencies before dispatching.
 			const availableCommands = pi.getCommands()
 				.filter((c) => c.source === "extension")
 				.map((c) => c.name);
@@ -412,7 +230,6 @@ export default function (pi: ExtensionAPI): void {
 				? `\nDelivery: ${delivery === "stack" ? "stacked PRs" : "single PR"}${worktree ? " in a managed Git worktree" : ""}`
 				: "";
 
-			// --- Active-session routes: restrict tools, inject playbook, trigger a turn ---
 			if (isActiveSessionRoute(route)) {
 				await ctx.waitForIdle();
 				if (!lifecycle.isSessionCurrent(sessionToken)) return;
@@ -468,56 +285,45 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// --- Delegated routes: change / review / unsupported ---
 			const dispatchToken = lifecycle.beginDispatch(sessionToken, { route });
 			if (!dispatchToken) {
 				notify("A dispatch is already active.", "warning");
 				return;
 			}
 
-			pi.sendMessage({
-				customType: "kstack-route",
-				content: `${routeDescription}${deliveryNote}`,
-				display: true,
-				details: routeCard,
-			});
+			try {
+				pi.sendMessage({
+					customType: "kstack-route",
+					content: `${routeDescription}${deliveryNote}`,
+					display: true,
+					details: routeCard,
+				});
 
-			const result = await dispatchRoute(route, task, delivery, worktree, changeKind, dispatchToken, lifecycle, pi, ctx);
-
-			// Update the route card with dispatch status.
-			routeCard.dispatchStatus = result.status;
-			pi.sendMessage({
-				customType: "kstack-route",
-				content:
-					result.status === "dispatched"
+				const result = await dispatchRoute(route, task, delivery, worktree, changeKind, dispatchToken, lifecycle, pi, ctx);
+				routeCard.dispatchStatus = result.status;
+				pi.sendMessage({
+					customType: "kstack-route",
+					content: result.status === "dispatched"
 						? `Dispatched to ${getRouteLabel(route)}.`
 						: `Dispatch failed: ${(result as { error?: string }).error ?? result.status}`,
-				display: true,
-				details: routeCard,
-			});
+					display: true,
+					details: routeCard,
+				});
 
-			if (result.status === "failed") {
-				notify((result as { error?: string }).error ?? "Dispatch failed.", "error");
-			} else if (route === "change") {
-				notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
-			} else if (route === "review") {
-				notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
+				if (result.status === "failed") {
+					notify((result as { error?: string }).error ?? "Dispatch failed.", "error");
+				} else if (route === "change") {
+					notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
+				} else if (route === "review") {
+					notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
+				}
+			} finally {
+				lifecycle.endDispatch(dispatchToken);
 			}
-
-			lifecycle.endDispatch(dispatchToken);
 		},
 	});
 }
 
-async function selectRoute(
-	ctx: ExtensionCommandContext,
-	title: string,
-	options: Array<{ route: RouteId; label: string }>,
-): Promise<RouteId | undefined> {
-	const routesByLabel = new Map(options.map((option) => [option.label, option.route]));
-	const selected = await ctx.ui.select(title, [...routesByLabel.keys(), "Cancel"], {});
-	return selected && selected !== "Cancel" ? routesByLabel.get(selected) : undefined;
-}
 
 function readPlaybook(name: string): string {
 	return readFileSync(join(PLAYBOOKS_DIR, name), "utf8");

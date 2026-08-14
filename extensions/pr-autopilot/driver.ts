@@ -75,6 +75,14 @@ export interface AutopilotResult {
 	usage: UsageSummary;
 }
 
+export interface DriverOps {
+	runChildRole: typeof runChildRole;
+	loadPersistedState: typeof loadPersistedState;
+	savePersistedState: typeof savePersistedState;
+}
+
+const defaultOps: DriverOps = { runChildRole, loadPersistedState, savePersistedState };
+
 export async function runAutopilot(
 	mode: AutopilotMode,
 	params: {
@@ -92,6 +100,7 @@ export async function runAutopilot(
 		confirm: (label: string, body: string) => Promise<boolean>;
 	},
 	signal: AbortSignal,
+	ops: DriverOps = defaultOps,
 ): Promise<AutopilotResult> {
 	const { config, exec, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
 	const { setPhase, notify, confirm } = handlers;
@@ -122,7 +131,7 @@ export async function runAutopilot(
 
 	if (mode === "check") {
 		setPhase("checking");
-		const persisted = await loadPersistedState(repoKey, prNumber);
+		const persisted = await ops.loadPersistedState(repoKey, prNumber);
 		const state = await fetchPRState(exec, cwd, prNumber, null, { concurrency: config.maxConcurrency, handledThreadIds: persisted.handledThreadIds });
 		setPhase("idle");
 		if (typeof state === "string") {
@@ -154,7 +163,7 @@ export async function runAutopilot(
 	let verifiedHeadSha: string | null = null;
 	let cycle = 0;
 	const maxCycles = maxFixCycles(mode);
-	let persisted = await loadPersistedState(repoKey, prNumber);
+	let persisted = await ops.loadPersistedState(repoKey, prNumber);
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking", cycle);
@@ -249,7 +258,7 @@ export async function runAutopilot(
 					notify(`Merged origin/${state.baseRef} and pushed ${merged.headSha.slice(0, 8)}.`, "info");
 					verifiedHeadSha = null;
 					persisted = { ...persisted, headSha: merged.headSha };
-					await savePersistedState(persisted);
+					await ops.savePersistedState(persisted);
 					cycle++;
 					continue;
 				}
@@ -296,7 +305,7 @@ export async function runAutopilot(
 		const model = pickModel(config.models, cycle);
 		const taskFile = join(promptDir, `triager-${cycle + 1}.md`);
 		await writeFile(taskFile, buildTriagerTask(state), { mode: 0o600 });
-		const triagerResult = await runChildRole("triager",
+		const triagerResult = await ops.runChildRole("triager",
 			{
 				model: model.model,
 				thinking: model.thinking,
@@ -350,7 +359,7 @@ export async function runAutopilot(
 					notify(`Could not rerun ${flake.name}: ${rerun.stderr.trim()}`, "warning");
 				}
 			}
-			await savePersistedState(persisted);
+			await ops.savePersistedState(persisted);
 			if (reran) {
 				cycle++;
 				continue;
@@ -382,7 +391,7 @@ export async function runAutopilot(
 			setPhase("fixing", cycle);
 			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
 			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode), { mode: 0o600 });
-			const fixerResult = await runChildRole("fixer",
+			const fixerResult = await ops.runChildRole("fixer",
 				{
 					model: fixerModel.model,
 					thinking: fixerModel.thinking,
@@ -437,7 +446,7 @@ export async function runAutopilot(
 		} else {
 			persisted = { ...persisted, repliedThreadIds };
 		}
-		await savePersistedState(persisted);
+		await ops.savePersistedState(persisted);
 
 		if (mode === "threads") {
 			const recheck = await refresh();
