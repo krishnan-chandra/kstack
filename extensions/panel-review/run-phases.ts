@@ -14,7 +14,7 @@ import {
 	type ResolveDeps,
 } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
-import { runReviewer } from "./reviewer-runner.ts";
+import { runReviewer, type ChildEvent } from "./reviewer-runner.ts";
 import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec, ScopeBundle } from "./types.ts";
 
@@ -65,6 +65,8 @@ export interface PipelineDashboard {
 	markRunning(label: string): void;
 	progress(label: string, info: { turns: number; activity?: string; preview?: string }): void;
 	complete(label: string, info: { status: "completed" | "failed" | "aborted"; turns?: number; error?: string }): void;
+	event(label: string, event: ChildEvent): void;
+	note(label: string, text: string): void;
 	addLead(label: string, name: string, model: string): void;
 	tick(): void;
 	dispose(): void;
@@ -134,7 +136,10 @@ export async function runReviewPipeline(
 		const panel = await ops.runPanel(resolution.reviewers, resolution.maxConcurrency, (spec) => {
 			progress.set(spec.label, "running");
 			updateStatus();
-			if (fx.isCurrent()) dashboard?.markRunning(spec.label);
+			if (fx.isCurrent()) {
+				dashboard?.markRunning(spec.label);
+				dashboard?.note(spec.label, "Reviewer started");
+			}
 			return ops.runReviewer({
 				spec,
 				model: modelCliId(spec),
@@ -149,15 +154,24 @@ export async function runReviewPipeline(
 					updateStatus();
 					if (fx.isCurrent()) dashboard?.progress(label, { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
 				},
+				onEvent: (event) => {
+					if (fx.isCurrent()) dashboard?.event(spec.label, event);
+				},
 			}).then((result) => {
 				doneCount++;
 				progress.set(spec.label, result.status === "completed" ? "✓" : result.status === "failed" ? "✗" : "aborted");
 				updateStatus();
-				if (fx.isCurrent()) dashboard?.complete(spec.label, {
-					status: result.status,
-					turns: result.usage?.turns,
-					...(result.status === "failed" ? { error: result.error } : {}),
-				});
+				if (fx.isCurrent()) {
+					dashboard?.complete(spec.label, {
+						status: result.status,
+						turns: result.usage?.turns,
+						...(result.status === "failed" ? { error: result.error } : {}),
+					});
+					dashboard?.note(
+						spec.label,
+						`Reviewer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
+					);
+				}
 				return result;
 			});
 		});
@@ -200,13 +214,22 @@ export async function runReviewPipeline(
 			onProgress: ({ turns, activity, preview }) => {
 				if (fx.isCurrent()) dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
 			},
+			onEvent: (event) => {
+				if (fx.isCurrent()) dashboard?.event("lead", event);
+			},
 		});
 		fx.setCompactStatus(undefined);
-		if (fx.isCurrent()) dashboard?.complete("lead", {
-			status: synthesisResult.status,
-			turns: synthesisResult.usage?.turns,
-			...(synthesisResult.status === "failed" ? { error: synthesisResult.error } : {}),
-		});
+		if (fx.isCurrent()) {
+			dashboard?.complete("lead", {
+				status: synthesisResult.status,
+				turns: synthesisResult.usage?.turns,
+				...(synthesisResult.status === "failed" ? { error: synthesisResult.error } : {}),
+			});
+			dashboard?.note(
+				"lead",
+				`Synthesis ${synthesisResult.status}${synthesisResult.status === "failed" ? `: ${synthesisResult.error}` : ""}`,
+			);
+		}
 		const synthesized = synthesisResult.status === "completed";
 		const verdict = synthesized ? synthesisResult.output : renderRawReports(panel.results);
 		if (!synthesized) {

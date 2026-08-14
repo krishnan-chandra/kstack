@@ -6,15 +6,47 @@ import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-wo
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
+import { openInspector, type OpenInspectorResult } from "./inspector-overlay.ts";
 import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { resolvePanel, runReviewPipeline, type PipelineDashboard, type VerdictDetails } from "./run-phases.ts";
+import { PanelTranscriptStore } from "./transcript-store.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
+
+let activeAbort: AbortController | undefined;
+let activeInspector: OpenInspectorResult | undefined;
+let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscriptStore } | undefined;
 
 export default function (pi: ExtensionAPI): void {
 	const lifecycle = new PanelLifecycle();
-	let activeAbort: AbortController | undefined;
+
+	pi.registerShortcut("ctrl+shift+v", {
+		description: "Inspect panel review child transcripts",
+		handler: async (ctx) => {
+			if (ctx.mode !== "tui" || !activeStores || !lifecycle.isRunning()) {
+				ctx.ui.notify("No panel review is running.", "info");
+				return;
+			}
+			if (activeInspector) return;
+			const { dashboard, transcripts } = activeStores;
+			const inspector = openInspector(ctx, dashboard, transcripts, {
+				text: {
+					stripTerminalSequences,
+					truncateToWidth: (text, width) => truncateToWidth(text, width),
+				},
+				onAbort: () => {
+					if (activeAbort && !activeAbort.signal.aborted) {
+						activeAbort.abort();
+					}
+				},
+			});
+			activeInspector = inspector;
+			inspector.closed.finally(() => {
+				if (activeInspector === inspector) activeInspector = undefined;
+			});
+		},
+	});
 
 	pi.registerShortcut("ctrl+shift+x", {
 		description: "Abort the running panel review",
@@ -177,6 +209,9 @@ export default function (pi: ExtensionAPI): void {
 	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => claimPanelReviewRequest(data, runPanelReview));
 	pi.on("session_start", () => lifecycle.startSession());
 	pi.on("session_shutdown", () => {
+		activeInspector?.close();
+		activeInspector = undefined;
+		activeStores = undefined;
 		activeAbort?.abort();
 		activeAbort = undefined;
 		lifecycle.shutdownSession();
@@ -185,19 +220,34 @@ export default function (pi: ExtensionAPI): void {
 
 function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]): PipelineDashboard | undefined {
 	if (ctx.mode !== "tui") return undefined;
-	const store = new PanelDashboardStore();
-	for (const reviewer of reviewers) store.addReviewer(reviewer.label, reviewer.label, modelCliId(reviewer));
-	const dispose = mountPanelDashboard(ctx.ui, store, {
+	const dashboardStore = new PanelDashboardStore();
+	const transcriptStore = new PanelTranscriptStore();
+	for (const reviewer of reviewers) {
+		dashboardStore.addReviewer(reviewer.label, reviewer.label, modelCliId(reviewer));
+		transcriptStore.addChild(reviewer.label);
+	}
+	activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
+	const disposeWidget = mountPanelDashboard(ctx.ui, dashboardStore, {
 		stripTerminalSequences,
 		truncateToWidth: (text, width) => truncateToWidth(text, width),
 	});
 	return {
-		addLead: (id, label, model) => store.addLead(id, label, model),
-		markRunning: (id) => store.markRunning(id),
-		progress: (id, info) => store.progress(id, info),
-		complete: (id, info) => store.complete(id, info),
-		tick: () => store.tick(),
-		dispose,
+		addLead: (id, label, model) => {
+			dashboardStore.addLead(id, label, model);
+			transcriptStore.addChild(id);
+		},
+		markRunning: (id) => dashboardStore.markRunning(id),
+		progress: (id, info) => dashboardStore.progress(id, info),
+		complete: (id, info) => dashboardStore.complete(id, info),
+		event: (id, ev) => transcriptStore.push(id, ev),
+		note: (id, text) => transcriptStore.note(id, text),
+		tick: () => dashboardStore.tick(),
+		dispose: () => {
+			activeInspector?.close();
+			activeInspector = undefined;
+			activeStores = undefined;
+			disposeWidget();
+		},
 	};
 }
 

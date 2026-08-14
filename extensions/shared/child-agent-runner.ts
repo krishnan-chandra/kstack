@@ -42,6 +42,12 @@ export interface ChildRunnerDeps {
 	stdoutLineCapBytes?: number;
 }
 
+export type ChildEvent =
+	| { kind: "tool_start"; summary: string; at: number }
+	| { kind: "tool_end"; durationMs?: number; at: number }
+	| { kind: "text_delta"; delta: string; at: number }
+	| { kind: "turn_end"; turn: number; text: string; usage: ChildUsage; at: number };
+
 export interface RunChildOptions {
 	args: string[];
 	cwd: string;
@@ -49,6 +55,7 @@ export interface RunChildOptions {
 	signal?: AbortSignal;
 	deps?: ChildRunnerDeps;
 	onProgress?: (progress: { turns: number; activity?: string; preview?: string }) => void;
+	onEvent?: (event: ChildEvent) => void;
 }
 
 export type ChildRunResult =
@@ -152,6 +159,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		let idleTimer: ReturnType<typeof setTimeout> | undefined;
 		let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		let lastToolStartAt: number | undefined;
 
 		const emit = () => options.onProgress?.({ turns: usage.turns, activity, ...(preview ? { preview } : {}) });
 		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
@@ -194,24 +202,54 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			if (event.type === "message_start" && event.message?.role === "assistant") { preview = ""; emit(); return; }
 			if (event.type === "message_update") {
 				const delta = event.assistantMessageEvent;
-				if (delta?.type === "text_delta" && delta.delta) { preview = truncateTailUtf8(preview + delta.delta, PREVIEW_CAP); emit(); }
+				if (delta?.type === "text_delta" && delta.delta) {
+					preview = truncateTailUtf8(preview + delta.delta, PREVIEW_CAP);
+					emit();
+					options.onEvent?.({ kind: "text_delta", delta: delta.delta, at: Date.now() });
+				}
 				return;
 			}
-			if (event.type === "tool_execution_start" && event.toolName) { activity = summarizeToolCall(event.toolName, event.args); emit(); return; }
-			if (event.type === "tool_execution_end") { activity = "thinking"; emit(); return; }
+			if (event.type === "tool_execution_start" && event.toolName) {
+				activity = summarizeToolCall(event.toolName, event.args);
+				emit();
+				if (lastToolStartAt !== undefined) {
+					options.onEvent?.({ kind: "tool_end", at: Date.now() });
+				}
+				lastToolStartAt = Date.now();
+				options.onEvent?.({ kind: "tool_start", summary: activity, at: lastToolStartAt });
+				return;
+			}
+			if (event.type === "tool_execution_end") {
+				activity = "thinking";
+				emit();
+				const now = Date.now();
+				const durationMs = lastToolStartAt !== undefined ? Math.max(0, now - lastToolStartAt) : undefined;
+				lastToolStartAt = undefined;
+				options.onEvent?.({ kind: "tool_end", durationMs, at: now });
+				return;
+			}
 			if (event.type !== "message_end" || event.message?.role !== "assistant") return;
 			const message = event.message;
 			usage.turns++;
-			usage.input += message.usage?.input ?? 0;
-			usage.output += message.usage?.output ?? 0;
-			usage.cacheRead += message.usage?.cacheRead ?? 0;
-			usage.cacheWrite += message.usage?.cacheWrite ?? 0;
-			usage.cost += message.usage?.cost?.total ?? 0;
+			const turnUsage: ChildUsage = {
+				input: message.usage?.input ?? 0,
+				output: message.usage?.output ?? 0,
+				cacheRead: message.usage?.cacheRead ?? 0,
+				cacheWrite: message.usage?.cacheWrite ?? 0,
+				cost: message.usage?.cost?.total ?? 0,
+				turns: 1,
+			};
+			usage.input += turnUsage.input;
+			usage.output += turnUsage.output;
+			usage.cacheRead += turnUsage.cacheRead;
+			usage.cacheWrite += turnUsage.cacheWrite;
+			usage.cost += turnUsage.cost;
 			stopReason = message.stopReason ?? stopReason;
 			errorMessage = message.errorMessage ?? errorMessage;
 			const text = assistantText(message);
 			if (text) { finalText = text; preview = truncateTailUtf8(text, PREVIEW_CAP); }
 			emit();
+			options.onEvent?.({ kind: "turn_end", turn: usage.turns, text, usage: turnUsage, at: Date.now() });
 		}, { maxLineBytes: lineCap, onOverflow: (maxBytes) => { protocolError = `Child emitted a JSONL stdout line larger than ${maxBytes} bytes.`; } });
 
 		child.stdout.on("data", (data) => { armIdle(); parser.push(data); if (protocolError) stop(); });

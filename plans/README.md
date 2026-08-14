@@ -31,7 +31,7 @@ not numbered and not superseded by anything below.
 | 013  | Characterization tests for the pr-autopilot drive loop | P2 | M | — | DONE — implemented 2026-08-14 (9 drive-loop cases) |
 | 014  | Slim the kstack-router command handler | P3 | M | 012 (soft) | DONE — implemented 2026-08-14 (330 lines; resolver tests + smoke green) |
 | 015  | Extract panel-review's run pipeline into phase modules | P3 | M | 012 (soft) | DONE — implemented 2026-08-14 (203 lines; resolution/pipeline tests green) |
-| 016  | Read-only transcript inspector overlay for panel-review | P3 | M | 015 | TODO |
+| 016  | Read-only transcript inspector overlay for panel-review | P3 | M | 015 | DONE — implemented 2026-08-14 (ctrl+shift+v inspector, transcript-store, overlay renderer) |
 
 Reconciled on 2026-08-14 against `7e18fff`: full suite 667/667 pass, typecheck clean.
 Plans 012–015 added in the same reconcile session (second audit round over the

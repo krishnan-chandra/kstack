@@ -125,7 +125,7 @@ export function sanitizeDisplayText(input: string, text: TerminalText = fallback
 		.trim();
 }
 
-const STATUS_ICON: Record<DashboardStatus, { icon: string; color: string }> = {
+export const STATUS_ICON: Record<DashboardStatus, { icon: string; color: string }> = {
 	queued: { icon: "○", color: "dim" },
 	running: { icon: "●", color: "accent" },
 	completed: { icon: "✓", color: "success" },
@@ -133,7 +133,7 @@ const STATUS_ICON: Record<DashboardStatus, { icon: string; color: string }> = {
 	aborted: { icon: "⊘", color: "warning" },
 };
 
-function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
+export function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
 	if (row.startedAt === undefined) return undefined;
 	const end = row.finishedAt ?? now;
 	return Math.max(0, Math.round((end - row.startedAt) / 1000));
@@ -263,7 +263,7 @@ export function renderDashboard(
 	const header =
 		theme.fg("success", "■ Panel review") +
 		theme.fg("muted", ` — ${done}/${summary.total} done · ${store.elapsedSeconds()}s`) +
-		theme.fg("dim", " — Ctrl+Shift+X to abort");
+		theme.fg("dim", " — ^⇧V inspect · ^⇧X abort");
 	lines.push(text.truncateToWidth(header, width));
 
 	const showModel = width >= 60;
