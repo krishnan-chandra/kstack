@@ -56,12 +56,13 @@ function findPiPackageDir() {
 const piPackageDir = findPiPackageDir();
 const sandbox = mkdtempSync(join(tmpdir(), "kstack-smoke-"));
 symlinkSync(join(piPackageDir, "node_modules"), join(sandbox, "node_modules"), "dir");
-for (const name of ["kstack-router", "plan-implement", "panel-review", "shared"]) {
+for (const name of ["kstack-router", "plan-implement", "fast-implement", "panel-review", "shared"]) {
 	symlinkSync(join(EXTENSIONS_ROOT, name), join(sandbox, name), "dir");
 }
 
 const { default: kstackRouter } = await import(join(sandbox, "kstack-router", "index.ts"));
 const { PLAN_IMPLEMENT_REQUEST_EVENT } = await import(join(sandbox, "plan-implement", "api.ts"));
+const { FAST_IMPLEMENT_REQUEST_EVENT } = await import(join(sandbox, "fast-implement", "api.ts"));
 
 // ---------------------------------------------------------------- mock Pi ---
 
@@ -103,6 +104,7 @@ function makePi({ activeTools, sessionName } = {}) {
 			return [
 				{ name: "plan-implement", source: "extension" },
 				{ name: "panel-review", source: "extension" },
+				{ name: "fast-implement", source: "extension" },
 			];
 		},
 		getActiveTools() {
@@ -282,6 +284,16 @@ await scenario("change route delegates the exact task, mode, and change kind to 
 	assert.equal(env.state.sessionName, "split-the-feature-into-prs");
 	assert.deepEqual(seen, [{ task: "Split the feature into PRs", mode: "stack", changeKind: "feature" }]);
 	assert.ok(env.state.messages.some((m) => m.details?.dispatchStatus === "dispatched"));
+});
+
+await scenario("fast-change delegates exact task, location, and change kind to fast-implement", async () => {
+	const env = setup();
+	const seen = [];
+	env.state.busListeners.set(FAST_IMPLEMENT_REQUEST_EVENT, [
+		(request) => { seen.push({ task: request.task, workLocation: request.workLocation, changeKind: request.changeKind }); request.claimed = true; request.completion = Promise.resolve(); },
+	]);
+	await env.state.commands.get("kstack").handler('--route fast-change --worktree --change-kind bug-fix "Fix the narrow bug"', env.ctx);
+	assert.deepEqual(seen, [{ task: "Fix the narrow bug", workLocation: "worktree", changeKind: "bug-fix" }]);
 });
 
 await scenario("rejects a change-kind override when the final route is not change", async () => {

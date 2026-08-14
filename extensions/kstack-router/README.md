@@ -16,6 +16,7 @@ session name.
 |---|---|---|
 | `investigate` | Read-only research, explain, diagnose | Active session, read-only tools |
 | `change` | Feature, fix, refactor, prototype | plan-implement → panel-review |
+| `fast-change` | Explicit, bounded, low-risk implementation | fast-implement (one child) |
 | `arena` | Competing parallel candidates | Arena skill, frame-first |
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
@@ -30,6 +31,7 @@ session name.
 /kstack --route investigate What does the handoff extension do?
 /kstack --route change --change-kind refactor Refactor the config loader
 /kstack --route change --worktree --change-kind feature Add isolated search
+/kstack --route fast-change --worktree --change-kind bug-fix Fix a narrow parser bug
 /kstack --route change --stack --change-kind feature Split feature into three PRs
 /kstack --route review Review the latest changes
 /kstack --route arena -- "Generate three alternative designs"
@@ -39,7 +41,7 @@ session name.
 
 ## Change-kind playbooks
 
-For the `change` route, the classifier recommends one of `bug-fix`, `feature`,
+For the `change` and `fast-change` routes, the classifier recommends one of `bug-fix`, `feature`,
 `refactor`, `performance`, `prototype`, or `generic`. The selected kind appears
 in the route card and plan-implement confirmation. Override it explicitly when
 the classifier has insufficient context:
@@ -48,9 +50,11 @@ the classifier has insufficient context:
 /kstack --route change --change-kind performance Reduce archive-index latency
 ```
 
-`--worktree` is valid only for the change route and dispatches single-PR work
+`--worktree` is valid only for a change route and dispatches single-PR work
 to a managed Git linked worktree beneath `~/.pi/kstack/worktrees`. It cannot be
-combined with `--stack` in v1.
+combined with `--stack` in v1. `fast-change` always uses single delivery; use `change --stack` for a decomposed jj stack.
+
+The classifier recommends `fast-change` only for explicit low-risk bounded edits. Security, authentication, concurrency, persistence, schemas, migrations, dependency updates, public APIs, multi-package changes, architectural choices, and unclear scope remain on the higher-assurance `change` or `investigate` routes. The route selection UI always lets users accept or override its recommendation.
 
 Writable workstreams (`change`, and other routes after they become writable)
 create a dedicated `kstack/<task-slug>` branch before the first repository

@@ -16,6 +16,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally on a chosen or inherited model and effort, then gives read-only tools for normalized, on-demand access to the linked session's active or archived history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated branch with incremental local commits, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git worktrees. |
+| [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation child for an explicit, bounded change on a local branch or managed worktree. It preserves inspection, verification, and commits, but deliberately skips independent planning and review; it supports single-PR local workstreams only and never publishes. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 
@@ -55,7 +56,7 @@ create branches.
 
 Model assignments for panel-review, plan-implement, arena, swarm, and the
 `how` and `why` investigation skills live in a single unified config file:
-`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
+`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`). The optional `fast-implement` section configures its one-shot implementer independently of `plan-implement`.
 
 Copy the starter and edit:
 
@@ -165,7 +166,7 @@ The two-model implementation workflow is available as an extension command:
 /plan-implement --change-kind bug-fix Fix the archive race
 ```
 
-Without `--change-kind`, the command asks you to select one before planning. It
+Without `--change-kind`, the command asks you to select one before planning. For explicit low-risk bounded edits, use `/fast-implement --change-kind feature <task>` or `/kstack --route fast-change <task>`; this lower-assurance option never publishes automatically. It
 keeps skills enabled in both child agents, so each role can consult the
 original task-specific skills it needs. See
 [`extensions/plan-implement/README.md`](extensions/plan-implement/README.md)
