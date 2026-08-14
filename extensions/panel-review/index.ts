@@ -259,6 +259,7 @@ function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]
 			activeInspector?.close();
 			activeInspector = undefined;
 			activeStores = undefined;
+			transcriptStore.dispose();
 			disposeWidget();
 		},
 	};

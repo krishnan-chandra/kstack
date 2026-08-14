@@ -103,7 +103,6 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	/** Send a phase-update message card to the TUI. */
 	function sendPhaseMessage(
-		pi: ExtensionAPI,
 		mode: string,
 		phase: LifecyclePhase,
 		cycles: number,
@@ -211,12 +210,12 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			const updateStatus = (phase: LifecyclePhase, cycles = 0) => {
 				if (lifecycle.isCurrent(runToken)) {
 					ctx.ui.setStatus("pr-autopilot", `pr-autopilot: ${phase}`);
-					sendPhaseMessage(pi, mode, phase, cycles, modelList, phase);
+					sendPhaseMessage(mode, phase, cycles, modelList, phase);
 				}
 			};
 
 			const result = await runAutopilot(
-				mode as AutopilotMode,
+				mode,
 				{
 					config,
 					exec: makeExec(pi),
@@ -242,14 +241,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 							"Stop at merge-ready; no merge performed. Use /session-archive to archive this session.",
 						"info",
 					);
-					sendPhaseMessage(
-						pi,
-						mode,
-						"idle",
-						result.cyclesCompleted,
-						modelList,
-						"Looks merge-ready — stopped, not merged.",
-					);
+					sendPhaseMessage(mode, "idle", result.cyclesCompleted, modelList, "Looks merge-ready — stopped, not merged.");
 				} else if (result.status === "cleaned") {
 					notify("PR autopilot cleanup complete. Managed worktree removed; session archive is manual.", "info");
 				} else if (result.status === "blocked") {
@@ -270,6 +262,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			return result;
 		} finally {
 			abortController = undefined;
+			if (lifecycle.isCurrent(runToken)) ctx.ui.setStatus("pr-autopilot", undefined);
 			lifecycle.endRun(runToken);
 			if (tempDir) {
 				try {
@@ -278,7 +271,6 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					notify(`pr-autopilot: could not remove temp dir ${tempDir}. Remove it manually.`, "warning");
 				}
 			}
-			if (lifecycle.isCurrent(runToken)) ctx.ui.setStatus("pr-autopilot", undefined);
 		}
 	}
 
