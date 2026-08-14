@@ -20,6 +20,21 @@ export async function getPullRequest(exec: ExecFn, cwd: string, number: number, 
 	if (v?.number !== number || typeof v.url !== "string" || typeof v.title !== "string" || !["OPEN","CLOSED","MERGED"].includes(String(v.state)) || typeof v.isDraft !== "boolean" || typeof v.headRefName !== "string" || typeof v.baseRefName !== "string" || typeof v.headRefOid !== "string" || !SHA.test(v.headRefOid)) throw new Error(`PR #${number} response failed validation.`);
 	return { number, url: v.url, title: v.title, state: v.state as PullRequestSnapshot["state"], isDraft: v.isDraft, headRef: v.headRefName, baseRef: v.baseRefName, headOid: v.headRefOid, mergeable: String(v.mergeable), mergeStateStatus: String(v.mergeStateStatus), mergedAt: typeof v.mergedAt === "string" ? v.mergedAt : null, mergeCommitOid: typeof commit?.oid === "string" ? commit.oid : null };
 }
+export async function findOpenPullRequestByHead(exec: ExecFn, cwd: string, headRef: string, signal?: AbortSignal): Promise<number> {
+	const out = await exec("gh", ["pr", "list", "--state", "open", "--head", headRef, "--json", "number,headRefName"], { cwd, timeout: LIMITS.queryMs, signal });
+	if (out.code !== 0) throw new Error(`Could not resolve an open PR for branch ${headRef}: ${diagnostic(out.stderr)}`);
+	const value = parseJson(out.stdout);
+	if (!Array.isArray(value)) throw new Error("GitHub PR list response failed validation.");
+	const matches = value.filter((entry) => {
+		const candidate = record(entry);
+		return candidate?.headRefName === headRef && Number.isSafeInteger(candidate.number) && Number(candidate.number) > 0;
+	});
+	if (matches.length !== 1) throw new Error(`Expected exactly one open PR with head ${headRef}; found ${matches.length}.`);
+	const match = record(matches[0]);
+	if (!match || typeof match.number !== "number") throw new Error("GitHub PR list response failed validation.");
+	return match.number;
+}
+
 export async function mergePullRequest(exec: ExecFn, cwd: string, number: number, method: MergeMethod, sha: string, signal?: AbortSignal): Promise<void> {
 	const out = await exec("gh", ["pr", "merge", String(number), `--${method}`, "--match-head-commit", sha], { cwd, timeout: LIMITS.mergeMs, signal });
 	if (out.code !== 0) throw new Error(`GitHub rejected merge for PR #${number}: ${diagnostic(out.stderr || out.stdout)}`);

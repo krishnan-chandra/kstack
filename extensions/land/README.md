@@ -1,21 +1,43 @@
 # Land
 
-`/land` is the confirmation-gated final mile after `pr-autopilot`. It pins a PR head, requires a fresh structured autopilot readiness result, confirms the exact operation, invokes `gh pr merge --match-head-commit`, and polls GitHub until the matching PR is remotely verified as merged.
+`/land` merges one GitHub pull request after `pr-autopilot` verifies that its current head is ready. The command confirms the exact PR, head SHA, base branch, and merge method before it asks GitHub to merge or enqueue the PR.
+
+## Usage
 
 ```text
 /land --pr 42 --method squash
 /land --pr 42 --readiness watch
+/land
 ```
 
-The merge method is selected from the repository's enabled methods when omitted. The extension never uses `--admin`, `--auto`, `--delete-branch`, a shell, or a force push. Each GitHub query is limited to 15 seconds, merge invocation to 60 seconds, and verification to 30 minutes. Ctrl+Shift+L aborts active polling or subprocesses; it cannot undo a merge or dequeue a request already accepted by GitHub.
+If you omit `--pr`, Land resolves the one open PR whose head matches the current Git branch. Pass `--pr` to land a PR without checking out its head branch. Land stops if branch-based discovery finds zero or multiple PRs.
 
-A successful `gh pr merge` exit is not success: the result remains partially landed/queued until GitHub reports `MERGED` for the pinned head ref and SHA. Failures retain bounded diagnostics.
+`--readiness` defaults to `check`. Use `watch` to let `pr-autopilot` address confirmed fixes and wait for CI. If autopilot pushes a new head, Land pins that newly verified SHA before confirmation.
 
-The in-process `kstack:land:request` API accepts a typed `LandOptions` request and returns a structured `LandResult`.
+If you omit `--method`, Land asks you to select one of the repository's enabled merge methods.
 
-## Current limitation
+## Safety and partial results
 
-The command currently requires an explicit `--pr` and uses the current Git branch as the expected PR head. jj stack advancement and automatic branch-to-PR target discovery are not yet implemented; `--top` fails closed without mutation.
+Land never passes `--admin`, `--auto`, or `--delete-branch` to `gh`. It does not force-push or delete a branch. Immediately before the merge command, Land checks that GitHub still reports the confirmed head ref and SHA. The merge command also passes `--match-head-commit`.
+
+A successful `gh pr merge` command is not proof that the PR merged. Land polls GitHub until the pinned PR reports `MERGED`. If GitHub accepts the request but polling fails, times out, or is cancelled, Land reports `partially-landed` and preserves the accepted mutation in its result.
+
+Press Ctrl+Shift+L to abort an active subprocess or polling wait. Cancellation cannot undo a merge or remove a request from a merge queue.
+
+## API
+
+The `kstack:land:request` event accepts typed `LandOptions` with a positive PR number and returns a structured `LandResult`. The request is claimed synchronously, and callers await its completion.
+
+## Limits
+
+- GitHub query timeout: 15 seconds
+- Merge command timeout: 60 seconds
+- Poll interval: 10 seconds
+- Maximum verification wait: 30 minutes per PR
+- Retained diagnostic output: 8 KiB
+- Concurrent Land runs per session: 1
+
+Land currently supports one PR at a time. jj stack advancement is not part of the public command or API.
 
 ## Development
 
@@ -23,3 +45,5 @@ The command currently requires an explicit `--pr` and uses the current Git branc
 node --test extensions/land/*.test.ts
 npm run typecheck
 ```
+
+The tests use injected command results. They do not mutate GitHub repositories.
