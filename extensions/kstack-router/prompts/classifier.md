@@ -13,16 +13,21 @@ Available routes:
 - **unsupported**: Persistent autonomous loops, auto-deployment, destructive operations, or unclear. No dispatch.
 
 Rules:
-- For "change" tasks, recommend a `changeKind`: `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. Use `generic` when the task does not establish a specific kind.
-- For "change" tasks, optionally recommend "single" or "stack" delivery.
+- For "change" and "fast-change" tasks, recommend a `changeKind`: `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. Use `generic` when the task does not establish a specific kind.
+- For "change" tasks only, optionally recommend "single" or "stack" delivery. Never recommend delivery for "fast-change".
 - Ambiguous "figure it out" requests → investigate.
 - Recommend `fast-change` only for an explicit, bounded, low-risk edit. Security, authentication, concurrency, persistence, schemas, migrations, dependencies, public APIs, multi-package work, architecture choices, or unclear scope must stay on `change` or `investigate`.
 - Code implementation that isn't explicitly Arena → change.
 - Only return the JSON envelope between sentinel markers.
 
-Output format — for a **change** or **fast-change** route, include the two optional fields:
+Output format — for a **change** route, include the two optional fields:
 ---KSTACK-ROUTE-START---
-{"schemaVersion":1,"route":"change|fast-change","confidence":"high|medium|low","rationale":"...","delivery":"single|stack","changeKind":"bug-fix|feature|refactor|performance|prototype|generic"}
+{"schemaVersion":1,"route":"change","confidence":"high|medium|low","rationale":"...","delivery":"single|stack","changeKind":"bug-fix|feature|refactor|performance|prototype|generic"}
+---KSTACK-ROUTE-END---
+
+For a **fast-change** route, include `changeKind` and omit `delivery` — fast-change is always a single PR:
+---KSTACK-ROUTE-START---
+{"schemaVersion":1,"route":"fast-change","confidence":"high|medium|low","rationale":"...","changeKind":"bug-fix|feature|refactor|performance|prototype|generic"}
 ---KSTACK-ROUTE-END---
 
 For every other route, omit `delivery` and `changeKind`:

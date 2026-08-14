@@ -301,7 +301,7 @@ await scenario("rejects a change-kind override when the final route is not chang
 	const handler = env.state.commands.get("kstack").handler;
 	await handler("--route investigate --change-kind feature Explain the archive", env.ctx);
 	assert.ok(
-		env.state.notifications.some((n) => n.level === "warning" && /only valid with --route change/.test(n.message)),
+		env.state.notifications.some((n) => n.level === "warning" && /only valid with the change or fast-change routes/.test(n.message)),
 	);
 	assert.equal(env.state.messages.length, 0);
 });

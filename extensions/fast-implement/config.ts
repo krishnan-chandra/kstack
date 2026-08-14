@@ -1,7 +1,21 @@
-import { loadKstackSection, MODEL_ID_RE, THINKING_LEVELS, type ThinkingLevel } from "../shared/kstack-config.ts";
+import { loadKstackSection, type ThinkingLevel } from "../shared/kstack-config.ts";
 import { LIMITS, type FastImplementConfig, type ResolvedRole, type RoleSpec } from "./types.ts";
 
-export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [{ model: "openai/gpt-5.6-terra", thinking: "medium" }, { model: "openrouter/google/gemini-3.7-flash", thinking: "high" }];
+/**
+ * Fast mode has no independent planner or reviewer, so the implementer model
+ * set is the only quality control. Only these model/thinking pairs may run.
+ */
+export const ALLOWED_IMPLEMENTERS: readonly RoleSpec[] = [
+	{ model: "openai/gpt-5.6-sol", thinking: "low" },
+	{ model: "openrouter/x-ai/grok-4.6", thinking: "high" },
+	{ model: "anthropic/claude-opus-5", thinking: "medium" },
+];
+export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = ALLOWED_IMPLEMENTERS;
+
+function allowedPairs(): string {
+	return ALLOWED_IMPLEMENTERS.map((spec) => `${spec.model}:${spec.thinking}`).join(", ");
+}
+
 export type ConfigLoad = { status: "loaded"; config: FastImplementConfig; path: string } | { status: "missing"; path: string } | { status: "invalid"; path: string; error: string };
 
 export function validateConfig(raw: unknown): { ok: true; config: FastImplementConfig } | { ok: false; error: string } {
@@ -9,11 +23,12 @@ export function validateConfig(raw: unknown): { ok: true; config: FastImplementC
 	const value = raw as Record<string, unknown>; const role = value.implementer;
 	if (typeof role !== "object" || role === null || Array.isArray(role)) return { ok: false, error: '"implementer" must be a model role.' };
 	const spec = role as Record<string, unknown>;
-	if (typeof spec.model !== "string" || !MODEL_ID_RE.test(spec.model)) return { ok: false, error: '"implementer.model" must be a provider/model id.' };
-	if (spec.thinking !== undefined && (typeof spec.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(spec.thinking))) return { ok: false, error: '"implementer.thinking" is invalid.' };
+	const allowed = ALLOWED_IMPLEMENTERS.find((candidate) => candidate.model === spec.model);
+	if (!allowed) return { ok: false, error: `"implementer.model" must be one of the bounded fast implementers: ${allowedPairs()}.` };
+	if (spec.thinking !== undefined && spec.thinking !== allowed.thinking) return { ok: false, error: `"implementer.thinking" for ${allowed.model} must be "${allowed.thinking}".` };
 	const timeout = value.timeoutMinutes ?? LIMITS.defaultTimeoutMinutes;
 	if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < LIMITS.minTimeoutMinutes || timeout > LIMITS.maxTimeoutMinutes) return { ok: false, error: `"timeoutMinutes" must be ${LIMITS.minTimeoutMinutes}-${LIMITS.maxTimeoutMinutes}.` };
-	return { ok: true, config: { implementer: { model: spec.model, thinking: spec.thinking as ThinkingLevel | undefined }, timeoutMinutes: timeout } };
+	return { ok: true, config: { implementer: { model: allowed.model, thinking: allowed.thinking as ThinkingLevel | undefined }, timeoutMinutes: timeout } };
 }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad { const section = loadKstackSection("fast-implement", env); if (section.status !== "found") return section; const result = validateConfig(section.value); return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error }; }
 export function resolveRole(config: FastImplementConfig | null, available: (provider: string, model: string) => boolean): { ok: true; role: ResolvedRole } | { ok: false; error: string } {

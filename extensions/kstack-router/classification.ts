@@ -112,7 +112,10 @@ export function parseClassifierOutput(
 				error: `Invalid delivery: ${JSON.stringify(envelope.delivery)}. Must be "single" or "stack".`,
 			};
 		}
-		delivery = envelope.delivery;
+		// Delivery only applies to the full change route. fast-change is always
+		// single-PR, and fast classifiers sometimes echo every template field, so
+		// an inapplicable delivery is dropped rather than rejected.
+		if (envelope.route === "change") delivery = envelope.delivery;
 	}
 
 	// Reject model-supplied commands or parameters.

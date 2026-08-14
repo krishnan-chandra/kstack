@@ -8,23 +8,33 @@ export function validateTask(raw: string): { ok: true; task: string } | { ok: fa
 	return { ok: true, task };
 }
 
+/** Split one leading whitespace-delimited token off `input`. */
+function takeToken(input: string): { token: string; rest: string } | undefined {
+	const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim());
+	return match ? { token: match[1], rest: match[2] ?? "" } : undefined;
+}
+
 export function parseFastImplementArgs(raw: string): { ok: true; request: FastImplementRequest } | { ok: false; error: string } {
-	const tokens = raw.match(/(?:[^\s"']|"[^"]*"|'[^']*')+/g) ?? [];
+	let rest = raw.trim();
 	let workLocation: FastImplementRequest["workLocation"] = "current";
 	let changeKind: ChangeKind = "generic";
-	let taskStart = 0;
-	for (; taskStart < tokens.length; taskStart++) {
-		const token = tokens[taskStart];
-		if (token === "--") { taskStart++; break; }
+	// Consume leading flags, then treat the raw remainder as the task so that
+	// quotes, apostrophes, and contractions inside the task survive verbatim.
+	for (let next = takeToken(rest); next?.token.startsWith("--"); next = takeToken(rest)) {
+		const { token } = next;
+		rest = next.rest;
+		if (token === "--") break;
 		if (token === "--worktree") { if (workLocation === "worktree") return { ok: false, error: "Duplicate --worktree flag." }; workLocation = "worktree"; continue; }
 		if (token === "--change-kind") {
-			const value = tokens[++taskStart];
+			const valueToken = takeToken(rest);
+			const value = valueToken?.token.replace(/^["']|["']$/g, "");
 			if (!value || !isChangeKind(value)) return { ok: false, error: "--change-kind requires a supported change kind." };
-			changeKind = value; continue;
+			changeKind = value; rest = valueToken?.rest ?? ""; continue;
 		}
-		if (token.startsWith("--")) return { ok: false, error: `Unknown fast-implement flag: ${token}.` };
-		break;
+		return { ok: false, error: `Unknown fast-implement flag: ${token}.` };
 	}
-	const validated = validateTask(tokens.slice(taskStart).join(" ").replace(/^("|')|("|')$/g, ""));
+	const task = rest.trim();
+	const unquoted = /^(["'])([\s\S]*)\1$/.exec(task);
+	const validated = validateTask(unquoted ? unquoted[2] : task);
 	return validated.ok ? { ok: true, request: { task: validated.task, workLocation, changeKind } } : validated;
 }

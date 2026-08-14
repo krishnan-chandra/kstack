@@ -74,6 +74,26 @@ describe("parseClassifierOutput", () => {
 		if (result.ok) assert.equal(result.envelope.changeKind, undefined);
 	});
 
+	it("drops an echoed delivery on a fast-change route but keeps its change kind", () => {
+		const output = buildEnvelope(
+			JSON.stringify({
+				schemaVersion: 1,
+				route: "fast-change",
+				confidence: "high",
+				rationale: "Narrow bounded edit.",
+				delivery: "stack",
+				changeKind: "bug-fix",
+			}),
+		);
+		const result = parseClassifierOutput(output);
+		assert.ok(result.ok);
+		if (result.ok) {
+			assert.equal(result.envelope.route, "fast-change");
+			assert.equal(result.envelope.delivery, undefined);
+			assert.equal(result.envelope.changeKind, "bug-fix");
+		}
+	});
+
 	it("parses envelope with stack delivery", () => {
 		const output = buildEnvelope(
 			JSON.stringify({

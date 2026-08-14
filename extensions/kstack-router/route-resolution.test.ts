@@ -124,13 +124,34 @@ test("missing classifier model uses the no-classifier manual prompt", async () =
 test("change kind is rejected for non-change routes", async () => {
 	const { fx } = effects();
 	const result = await resolve({ route: "review", changeKind: "feature", task: "do work" }, fx);
-	assert.deepEqual(result, { failed: "--change-kind is only valid with --route change." });
+	assert.deepEqual(result, { failed: "--change-kind is only valid with the change or fast-change routes." });
 });
 
 test("worktree is rejected for non-change routes", async () => {
 	const { fx } = effects();
 	const result = await resolve({ route: "review", worktree: true, task: "do work" }, fx);
-	assert.deepEqual(result, { failed: "--worktree is only valid with the change route." });
+	assert.deepEqual(result, { failed: "--worktree is only valid with the change or fast-change routes." });
+});
+
+test("an explicit stack delivery on fast-change fails with a redirect", async () => {
+	const { fx } = effects();
+	const result = await resolve({ route: "fast-change", delivery: "stack", task: "do work" }, fx);
+	assert.deepEqual(result, { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." });
+});
+
+test("an accepted fast-change recommendation ignores echoed delivery and forces single", async () => {
+	const fastChange: ClassifierRunResult = {
+		...completed,
+		envelope: { ...completed.envelope, route: "fast-change", delivery: "stack", changeKind: "bug-fix" },
+	};
+	const { fx } = effects({ classifier: fastChange, routes: ["fast-change"] });
+	const result = await resolve({ task: "do work" }, fx);
+	assert.ok("resolved" in result);
+	if ("resolved" in result) {
+		assert.equal(result.resolved.route, "fast-change");
+		assert.equal(result.resolved.delivery, "single");
+		assert.equal(result.resolved.changeKind, "bug-fix");
+	}
 });
 
 test("an explicit change route prompts for delivery and honors stack", async () => {
