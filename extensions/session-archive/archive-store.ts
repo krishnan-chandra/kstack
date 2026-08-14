@@ -109,15 +109,21 @@ export function openArchiveDbReadOnly(dbPath: string): DatabaseSync {
 }
 
 function initializeSchema(db: DatabaseSync): void {
-	const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
-	if (row.user_version === SCHEMA_VERSION) return;
-	if (row.user_version !== 0) {
-		throw new ArchiveStoreError(
-			`unsupported archive schema version ${row.user_version} (expected ${SCHEMA_VERSION})`,
-		);
-	}
+	const fast = db.prepare("PRAGMA user_version").get() as { user_version: number };
+	if (fast.user_version === SCHEMA_VERSION) return;
 	db.exec("BEGIN IMMEDIATE");
 	try {
+		// Another process may have initialized the schema while this process waited for the lock.
+		const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
+		if (row.user_version === SCHEMA_VERSION) {
+			db.exec("COMMIT");
+			return;
+		}
+		if (row.user_version !== 0) {
+			throw new ArchiveStoreError(
+				`unsupported archive schema version ${row.user_version} (expected ${SCHEMA_VERSION})`,
+			);
+		}
 		db.exec(SCHEMA_SQL);
 		db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
 		db.exec("COMMIT");
