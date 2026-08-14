@@ -25,6 +25,7 @@ import { parseArgs } from "./args.ts";
 import { DEFAULT_MAX_RUNTIME_MINUTES, DEFAULT_TIMEOUT_MINUTES, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
 import { runPanel } from "./orchestrator.ts";
 import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
+import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { runReviewer } from "./reviewer-runner.ts";
 import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
@@ -69,6 +70,7 @@ interface VerdictDetails {
 }
 
 export default function (pi: ExtensionAPI) {
+	const lifecycle = new PanelLifecycle();
 	// Set while a panel run (reviewers or synthesis) is in flight.
 	let activeAbort: AbortController | undefined;
 
@@ -107,15 +109,26 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
-			const notify = ctx.ui.notify.bind(ctx.ui);
+			let runToken: PanelToken | undefined;
+			const session = lifecycle.currentSessionToken();
+			const isLive = () => runToken ? lifecycle.isCurrent(runToken) : Boolean(session && lifecycle.isSessionCurrent(session));
+			const notify = (message: string, level: "info" | "warning" | "error") => {
+				if (isLive()) ctx.ui.notify(message, level);
+			};
 			const setCompactStatus = (status: string | undefined) => {
-				if (ctx.mode !== "tui") ctx.ui.setStatus("panel-review", status);
+				if (isLive() && ctx.mode !== "tui") ctx.ui.setStatus("panel-review", status);
 			};
 			if (!ctx.hasUI) {
-				notify("panel-review requires interactive (TUI/RPC) mode.", "error");
+				ctx.ui.notify("panel-review requires interactive (TUI/RPC) mode.", "error");
 				return { status: "failed", error: "panel-review requires interactive (TUI/RPC) mode." };
 			}
+			if (!session) return { status: "failed", error: "no active session" };
+			if (lifecycle.isRunning()) {
+				notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
+				return { status: "failed", error: "a panel review is already running" };
+			}
 			await ctx.waitForIdle();
+			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 
 			// Git scope — before any model call.
 			let repoRoot: string;
@@ -139,6 +152,7 @@ export default function (pi: ExtensionAPI) {
 				const subjects = defaultGitExecSafe(["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], repoRoot);
 				const prefill = subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
 				const edited = await ctx.ui.editor("Panel review intent (required):", prefill);
+				if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 				intent = edited?.trim() ?? "";
 			}
 			if (!intent) {
@@ -226,10 +240,16 @@ export default function (pi: ExtensionAPI) {
 							: ""),
 				);
 				if (!confirmed) return { status: "declined" };
+				if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
+				runToken = lifecycle.beginRun(session);
+				if (!runToken) {
+					notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
+					return { status: "failed", error: "a panel review is already running" };
+				}
 
 				// Live dashboard: TUI-only above-editor widget. Compact status is an
 				// RPC fallback only, avoiding duplicate progress in the TUI footer.
-				if (ctx.mode === "tui") {
+				if (isLive() && ctx.mode === "tui") {
 					dashboard = new PanelDashboardStore();
 					for (const r of resolution.reviewers) dashboard.addReviewer(r.label, r.label, modelCliId(r));
 					disposeDashboard = mountPanelDashboard(ctx.ui, dashboard, {
@@ -251,20 +271,21 @@ export default function (pi: ExtensionAPI) {
 				const startedAt = Date.now();
 				const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
 				const updateStatus = () => {
+					if (!isLive()) return;
 					const lines = resolution.reviewers.map((r) => `${r.label}:${progress.get(r.label) ?? "queued"}`).join(" ");
 					setCompactStatus(`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${elapsed()} — ${lines}`);
 				};
 				updateStatus();
 				ticker = setInterval(() => {
 					updateStatus();
-					dashboard?.tick();
+					if (isLive()) dashboard?.tick();
 				}, 1000);
 				ticker.unref?.();
 
 				const panel = await runPanel(resolution.reviewers, resolution.maxConcurrency, (spec) => {
 					progress.set(spec.label, "running");
 					updateStatus();
-					dashboard?.markRunning(spec.label);
+					if (isLive()) dashboard?.markRunning(spec.label);
 					return runReviewer({
 						spec,
 						model: modelCliId(spec),
@@ -277,13 +298,13 @@ export default function (pi: ExtensionAPI) {
 						onProgress: ({ label, turns, activity, preview }) => {
 							progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
 							updateStatus();
-							dashboard?.progress(label, { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
+							if (isLive()) dashboard?.progress(label, { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
 						},
 					}).then((result) => {
 						doneCount++;
 						progress.set(spec.label, result.status === "completed" ? "✓" : result.status === "failed" ? "✗" : "aborted");
 						updateStatus();
-						dashboard?.complete(spec.label, {
+						if (isLive()) dashboard?.complete(spec.label, {
 							status: result.status,
 							turns: result.usage?.turns,
 							...(result.status === "failed" && result.error ? { error: result.error } : {}),
@@ -309,8 +330,8 @@ export default function (pi: ExtensionAPI) {
 
 				// Synthesize with the configured synthesis model in an isolated child process.
 				setCompactStatus(`panel-review: synthesizing verdict with ${synthesisCliId}…`);
-				dashboard?.addLead("lead", "lead", synthesisCliId);
-				dashboard?.markRunning("lead");
+				if (isLive()) dashboard?.addLead("lead", "lead", synthesisCliId);
+				if (isLive()) dashboard?.markRunning("lead");
 				const { input, truncated: synthTruncated } = buildSynthesisInput({
 					intent,
 					scope,
@@ -335,11 +356,11 @@ export default function (pi: ExtensionAPI) {
 					signal: abort.signal,
 					deps: childDeps,
 					onProgress: ({ turns, activity, preview }) => {
-						dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
+						if (isLive()) dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
 					},
 				});
 				setCompactStatus(undefined);
-				dashboard?.complete("lead", {
+				if (isLive()) dashboard?.complete("lead", {
 					status: synthResult.status,
 					turns: synthResult.usage?.turns,
 					...(synthResult.status === "failed" && synthResult.error ? { error: synthResult.error } : {}),
@@ -372,6 +393,7 @@ export default function (pi: ExtensionAPI) {
 					contextFilesDisabled: scope.contextFilesTouched,
 				};
 				await ctx.waitForIdle();
+				if (!isLive()) return { status: "aborted" };
 				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });
 				return {
 					status: "completed",
@@ -383,7 +405,7 @@ export default function (pi: ExtensionAPI) {
 			} finally {
 				if (ticker) clearInterval(ticker);
 				if (runAbort && activeAbort === runAbort) activeAbort = undefined;
-				disposeDashboard?.();
+				if (isLive()) disposeDashboard?.();
 				disposeDashboard = undefined;
 				dashboard = undefined;
 				setCompactStatus(undefined);
@@ -401,6 +423,7 @@ export default function (pi: ExtensionAPI) {
 						notify(`panel-review: could not remove temp prompt dir ${promptDir}; remove it manually.`, "warning");
 					}
 				}
+				if (runToken) lifecycle.endRun(runToken);
 			}
 	};
 
@@ -420,9 +443,12 @@ export default function (pi: ExtensionAPI) {
 		claimPanelReviewRequest(data, runPanelReview);
 	});
 
+	pi.on("session_start", () => lifecycle.startSession());
+
 	pi.on("session_shutdown", () => {
 		activeAbort?.abort();
 		activeAbort = undefined;
+		lifecycle.shutdownSession();
 	});
 }
 
