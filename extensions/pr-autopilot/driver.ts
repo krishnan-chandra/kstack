@@ -44,7 +44,6 @@ import {
 	currentBranch,
 	currentHead,
 	findLowestUnmergedPR,
-	type GHPrJson,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
