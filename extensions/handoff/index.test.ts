@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { createHandoffHandler } from "./command.ts";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
-import { createHandoffHandler } from "./index.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
 
 const SESSION_FILE = "/sessions/old.jsonl";

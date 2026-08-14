@@ -10,21 +10,9 @@
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-	ensureArchiveDirs,
-	fileExists,
-	fileSize,
-	getArchiveDbPath,
-	getArchiveRoot,
-	isArchiveWriteTarget,
-	readUtf8Ranges,
-} from "./archive-files.ts";
-import type { BulkArchiveOutcome } from "./archive-ops.ts";
-import { buildSessionChoices } from "./session-choices.ts";
-import { selectSessionChoices } from "./session-picker.ts";
-import { splitUtf8Chunks } from "./tool-output.ts";
+import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-files.ts";
+import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
 
 export default async function (pi: ExtensionAPI) {
 	let sqliteAvailable = true;
@@ -62,21 +50,27 @@ export default async function (pi: ExtensionAPI) {
 	const { archiveCurrentSession, archiveInactiveSessions } = await import("./archive-ops.ts");
 	const { inspectArchiveIntegrity, reconcileArchive } = await import("./reconcile.ts");
 
-	// Write/edit guard: archived content is read-only for agents.
-	pi.on("tool_call", async (event, ctx) => {
-		if (event.toolName !== "write" && event.toolName !== "edit") return;
-		const target = (event.input as { path?: unknown }).path;
-		if (typeof target !== "string" || target.length === 0) return;
-		if (isArchiveWriteTarget(target, ctx.cwd, archiveRoot)) {
-			return {
-				block: true,
-				reason:
-					"The session archive is read-only. Archived sessions can be searched with " +
-					"search_session_archive and read with read_session_archive, but never modified.",
-			};
-		}
-		return undefined;
+	const commands = createArchiveCommands({
+		archiveRoot,
+		dbPath,
+		archiveCurrentSession,
+		archiveInactiveSessions,
+		inspectArchiveIntegrity,
+		getArchiveStats,
+		listSessionRows,
+		openArchiveDb,
 	});
+	const tools = createArchiveTools({
+		dbPath,
+		getSessionRow,
+		countEntries,
+		openArchiveDbReadOnly,
+		readEntries,
+		searchArchive,
+	});
+
+	// Write/edit guard: archived content is read-only for agents.
+	pi.on("tool_call", async (event, ctx) => createWriteGuard(archiveRoot)(event, ctx));
 
 	pi.on("session_start", async (_event, ctx) => {
 		try {
@@ -102,151 +96,22 @@ export default async function (pi: ExtensionAPI) {
 
 	pi.registerCommand("session-archive", {
 		description: "Archive the current session (read-only, searchable) and start a new one",
-		handler: async (_args, ctx) => {
-			const sessionId = ctx.sessionManager.getSessionId();
-			const sessionName = ctx.sessionManager.getSessionName()?.trim() || undefined;
-			await archiveCurrentSession({
-				deps: { dbPath, archiveRoot },
-				snapshot: {
-					sourcePath: ctx.sessionManager.getSessionFile(),
-					sessionId,
-					sessionDir: ctx.sessionManager.getSessionDir(),
-					sessionName,
-				},
-				waitForIdle: () => ctx.waitForIdle(),
-				confirm: (title, message) => ctx.ui.confirm(title, message),
-				notify: (message, level) => ctx.ui.notify(message, level),
-				startNewSession: (withSession) =>
-					// Deliberately no parentSession: the archive destination does not
-					// exist yet, and SQLite preserves the archive relationship.
-					ctx.newSession({
-						withSession: async (freshCtx) => {
-							await withSession({
-								notify: (message, level) => freshCtx.ui.notify(message, level),
-							});
-						},
-					}),
-			});
-		},
+		handler: commands.sessionArchive,
 	});
 
 	pi.registerCommand("session-archives", {
 		description: "List archive stats and archived sessions (read-only)",
-		handler: async (args, ctx) => {
-			const integrity = inspectArchiveIntegrity(dbPath);
-			const db = openArchiveDb(dbPath);
-			try {
-				const stats = getArchiveStats(db);
-				const lines: string[] = [
-					`Archive: ${stats.sessionsArchived} archived, ${stats.sessionsPending} pending, ${stats.sessionsError} error, ${stats.entriesTotal} entries indexed`,
-				];
-				if (integrity.length > 0) {
-					lines.push("", `Integrity problems (${integrity.length}):`);
-					for (const issue of integrity) {
-						lines.push(`  ${issue.sessionId}: ${issue.message}`);
-					}
-				}
-				try {
-					lines.push(`Database size: ${(fileSize(dbPath) / 1024).toFixed(0)} KiB`);
-				} catch {
-					// DB file may not exist yet.
-				}
-
-				const filter = args?.trim() ? args.trim().toLowerCase() : undefined;
-				const rows = listSessionRows(db, { limit: 50 }).filter(
-					(row) =>
-						!filter ||
-						row.session_id.toLowerCase().includes(filter) ||
-						(row.name ?? "").toLowerCase().includes(filter) ||
-						row.cwd.toLowerCase().includes(filter),
-				);
-				if (rows.length === 0) {
-					lines.push(filter ? `No archived sessions match "${filter}".` : "No archived sessions yet.");
-				} else {
-					lines.push("");
-					for (const row of rows) {
-						const when = row.archived_at ?? row.created_at;
-						lines.push(
-							`[${row.state}] ${row.name ?? row.session_id.slice(0, 8)} — ${row.cwd} — ${row.entry_count} entries — ${when}`,
-						);
-						if (row.state === "error" && row.last_error) {
-							lines.push(`    error: ${row.last_error}`);
-						}
-					}
-				}
-				ctx.ui.notify(lines.join("\n"), "info");
-			} finally {
-				db.close();
-			}
-		},
+		handler: commands.sessionArchives,
 	});
 
 	pi.registerCommand("session-archive-other", {
 		description: "Select one or more inactive sessions and archive them",
-		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("/session-archive-other requires interactive TUI or RPC mode.", "error");
-				return;
-			}
-			await ctx.waitForIdle();
-			const currentFile = ctx.sessionManager.getSessionFile();
-			const sessionDir = ctx.sessionManager.getSessionDir();
-			const sessions = await SessionManager.list(ctx.cwd, sessionDir);
-			const candidates = sessions.filter((s) => s.path !== currentFile);
-			if (candidates.length === 0) {
-				ctx.ui.notify("No other sessions found for this directory.", "info");
-				return;
-			}
-			const selected = await selectSessionChoices(ctx, buildSessionChoices(candidates));
-			if (!selected || selected.length === 0) return;
-			const labels = selected.slice(0, 10).map((choice) => `  • ${choice.label}`);
-			if (selected.length > labels.length) labels.push(`  …and ${selected.length - labels.length} more`);
-			const confirmed = await ctx.ui.confirm(
-				`Archive ${selected.length} session(s)?`,
-				`${labels.join("\n")}\n\n` +
-					"The selected sessions become read-only, leave the /resume list, and stay searchable. " +
-					"Continue only if none is open in another Pi process.",
-			);
-			if (!confirmed) return;
-			ctx.ui.notify(`Archiving ${selected.length} session(s)…`, "info");
-			const outcomes = await archiveInactiveSessions({
-				deps: { dbPath, archiveRoot },
-				sourcePaths: selected.map((choice) => choice.session.path),
-				currentSessionFile: currentFile,
-				sessionDir,
-			});
-			reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
-		},
+		handler: commands.sessionArchiveOther,
 	});
 
 	pi.registerCommand("session-archive-all", {
 		description: "Archive every inactive session in this directory in one confirmed batch",
-		handler: async (_args, ctx) => {
-			await ctx.waitForIdle();
-			const currentFile = ctx.sessionManager.getSessionFile();
-			const sessionDir = ctx.sessionManager.getSessionDir();
-			const sessions = await SessionManager.list(ctx.cwd, sessionDir);
-			const candidates = sessions.filter((s) => s.path !== currentFile);
-			if (candidates.length === 0) {
-				ctx.ui.notify("No other sessions found for this directory.", "info");
-				return;
-			}
-			const confirmed = await ctx.ui.confirm(
-				`Archive ${candidates.length} session(s)?`,
-				`All ${candidates.length} inactive session(s) for ${ctx.cwd} will become read-only, ` +
-					"leave the /resume list, and stay searchable. " +
-					"Continue only if none of them is open in another Pi process.",
-			);
-			if (!confirmed) return;
-			ctx.ui.notify(`Archiving ${candidates.length} session(s)…`, "info");
-			const outcomes = await archiveInactiveSessions({
-				deps: { dbPath, archiveRoot },
-				sourcePaths: candidates.map((s) => s.path),
-				currentSessionFile: currentFile,
-				sessionDir,
-			});
-			reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
-		},
+		handler: commands.sessionArchiveAll,
 	});
 
 	pi.registerTool({
@@ -271,39 +136,7 @@ export default async function (pi: ExtensionAPI) {
 				Type.Integer({ minimum: 1, maximum: 100, description: "Max results (default 20, max 100)" }),
 			),
 		}),
-		async execute(_toolCallId, params) {
-			if (!fileExists(dbPath)) {
-				return { content: [{ type: "text" as const, text: "No archived sessions match." }], details: {} };
-			}
-			const db = openArchiveDbReadOnly(dbPath);
-			try {
-				const hits = searchArchive(db, {
-					query: params.query,
-					cwd: params.cwd,
-					role: params.role,
-					sessionId: params.session_id,
-					limit: params.limit,
-				});
-				if (hits.length === 0) {
-					return { content: [{ type: "text" as const, text: "No archived sessions match." }], details: {} };
-				}
-				const text = hits
-					.map(
-						(h) =>
-							`session ${h.session_id} entry ${h.entry_id} [${h.role ?? h.entry_type}] ${h.timestamp}\n` +
-							`  session: ${h.session_name ?? "(unnamed)"} — ${h.cwd} (archived ${h.archived_at ?? "pending"})\n` +
-							`  ${h.snippet}`,
-					)
-					.join("\n\n");
-				const truncated = truncateHead(text, { maxBytes: DEFAULT_MAX_BYTES - 512 });
-				const output = truncated.truncated
-					? `${truncated.content}\n\n[Search output truncated after ${hits.length} matched rows. Refine the query or lower the limit.]`
-					: truncated.content;
-				return { content: [{ type: "text" as const, text: output }], details: {} };
-			} finally {
-				db.close();
-			}
-		},
+		execute: tools.searchSessionArchive,
 	});
 
 	pi.registerTool({
@@ -330,85 +163,6 @@ export default async function (pi: ExtensionAPI) {
 				Type.Integer({ minimum: 0, maximum: 1_000_000, description: "Chunk within this entry page (default 0)" }),
 			),
 		}),
-		async execute(_toolCallId, params) {
-			if (!fileExists(dbPath)) {
-				throw new Error(`No archived session with id ${params.session_id}.`);
-			}
-			const db = openArchiveDbReadOnly(dbPath);
-			try {
-				const session = getSessionRow(db, params.session_id);
-				if (!session || session.state !== "archived") {
-					throw new Error(`No archived session with id ${params.session_id}.`);
-				}
-				const offset = params.offset ?? 0;
-				const limit = params.limit ?? 50;
-				const total = countEntries(db, params.session_id);
-				const entries = readEntries(db, params.session_id, offset, limit);
-				if (params.format === "raw" && !session.archive_path) {
-					throw new Error(`Archived session ${params.session_id} has no JSONL artifact path.`);
-				}
-				const body =
-					params.format === "raw"
-						? readUtf8Ranges(
-								session.archive_path!,
-								entries.map((e) => ({ offset: e.raw_offset, length: e.raw_length })),
-							).join("\n")
-						: entries
-								.map((e) =>
-									[
-										`#${e.ordinal} [${e.entry_type}${e.role ? `/${e.role}` : ""}] ${e.timestamp} (id ${e.entry_id}, parent ${e.parent_id ?? "none"})`,
-										e.text_content ?? "",
-									]
-										.filter(Boolean)
-										.join("\n"),
-								)
-								.join("\n\n");
-				const chunks = splitUtf8Chunks(body, READ_BODY_CHUNK_BYTES);
-				const chunk = params.chunk ?? 0;
-				if (chunk >= chunks.length) {
-					throw new Error(`Chunk ${chunk} is out of range; this page has ${chunks.length} chunk(s).`);
-				}
-				const range =
-					entries.length === 0 ? "no entries" : `entries ${offset + 1}–${offset + entries.length} of ${total}`;
-				const next =
-					chunk + 1 < chunks.length
-						? `continue with the same offset/limit and chunk ${chunk + 1}`
-						: offset + entries.length < total
-							? `continue with offset ${offset + entries.length} and chunk 0`
-							: "end of session";
-				const rawHeader =
-					`Session ${session.session_id} (${session.state}) — ${session.name ?? "(unnamed)"} — ${session.cwd}\n` +
-					`${range} — chunk ${chunk + 1} of ${chunks.length} — ${next}`;
-				const header = truncateHead(rawHeader, { maxBytes: 4096, maxLines: 10 }).content;
-				return { content: [{ type: "text" as const, text: `${header}\n\n${chunks[chunk]}` }], details: {} };
-			} finally {
-				db.close();
-			}
-		},
+		execute: tools.readSessionArchive,
 	});
-}
-
-const READ_BODY_CHUNK_BYTES = DEFAULT_MAX_BYTES - 8192;
-
-function reportBatchResults(
-	notify: (message: string, level: "info" | "warning" | "error") => void,
-	outcomes: BulkArchiveOutcome[],
-): void {
-	const archived = outcomes.filter((outcome) => outcome.result.status === "archived");
-	const skipped = outcomes.filter((outcome) => outcome.result.status === "rejected");
-	const failed = outcomes.filter((outcome) => outcome.result.status === "failed");
-	const lines = [
-		`Bulk archive complete: ${archived.length} archived, ${skipped.length} skipped, ${failed.length} failed.`,
-	];
-	for (const group of [
-		["Skipped", skipped],
-		["Failed", failed],
-	] as const) {
-		const [label, list] = group;
-		for (const outcome of list.slice(0, 5)) {
-			lines.push(`${label}: ${outcome.sourcePath} — ${outcome.result.message}`);
-		}
-		if (list.length > 5) lines.push(`…and ${list.length - 5} more ${label.toLowerCase()}.`);
-	}
-	notify(lines.join("\n"), failed.length > 0 ? "warning" : "info");
 }
