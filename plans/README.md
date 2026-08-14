@@ -25,8 +25,8 @@ not numbered and not superseded by anything below.
 | 007  | Guard panel-review against concurrent runs | P2 | S | — | DONE |
 | 008  | Slim plan-implement/index.ts into phase modules | P3 | M | 003, 004 | DONE |
 | 009  | Split the pr-autopilot driver module | P3 | M | 004 | DONE |
-| 010  | Cache parsed handoff history between tool calls | P3 | S | — | TODO |
-| 011  | Add a root AGENTS.md | P3 | S | — | TODO |
+| 010  | Cache parsed handoff history between tool calls | P3 | S | — | DONE |
+| 011  | Add a root AGENTS.md | P3 | S | — | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 

@@ -251,6 +251,8 @@ pi -e extensions/session-archive/index.ts
 
 ## Development
 
+Agents should read [`AGENTS.md`](AGENTS.md) before making changes.
+
 Run the full JavaScript and TypeScript test suite from the repository root:
 
 ```bash
