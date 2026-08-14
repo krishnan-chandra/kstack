@@ -23,7 +23,7 @@ not numbered and not superseded by anything below.
 | 005  | Extract one shared kstack.json config loader | P2 | M | 003 | DONE |
 | 006  | Fix pr-autopilot GitHub state-reading bugs | P2 | M | — | DONE |
 | 007  | Guard panel-review against concurrent runs | P2 | S | — | DONE |
-| 008  | Slim plan-implement/index.ts into phase modules | P3 | M | 003, 004 | TODO |
+| 008  | Slim plan-implement/index.ts into phase modules | P3 | M | 003, 004 | DONE |
 | 009  | Split the pr-autopilot driver module | P3 | M | 004 | TODO |
 | 010  | Cache parsed handoff history between tool calls | P3 | S | — | TODO |
 | 011  | Add a root AGENTS.md | P3 | S | — | TODO |
