@@ -53,7 +53,7 @@ describe("plan-implement config", () => {
 			{ model: "openai/gpt-5.6-terra", thinking: "medium" },
 			{ model: "openrouter/google/gemini-3.7-flash", thinking: "high" },
 			{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
-			{ model: "openrouter/z-ai/glm-5.2", thinking: "high" },
+			{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 		]);
 
 		const available = new Set([DEFAULT_PLANNERS[1].model, DEFAULT_IMPLEMENTERS[2].model]);

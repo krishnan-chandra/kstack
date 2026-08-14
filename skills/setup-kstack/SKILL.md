@@ -39,7 +39,7 @@ pi --list-models
 ```
 
 Use the `provider` and `model` columns together as the config identifier, for
-example `openai/gpt-5.6-sol` or `openrouter/z-ai/glm-5.2`. A row with `thinking`
+example `openai/gpt-5.6-sol` or `openrouter/moonshotai/kimi-k3`. A row with `thinking`
 set to `yes` can take a thinking level. Omit `thinking` for a model that does
 not support it.
 
@@ -96,10 +96,10 @@ model IDs are currently:
 ```text
 openai/gpt-5.6-luna
 openai/gpt-5.6-terra
-openrouter/z-ai/glm-5.2
+openrouter/google/gemini-3.7-flash
 openrouter/deepseek/deepseek-v4-pro
-openrouter/google/gemini-3.5-flash-lite
 openrouter/deepseek/deepseek-v4-flash
+openrouter/z-ai/glm-5.2
 ```
 
 When the user requests a different investigator, explain that `how`, `why`,

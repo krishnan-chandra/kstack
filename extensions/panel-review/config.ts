@@ -52,7 +52,7 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	// DeepSeek V4 Pro at high thinking repeatedly produced no output for 20+ minutes;
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
-	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
+	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 	{ label: "gemini", model: "openrouter/google/gemini-3.7-flash", thinking: "high" },
 ];
 
