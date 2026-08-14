@@ -1,11 +1,9 @@
 /** Unified kstack.json configuration and role-model resolution. */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { LIMITS, THINKING_LEVELS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
+import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
+export { getAgentDir, getKstackPath };
 
-const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
 
 export const DEFAULT_PLANNERS: readonly RoleSpec[] = [
@@ -25,16 +23,6 @@ export type ConfigLoad =
 	| { status: "loaded"; config: PlanImplementConfig; path: string }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
-
-export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-	const configured = env.PI_CODING_AGENT_DIR;
-	if (!configured) return join(homedir(), ".pi", "agent");
-	return configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured;
-}
-
-export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
-	return join(getAgentDir(env), "kstack.json");
-}
 
 function validateRole(raw: unknown, role: "planner" | "implementer"): { ok: true; spec: RoleSpec } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -88,20 +76,10 @@ export function validateConfig(raw: unknown): { ok: true; config: PlanImplementC
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const path = getKstackPath(env);
-	if (!existsSync(path)) return { status: "missing", path };
-	try {
-		const root = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof root !== "object" || root === null || Array.isArray(root)) {
-			return { status: "invalid", path, error: "kstack.json must be a JSON object." };
-		}
-		const section = (root as Record<string, unknown>)["plan-implement"];
-		if (section === undefined) return { status: "missing", path };
-		const result = validateConfig(section);
-		return result.ok ? { status: "loaded", config: result.config, path } : { status: "invalid", path, error: result.error };
-	} catch (error) {
-		return { status: "invalid", path, error: `Unreadable config: ${(error as Error).message}` };
-	}
+	const section = loadKstackSection("plan-implement", env);
+	if (section.status !== "found") return section;
+	const result = validateConfig(section.value);
+	return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error };
 }
 
 export interface ResolveDeps {

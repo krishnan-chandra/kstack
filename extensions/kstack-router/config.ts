@@ -1,27 +1,13 @@
 /** Router configuration from kstack.json. */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
+export { getAgentDir, getKstackPath };
 
 export type ConfigLoad =
 	| { status: "loaded"; config: RouterConfig; path: string }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
-
-export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-	const dir = env.PI_CODING_AGENT_DIR;
-	if (dir) return dir.startsWith("~/") ? join(homedir(), dir.slice(2)) : dir;
-	return join(homedir(), ".pi", "agent");
-}
-
-export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
-	return join(getAgentDir(env), "kstack.json");
-}
-
-const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export function validateRouterConfig(raw: unknown): { ok: true; config: RouterConfig } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -57,22 +43,10 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const path = getKstackPath(env);
-	if (!existsSync(path)) return { status: "missing", path };
-	try {
-		const root = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof root !== "object" || root === null || Array.isArray(root)) {
-			return { status: "invalid", path, error: "kstack.json must be a JSON object." };
-		}
-		const section = (root as Record<string, unknown>)["kstack-router"];
-		if (section === undefined) return { status: "missing", path };
-		const result = validateRouterConfig(section);
-		return result.ok
-			? { status: "loaded", config: result.config, path }
-			: { status: "invalid", path, error: result.error };
-	} catch (err) {
-		return { status: "invalid", path, error: `Unreadable config: ${(err as Error).message}` };
-	}
+	const section = loadKstackSection("kstack-router", env);
+	if (section.status !== "found") return section;
+	const result = validateRouterConfig(section.value);
+	return result.ok ? { status: "loaded", config: result.config, path: section.path } : { status: "invalid", path: section.path, error: result.error };
 }
 
 export interface ClassifierModelResolution {

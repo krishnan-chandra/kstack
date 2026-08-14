@@ -23,28 +23,14 @@
  * (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash) are used.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { getAgentDir, getKstackPath, loadKstackSection, MODEL_ID_RE, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
-
-const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export { getAgentDir, getKstackPath };
 
 export type ConfigLoad =
 	| { status: "loaded"; config: ResolvedAutopilotConfig; path: string }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
-
-export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-	const dir = env.PI_CODING_AGENT_DIR;
-	if (dir) return dir.startsWith("~/") ? join(homedir(), dir.slice(2)) : dir;
-	return join(homedir(), ".pi", "agent");
-}
-
-export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
-	return join(getAgentDir(env), "kstack.json");
-}
 
 /**
  * Built-in tiny model set, used when no pr-autopilot config section exists.
@@ -175,26 +161,14 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const path = getKstackPath(env);
-	if (!existsSync(path)) return { status: "missing", path };
-	try {
-		const root = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof root !== "object" || root === null || Array.isArray(root)) {
-			return { status: "invalid", path, error: "kstack.json must be a JSON object." };
-		}
-		const rootObj = root as Record<string, unknown>;
-		const section = rootObj["pr-autopilot"] ?? rootObj["pr-babysit"];
-		if (section === undefined) return { status: "missing", path };
-		const result = validateConfig(section);
-		if (!result.ok) return { status: "invalid", path, error: result.error };
-		const warnings =
-			rootObj["pr-autopilot"] === undefined && rootObj["pr-babysit"] !== undefined
-				? ['kstack.json still has "pr-babysit"; rename that section to "pr-autopilot".']
-				: [];
-		return { status: "loaded", config: { ...result.config, source: "config", warnings }, path };
-	} catch (error) {
-		return { status: "invalid", path, error: `Unreadable config: ${(error as Error).message}` };
-	}
+	let section = loadKstackSection("pr-autopilot", env);
+	let legacy = false;
+	if (section.status === "missing") { section = loadKstackSection("pr-babysit", env); legacy = section.status === "found"; }
+	if (section.status !== "found") return section;
+	const result = validateConfig(section.value);
+	if (!result.ok) return { status: "invalid", path: section.path, error: result.error };
+	const warnings = legacy ? ['kstack.json still has "pr-babysit"; rename that section to "pr-autopilot".'] : [];
+	return { status: "loaded", config: { ...result.config, source: "config", warnings }, path: section.path };
 }
 
 export interface ResolveDeps {
