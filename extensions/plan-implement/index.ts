@@ -7,19 +7,25 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { requestLand } from "../land/api.ts";
 import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
+import {
+	CHANGE_KINDS,
+	type ChangeKind,
+	changeKindLabel,
+	changeKindPlaybookFile,
+	isChangeKind,
+} from "../shared/change-kind.ts";
 import { makeExec } from "../shared/git-exec.ts";
+import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
+import { type ManagedWorktreePlan, planManagedWorktree } from "../shared/worktree.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
-import { CHANGE_KINDS, type ChangeKind, changeKindLabel, changeKindPlaybookFile, isChangeKind } from "../shared/change-kind.ts";
 import { parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { preflightStack } from "./delivery-mode.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
-import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
-import { type ManagedWorktreePlan, planManagedWorktree } from "../shared/worktree.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");

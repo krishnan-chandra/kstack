@@ -5,15 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
+import {
+	createCurrentWorkstreamBranch,
+	verifyCommittedWorkstream,
+	type WorkstreamCheckpoint,
+} from "../shared/git-policy.ts";
+import { createManagedWorktree, type ManagedWorktreePlan } from "../shared/worktree.ts";
 import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
 import type { ExecFn } from "./delivery-mode.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
-import { createCurrentWorkstreamBranch, verifyCommittedWorkstream, type WorkstreamCheckpoint } from "../shared/git-policy.ts";
 import type { WorkflowPhase, WorkflowToken } from "./lifecycle.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
-import { createManagedWorktree, type ManagedWorktreePlan } from "../shared/worktree.ts";
 
 type Level = "info" | "warning" | "error";
 

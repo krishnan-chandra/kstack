@@ -1,7 +1,7 @@
 import { validateBoundedNumber } from "../shared/config-validate.ts";
 import { loadKstackSection } from "../shared/kstack-config.ts";
 import { splitModelRef } from "../shared/model-spec.ts";
-import { LIMITS, type FastImplementConfig, type ResolvedRole, type RoleSpec } from "./types.ts";
+import { type FastImplementConfig, LIMITS, type ResolvedRole, type RoleSpec } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
 

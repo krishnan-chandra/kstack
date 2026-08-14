@@ -138,7 +138,8 @@ export async function resolveRoute(
 		return { failed: "--worktree is only valid with the change or fast-change routes." };
 	}
 	if (route === "fast-change") {
-		if (delivery === "stack") return { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." };
+		if (delivery === "stack")
+			return { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." };
 		delivery = "single";
 	}
 	if (route === "change" && !delivery) {

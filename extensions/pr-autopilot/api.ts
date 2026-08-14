@@ -30,9 +30,7 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		"ctx" in value &&
 		typeof value.ctx === "object" &&
 		value.ctx !== null &&
-		(!("cwd" in value) ||
-			value.cwd === undefined ||
-			(typeof value.cwd === "string" && value.cwd.length > 0)),
+		(!("cwd" in value) || value.cwd === undefined || (typeof value.cwd === "string" && value.cwd.length > 0)),
 });
 
 export function isPrAutopilotRequest(value: unknown): value is PrAutopilotRequest {

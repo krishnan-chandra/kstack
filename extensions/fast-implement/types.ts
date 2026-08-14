@@ -11,10 +11,22 @@ export const LIMITS = {
 	killGraceMs: 5_000,
 } as const;
 
-export interface RoleSpec { model: string; thinking?: string }
-export interface FastImplementConfig { implementer: RoleSpec; timeoutMinutes: number }
-export interface ResolvedRole extends FastImplementConfig { source: "config" | "default" }
-export interface FastImplementRequest { task: string; workLocation: "current" | "worktree"; changeKind: ChangeKind }
+export interface RoleSpec {
+	model: string;
+	thinking?: string;
+}
+export interface FastImplementConfig {
+	implementer: RoleSpec;
+	timeoutMinutes: number;
+}
+export interface ResolvedRole extends FastImplementConfig {
+	source: "config" | "default";
+}
+export interface FastImplementRequest {
+	task: string;
+	workLocation: "current" | "worktree";
+	changeKind: ChangeKind;
+}
 export type FastImplementOutcome =
 	| { status: "completed"; branch: string; cwd: string; output: string }
 	| { status: "failed" | "aborted"; error: string; branch?: string; cwd?: string; output?: string };

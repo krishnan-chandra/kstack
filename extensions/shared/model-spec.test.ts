@@ -29,7 +29,10 @@ const errors = {
 
 test("validates required labels and provider/model ids", () => {
 	assert.deepEqual(
-		validateModelSpecFields({ label: "reviewer_1", model: "openrouter/deepseek/deepseek-v4-pro" }, { requireLabel: true, errors }),
+		validateModelSpecFields(
+			{ label: "reviewer_1", model: "openrouter/deepseek/deepseek-v4-pro" },
+			{ requireLabel: true, errors },
+		),
 		{ ok: true, label: "reviewer_1", model: "openrouter/deepseek/deepseek-v4-pro" },
 	);
 	assert.deepEqual(validateModelSpecFields({ label: "bad label", model: "p/m" }, { requireLabel: true, errors }), {

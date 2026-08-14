@@ -31,8 +31,14 @@ test("claims a valid request exactly once", async () => {
 		payload: { value: "one" },
 		claimed: false,
 	};
-	assert.equal(channel.claim(envelope, async ({ value }) => value.toUpperCase()), true);
-	assert.equal(channel.claim(envelope, async () => "second"), false);
+	assert.equal(
+		channel.claim(envelope, async ({ value }) => value.toUpperCase()),
+		true,
+	);
+	assert.equal(
+		channel.claim(envelope, async () => "second"),
+		false,
+	);
 	assert.equal(await envelope.completion, "ONE");
 });
 
