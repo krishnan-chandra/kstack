@@ -251,9 +251,9 @@ export interface RenderRequester {
 	terminal?: { rows?: number };
 }
 
-function checkKey(data: string, key: string): boolean {
+function checkKey(data: string, key: Parameters<typeof matchesKey>[1]): boolean {
 	try {
-		return matchesKey(data, key as any);
+		return matchesKey(data, key);
 	} catch {
 		return false;
 	}
@@ -328,17 +328,12 @@ export class InspectorComponent implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (
-			checkKey(data, "ctrl+shift+x") ||
-			checkKey(data, "ctrl+x") ||
-			matchesKey(data, "ctrl+shift+x" as any) ||
-			data === "\x18"
-		) {
+		if (checkKey(data, "ctrl+shift+x") || checkKey(data, "ctrl+x")) {
 			this.onAbort?.();
 			return;
 		}
 
-		if (checkKey(data, "escape") || data === "\x1b") {
+		if (checkKey(data, "escape")) {
 			this.onClose();
 			return;
 		}
@@ -346,7 +341,7 @@ export class InspectorComponent implements Component {
 		const rows = this.dashboard.getRows();
 		const count = rows.length;
 
-		if (checkKey(data, "left") || checkKey(data, "shift+tab") || data === "\x1b[D" || data === "\x1b[Z") {
+		if (checkKey(data, "left") || checkKey(data, "shift+tab")) {
 			if (count > 0) {
 				this.state.selectedIndex = (this.state.selectedIndex - 1 + count) % count;
 				this.state.scrollOffset = 0;
@@ -356,7 +351,7 @@ export class InspectorComponent implements Component {
 			return;
 		}
 
-		if (checkKey(data, "right") || checkKey(data, "tab") || data === "\x1b[C" || data === "\t") {
+		if (checkKey(data, "right") || checkKey(data, "tab")) {
 			if (count > 0) {
 				this.state.selectedIndex = (this.state.selectedIndex + 1) % count;
 				this.state.scrollOffset = 0;
@@ -366,7 +361,7 @@ export class InspectorComponent implements Component {
 			return;
 		}
 
-		if (checkKey(data, "up") || data === "\x1b[A") {
+		if (checkKey(data, "up")) {
 			const maxScroll = this.getMaxScroll();
 			this.state.scrollOffset = Math.min(maxScroll, this.state.scrollOffset + 1);
 			this.state.follow = false;
@@ -374,14 +369,14 @@ export class InspectorComponent implements Component {
 			return;
 		}
 
-		if (checkKey(data, "down") || data === "\x1b[B") {
+		if (checkKey(data, "down")) {
 			this.state.scrollOffset = Math.max(0, this.state.scrollOffset - 1);
 			if (this.state.scrollOffset === 0) this.state.follow = true;
 			this.tui.requestRender();
 			return;
 		}
 
-		if (checkKey(data, "pageUp") || checkKey(data, "pageup") || data === "\x1b[5~") {
+		if (checkKey(data, "pageUp")) {
 			const maxScroll = this.getMaxScroll();
 			this.state.scrollOffset = Math.min(maxScroll, this.state.scrollOffset + 10);
 			this.state.follow = false;
@@ -389,21 +384,21 @@ export class InspectorComponent implements Component {
 			return;
 		}
 
-		if (checkKey(data, "pageDown") || checkKey(data, "pagedown") || data === "\x1b[6~") {
+		if (checkKey(data, "pageDown")) {
 			this.state.scrollOffset = Math.max(0, this.state.scrollOffset - 10);
 			if (this.state.scrollOffset === 0) this.state.follow = true;
 			this.tui.requestRender();
 			return;
 		}
 
-		if (checkKey(data, "home") || data === "g" || data === "\x1b[H") {
+		if (checkKey(data, "home") || data === "g") {
 			this.state.scrollOffset = this.getMaxScroll();
 			this.state.follow = false;
 			this.tui.requestRender();
 			return;
 		}
 
-		if (checkKey(data, "end") || data === "G" || data === "\x1b[F") {
+		if (checkKey(data, "end") || data === "G") {
 			this.state.scrollOffset = 0;
 			this.state.follow = true;
 			this.tui.requestRender();
