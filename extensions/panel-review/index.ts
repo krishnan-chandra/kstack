@@ -14,12 +14,10 @@ import { type PipelineDashboard, resolvePanel, runReviewPipeline, type VerdictDe
 import { PanelTranscriptStore } from "./transcript-store.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
-let activeAbort: AbortController | undefined;
-let activeInspector: OpenInspectorResult | undefined;
-let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscriptStore } | undefined;
-
 export default function (pi: ExtensionAPI): void {
 	const lifecycle = new PanelLifecycle();
+	let activeInspector: OpenInspectorResult | undefined;
+	let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscriptStore } | undefined;
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
@@ -39,9 +37,7 @@ export default function (pi: ExtensionAPI): void {
 					truncateToWidth: (text, width) => truncateToWidth(text, width),
 				},
 				onAbort: () => {
-					if (activeAbort && !activeAbort.signal.aborted) {
-						activeAbort.abort();
-					}
+					lifecycle.abortRun();
 				},
 			});
 			activeInspector = inspector;
@@ -54,8 +50,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerShortcut("ctrl+shift+x", {
 		description: "Abort the running panel review",
 		handler: async (ctx) => {
-			if (activeAbort && !activeAbort.signal.aborted) {
-				activeAbort.abort();
+			if (lifecycle.abortRun()) {
 				if (ctx.mode !== "tui") {
 					ctx.ui.setStatus("panel-review", "panel-review: aborting (SIGTERM, SIGKILL after grace)…");
 				}
@@ -193,12 +188,7 @@ export default function (pi: ExtensionAPI): void {
 					notify,
 					setCompactStatus,
 					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
-					setActiveAbort: (controller) => {
-						activeAbort = controller;
-					},
-					clearActiveAbort: (controller) => {
-						if (activeAbort === controller) activeAbort = undefined;
-					},
+					runSignal: lifecycle.runSignal(runToken),
 					waitForIdle: () => ctx.waitForIdle(),
 					sendVerdict: (verdict, details) =>
 						pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),
@@ -231,44 +221,42 @@ export default function (pi: ExtensionAPI): void {
 		activeInspector?.close();
 		activeInspector = undefined;
 		activeStores = undefined;
-		activeAbort?.abort();
-		activeAbort = undefined;
 		lifecycle.shutdownSession();
 	});
-}
 
-function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]): PipelineDashboard | undefined {
-	if (ctx.mode !== "tui") return undefined;
-	const dashboardStore = new PanelDashboardStore();
-	const transcriptStore = new PanelTranscriptStore();
-	for (const reviewer of reviewers) {
-		dashboardStore.addReviewer(reviewer.label, reviewer.label, modelCliId(reviewer));
-		transcriptStore.addChild(reviewer.label);
+	function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]): PipelineDashboard | undefined {
+		if (ctx.mode !== "tui") return undefined;
+		const dashboardStore = new PanelDashboardStore();
+		const transcriptStore = new PanelTranscriptStore();
+		for (const reviewer of reviewers) {
+			dashboardStore.addReviewer(reviewer.label, reviewer.label, modelCliId(reviewer));
+			transcriptStore.addChild(reviewer.label);
+		}
+		activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
+		const disposeWidget = mountPanelDashboard(ctx.ui, dashboardStore, {
+			stripTerminalSequences,
+			truncateToWidth: (text, width) => truncateToWidth(text, width),
+		});
+		return {
+			addLead: (id, label, model) => {
+				dashboardStore.addLead(id, label, model);
+				transcriptStore.addChild(id);
+			},
+			markRunning: (id) => dashboardStore.markRunning(id),
+			progress: (id, info) => dashboardStore.progress(id, info),
+			complete: (id, info) => dashboardStore.complete(id, info),
+			event: (id, ev) => transcriptStore.push(id, ev),
+			note: (id, text) => transcriptStore.note(id, text),
+			tick: () => dashboardStore.tick(),
+			dispose: () => {
+				activeInspector?.close();
+				activeInspector = undefined;
+				activeStores = undefined;
+				transcriptStore.dispose();
+				disposeWidget();
+			},
+		};
 	}
-	activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
-	const disposeWidget = mountPanelDashboard(ctx.ui, dashboardStore, {
-		stripTerminalSequences,
-		truncateToWidth: (text, width) => truncateToWidth(text, width),
-	});
-	return {
-		addLead: (id, label, model) => {
-			dashboardStore.addLead(id, label, model);
-			transcriptStore.addChild(id);
-		},
-		markRunning: (id) => dashboardStore.markRunning(id),
-		progress: (id, info) => dashboardStore.progress(id, info),
-		complete: (id, info) => dashboardStore.complete(id, info),
-		event: (id, ev) => transcriptStore.push(id, ev),
-		note: (id, text) => transcriptStore.note(id, text),
-		tick: () => dashboardStore.tick(),
-		dispose: () => {
-			activeInspector?.close();
-			activeInspector = undefined;
-			activeStores = undefined;
-			transcriptStore.dispose();
-			disposeWidget();
-		},
-	};
 }
 
 function defaultGitExecSafe(args: string[], cwd: string): string {

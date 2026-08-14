@@ -77,8 +77,7 @@ export interface ReviewPipelineEffects {
 	notify(message: string, level: "info" | "warning" | "error"): void;
 	setCompactStatus(status: string | undefined): void;
 	createDashboard(reviewers: ReviewerSpec[]): PipelineDashboard | undefined;
-	setActiveAbort(controller: AbortController): void;
-	clearActiveAbort(controller: AbortController): void;
+	runSignal: AbortSignal | undefined;
 	waitForIdle(): Promise<void>;
 	sendVerdict(verdict: string, details: VerdictDetails): void;
 }
@@ -110,14 +109,11 @@ export async function runReviewPipeline(
 	const { scope, intent, options, resolution } = input;
 	let promptDir: string | undefined;
 	let ticker: ReturnType<typeof setInterval> | undefined;
-	let abort: AbortController | undefined;
 	const dashboard = fx.createDashboard(resolution.reviewers);
 	try {
 		promptDir = mkdtempSync(join(tmpdir(), "pi-panel-review-prompt-"));
 		const reviewerPromptFile = join(promptDir, "reviewer-prompt.md");
 		writeFileSync(reviewerPromptFile, assembleReviewerPrompt(), { encoding: "utf8", mode: 0o600 });
-		abort = new AbortController();
-		fx.setActiveAbort(abort);
 		const progress = new Map<string, string>();
 		let doneCount = 0;
 		const startedAt = Date.now();
@@ -155,7 +151,7 @@ export async function runReviewPipeline(
 					task: `Review the bundle at ${scope.path}.`,
 					cwd: scope.repoRoot,
 					noContextFiles: scope.contextFilesTouched,
-					signal: abort?.signal,
+					signal: fx.runSignal,
 					deps: childDeps,
 					onProgress: ({ label, turns, activity, preview }) => {
 						progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
@@ -232,7 +228,7 @@ export async function runReviewPipeline(
 			task: `Synthesize the panel review in ${synthesisInputFile}. The repository root is ${scope.repoRoot}.`,
 			cwd: scope.repoRoot,
 			noContextFiles: scope.contextFilesTouched,
-			signal: abort?.signal,
+			signal: fx.runSignal,
 			deps: childDeps,
 			onProgress: ({ turns, activity, preview }) => {
 				if (fx.isCurrent())
@@ -288,7 +284,6 @@ export async function runReviewPipeline(
 		return { status: "completed", verdict, synthesized, baseSha: scope.baseSha, headSha: scope.headSha };
 	} finally {
 		if (ticker) clearInterval(ticker);
-		if (abort) fx.clearActiveAbort(abort);
 		dashboard?.dispose();
 		fx.setCompactStatus(undefined);
 		if (promptDir) {

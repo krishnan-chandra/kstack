@@ -100,8 +100,7 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 		notify: (message) => notifications.push(message),
 		setCompactStatus: () => {},
 		createDashboard: () => undefined,
-		setActiveAbort: () => {},
-		clearActiveAbort: () => {},
+		runSignal: undefined,
 		waitForIdle: async () => {},
 		sendVerdict: () => assert.fail("failed panels must not emit a verdict"),
 	};
@@ -160,38 +159,27 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 	assert.match(notifications[0] ?? "", /All reviewers failed; nothing to synthesize/);
 });
 
-test("an older pipeline cannot clear a newer run's abort controller", async () => {
-	let activeAbort: AbortController | undefined;
-	let firstAbort: AbortController | undefined;
-	const replacementAbort = new AbortController();
+test("pipeline forwards and observes the lifecycle run signal", async () => {
+	const controller = new AbortController();
 	const fx: ReviewPipelineEffects = {
 		isCurrent: () => true,
 		notify: () => {},
 		setCompactStatus: () => {},
 		createDashboard: () => undefined,
-		setActiveAbort: (controller) => {
-			firstAbort ??= controller;
-			activeAbort = controller;
-		},
-		clearActiveAbort: (controller) => {
-			if (activeAbort === controller) activeAbort = undefined;
-		},
+		runSignal: controller.signal,
 		waitForIdle: async () => {},
-		sendVerdict: () => assert.fail("failed panels must not emit a verdict"),
+		sendVerdict: () => assert.fail("aborted panels must not emit a verdict"),
 	};
 	const ops: ReviewPipelineOps = {
-		runPanel: async () => {
-			assert.equal(activeAbort, firstAbort);
-			activeAbort = replacementAbort;
-			return {
-				results: [{ status: "failed", label: "one", model: "test/one", error: "stopped" }],
-				completed: 0,
-				failed: 1,
-				aborted: 0,
-			};
+		runPanel: async (reviewers, _maxConcurrency, runOne) => {
+			const result = await runOne(reviewers[0], 0);
+			return { results: [result], completed: 0, failed: 0, aborted: 1 };
 		},
-		runReviewer: async () => {
-			throw new Error("reviewer runner should be owned by the fake panel");
+		runReviewer: async (input) => {
+			assert.equal(input.signal, controller.signal);
+			controller.abort();
+			assert.equal(input.signal.aborted, true);
+			return { status: "aborted", label: input.spec.label, model: input.model };
 		},
 	};
 	const scope: ScopeBundle = {
@@ -211,7 +199,7 @@ test("an older pipeline cannot clear a newer run's abort controller", async () =
 		generatedAt: "now",
 	};
 
-	await runReviewPipeline(
+	const result = await runReviewPipeline(
 		{
 			scope,
 			intent: "review",
@@ -229,5 +217,5 @@ test("an older pipeline cannot clear a newer run's abort controller", async () =
 		ops,
 	);
 
-	assert.equal(activeAbort, replacementAbort);
+	assert.equal(result.status, "aborted");
 });

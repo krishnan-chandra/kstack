@@ -58,20 +58,14 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
-	let abortController: AbortController | undefined;
 
 	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => {
-		abortController?.abort();
-		abortController = undefined;
-		lifecycle.shutdownSession();
-	});
+	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 
 	pi.registerShortcut("ctrl+shift+b", {
 		description: "Abort the running pr-autopilot child agent",
 		handler: async (ctx) => {
-			if (abortController && !abortController.signal.aborted) {
-				abortController.abort();
+			if (lifecycle.abortRun()) {
 				ctx.ui.setStatus("pr-autopilot", "pr-autopilot: aborting child agent…");
 			} else {
 				ctx.ui.notify("No pr-autopilot child agent is running.", "info");
@@ -194,8 +188,11 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			return early("blocked", "another autopilot run started before confirmation completed");
 		}
 
-		const abort = new AbortController();
-		abortController = abort;
+		const runSignal = lifecycle.runSignal(runToken);
+		if (!runSignal) {
+			lifecycle.endRun(runToken);
+			return early("aborted", "run signal is unavailable");
+		}
 
 		let tempDir: string | undefined;
 		const modelList = config.models.map((m) => m.label);
@@ -230,7 +227,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					notify: notify,
 					confirm: (label, body) => ctx.ui.confirm(label, body),
 				},
-				abort.signal,
+				runSignal,
 			);
 
 			if (lifecycle.isCurrent(runToken)) {
@@ -261,7 +258,6 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			}
 			return result;
 		} finally {
-			abortController = undefined;
 			if (lifecycle.isCurrent(runToken)) ctx.ui.setStatus("pr-autopilot", undefined);
 			lifecycle.endRun(runToken);
 			if (tempDir) {
