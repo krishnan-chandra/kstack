@@ -16,6 +16,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated branch with incremental local commits, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations. Supports local jj stacks and isolated managed Git worktrees. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
+| [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 
 Writable workstreams start on a dedicated `kstack/<task-slug>` branch and commit
 coherent increments as work proceeds. They stop on a dirty current working tree
@@ -206,6 +207,8 @@ the review/fix/CI loop with only tiny models:
 /pr-autopilot --mode threads          # address review comments only, then push
 /pr-autopilot --mode cleanup          # after merge: remove managed worktree and branch
 /pr-autopilot --mode drive --pr 42    # run on a specific PR instead of auto-detecting
+/land --pr 42 --method squash          # confirm and land the exact merge-ready head
+/land --pr 42 --readiness watch        # let autopilot watch first, then confirm landing
 ```
 
 `pr-autopilot` uses only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek
