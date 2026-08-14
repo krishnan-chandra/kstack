@@ -96,6 +96,33 @@ In a colocated repo jj and git share `.git`. To stay safe:
 - Read-only `git`/`gh` is fine: `git remote -v`, `git log`, `gh pr view`, `gh auth status`.
 - `.gitignore` is respected by jj.
 
+## Session working state must live in ignored paths
+
+jj snapshots **every non-ignored file** into the working-copy commit on every
+command. Untracked-but-not-ignored scratch files (plan documents, notes,
+generated reports) silently become part of whatever change is `@` — and a
+later `jj new trunk()`, rebase, or `jj abandon` while building or advancing a
+stack removes them from disk along with the abandoned working copy. This has
+destroyed real working state in this repository before.
+
+Before starting stack work, check for stray working files and move them into
+an ignored location (this repo uses `local/`, which is in `.gitignore`):
+
+```bash
+jj status            # anything listed that you never meant to commit?
+mkdir -p local
+git check-ignore -v local/   # confirm the destination is ignored
+```
+
+If working state was already swallowed into an abandoned or side commit,
+recover it — nothing is lost until the operation log is expired:
+
+```bash
+jj op log                          # find the op before the wipe
+jj log --at-op <op-id>             # locate the commit holding the files
+git show <commit>:<path> > local/<path-basename>   # extract per file
+```
+
 ## Git hooks
 
 `jj` operations do **not** run Git hooks (pre-commit, commit-msg, etc.). Hooks only fire on direct `git` commands. If the repo relies on pre-commit for linting, run the linters manually on the changed files after editing:

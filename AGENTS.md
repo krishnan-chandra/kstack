@@ -40,7 +40,11 @@ push, publish, or open a pull request without explicit confirmation.
 
 ## Layout notes
 
-- `plans/` is gitignored working state for advisors and executors.
+- `local/` is gitignored, session-local working state (never tracked; jj
+  never snapshots it). Active advisor/executor plans live in `local/plans/`.
+- `plans/` is tracked: it holds the durable plan ledger (`plans/README.md`)
+  and committed specifications. Do not put in-progress working files there —
+  jj snapshots them into stack commits, and stack rebuilds can destroy them.
 - `config/pi-defaults/` is merged into the user's Pi configuration by
   `install.mjs`.
 - Runtime configuration belongs at `$PI_CODING_AGENT_DIR/kstack.json`, never
