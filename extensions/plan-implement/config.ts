@@ -16,7 +16,7 @@ export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [
 	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
 	{ model: "openrouter/google/gemini-3.7-flash", thinking: "high" },
 	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
-	{ model: "openrouter/z-ai/glm-5.2", thinking: "high" },
+	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 ];
 
 export type ConfigLoad =
