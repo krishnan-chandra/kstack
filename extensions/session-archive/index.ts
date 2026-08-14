@@ -8,9 +8,8 @@
  * tool can archive, restore, edit, or delete a session.
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-files.ts";
 import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
 

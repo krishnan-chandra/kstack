@@ -29,7 +29,7 @@ import { createHandoffHandler, requireHandoffSource } from "./command.ts";
 import { readHandoffHistory, searchHandoffHistory } from "./history-reader.ts";
 
 export default async function (pi: ExtensionAPI) {
-	const [{ Type }, { StringEnum }] = await Promise.all([import("typebox"), import("@earendil-works/pi-ai")]);
+	const { Type, StringEnum } = await import("@earendil-works/pi-ai");
 
 	pi.registerCommand("handoff", {
 		description:
