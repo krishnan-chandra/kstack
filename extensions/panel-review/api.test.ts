@@ -53,7 +53,11 @@ describe("panel-review in-process API", () => {
 	});
 
 	it("allows only one listener to claim a request", () => {
-		const request = { schemaVersion: 2, options: {}, ctx: {} as ExtensionCommandContext, claimed: false };
+		const request = {
+			schemaVersion: 2,
+			payload: { options: {}, ctx: {} as ExtensionCommandContext },
+			claimed: false,
+		};
 		assert.equal(
 			claimPanelReviewRequest(request, async () => ({ status: "declined" as const })),
 			true,
