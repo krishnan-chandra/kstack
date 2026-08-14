@@ -159,8 +159,12 @@ describe("InspectorComponent", () => {
 		const transcripts = new PanelTranscriptStore(() => 1000);
 		transcripts.addChild("r1");
 		transcripts.addChild("r2");
+		for (let i = 1; i <= 30; i++) {
+			transcripts.note("r1", `Note ${i}`);
+		}
 
 		let closed = false;
+		let aborted = false;
 		let renders = 0;
 		const fakeTui = {
 			requestRender: () => {
@@ -176,6 +180,9 @@ describe("InspectorComponent", () => {
 			fakeTheme,
 			() => {
 				closed = true;
+			},
+			() => {
+				aborted = true;
 			},
 			fakeText,
 		);
@@ -201,9 +208,58 @@ describe("InspectorComponent", () => {
 		assert.equal(comp.getState().follow, true);
 		assert.equal(comp.getState().scrollOffset, 0);
 
+		// Abort shortcut (Ctrl+Shift+X)
+		comp.handleInput("\x18"); // Ctrl+X / Ctrl+Shift+X fallback
+		assert.equal(aborted, true);
+
 		// Escape
 		comp.handleInput("\x1b");
 		assert.equal(closed, true);
+
+		comp.dispose();
+	});
+
+	it("clamps scrollOffset on home/g and allows immediate downward scrolling", () => {
+		const dashboard = new PanelDashboardStore(() => 1000);
+		dashboard.addReviewer("r1", "alpha", "model-a");
+
+		const transcripts = new PanelTranscriptStore(() => 1000);
+		transcripts.addChild("r1");
+		for (let i = 1; i <= 50; i++) {
+			transcripts.note("r1", `Line ${i}`);
+		}
+
+		const fakeTui = {
+			requestRender: () => {},
+			terminal: { rows: 20 }, // available body height = 13 (20*0.8=16; 16-3=13)
+		};
+
+		const comp = new InspectorComponent(
+			dashboard,
+			transcripts,
+			fakeTui,
+			fakeTheme,
+			() => {},
+			() => {},
+			fakeText,
+		);
+
+		comp.render(80);
+
+		// Jump to top via 'g'
+		comp.handleInput("g");
+		const topOffset = comp.getState().scrollOffset;
+		assert.ok(topOffset > 0 && topOffset < 100, `topOffset was ${topOffset}`);
+		assert.equal(comp.getState().follow, false);
+
+		// Immediately press down: should decrement from topOffset, not 999999
+		comp.handleInput("\x1b[B");
+		assert.equal(comp.getState().scrollOffset, topOffset - 1);
+
+		// Jump to bottom via 'G'
+		comp.handleInput("G");
+		assert.equal(comp.getState().scrollOffset, 0);
+		assert.equal(comp.getState().follow, true);
 
 		comp.dispose();
 	});

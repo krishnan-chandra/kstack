@@ -30,7 +30,8 @@ describe("PanelTranscriptStore", () => {
 
 	it("streams text deltas into the live tail and freezes on turn_end", () => {
 		let clock = 1000;
-		const store = new PanelTranscriptStore(() => clock);
+		// throttleMs = 0 for synchronous test verification
+		const store = new PanelTranscriptStore(() => clock, 0);
 		store.addChild("r1");
 
 		let emissions = 0;
@@ -69,6 +70,55 @@ describe("PanelTranscriptStore", () => {
 			usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
 			at: 1050,
 		});
+	});
+
+	it("coalesces text_delta emissions when throttling is enabled", async () => {
+		const store = new PanelTranscriptStore(() => Date.now(), 50);
+		store.addChild("r1");
+
+		let emissions = 0;
+		store.subscribe(() => {
+			emissions++;
+		});
+
+		// Multiple rapid deltas within 50ms should only schedule 1 throttled emit
+		store.push("r1", { kind: "text_delta", delta: "a", at: 1 });
+		store.push("r1", { kind: "text_delta", delta: "b", at: 2 });
+		store.push("r1", { kind: "text_delta", delta: "c", at: 3 });
+
+		assert.equal(emissions, 0);
+		assert.equal(store.getLiveTail("r1"), "abc");
+
+		// Wait for throttle timer
+		await new Promise((r) => setTimeout(r, 70));
+		assert.equal(emissions, 1);
+
+		store.dispose();
+	});
+
+	it("flushes throttled emission immediately on turn_end or flush()", () => {
+		const store = new PanelTranscriptStore(() => Date.now(), 1000);
+		store.addChild("r1");
+
+		let emissions = 0;
+		store.subscribe(() => {
+			emissions++;
+		});
+
+		store.push("r1", { kind: "text_delta", delta: "streaming text", at: 1 });
+		assert.equal(emissions, 0);
+
+		// turn_end should flush immediately
+		store.push("r1", {
+			kind: "turn_end",
+			turn: 1,
+			text: "streaming text",
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+			at: 2,
+		});
+		assert.equal(emissions, 1);
+
+		store.dispose();
 	});
 
 	it("attaches duration to the preceding tool call on tool_end", () => {
@@ -138,13 +188,13 @@ describe("PanelTranscriptStore", () => {
 		}
 	});
 
-	it("evicts oldest entries when byte capacity exceeds limit", () => {
-		const store = new PanelTranscriptStore();
+	it("evicts oldest entries when byte capacity exceeds limit (including live tail)", () => {
+		const store = new PanelTranscriptStore(() => Date.now(), 0);
 		store.addChild("r1");
 
-		// Each text entry has ~4 KiB
+		// Fill to near capacity with entries
 		const chunk = "a".repeat(4 * 1024);
-		const totalChunks = Math.ceil(MAX_CHILD_TRANSCRIPT_BYTES / (4 * 1024)) + 5;
+		const totalChunks = Math.floor(MAX_CHILD_TRANSCRIPT_BYTES / (4 * 1024));
 
 		for (let i = 0; i < totalChunks; i++) {
 			store.push("r1", {
@@ -156,12 +206,14 @@ describe("PanelTranscriptStore", () => {
 			});
 		}
 
+		// Now push a large live tail (8 KiB)
+		const largeTail = "x".repeat(MAX_ENTRY_TEXT_BYTES);
+		store.push("r1", { kind: "text_delta", delta: largeTail, at: 100 });
+
+		// Live tail growth must trigger eviction of oldest historical entries
 		assert.equal(store.wasEvicted("r1"), true);
 		const entries = store.getEntries("r1");
-		// Ensure first chunks were evicted
-		const firstText = entries.find((e) => e.kind === "text");
-		assert.ok(firstText && firstText.kind === "text");
-		assert.ok(!firstText.text.startsWith("chunk-0:"));
+		assert.ok(!entries.some((e) => e.kind === "text" && e.text.startsWith("chunk-0:")));
 	});
 
 	it("truncates oversized entry text", () => {

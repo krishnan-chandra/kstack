@@ -133,7 +133,7 @@ export const STATUS_ICON: Record<DashboardStatus, { icon: string; color: string 
 	aborted: { icon: "⊘", color: "warning" },
 };
 
-function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
+export function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
 	if (row.startedAt === undefined) return undefined;
 	const end = row.finishedAt ?? now;
 	return Math.max(0, Math.round((end - row.startedAt) / 1000));

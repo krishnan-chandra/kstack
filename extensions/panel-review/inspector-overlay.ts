@@ -20,6 +20,7 @@ import {
 } from "../shared/child-agent-runner.ts";
 import {
 	PanelDashboardStore,
+	rowElapsedSeconds,
 	sanitizeDisplayText,
 	STATUS_ICON,
 	stripTerminalSequencesFallback,
@@ -99,10 +100,75 @@ export function wrapAndSanitizeText(
 	return result;
 }
 
-function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
-	if (row.startedAt === undefined) return undefined;
-	const end = row.finishedAt ?? now;
-	return Math.max(0, Math.round((end - row.startedAt) / 1000));
+/** Compute flattened formatted lines for the selected child. */
+export function computeInspectorBodyLines(
+	dashboard: PanelDashboardStore,
+	transcripts: PanelTranscriptStore,
+	selectedIndex: number,
+	width: number,
+	theme: DashboardTheme,
+	text: TerminalText = fallbackTerminalText,
+): string[] {
+	const rows = dashboard.getRows();
+	if (rows.length === 0) {
+		return [theme.fg("dim", "(no transcript yet)")];
+	}
+	const clampedIndex = Math.max(0, Math.min(selectedIndex, rows.length - 1));
+	const selectedId = rows[clampedIndex].id;
+
+	const allBodyLines: string[] = [];
+	if (transcripts.wasEvicted(selectedId)) {
+		allBodyLines.push(theme.fg("warning", EVICTION_NOTICE));
+	}
+
+	const entries = transcripts.getEntries(selectedId);
+	for (const entry of entries) {
+		switch (entry.kind) {
+			case "note": {
+				const safe = sanitizeDisplayText(entry.text, text);
+				allBodyLines.push(theme.fg("dim", `— ${safe}`));
+				break;
+			}
+			case "tool": {
+				let line = `${theme.fg("accent", "●")} ${theme.fg("muted", sanitizeDisplayText(entry.summary, text))}`;
+				if (entry.durationMs !== undefined) {
+					line += ` ${theme.fg("dim", `· ${formatDuration(entry.durationMs)}`)}`;
+				}
+				allBodyLines.push(line);
+				break;
+			}
+			case "turn": {
+				const u = entry.usage;
+				let turnLine = `— turn ${entry.turn} · in ${formatTokens(u.input)} out ${formatTokens(u.output)}`;
+				if (u.cost > 0) {
+					turnLine += ` · $${u.cost < 0.01 ? u.cost.toFixed(4) : u.cost.toFixed(3)}`;
+				}
+				allBodyLines.push(theme.fg("dim", turnLine));
+				break;
+			}
+			case "text": {
+				const wrapped = wrapAndSanitizeText(entry.text, Math.max(10, width - 2), text);
+				for (const w of wrapped) {
+					allBodyLines.push(w);
+				}
+				break;
+			}
+		}
+	}
+
+	const liveTail = transcripts.getLiveTail(selectedId);
+	if (liveTail) {
+		const wrappedTail = wrapAndSanitizeText(liveTail, Math.max(10, width - 2), text);
+		for (const w of wrappedTail) {
+			allBodyLines.push(theme.fg("dim", w));
+		}
+	}
+
+	if (allBodyLines.length === 0) {
+		allBodyLines.push(theme.fg("dim", "(no transcript yet)"));
+	}
+
+	return allBodyLines;
 }
 
 /**
@@ -159,57 +225,14 @@ export function renderInspector(
 	const metaLine = theme.fg("dim", `— ${metaParts.join(" · ")} —`);
 
 	// Body lines
-	const allBodyLines: string[] = [];
-	if (transcripts.wasEvicted(selectedId)) {
-		allBodyLines.push(theme.fg("warning", EVICTION_NOTICE));
-	}
-
-	const entries = transcripts.getEntries(selectedId);
-	for (const entry of entries) {
-		switch (entry.kind) {
-			case "note": {
-				const safe = sanitizeDisplayText(entry.text, text);
-				allBodyLines.push(theme.fg("dim", `— ${safe}`));
-				break;
-			}
-			case "tool": {
-				let line = `${theme.fg("accent", "●")} ${theme.fg("muted", sanitizeDisplayText(entry.summary, text))}`;
-				if (entry.durationMs !== undefined) {
-					line += ` ${theme.fg("dim", `· ${formatDuration(entry.durationMs)}`)}`;
-				}
-				allBodyLines.push(line);
-				break;
-			}
-			case "turn": {
-				const u = entry.usage;
-				let turnLine = `— turn ${entry.turn} · in ${formatTokens(u.input)} out ${formatTokens(u.output)}`;
-				if (u.cost > 0) {
-					turnLine += ` · $${u.cost < 0.01 ? u.cost.toFixed(4) : u.cost.toFixed(3)}`;
-				}
-				allBodyLines.push(theme.fg("dim", turnLine));
-				break;
-			}
-			case "text": {
-				const wrapped = wrapAndSanitizeText(entry.text, Math.max(10, width - 2), text);
-				for (const w of wrapped) {
-					allBodyLines.push(w);
-				}
-				break;
-			}
-		}
-	}
-
-	const liveTail = transcripts.getLiveTail(selectedId);
-	if (liveTail) {
-		const wrappedTail = wrapAndSanitizeText(liveTail, Math.max(10, width - 2), text);
-		for (const w of wrappedTail) {
-			allBodyLines.push(theme.fg("dim", w));
-		}
-	}
-
-	if (allBodyLines.length === 0) {
-		allBodyLines.push(theme.fg("dim", "(no transcript yet)"));
-	}
+	const allBodyLines = computeInspectorBodyLines(
+		dashboard,
+		transcripts,
+		clampedIndex,
+		width,
+		theme,
+		text,
+	);
 
 	// Last line: Key help
 	const helpText = `←→/tab child · ↑↓ PgUp PgDn scroll · f follow [${state.follow ? "ON" : "OFF"}] · esc close`;
@@ -265,7 +288,9 @@ export class InspectorComponent implements Component {
 	private readonly tui: RenderRequester;
 	private readonly theme: DashboardTheme;
 	private readonly onClose: () => void;
+	private readonly onAbort?: () => void;
 	private readonly text: TerminalText;
+	private lastWidth = 80;
 	private unsubDashboard: (() => void) | undefined;
 	private unsubTranscripts: (() => void) | undefined;
 
@@ -275,6 +300,7 @@ export class InspectorComponent implements Component {
 		tui: RenderRequester,
 		theme: DashboardTheme,
 		onClose: () => void,
+		onAbort?: () => void,
 		text: TerminalText = fallbackTerminalText,
 	) {
 		this.dashboard = dashboard;
@@ -282,6 +308,7 @@ export class InspectorComponent implements Component {
 		this.tui = tui;
 		this.theme = theme;
 		this.onClose = onClose;
+		this.onAbort = onAbort;
 		this.text = text;
 
 		this.unsubDashboard = this.dashboard.subscribe(() => this.tui.requestRender());
@@ -292,7 +319,23 @@ export class InspectorComponent implements Component {
 		return this.state;
 	}
 
+	private getMaxScroll(): number {
+		const termRows = this.tui.terminal?.rows ?? 24;
+		const height = Math.max(8, Math.floor(termRows * 0.8));
+		const availableBodyHeight = Math.max(1, height - 3);
+		const bodyLines = computeInspectorBodyLines(
+			this.dashboard,
+			this.transcripts,
+			this.state.selectedIndex,
+			this.lastWidth,
+			this.theme,
+			this.text,
+		);
+		return Math.max(0, bodyLines.length - availableBodyHeight);
+	}
+
 	render(width: number): string[] {
+		this.lastWidth = width;
 		const termRows = this.tui.terminal?.rows ?? 24;
 		const height = Math.max(8, Math.floor(termRows * 0.8));
 		return renderInspector(
@@ -311,6 +354,16 @@ export class InspectorComponent implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (
+			checkKey(data, "ctrl+shift+x") ||
+			checkKey(data, "ctrl+x") ||
+			matchesKey(data, "ctrl+shift+x" as any) ||
+			data === "\x18"
+		) {
+			this.onAbort?.();
+			return;
+		}
+
 		if (checkKey(data, "escape") || data === "\x1b") {
 			this.onClose();
 			return;
@@ -340,7 +393,8 @@ export class InspectorComponent implements Component {
 		}
 
 		if (checkKey(data, "up") || data === "\x1b[A") {
-			this.state.scrollOffset++;
+			const maxScroll = this.getMaxScroll();
+			this.state.scrollOffset = Math.min(maxScroll, this.state.scrollOffset + 1);
 			this.state.follow = false;
 			this.tui.requestRender();
 			return;
@@ -354,7 +408,8 @@ export class InspectorComponent implements Component {
 		}
 
 		if (checkKey(data, "pageUp") || checkKey(data, "pageup") || data === "\x1b[5~") {
-			this.state.scrollOffset += 10;
+			const maxScroll = this.getMaxScroll();
+			this.state.scrollOffset = Math.min(maxScroll, this.state.scrollOffset + 10);
 			this.state.follow = false;
 			this.tui.requestRender();
 			return;
@@ -368,7 +423,7 @@ export class InspectorComponent implements Component {
 		}
 
 		if (checkKey(data, "home") || data === "g" || data === "\x1b[H") {
-			this.state.scrollOffset = 999999;
+			this.state.scrollOffset = this.getMaxScroll();
 			this.state.follow = false;
 			this.tui.requestRender();
 			return;
@@ -397,6 +452,11 @@ export class InspectorComponent implements Component {
 	}
 }
 
+export interface OpenInspectorOptions {
+	text?: TerminalText;
+	onAbort?: () => void;
+}
+
 export interface OpenInspectorResult {
 	close(): void;
 	closed: Promise<void>;
@@ -406,8 +466,10 @@ export function openInspector(
 	ctx: ExtensionContext,
 	dashboard: PanelDashboardStore,
 	transcripts: PanelTranscriptStore,
-	text: TerminalText = fallbackTerminalText,
+	options: OpenInspectorOptions = {},
 ): OpenInspectorResult {
+	const text = options.text ?? fallbackTerminalText;
+	const onAbort = options.onAbort;
 	let doneFn: (() => void) | undefined;
 	let closedResolve!: () => void;
 	const closed = new Promise<void>((resolve) => {
@@ -430,7 +492,7 @@ export function openInspector(
 	ctx.ui.custom<void>(
 		(tui, theme, _kb, done) => {
 			doneFn = () => done(undefined);
-			component = new InspectorComponent(dashboard, transcripts, tui, theme, close, text);
+			component = new InspectorComponent(dashboard, transcripts, tui, theme, close, onAbort, text);
 			return component;
 		},
 		{

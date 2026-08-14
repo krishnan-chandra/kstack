@@ -42,17 +42,25 @@ interface ChildTranscriptState {
 	id: string;
 	entries: TranscriptEntry[];
 	liveTail: string | undefined;
-	totalBytes: number;
+	entriesBytes: number;
 	evicted: boolean;
+}
+
+function childTotalBytes(state: ChildTranscriptState): number {
+	const tailBytes = state.liveTail ? Buffer.byteLength(state.liveTail, "utf8") : 0;
+	return state.entriesBytes + tailBytes;
 }
 
 export class PanelTranscriptStore {
 	private readonly children = new Map<string, ChildTranscriptState>();
 	private readonly listeners = new Set<() => void>();
 	private readonly now: () => number;
+	private readonly throttleMs: number;
+	private throttleTimer: ReturnType<typeof setTimeout> | undefined;
 
-	constructor(now: () => number = () => Date.now()) {
+	constructor(now: () => number = () => Date.now(), throttleMs = 80) {
 		this.now = now;
+		this.throttleMs = throttleMs;
 	}
 
 	nowMs(): number {
@@ -72,29 +80,58 @@ export class PanelTranscriptStore {
 		}
 	}
 
+	/** Flush any pending throttled emission immediately. */
+	flush(): void {
+		if (this.throttleTimer) {
+			clearTimeout(this.throttleTimer);
+			this.throttleTimer = undefined;
+			this.emit();
+		}
+	}
+
+	dispose(): void {
+		if (this.throttleTimer) {
+			clearTimeout(this.throttleTimer);
+			this.throttleTimer = undefined;
+		}
+		this.listeners.clear();
+	}
+
 	addChild(id: string): void {
 		if (this.children.has(id)) return;
 		this.children.set(id, {
 			id,
 			entries: [],
 			liveTail: undefined,
-			totalBytes: 0,
+			entriesBytes: 0,
 			evicted: false,
 		});
+		this.flushAndEmit();
+	}
+
+	private flushAndEmit(): void {
+		if (this.throttleTimer) {
+			clearTimeout(this.throttleTimer);
+			this.throttleTimer = undefined;
+		}
 		this.emit();
+	}
+
+	private enforceLimits(state: ChildTranscriptState): void {
+		while (
+			state.entries.length > 0 &&
+			(childTotalBytes(state) > MAX_CHILD_TRANSCRIPT_BYTES || state.entries.length > MAX_CHILD_ENTRIES)
+		) {
+			const removed = state.entries.shift()!;
+			state.entriesBytes -= getEntryByteLength(removed);
+			state.evicted = true;
+		}
 	}
 
 	private addEntry(state: ChildTranscriptState, entry: TranscriptEntry): void {
 		state.entries.push(entry);
-		state.totalBytes += getEntryByteLength(entry);
-		while (
-			state.entries.length > 0 &&
-			(state.totalBytes > MAX_CHILD_TRANSCRIPT_BYTES || state.entries.length > MAX_CHILD_ENTRIES)
-		) {
-			const removed = state.entries.shift()!;
-			state.totalBytes -= getEntryByteLength(removed);
-			state.evicted = true;
-		}
+		state.entriesBytes += getEntryByteLength(entry);
+		this.enforceLimits(state);
 	}
 
 	note(id: string, text: string): void {
@@ -106,7 +143,7 @@ export class PanelTranscriptStore {
 			at: this.now(),
 		};
 		this.addEntry(state, entry);
-		this.emit();
+		this.flushAndEmit();
 	}
 
 	push(id: string, event: ChildEvent): void {
@@ -117,7 +154,16 @@ export class PanelTranscriptStore {
 			case "text_delta": {
 				const current = state.liveTail ?? "";
 				state.liveTail = truncateTailUtf8(current + event.delta, MAX_ENTRY_TEXT_BYTES);
-				this.emit();
+				this.enforceLimits(state);
+				if (this.throttleMs <= 0) {
+					this.emit();
+				} else if (!this.throttleTimer) {
+					this.throttleTimer = setTimeout(() => {
+						this.throttleTimer = undefined;
+						this.emit();
+					}, this.throttleMs);
+					this.throttleTimer.unref?.();
+				}
 				break;
 			}
 			case "tool_start": {
@@ -127,14 +173,14 @@ export class PanelTranscriptStore {
 					at: event.at,
 				};
 				this.addEntry(state, entry);
-				this.emit();
+				this.flushAndEmit();
 				break;
 			}
 			case "tool_end": {
 				const last = state.entries.at(-1);
 				if (last && last.kind === "tool" && last.durationMs === undefined) {
 					last.durationMs = event.durationMs;
-					this.emit();
+					this.flushAndEmit();
 				}
 				break;
 			}
@@ -155,7 +201,7 @@ export class PanelTranscriptStore {
 					at: event.at,
 				});
 				state.liveTail = undefined;
-				this.emit();
+				this.flushAndEmit();
 				break;
 			}
 		}

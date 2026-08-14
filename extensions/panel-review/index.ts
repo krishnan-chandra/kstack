@@ -31,8 +31,15 @@ export default function (pi: ExtensionAPI): void {
 			if (activeInspector) return;
 			const { dashboard, transcripts } = activeStores;
 			const inspector = openInspector(ctx, dashboard, transcripts, {
-				stripTerminalSequences,
-				truncateToWidth: (text, width) => truncateToWidth(text, width),
+				text: {
+					stripTerminalSequences,
+					truncateToWidth: (text, width) => truncateToWidth(text, width),
+				},
+				onAbort: () => {
+					if (activeAbort && !activeAbort.signal.aborted) {
+						activeAbort.abort();
+					}
+				},
 			});
 			activeInspector = inspector;
 			inspector.closed.finally(() => {
