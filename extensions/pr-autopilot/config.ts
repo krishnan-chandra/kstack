@@ -23,17 +23,15 @@
  * (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash) are used.
  */
 
-import {
-	getAgentDir,
-	getKstackPath,
-	loadKstackSection,
-	MODEL_ID_RE,
-	THINKING_LEVELS,
-} from "../shared/kstack-config.ts";
+import { validateBoundedNumber } from "../shared/config-validate.ts";
+import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
 export { getAgentDir, getKstackPath };
 export { modelCliId } from "../shared/model-spec.ts";
+
+const TINY_THINKING = ["off", "minimal", "low"] as const;
 
 export type ConfigLoad =
 	| { status: "loaded"; config: ResolvedAutopilotConfig; path: string }
@@ -63,29 +61,22 @@ function validateModelSpec(
 		return { ok: false, error: `Model entry ${index} must be an object {label, model, thinking?}.` };
 	}
 	const value = raw as Record<string, unknown>;
-	if (typeof value.label !== "string" || !/^[A-Za-z0-9_-]{1,16}$/.test(value.label)) {
-		return { ok: false, error: `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].` };
-	}
-	if (typeof value.model !== "string" || !MODEL_ID_RE.test(value.model)) {
-		return { ok: false, error: `Model entry ${index} (${value.label}): "model" must be "provider/model".` };
-	}
-	if (value.thinking !== undefined) {
-		if (typeof value.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(value.thinking)) {
-			return {
-				ok: false,
-				error: `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
-			};
-		}
-		// Tiny-model invariant: no thinking level above "low".
-		const allowed = ["off", "minimal", "low"];
-		if (!allowed.includes(value.thinking)) {
-			return {
-				ok: false,
-				error: `Model entry ${index} (${value.label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`,
-			};
-		}
-	}
-	return { ok: true, spec: { label: value.label, model: value.model, thinking: (value.thinking ?? "low") as string } };
+	const fields = validateModelSpecFields(value, {
+		requireLabel: true,
+		allowedThinking: TINY_THINKING,
+		errors: {
+			label: () => `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].`,
+			model: () => `Model entry ${index} (${value.label}): "model" must be "provider/model".`,
+			thinking: (thinking) =>
+				typeof thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(thinking)
+					? `Model entry ${index} (${value.label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`
+					: `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
+		},
+	});
+	if (!fields.ok) return fields;
+	const label = fields.label;
+	if (!label) return { ok: false, error: `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].` };
+	return { ok: true, spec: { label, model: fields.model, thinking: fields.thinking ?? "low" } };
 }
 
 export interface ValidateConfigResult {
@@ -131,12 +122,7 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 
 	let maxConcurrency;
 	if (obj.maxConcurrency !== undefined) {
-		if (
-			typeof obj.maxConcurrency !== "number" ||
-			!Number.isInteger(obj.maxConcurrency) ||
-			obj.maxConcurrency < 1 ||
-			obj.maxConcurrency > 5
-		) {
+		if (!validateBoundedNumber(obj.maxConcurrency, { integer: true, min: 1, max: 5 })) {
 			return { ok: false, error: `"maxConcurrency" must be an integer between 1 and 5.` };
 		}
 		maxConcurrency = obj.maxConcurrency;
@@ -146,12 +132,7 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 
 	let timeoutMinutes;
 	if (obj.timeoutMinutes !== undefined) {
-		if (
-			typeof obj.timeoutMinutes !== "number" ||
-			!Number.isFinite(obj.timeoutMinutes) ||
-			obj.timeoutMinutes < 1 ||
-			obj.timeoutMinutes > 15
-		) {
+		if (!validateBoundedNumber(obj.timeoutMinutes, { min: 1, max: 15 })) {
 			return { ok: false, error: `"timeoutMinutes" must be a number between 1 and 15.` };
 		}
 		timeoutMinutes = obj.timeoutMinutes;
@@ -161,12 +142,7 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 
 	let maxRuntimeMinutes;
 	if (obj.maxRuntimeMinutes !== undefined) {
-		if (
-			typeof obj.maxRuntimeMinutes !== "number" ||
-			!Number.isFinite(obj.maxRuntimeMinutes) ||
-			obj.maxRuntimeMinutes < 2 ||
-			obj.maxRuntimeMinutes > 60
-		) {
+		if (!validateBoundedNumber(obj.maxRuntimeMinutes, { min: 2, max: 60 })) {
 			return { ok: false, error: `"maxRuntimeMinutes" must be a number between 2 and 60.` };
 		}
 		maxRuntimeMinutes = obj.maxRuntimeMinutes;
@@ -226,8 +202,8 @@ export function resolveModels(
 	if (config.status === "loaded") {
 		const unavailable: string[] = [];
 		for (const m of config.config.models) {
-			const slash = m.model.indexOf("/");
-			if (!deps.available(m.model.slice(0, slash), m.model.slice(slash + 1))) {
+			const { provider, modelId } = splitModelRef(m.model);
+			if (!deps.available(provider, modelId)) {
 				unavailable.push(`${m.label}: ${m.model}`);
 			}
 		}
@@ -250,8 +226,8 @@ export function resolveModels(
 	const available: AutopilotModelSpec[] = [];
 	const skipped: string[] = [];
 	for (const m of DEFAULT_TINY_MODELS) {
-		const slash = m.model.indexOf("/");
-		if (deps.available(m.model.slice(0, slash), m.model.slice(slash + 1))) {
+		const { provider, modelId } = splitModelRef(m.model);
+		if (deps.available(provider, modelId)) {
 			available.push({ ...m });
 		} else {
 			skipped.push(m.model);

@@ -1,12 +1,8 @@
 /** Router configuration from kstack.json. */
 
-import {
-	getAgentDir,
-	getKstackPath,
-	loadKstackSection,
-	MODEL_ID_RE,
-	THINKING_LEVELS,
-} from "../shared/kstack-config.ts";
+import { validateBoundedNumber } from "../shared/config-validate.ts";
+import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
 
 export { getAgentDir, getKstackPath };
@@ -29,26 +25,22 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 			return { ok: false, error: '"kstack-router.classifier" must be an object {"model": "...", "thinking"?}.' };
 		}
 		const classifier = obj.classifier as Record<string, unknown>;
-		if (typeof classifier.model !== "string" || !MODEL_ID_RE.test(classifier.model)) {
-			return {
-				ok: false,
-				error: `"kstack-router.classifier.model" must be "provider/model", got ${JSON.stringify(classifier.model)}.`,
-			};
-		}
-		const thinking = classifier.thinking as string | undefined;
-		if (thinking !== undefined && !(THINKING_LEVELS as readonly string[]).includes(thinking)) {
-			return { ok: false, error: `"kstack-router.classifier.thinking" must be one of ${THINKING_LEVELS.join(", ")}.` };
-		}
-		config.classifier = { model: classifier.model, thinking };
+		const fields = validateModelSpecFields(classifier, {
+			requireLabel: false,
+			errors: {
+				label: () => '"kstack-router.classifier" does not use a label.',
+				model: (value) =>
+					`"kstack-router.classifier.model" must be "provider/model", got ${JSON.stringify(value)}.`,
+				thinking: () =>
+					`"kstack-router.classifier.thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
+			},
+		});
+		if (!fields.ok) return fields;
+		config.classifier = { model: fields.model, thinking: fields.thinking };
 	}
 
 	if (obj.timeoutSeconds !== undefined) {
-		if (
-			typeof obj.timeoutSeconds !== "number" ||
-			!Number.isFinite(obj.timeoutSeconds) ||
-			obj.timeoutSeconds < 1 ||
-			obj.timeoutSeconds > 600
-		) {
+		if (!validateBoundedNumber(obj.timeoutSeconds, { min: 1, max: 600 })) {
 			return { ok: false, error: '"kstack-router.timeoutSeconds" must be a number between 1 and 600.' };
 		}
 		config.timeoutSeconds = obj.timeoutSeconds;
@@ -84,8 +76,8 @@ export function resolveClassifierModel(
 	deps: ResolveDeps,
 ): ClassifierModelResolution | { ok: false; error: string } {
 	if (config?.classifier) {
-		const slash = config.classifier.model.indexOf("/");
-		if (!deps.available(config.classifier.model.slice(0, slash), config.classifier.model.slice(slash + 1))) {
+		const { provider, modelId } = splitModelRef(config.classifier.model);
+		if (!deps.available(provider, modelId)) {
 			return { ok: false, error: `Configured classifier model is unavailable: ${config.classifier.model}.` };
 		}
 		return { modelId: config.classifier.model, source: "config", thinking: config.classifier.thinking };
@@ -93,8 +85,8 @@ export function resolveClassifierModel(
 
 	// Try default.
 	const defaultModel = DEFAULTS.classifierModel;
-	const slash = defaultModel.indexOf("/");
-	if (deps.available(defaultModel.slice(0, slash), defaultModel.slice(slash + 1))) {
+	const { provider, modelId } = splitModelRef(defaultModel);
+	if (deps.available(provider, modelId)) {
 		return { modelId: defaultModel, source: "default", thinking: DEFAULTS.classifierThinking };
 	}
 
