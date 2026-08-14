@@ -54,6 +54,11 @@ another option. Put `--` before a task that starts with dashes.
    title, and the full reviewer recommendation — is displayed as the run's
    terminal output. The publisher never marks PRs ready, merges, or
    force-pushes.
+10. After a successful single-PR publication, resolves the open PR from the
+    workflow branch using live GitHub state and offers an optional `/land`
+    continuation. If accepted, `/land` watches pr-autopilot readiness and keeps
+    its own exact-head merge confirmation. Stack mode is excluded, and a
+    missing land extension or unresolved PR ends cleanly at the published draft. Managed-worktree runs pass the retained workflow checkout to both landing and pr-autopilot.
 
 Both `kstack-router` and direct `/plan-implement` calls supply a selected
 change kind. The confirmation displays it. The planner, implementer, and review

@@ -118,6 +118,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		mode: AutopilotMode,
 		prNumber: number | undefined,
 		ctx: ExtensionCommandContext,
+		cwd = ctx.cwd,
 	): Promise<AutopilotResult> {
 		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({
 			status, mergeReady: false, cyclesCompleted: 0, blockedReasons: [reason],
@@ -204,7 +205,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 				{
 					config,
 					exec: makeExec(pi),
-					cwd: ctx.cwd,
+					cwd,
 					explicitPR: prNumber,
 					promptDir: tempDir,
 					triagerPromptFile,
@@ -273,6 +274,6 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	// Listen for in-process API requests from the router or other extensions.
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
-		claimPrAutopilotRequest(data, (mode, prNumber, ctx) => runAutopilotCommand(mode, prNumber, ctx));
+		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd) => runAutopilotCommand(mode, prNumber, ctx, cwd));
 	});
 }

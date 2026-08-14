@@ -3,7 +3,7 @@ import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 export type MergeMethod = "merge" | "squash" | "rebase";
 export type ReadinessMode = "check" | "watch";
 export interface LandTarget { kind: "single"; prNumber: number }
-export interface LandOptions { target: LandTarget; readiness: ReadinessMode; method?: MergeMethod }
+export interface LandOptions { target: LandTarget; readiness: ReadinessMode; method?: MergeMethod; cwd?: string }
 export interface FrontierResult {
 	prNumber: number; url: string; expectedHeadSha: string; method: MergeMethod;
 	state: "landed" | "queued" | "blocked" | "not-attempted";

@@ -30,7 +30,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 	const lifecycle = new LandLifecycle();
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => lifecycle.shutdown());
+	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 	pi.registerShortcut("ctrl+shift+l", {
 		description: "Abort active landing wait/subprocess",
 		handler: async (ctx) => {
@@ -50,10 +50,11 @@ export default function landExtension(pi: ExtensionAPI): void {
 		const token = lifecycle.begin();
 		if (!token) return blocked("Another landing run is active.");
 		ctx.ui.setStatus("land", "land: resolving target");
+		const cwd = options.cwd ?? ctx.cwd;
 		try {
 			const result = await runLand(options, {
-				exec: makeExec(pi), cwd: ctx.cwd, signal: token.signal,
-				runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx),
+				exec: makeExec(pi), cwd, signal: token.signal,
+				runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd),
 				selectMethod: async (allowed) => selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
 				confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),
 				now: Date.now,

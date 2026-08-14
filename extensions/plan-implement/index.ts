@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { requestLand } from "../land/api.ts";
+import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
@@ -141,6 +143,18 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				isCurrent: () => lifecycle.isCurrent(token), isSessionCurrent: () => lifecycle.isSessionCurrent(token),
 				beginChild: (phase) => lifecycle.beginChild(token, phase), endChild: (controller) => lifecycle.endChild(token, controller),
 				exec: makeExec(pi), requestPanelReview: (options) => requestPanelReview(pi, options, ctx),
+				resolvePublishedPr: async (cwd) => {
+					const exec = makeExec(pi);
+					const branch = await exec("git", ["branch", "--show-current"], { cwd, timeout: 15_000 });
+					const head = branch.code === 0 ? branch.stdout.trim() : "";
+					if (!head) return { ok: false, error: "could not resolve the workflow branch." };
+					try {
+						return { ok: true, prNumber: await findOpenPullRequestByHead((command, args, options) => pi.exec(command, args, options), cwd, head) };
+					} catch (error) {
+						return { ok: false, error: error instanceof Error ? error.message : String(error) };
+					}
+				},
+				requestLand: (prNumber, cwd) => requestLand(pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
 			});
 		} finally { lifecycle.finishWorkflow(token); }
 	}
