@@ -46,10 +46,7 @@ export function validateModelSpecFields(
 		return { ok: false, error: rules.errors.model(value.model) };
 	}
 	const allowedThinking = rules.allowedThinking ?? THINKING_LEVELS;
-	if (
-		value.thinking !== undefined &&
-		(!isThinkingLevel(value.thinking) || !allowedThinking.includes(value.thinking))
-	) {
+	if (value.thinking !== undefined && (!isThinkingLevel(value.thinking) || !allowedThinking.includes(value.thinking))) {
 		return { ok: false, error: rules.errors.thinking(value.thinking) };
 	}
 	return {

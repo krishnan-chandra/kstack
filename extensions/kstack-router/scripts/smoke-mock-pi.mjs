@@ -290,9 +290,15 @@ await scenario("fast-change delegates exact task, location, and change kind to f
 	const env = setup();
 	const seen = [];
 	env.state.busListeners.set(FAST_IMPLEMENT_REQUEST_EVENT, [
-		(request) => { seen.push({ task: request.task, workLocation: request.workLocation, changeKind: request.changeKind }); request.claimed = true; request.completion = Promise.resolve(); },
+		(request) => {
+			seen.push({ task: request.task, workLocation: request.workLocation, changeKind: request.changeKind });
+			request.claimed = true;
+			request.completion = Promise.resolve();
+		},
 	]);
-	await env.state.commands.get("kstack").handler('--route fast-change --worktree --change-kind bug-fix "Fix the narrow bug"', env.ctx);
+	await env.state.commands
+		.get("kstack")
+		.handler('--route fast-change --worktree --change-kind bug-fix "Fix the narrow bug"', env.ctx);
 	assert.deepEqual(seen, [{ task: "Fix the narrow bug", workLocation: "worktree", changeKind: "bug-fix" }]);
 });
 
@@ -301,7 +307,9 @@ await scenario("rejects a change-kind override when the final route is not chang
 	const handler = env.state.commands.get("kstack").handler;
 	await handler("--route investigate --change-kind feature Explain the archive", env.ctx);
 	assert.ok(
-		env.state.notifications.some((n) => n.level === "warning" && /only valid with the change or fast-change routes/.test(n.message)),
+		env.state.notifications.some(
+			(n) => n.level === "warning" && /only valid with the change or fast-change routes/.test(n.message),
+		),
 	);
 	assert.equal(env.state.messages.length, 0);
 });

@@ -28,7 +28,9 @@ const channel = createRequestChannel<PanelReviewPayload, PanelReviewOutcome, 2>(
 			(!("repositoryPath" in options) ||
 				options.repositoryPath === undefined ||
 				typeof options.repositoryPath === "string") &&
-			(!("approvedPlan" in options) || options.approvedPlan === undefined || typeof options.approvedPlan === "string") &&
+			(!("approvedPlan" in options) ||
+				options.approvedPlan === undefined ||
+				typeof options.approvedPlan === "string") &&
 			(!("executionLedger" in options) ||
 				options.executionLedger === undefined ||
 				typeof options.executionLedger === "string") &&

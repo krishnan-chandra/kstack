@@ -1,7 +1,7 @@
 /** In-process request contract for invoking plan-implement from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { isChangeKind, type ChangeKind } from "../shared/change-kind.ts";
+import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import type { DeliveryMode, WorkLocation } from "./types.ts";
 

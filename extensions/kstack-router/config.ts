@@ -29,10 +29,8 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 			requireLabel: false,
 			errors: {
 				label: () => '"kstack-router.classifier" does not use a label.',
-				model: (value) =>
-					`"kstack-router.classifier.model" must be "provider/model", got ${JSON.stringify(value)}.`,
-				thinking: () =>
-					`"kstack-router.classifier.thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
+				model: (value) => `"kstack-router.classifier.model" must be "provider/model", got ${JSON.stringify(value)}.`,
+				thinking: () => `"kstack-router.classifier.thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
 			},
 		});
 		if (!fields.ok) return fields;

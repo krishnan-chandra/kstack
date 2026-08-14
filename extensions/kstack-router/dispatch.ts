@@ -54,11 +54,19 @@ export async function dispatchRoute(
 		}
 
 		case "fast-change": {
-			if (delivery === "stack") return { status: "failed", error: "fast-change supports only single-PR workstreams. Use the change route for stacks." };
+			if (delivery === "stack")
+				return {
+					status: "failed",
+					error: "fast-change supports only single-PR workstreams. Use the change route for stacks.",
+				};
 			try {
 				const result = await requestFastImplement(pi, task, worktree ? "worktree" : "current", changeKind, ctx);
-				return result.handled ? { status: "dispatched" } : { status: "failed", error: "fast-implement extension is not loaded or did not accept the request." };
-			} catch (err) { return { status: "failed", error: `fast-implement dispatch failed: ${(err as Error).message}` }; }
+				return result.handled
+					? { status: "dispatched" }
+					: { status: "failed", error: "fast-implement extension is not loaded or did not accept the request." };
+			} catch (err) {
+				return { status: "failed", error: `fast-implement dispatch failed: ${(err as Error).message}` };
+			}
 		}
 
 		case "review": {

@@ -2,8 +2,11 @@
 	"name": "kstack",
 	"private": true,
 	"type": "module",
-	"engines": { "node": ">=22" },
+	"engines": {
+		"node": ">=22"
+	},
 	"devDependencies": {
+		"@biomejs/biome": "2.5.8",
 		"@earendil-works/pi-ai": "^0.84.2",
 		"@earendil-works/pi-coding-agent": "^0.84.2",
 		"@earendil-works/pi-tui": "^0.84.2",
@@ -12,6 +15,8 @@
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
+		"format": "biome check --write .",
+		"lint": "biome check .",
 		"test": "node --test install.test.mjs \"extensions/**/*.test.ts\" \"skills/**/*.test.mjs\"",
 		"test:extensions": "node --test \"extensions/**/*.test.ts\"",
 		"typecheck": "tsc -p tsconfig.json"

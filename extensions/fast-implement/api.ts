@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { isChangeKind, type ChangeKind } from "../shared/change-kind.ts";
+import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 
 export const FAST_IMPLEMENT_REQUEST_EVENT = "kstack:fast-implement:request";
@@ -42,9 +42,7 @@ export function claimFastImplementRequest(
 		ctx: ExtensionCommandContext,
 	) => Promise<void>,
 ): boolean {
-	return channel.claim(value, (payload) =>
-		run(payload.task, payload.workLocation, payload.changeKind, payload.ctx),
-	);
+	return channel.claim(value, (payload) => run(payload.task, payload.workLocation, payload.changeKind, payload.ctx));
 }
 
 export async function requestFastImplement(

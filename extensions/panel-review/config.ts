@@ -35,8 +35,8 @@ import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "
 import { MODEL_LABEL_RE, splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
-export { getAgentDir, getKstackPath, THINKING_LEVELS };
 export { modelCliId } from "../shared/model-spec.ts";
+export { getAgentDir, getKstackPath, THINKING_LEVELS };
 
 export const MIN_REVIEWERS = 2;
 export const MAX_REVIEWERS = 5;

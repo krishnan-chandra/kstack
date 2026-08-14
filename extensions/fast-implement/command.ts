@@ -1,10 +1,11 @@
-import { isChangeKind, type ChangeKind } from "../shared/change-kind.ts";
-import { LIMITS, type FastImplementRequest } from "./types.ts";
+import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
+import { type FastImplementRequest, LIMITS } from "./types.ts";
 
 export function validateTask(raw: string): { ok: true; task: string } | { ok: false; error: string } {
 	const task = raw.trim();
 	if (!task) return { ok: false, error: "/fast-implement requires a non-empty task." };
-	if (Buffer.byteLength(task) > LIMITS.maxTaskBytes) return { ok: false, error: `Task exceeds ${LIMITS.maxTaskBytes} bytes.` };
+	if (Buffer.byteLength(task) > LIMITS.maxTaskBytes)
+		return { ok: false, error: `Task exceeds ${LIMITS.maxTaskBytes} bytes.` };
 	return { ok: true, task };
 }
 
@@ -14,7 +15,9 @@ function takeToken(input: string): { token: string; rest: string } | undefined {
 	return match ? { token: match[1], rest: match[2] ?? "" } : undefined;
 }
 
-export function parseFastImplementArgs(raw: string): { ok: true; request: FastImplementRequest } | { ok: false; error: string } {
+export function parseFastImplementArgs(
+	raw: string,
+): { ok: true; request: FastImplementRequest } | { ok: false; error: string } {
 	let rest = raw.trim();
 	let workLocation: FastImplementRequest["workLocation"] = "current";
 	let changeKind: ChangeKind = "generic";
@@ -24,12 +27,19 @@ export function parseFastImplementArgs(raw: string): { ok: true; request: FastIm
 		const { token } = next;
 		rest = next.rest;
 		if (token === "--") break;
-		if (token === "--worktree") { if (workLocation === "worktree") return { ok: false, error: "Duplicate --worktree flag." }; workLocation = "worktree"; continue; }
+		if (token === "--worktree") {
+			if (workLocation === "worktree") return { ok: false, error: "Duplicate --worktree flag." };
+			workLocation = "worktree";
+			continue;
+		}
 		if (token === "--change-kind") {
 			const valueToken = takeToken(rest);
 			const value = valueToken?.token.replace(/^["']|["']$/g, "");
-			if (!value || !isChangeKind(value)) return { ok: false, error: "--change-kind requires a supported change kind." };
-			changeKind = value; rest = valueToken?.rest ?? ""; continue;
+			if (!value || !isChangeKind(value))
+				return { ok: false, error: "--change-kind requires a supported change kind." };
+			changeKind = value;
+			rest = valueToken?.rest ?? "";
+			continue;
 		}
 		return { ok: false, error: `Unknown fast-implement flag: ${token}.` };
 	}

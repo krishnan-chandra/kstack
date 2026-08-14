@@ -28,8 +28,8 @@ import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
-export { getAgentDir, getKstackPath };
 export { modelCliId } from "../shared/model-spec.ts";
+export { getAgentDir, getKstackPath };
 
 const TINY_THINKING = ["off", "minimal", "low"] as const;
 
@@ -256,4 +256,3 @@ export function resolveModels(
 		},
 	};
 }
-

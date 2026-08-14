@@ -5,8 +5,8 @@ import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
 
-export { getAgentDir, getKstackPath };
 export { modelCliId } from "../shared/model-spec.ts";
+export { getAgentDir, getKstackPath };
 
 const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
 

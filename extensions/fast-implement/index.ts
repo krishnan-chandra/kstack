@@ -29,7 +29,13 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 		const details = message.details as { status?: string; branch?: string } | undefined;
 		const header = `${details?.status === "completed" ? theme.fg("success", "■") : theme.fg("error", "■")} ${theme.fg("accent", "Fast implement")}${theme.fg("muted", ` — ${details?.branch ?? "no workstream"}`)}`;
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-		box.addChild(new Text(expanded ? `${header}\n\n${message.content}` : `${header}${theme.fg("dim", " (Ctrl+O to expand)")}`, 0, 0));
+		box.addChild(
+			new Text(
+				expanded ? `${header}\n\n${message.content}` : `${header}${theme.fg("dim", " (Ctrl+O to expand)")}`,
+				0,
+				0,
+			),
+		);
 		return box;
 	});
 
