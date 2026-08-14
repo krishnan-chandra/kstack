@@ -251,7 +251,13 @@ pi -e extensions/session-archive/index.ts
 
 ## Development
 
-Run the extension tests from the repository root:
+Run the full JavaScript and TypeScript test suite from the repository root:
+
+```bash
+npm test
+```
+
+For focused runs, use the individual test commands:
 
 ```bash
 node --test install.test.mjs
