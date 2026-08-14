@@ -185,10 +185,10 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			writeFileSync(triagerPromptFile, readPrompt("triager.md"), { encoding: "utf8", mode: 0o600 });
 			writeFileSync(fixerPromptFile, readPrompt("fixer.md"), { encoding: "utf8", mode: 0o600 });
 
-			const updateStatus = (phase: LifecyclePhase) => {
+			const updateStatus = (phase: LifecyclePhase, cycles = 0) => {
 				if (lifecycle.isCurrent(runToken)) {
 					ctx.ui.setStatus("pr-autopilot", `pr-autopilot: ${phase}`);
-					sendPhaseMessage(pi, mode, phase, 0, modelList, phase);
+					sendPhaseMessage(pi, mode, phase, cycles, modelList, phase);
 				}
 			};
 
@@ -204,7 +204,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					fixerPromptFile,
 				},
 				{
-					setPhase: (phase) => updateStatus(phase),
+					setPhase: (phase, cycles) => updateStatus(phase, cycles),
 					notify: notify,
 					confirm: (label, body) => ctx.ui.confirm(label, body),
 				},

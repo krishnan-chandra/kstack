@@ -209,10 +209,10 @@ describe("pr-autopilot state machine", () => {
 	describe("pickModel", () => {
 		it("round-robins across tiny models", () => {
 			const models = DEFAULT_TINY_MODELS;
-			assert.equal(pickModel(models, "triager", 0).label, "luna");
-			assert.equal(pickModel(models, "triager", 1).label, "gemini");
-			assert.equal(pickModel(models, "triager", 2).label, "deepseek");
-			assert.equal(pickModel(models, "triager", 3).label, "luna");
+			assert.equal(pickModel(models, 0).label, "luna");
+			assert.equal(pickModel(models, 1).label, "gemini");
+			assert.equal(pickModel(models, 2).label, "deepseek");
+			assert.equal(pickModel(models, 3).label, "luna");
 		});
 	});
 
