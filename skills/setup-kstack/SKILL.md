@@ -95,10 +95,10 @@ model IDs are currently:
 
 ```text
 openai/gpt-5.6-luna
-openai/gpt-5.6-terra
 openrouter/google/gemini-3.7-flash
-openrouter/deepseek/deepseek-v4-pro
 openrouter/deepseek/deepseek-v4-flash
+openai/gpt-5.6-terra
+openrouter/deepseek/deepseek-v4-pro
 openrouter/z-ai/glm-5.2
 ```
 

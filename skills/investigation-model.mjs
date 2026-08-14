@@ -9,10 +9,10 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const INVESTIGATION_THINKING_LEVELS = new Set(["medium", "high", "xhigh", "max"]);
 const FAST_MODELS = [
 	{ model: "openai/gpt-5.6-luna", thinking: "medium" },
-	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
 	{ model: "openrouter/google/gemini-3.7-flash", thinking: "medium" },
-	{ model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "medium" },
+	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
+	{ model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
 ];
 const FAST_MODEL_IDS = new Set(FAST_MODELS.map(({ model }) => model));
