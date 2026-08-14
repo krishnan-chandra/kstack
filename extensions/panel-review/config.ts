@@ -30,13 +30,9 @@
  * unavailable.
  */
 
-import {
-	getAgentDir,
-	getKstackPath,
-	loadKstackSection,
-	MODEL_ID_RE,
-	THINKING_LEVELS,
-} from "../shared/kstack-config.ts";
+import { validateBoundedNumber } from "../shared/config-validate.ts";
+import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { MODEL_LABEL_RE, splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
 export { getAgentDir, getKstackPath, THINKING_LEVELS };
@@ -93,38 +89,29 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 			return { ok: false, error: "Each reviewer must be an object." };
 		}
 		const r = entry as Record<string, unknown>;
-		if (typeof r.label !== "string" || !/^[A-Za-z0-9_-]{1,16}$/.test(r.label)) {
+		if (typeof r.label !== "string" || !MODEL_LABEL_RE.test(r.label)) {
 			return { ok: false, error: `Invalid reviewer label ${JSON.stringify(r.label)}.` };
 		}
 		if (labels.has(r.label)) {
 			return { ok: false, error: `Duplicate reviewer label "${r.label}".` };
 		}
 		labels.add(r.label);
-		if (typeof r.model !== "string" || !MODEL_ID_RE.test(r.model)) {
-			return {
-				ok: false,
-				error: `Reviewer "${r.label}" has invalid model ${JSON.stringify(r.model)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/deepseek/deepseek-v4-pro").`,
-			};
-		}
-		if (
-			r.thinking !== undefined &&
-			(typeof r.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(r.thinking))
-		) {
-			return {
-				ok: false,
-				error: `Reviewer "${r.label}" has invalid thinking level ${JSON.stringify(r.thinking)}; expected one of ${THINKING_LEVELS.join(", ")}.`,
-			};
-		}
-		reviewers.push({ label: r.label, model: r.model, thinking: r.thinking as string | undefined });
+		const fields = validateModelSpecFields(r, {
+			requireLabel: true,
+			errors: {
+				label: (value) => `Invalid reviewer label ${JSON.stringify(value)}.`,
+				model: (value) =>
+					`Reviewer "${r.label}" has invalid model ${JSON.stringify(value)}; expected "provider/model" (extra path segments allowed, e.g. "openrouter/deepseek/deepseek-v4-pro").`,
+				thinking: (value) =>
+					`Reviewer "${r.label}" has invalid thinking level ${JSON.stringify(value)}; expected one of ${THINKING_LEVELS.join(", ")}.`,
+			},
+		});
+		if (!fields.ok) return fields;
+		reviewers.push({ label: r.label, model: fields.model, thinking: fields.thinking });
 	}
 	let maxConcurrency = DEFAULT_MAX_CONCURRENCY;
 	if (obj.maxConcurrency !== undefined) {
-		if (
-			typeof obj.maxConcurrency !== "number" ||
-			!Number.isInteger(obj.maxConcurrency) ||
-			obj.maxConcurrency < 1 ||
-			obj.maxConcurrency > MAX_REVIEWERS
-		) {
+		if (!validateBoundedNumber(obj.maxConcurrency, { integer: true, min: 1, max: MAX_REVIEWERS })) {
 			return { ok: false, error: `"maxConcurrency" must be an integer between 1 and ${MAX_REVIEWERS}.` };
 		}
 		maxConcurrency = obj.maxConcurrency;
@@ -149,14 +136,14 @@ function validateTimeouts(
 	obj: Record<string, unknown>,
 ): { ok: true; timeoutMinutes: number; maxRuntimeMinutes: number } | { ok: false; error: string } {
 	const timeoutMinutes = obj.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES;
-	if (typeof timeoutMinutes !== "number" || !Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) {
+	if (!validateBoundedNumber(timeoutMinutes, { min: Number.MIN_VALUE, max: Number.MAX_VALUE })) {
 		return {
 			ok: false,
 			error: '"timeoutMinutes" must be a positive number (per-child idle limit; output resets the timer).',
 		};
 	}
 	const maxRuntimeMinutes = obj.maxRuntimeMinutes ?? DEFAULT_MAX_RUNTIME_MINUTES;
-	if (typeof maxRuntimeMinutes !== "number" || !Number.isFinite(maxRuntimeMinutes) || maxRuntimeMinutes <= 0) {
+	if (!validateBoundedNumber(maxRuntimeMinutes, { min: Number.MIN_VALUE, max: Number.MAX_VALUE })) {
 		return { ok: false, error: '"maxRuntimeMinutes" must be a positive number (absolute per-child ceiling).' };
 	}
 	if (maxRuntimeMinutes < timeoutMinutes) {
@@ -176,22 +163,17 @@ function validateSynthesis(
 		};
 	}
 	const s = obj.synthesis as Record<string, unknown>;
-	if (typeof s.model !== "string" || !MODEL_ID_RE.test(s.model)) {
-		return {
-			ok: false,
-			error: `"synthesis.model" must be "provider/model" (extra path segments allowed), got ${JSON.stringify(s.model)}.`,
-		};
-	}
-	if (
-		s.thinking !== undefined &&
-		(typeof s.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(s.thinking))
-	) {
-		return {
-			ok: false,
-			error: `"synthesis.thinking" must be one of ${THINKING_LEVELS.join(", ")}, got ${JSON.stringify(s.thinking)}.`,
-		};
-	}
-	return { ok: true, spec: { model: s.model, thinking: s.thinking as string | undefined } };
+	const fields = validateModelSpecFields(s, {
+		requireLabel: false,
+		errors: {
+			label: () => '"synthesis" does not use a label.',
+			model: (value) =>
+				`"synthesis.model" must be "provider/model" (extra path segments allowed), got ${JSON.stringify(value)}.`,
+			thinking: (value) =>
+				`"synthesis.thinking" must be one of ${THINKING_LEVELS.join(", ")}, got ${JSON.stringify(value)}.`,
+		},
+	});
+	return fields.ok ? { ok: true, spec: { model: fields.model, thinking: fields.thinking } } : fields;
 }
 
 /**
@@ -242,8 +224,8 @@ export function resolveSynthesisModel(
 ): SynthesisResolution {
 	const warnings: string[] = [];
 	if (config) {
-		const slash = config.synthesis.model.indexOf("/");
-		if (!deps.find(config.synthesis.model.slice(0, slash), config.synthesis.model.slice(slash + 1))) {
+		const { provider, modelId } = splitModelRef(config.synthesis.model);
+		if (!deps.find(provider, modelId)) {
 			return {
 				ok: false,
 				error:
@@ -253,8 +235,8 @@ export function resolveSynthesisModel(
 		}
 		return { ok: true, model: config.synthesis.model, thinking: config.synthesis.thinking, source: "config", warnings };
 	}
-	const slash = DEFAULT_SYNTHESIS.model.indexOf("/");
-	if (deps.find(DEFAULT_SYNTHESIS.model.slice(0, slash), DEFAULT_SYNTHESIS.model.slice(slash + 1))) {
+	const { provider, modelId } = splitModelRef(DEFAULT_SYNTHESIS.model);
+	if (deps.find(provider, modelId)) {
 		return {
 			ok: true,
 			model: DEFAULT_SYNTHESIS.model,
@@ -291,8 +273,8 @@ export function resolveReviewers(
 	if (config) {
 		const unavailable: string[] = [];
 		for (const r of config.reviewers) {
-			const slash = r.model.indexOf("/");
-			if (!deps.find(r.model.slice(0, slash), r.model.slice(slash + 1))) {
+			const { provider, modelId } = splitModelRef(r.model);
+			if (!deps.find(provider, modelId)) {
 				unavailable.push(`${r.label}: ${r.model}`);
 			}
 		}
@@ -313,8 +295,8 @@ export function resolveReviewers(
 	const defaultAvailable: ReviewerSpec[] = [];
 	const defaultSkipped: string[] = [];
 	for (const r of DEFAULT_PANEL) {
-		const slash = r.model.indexOf("/");
-		if (deps.find(r.model.slice(0, slash), r.model.slice(slash + 1))) defaultAvailable.push(r);
+		const { provider, modelId } = splitModelRef(r.model);
+		if (deps.find(provider, modelId)) defaultAvailable.push(r);
 		else defaultSkipped.push(r.model);
 	}
 	if (defaultSkipped.length > 0) {

@@ -6,11 +6,12 @@
 | --- | --- |
 | `change-kind.ts` | Defines the change-kind taxonomy, labels, and proof-obligation playbook names. |
 | `child-agent-runner.ts` | Runs bounded Pi child processes and parses their JSONL event streams. |
+| `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
 | `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec`. |
 | `git-policy.ts` | Enforces current-workstream branch and committed-worktree postconditions. |
 | `kstack-config.ts` | Locates `kstack.json`, loads sections, and defines common model and thinking predicates. |
 | `model-availability.ts` | Checks whether a child process can reproduce an authenticated model. |
-| `model-spec.ts` | Formats configured model references for the Pi CLI. |
+| `model-spec.ts` | Validates, splits, and formats configured model references. |
 | `pi-json-lines.ts` | Parses and bounds Pi JSONL output. |
 | `prompt-assets.ts` | Reads bundled prompt and playbook Markdown assets. |
 | `request-channel.ts` | Implements synchronous claim-once invocation between loaded extensions. |

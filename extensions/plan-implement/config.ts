@@ -1,12 +1,8 @@
 /** Unified kstack.json configuration and role-model resolution. */
 
-import {
-	getAgentDir,
-	getKstackPath,
-	loadKstackSection,
-	MODEL_ID_RE,
-	THINKING_LEVELS,
-} from "../shared/kstack-config.ts";
+import { validateBoundedNumber } from "../shared/config-validate.ts";
+import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
 
 export { getAgentDir, getKstackPath };
@@ -40,20 +36,20 @@ function validateRole(
 		return { ok: false, error: `"${role}" must be {"model":"provider/model","thinking"?}.` };
 	}
 	const value = raw as Record<string, unknown>;
-	if (typeof value.model !== "string" || !MODEL_ID_RE.test(value.model)) {
-		return { ok: false, error: `"${role}.model" must be a provider/model id.` };
-	}
-	if (
-		value.thinking !== undefined &&
-		(typeof value.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(value.thinking))
-	) {
-		return { ok: false, error: `"${role}.thinking" must be one of ${THINKING_LEVELS.join(", ")}.` };
-	}
-	const thinking = (value.thinking ?? (role === "planner" ? "high" : undefined)) as ThinkingLevel | undefined;
+	const fields = validateModelSpecFields(value, {
+		requireLabel: false,
+		errors: {
+			label: () => `"${role}" does not use a label.`,
+			model: () => `"${role}.model" must be a provider/model id.`,
+			thinking: () => `"${role}.thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
+		},
+	});
+	if (!fields.ok) return fields;
+	const thinking: ThinkingLevel | undefined = fields.thinking ?? (role === "planner" ? "high" : undefined);
 	if (role === "planner" && (!thinking || !HIGH_THINKING.has(thinking))) {
 		return { ok: false, error: '"planner.thinking" must be high, xhigh, or max.' };
 	}
-	return { ok: true, spec: { model: value.model, thinking } };
+	return { ok: true, spec: { model: fields.model, thinking } };
 }
 
 export function validateConfig(raw: unknown): { ok: true; config: PlanImplementConfig } | { ok: false; error: string } {
@@ -71,10 +67,11 @@ export function validateConfig(raw: unknown): { ok: true; config: PlanImplementC
 	let timeoutMinutes: number = LIMITS.defaultTimeoutMinutes;
 	if (value.timeoutMinutes !== undefined) {
 		if (
-			typeof value.timeoutMinutes !== "number" ||
-			!Number.isInteger(value.timeoutMinutes) ||
-			value.timeoutMinutes < LIMITS.minTimeoutMinutes ||
-			value.timeoutMinutes > LIMITS.maxTimeoutMinutes
+			!validateBoundedNumber(value.timeoutMinutes, {
+				integer: true,
+				min: LIMITS.minTimeoutMinutes,
+				max: LIMITS.maxTimeoutMinutes,
+			})
 		) {
 			return {
 				ok: false,
@@ -100,8 +97,8 @@ export interface ResolveDeps {
 }
 
 function isAvailable(spec: RoleSpec, deps: ResolveDeps): boolean {
-	const slash = spec.model.indexOf("/");
-	return deps.available(spec.model.slice(0, slash), spec.model.slice(slash + 1));
+	const { provider, modelId } = splitModelRef(spec.model);
+	return deps.available(provider, modelId);
 }
 
 export function resolveRoles(
