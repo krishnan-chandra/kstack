@@ -1,77 +1,19 @@
-/**
- * Panel Review extension for Pi.
- *
- * Runs 2–5 isolated, read-only Pi subagents in parallel against the same
- * Git changeset, then synthesizes their independent findings into one
- * lead-review verdict (Act On / Consider / Noted / Dismissed).
- *
- * Children run `pi --mode json -p --no-session` with discovery disabled and
- * only read,grep,find,ls tools — no bash, no write/edit, no extensions, no
- * skills. The full diff is never passed on a command line; it lives in a
- * mode-0600 temp bundle removed after the run.
- *
- * Command: /panel-review [--base <ref>] [--intent <text>]
- * Config:  "panel-review" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
- */
+/** Panel Review extension: interactive adapter for isolated review phases. */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { rmSync } from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
-import { DEFAULT_MAX_RUNTIME_MINUTES, DEFAULT_TIMEOUT_MINUTES, loadConfig, modelCliId, resolveReviewers, resolveSynthesisModel } from "./config.ts";
-import { runPanel } from "./orchestrator.ts";
+import { loadConfig, modelCliId } from "./config.ts";
 import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
-import { runReviewer } from "./reviewer-runner.ts";
-import { buildSynthesisInput, buildSynthesisPrompt, renderRawReports } from "./synthesis.ts";
-import type { PanelArgs, PanelReviewOutcome, ReviewerResult } from "./types.ts";
+import { resolvePanel, runReviewPipeline, type PipelineDashboard, type VerdictDetails } from "./run-phases.ts";
+import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
-const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
-
-function readPrompt(name: string): string {
-	return readFileSync(join(PROMPTS_DIR, name), "utf8");
-}
-
-function assembleReviewerPrompt(): string {
-	return [
-		readPrompt("reviewer.md").trim(),
-		"",
-		"---",
-		"",
-		readPrompt("rubric.md").trim(),
-		"",
-		"---",
-		"",
-		readPrompt("code-quality.md").trim(),
-		"",
-		"---",
-		"",
-		readPrompt("thermo-nuclear.md").trim(),
-	].join("\n");
-}
-
-interface VerdictDetails {
-	schemaVersion: 1;
-	baseSha: string;
-	headSha: string;
-	models: string[];
-	reviewerStatuses: { label: string; model: string; status: string; error?: string }[];
-	/** Model that produced the lead verdict (may differ from the reviewers'). */
-	synthesisModel?: string;
-	truncated: boolean;
-	synthesized: boolean;
-	/** Children ran with --no-context-files because the changeset edits them. */
-	contextFilesDisabled: boolean;
-}
-
-export default function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI): void {
 	const lifecycle = new PanelLifecycle();
-	// Set while a panel run (reviewers or synthesis) is in flight.
 	let activeAbort: AbortController | undefined;
 
 	pi.registerShortcut("ctrl+shift+x", {
@@ -89,13 +31,12 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerMessageRenderer("panel-review", (message, { expanded, outputPad }, theme) => {
-		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
+		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 		const details = message.details as VerdictDetails | undefined;
 		if (!expanded) {
 			const statuses = details?.reviewerStatuses ?? [];
-			const okCount = statuses.filter((s) => s.status === "completed").length;
-			const header =
-				theme.fg("success", "■ Panel review") +
+			const okCount = statuses.filter((status) => status.status === "completed").length;
+			const header = theme.fg("success", "■ Panel review") +
 				theme.fg("muted", ` — ${okCount}/${statuses.length} reviewers completed`) +
 				(details?.truncated ? theme.fg("warning", " — scope truncated") : "") +
 				(details && !details.synthesized ? theme.fg("warning", " — synthesis failed") : "") +
@@ -103,348 +44,138 @@ export default function (pi: ExtensionAPI) {
 			box.addChild(new Text(header, 0, 0));
 			return box;
 		}
-		const header = theme.fg("success", "■ Panel review verdict");
-		box.addChild(new Text(`${header}\n\n${message.content}`, 0, 0));
+		box.addChild(new Text(`${theme.fg("success", "■ Panel review verdict")}\n\n${message.content}`, 0, 0));
 		return box;
 	});
 
 	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
-			let runToken: PanelToken | undefined;
-			const session = lifecycle.currentSessionToken();
-			const isLive = () => runToken ? lifecycle.isCurrent(runToken) : Boolean(session && lifecycle.isSessionCurrent(session));
-			const notify = (message: string, level: "info" | "warning" | "error") => {
-				if (isLive()) ctx.ui.notify(message, level);
-			};
-			const setCompactStatus = (status: string | undefined) => {
-				if (isLive() && ctx.mode !== "tui") ctx.ui.setStatus("panel-review", status);
-			};
-			if (!ctx.hasUI) {
-				ctx.ui.notify("panel-review requires interactive (TUI/RPC) mode.", "error");
-				return { status: "failed", error: "panel-review requires interactive (TUI/RPC) mode." };
+		let runToken: PanelToken | undefined;
+		const session = lifecycle.currentSessionToken();
+		const isLive = () => runToken ? lifecycle.isCurrent(runToken) : Boolean(session && lifecycle.isSessionCurrent(session));
+		const notify = (message: string, level: "info" | "warning" | "error") => {
+			if (isLive()) ctx.ui.notify(message, level);
+		};
+		const setCompactStatus = (status: string | undefined) => {
+			if (isLive() && ctx.mode !== "tui") ctx.ui.setStatus("panel-review", status);
+		};
+		if (!ctx.hasUI) {
+			ctx.ui.notify("panel-review requires interactive (TUI/RPC) mode.", "error");
+			return { status: "failed", error: "panel-review requires interactive (TUI/RPC) mode." };
+		}
+		if (!session) return { status: "failed", error: "no active session" };
+		if (lifecycle.isRunning()) {
+			notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
+			return { status: "failed", error: "a panel review is already running" };
+		}
+		await ctx.waitForIdle();
+		if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
+
+		let repoRoot: string;
+		try {
+			repoRoot = requireWorkTree(defaultGitExec, options.repositoryPath ?? ctx.cwd);
+		} catch (error) {
+			notify((error as Error).message, "error");
+			return { status: "failed", error: (error as Error).message };
+		}
+		let base;
+		try {
+			base = resolveBase(defaultGitExec, repoRoot, options.base);
+		} catch (error) {
+			notify((error as Error).message, "error");
+			return { status: "failed", error: (error as Error).message };
+		}
+
+		let intent = options.intent?.trim() ?? "";
+		if (!intent) {
+			const subjects = defaultGitExecSafe(["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], repoRoot);
+			const prefill = subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
+			const edited = await ctx.ui.editor("Panel review intent (required):", prefill);
+			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
+			intent = edited?.trim() ?? "";
+		}
+		if (!intent) {
+			notify("panel-review requires a non-empty intent.", "warning");
+			return { status: "failed", error: "panel-review requires a non-empty intent." };
+		}
+
+		const panel = resolvePanel(loadConfig(), {
+			find: (provider, modelId) => {
+				const model = ctx.modelRegistry.find(provider, modelId);
+				return model && ctx.modelRegistry.hasConfiguredAuth(model) ? model : undefined;
+			},
+			scopedModels: ctx.scopedModels,
+			activeModel: ctx.model,
+		});
+		if (!panel.ok) {
+			for (const warning of panel.warnings) notify(warning, "warning");
+			notify(panel.error, "error");
+			return { status: "failed", error: panel.error };
+		}
+		for (const warning of panel.resolution.warnings) notify(warning, "warning");
+
+		let scope: ScopeBundle | undefined;
+		try {
+			scope = collectScope(repoRoot, base, intent);
+			if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
+				notify(`No reviewable changes against ${scope.baseRef} (${scope.baseSha.slice(0, 8)}). Commit, stage, or modify files first — or pass --base for a wider range.`, "info");
+				return { status: "no-changes" };
 			}
-			if (!session) return { status: "failed", error: "no active session" };
-			if (lifecycle.isRunning()) {
+			const resolution = panel.resolution;
+			const reviewerList = resolution.reviewers.map((reviewer) => `  ${reviewer.label}: ${modelCliId(reviewer)}`).join("\n");
+			const confirmed = await ctx.ui.confirm(
+				"Run panel review?",
+				`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
+					"Review lens: thermo-nuclear code quality\n" +
+					`Changes: ${scope.fileCount} file(s), ${(scope.diffBytes / 1024).toFixed(0)} KiB diff, ${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
+					`Reviewers:\n${reviewerList}\nSynthesis: ${resolution.synthesis.cliId}\n\n` +
+					"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, no extensions or skills). The repository is never modified. " +
+					`A child silent for ${resolution.timeoutMinutes} min is killed as stalled (hard cap ${resolution.maxRuntimeMinutes} min); press Ctrl+Shift+X to abort mid-run.` +
+					(scope.contextFilesTouched ? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with --no-context-files to keep the reviewed content out of their instructions." : ""),
+			);
+			if (!confirmed) return { status: "declined" };
+			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
+			runToken = lifecycle.beginRun(session);
+			if (!runToken) {
 				notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
 				return { status: "failed", error: "a panel review is already running" };
 			}
-			await ctx.waitForIdle();
-			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
-
-			// Git scope — before any model call.
-			let repoRoot: string;
-			try {
-				repoRoot = requireWorkTree(defaultGitExec, options.repositoryPath ?? ctx.cwd);
-			} catch (err) {
-				notify((err as Error).message, "error");
-				return { status: "failed", error: (err as Error).message };
-			}
-			let base;
-			try {
-				base = resolveBase(defaultGitExec, repoRoot, options.base);
-			} catch (err) {
-				notify((err as Error).message, "error");
-				return { status: "failed", error: (err as Error).message };
-			}
-
-			// Intent: from --intent, or an editor prefilled with commit subjects.
-			let intent = options.intent?.trim() ?? "";
-			if (!intent) {
-				const subjects = defaultGitExecSafe(["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], repoRoot);
-				const prefill = subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
-				const edited = await ctx.ui.editor("Panel review intent (required):", prefill);
-				if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
-				intent = edited?.trim() ?? "";
-			}
-			if (!intent) {
-				notify("panel-review requires a non-empty intent.", "warning");
-				return { status: "failed", error: "panel-review requires a non-empty intent." };
-			}
-
-			// Reviewer panel.
-			const configLoad = loadConfig();
-			if (configLoad.status === "invalid") {
-				notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
-				return { status: "failed", error: `Invalid ${configLoad.path}: ${configLoad.error}` };
-			}
-			const modelDeps = {
-				find: (provider: string, modelId: string) => {
-					const m = ctx.modelRegistry.find(provider, modelId);
-					// find() is catalog-only; require configured auth so unavailable
-					// models are skipped (default panel) or rejected (config) up front.
-					return m && ctx.modelRegistry.hasConfiguredAuth(m) ? m : undefined;
-				},
-				scopedModels: ctx.scopedModels,
-				activeModel: ctx.model,
-			};
-			const resolution = resolveReviewers(configLoad.status === "loaded" ? configLoad.config : null, modelDeps);
-			if (!resolution.ok) {
-				notify(resolution.error, "error");
-				return { status: "failed", error: resolution.error };
-			}
-			for (const warning of resolution.warnings) notify(warning, "warning");
-
-			// Synthesis model (required in config). Without a config, fall back
-			// from the built-in small, fast default to the panel's first model.
-			const synthResolution = resolveSynthesisModel(configLoad.status === "loaded" ? configLoad.config : null, modelDeps);
-			if (!synthResolution.ok) {
-				if (configLoad.status === "loaded") {
-					notify(synthResolution.error, "error");
-					return { status: "failed", error: synthResolution.error };
-				}
-				notify(`${synthResolution.error} Using the first reviewer model instead.`, "warning");
-			}
-			if (synthResolution.ok) {
-				for (const warning of synthResolution.warnings) notify(warning, "warning");
-			}
-			const synthesisModel = synthResolution.ok ? synthResolution.model : resolution.reviewers[0].model;
-			const synthesisThinking = synthResolution.ok ? synthResolution.thinking : undefined;
-			const synthesisCliId = synthesisThinking ? `${synthesisModel}:${synthesisThinking}` : synthesisModel;
-			const timeoutMinutes = configLoad.status === "loaded" ? configLoad.config.timeoutMinutes : DEFAULT_TIMEOUT_MINUTES;
-			const maxRuntimeMinutes =
-				configLoad.status === "loaded" ? configLoad.config.maxRuntimeMinutes : DEFAULT_MAX_RUNTIME_MINUTES;
-			const childDeps = { timeoutMs: timeoutMinutes * 60_000, maxRuntimeMs: maxRuntimeMinutes * 60_000 };
-
-			let scope: ScopeBundle | undefined;
-			let promptDir: string | undefined;
-			let ticker: ReturnType<typeof setInterval> | undefined;
-			let runAbort: AbortController | undefined;
-			let dashboard: PanelDashboardStore | undefined;
-			let disposeDashboard: (() => void) | undefined;
-			try {
-				scope = collectScope(repoRoot, base, intent);
-				if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
-					notify(
-						`No reviewable changes against ${scope.baseRef} (${scope.baseSha.slice(0, 8)}). ` +
-							"Commit, stage, or modify files first — or pass --base for a wider range.",
-						"info",
-					);
-					return { status: "no-changes" };
-				}
-
-				const reviewerList = resolution.reviewers.map((r) => `  ${r.label}: ${modelCliId(r)}`).join("\n");
-				const confirmed = await ctx.ui.confirm(
-					"Run panel review?",
-					`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
-						"Review lens: thermo-nuclear code quality\n" +
-						`Changes: ${scope.fileCount} file(s), ${(scope.diffBytes / 1024).toFixed(0)} KiB diff, ` +
-						`${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
-						`Reviewers:\n${reviewerList}\n` +
-						`Synthesis: ${synthesisCliId}\n\n` +
-						"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, " +
-						"no extensions or skills). The repository is never modified. " +
-						`A child silent for ${timeoutMinutes} min is killed as stalled (hard cap ${maxRuntimeMinutes} min); ` +
-					"press Ctrl+Shift+X to abort mid-run." +
-						(scope.contextFilesTouched
-							? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with " +
-								"--no-context-files to keep the reviewed content out of their instructions."
-							: ""),
-				);
-				if (!confirmed) return { status: "declined" };
-				if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
-				runToken = lifecycle.beginRun(session);
-				if (!runToken) {
-					notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
-					return { status: "failed", error: "a panel review is already running" };
-				}
-
-				// Live dashboard: TUI-only above-editor widget. Compact status is an
-				// RPC fallback only, avoiding duplicate progress in the TUI footer.
-				if (isLive() && ctx.mode === "tui") {
-					dashboard = new PanelDashboardStore();
-					for (const r of resolution.reviewers) dashboard.addReviewer(r.label, r.label, modelCliId(r));
-					disposeDashboard = mountPanelDashboard(ctx.ui, dashboard, {
-						stripTerminalSequences,
-						truncateToWidth: (text, width) => truncateToWidth(text, width),
-					});
-				}
-
-				promptDir = mkdtempSync(join(tmpdir(), "pi-panel-review-prompt-"));
-				const reviewerPromptFile = join(promptDir, "reviewer-prompt.md");
-				writeFileSync(reviewerPromptFile, assembleReviewerPrompt(), { encoding: "utf8", mode: 0o600 });
-
-				const abort = new AbortController();
-				runAbort = abort;
-				activeAbort = abort;
-				const task = `Review the bundle at ${scope.path}.`;
-				const progress = new Map<string, string>();
-				let doneCount = 0;
-				const startedAt = Date.now();
-				const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
-				const updateStatus = () => {
-					if (!isLive()) return;
-					const lines = resolution.reviewers.map((r) => `${r.label}:${progress.get(r.label) ?? "queued"}`).join(" ");
-					setCompactStatus(`panel-review: ${doneCount}/${resolution.reviewers.length} done · ${elapsed()} — ${lines}`);
-				};
-				updateStatus();
-				ticker = setInterval(() => {
-					updateStatus();
-					if (isLive()) dashboard?.tick();
-				}, 1000);
-				ticker.unref?.();
-
-				const panel = await runPanel(resolution.reviewers, resolution.maxConcurrency, (spec) => {
-					progress.set(spec.label, "running");
-					updateStatus();
-					if (isLive()) dashboard?.markRunning(spec.label);
-					return runReviewer({
-						spec,
-						model: modelCliId(spec),
-						promptFile: reviewerPromptFile,
-						task,
-						cwd: scope!.repoRoot,
-						noContextFiles: scope!.contextFilesTouched,
-						signal: abort.signal,
-						deps: childDeps,
-						onProgress: ({ label, turns, activity, preview }) => {
-							progress.set(label, activity ? `${turns}t ${activity}` : `${turns}t`);
-							updateStatus();
-							if (isLive()) dashboard?.progress(label, { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
-						},
-					}).then((result) => {
-						doneCount++;
-						progress.set(spec.label, result.status === "completed" ? "✓" : result.status === "failed" ? "✗" : "aborted");
-						updateStatus();
-						if (isLive()) dashboard?.complete(spec.label, {
-							status: result.status,
-							turns: result.usage?.turns,
-							...(result.status === "failed" && result.error ? { error: result.error } : {}),
-						});
-						return result;
-					});
-				});
-
-				clearInterval(ticker);
-				ticker = undefined;
-				setCompactStatus(undefined);
-				if (panel.aborted > 0 && panel.completed === 0 && panel.failed === 0) {
-					notify("Panel review aborted.", "info");
-					return { status: "aborted" };
-				}
-				if (panel.completed === 0) {
-					const diag = panel.results
-						.map((r) => `  ${r.label} (${r.model}): ${r.status}${r.status === "failed" ? ` — ${r.error}` : ""}`)
-						.join("\n");
-					notify(`All reviewers failed; nothing to synthesize.\n${diag}`, "error");
-					return { status: "failed", error: `All reviewers failed.\n${diag}` };
-				}
-
-				// Synthesize with the configured synthesis model in an isolated child process.
-				setCompactStatus(`panel-review: synthesizing verdict with ${synthesisCliId}…`);
-				if (isLive()) dashboard?.addLead("lead", "lead", synthesisCliId);
-				if (isLive()) dashboard?.markRunning("lead");
-				const { input, truncated: synthTruncated } = buildSynthesisInput({
-					intent,
-					scope,
-					results: panel.results,
-					approvedPlan: options.approvedPlan,
-					executionLedger: options.executionLedger,
-				});
-				const synthInputFile = join(promptDir, "synthesis-input.md");
-				writeFileSync(synthInputFile, input, { encoding: "utf8", mode: 0o600 });
-				const synthPromptFile = join(promptDir, "synthesis-prompt.md");
-				writeFileSync(synthPromptFile, buildSynthesisPrompt(readPrompt("lead-judgment.md"), readPrompt("thermo-nuclear.md")), {
-					encoding: "utf8",
-					mode: 0o600,
-				});
-				const synthResult: ReviewerResult = await runReviewer({
-					spec: { label: "lead", model: synthesisModel, thinking: synthesisThinking },
-					model: synthesisCliId,
-					promptFile: synthPromptFile,
-					task: `Synthesize the panel review in ${synthInputFile}. The repository root is ${scope.repoRoot}.`,
-					cwd: scope.repoRoot,
-					noContextFiles: scope.contextFilesTouched,
-					signal: abort.signal,
-					deps: childDeps,
-					onProgress: ({ turns, activity, preview }) => {
-						if (isLive()) dashboard?.progress("lead", { turns, ...(activity ? { activity } : {}), ...(preview !== undefined ? { preview } : {}) });
+			return await runReviewPipeline(
+				{ scope, intent, options, resolution },
+				{
+					isCurrent: isLive,
+					notify,
+					setCompactStatus,
+					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
+					setActiveAbort: (controller) => { activeAbort = controller; },
+					clearActiveAbort: (controller) => {
+						if (activeAbort === controller) activeAbort = undefined;
 					},
-				});
-				setCompactStatus(undefined);
-				if (isLive()) dashboard?.complete("lead", {
-					status: synthResult.status,
-					turns: synthResult.usage?.turns,
-					...(synthResult.status === "failed" && synthResult.error ? { error: synthResult.error } : {}),
-				});
-
-				const synthesized = synthResult.status === "completed";
-				const verdict = synthesized ? synthResult.output : renderRawReports(panel.results);
-				if (!synthesized) {
-					notify(
-						`Synthesis ${synthResult.status}${synthResult.status === "failed" ? `: ${synthResult.error}` : ""}. ` +
-							"Preserving raw reviewer reports.",
-						"warning",
-					);
+					waitForIdle: () => ctx.waitForIdle(),
+					sendVerdict: (verdict, details) => pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),
+				},
+			);
+		} finally {
+			if (scope) {
+				try {
+					rmSync(scope.dir, { recursive: true, force: true });
+				} catch {
+					notify(`panel-review: could not remove temp bundle ${scope.dir} (mode 0600); remove it manually.`, "warning");
 				}
-
-				const details: VerdictDetails = {
-					schemaVersion: 1,
-					baseSha: scope.baseSha,
-					headSha: scope.headSha,
-					models: resolution.reviewers.map((r) => modelCliId(r)),
-					reviewerStatuses: panel.results.map((r) => ({
-						label: r.label,
-						model: r.model,
-						status: r.status,
-						...(r.status === "failed" ? { error: r.error } : {}),
-					})),
-					synthesisModel: synthesisCliId,
-					truncated: scope.truncated || synthTruncated,
-					synthesized,
-					contextFilesDisabled: scope.contextFilesTouched,
-				};
-				await ctx.waitForIdle();
-				if (!isLive()) return { status: "aborted" };
-				pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details });
-				return {
-					status: "completed",
-					verdict,
-					synthesized,
-					baseSha: scope.baseSha,
-					headSha: scope.headSha,
-				};
-			} finally {
-				if (ticker) clearInterval(ticker);
-				if (runAbort && activeAbort === runAbort) activeAbort = undefined;
-				if (isLive()) disposeDashboard?.();
-				disposeDashboard = undefined;
-				dashboard = undefined;
-				setCompactStatus(undefined);
-				if (scope) {
-					try {
-						rmSync(scope.dir, { recursive: true, force: true });
-					} catch {
-						notify(`panel-review: could not remove temp bundle ${scope.dir} (mode 0600); remove it manually.`, "warning");
-					}
-				}
-				if (promptDir) {
-					try {
-						rmSync(promptDir, { recursive: true, force: true });
-					} catch {
-						notify(`panel-review: could not remove temp prompt dir ${promptDir}; remove it manually.`, "warning");
-					}
-				}
-				if (runToken) lifecycle.endRun(runToken);
 			}
+			if (runToken) lifecycle.endRun(runToken);
+		}
 	};
 
 	pi.registerCommand("panel-review", {
 		description: "Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
-			if (!parsed.ok) {
-				ctx.ui.notify(parsed.error, "error");
-				return;
-			}
+			if (!parsed.ok) return ctx.ui.notify(parsed.error, "error");
 			await runPanelReview(parsed.args, ctx);
 		},
 	});
-
-	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => {
-		claimPanelReviewRequest(data, runPanelReview);
-	});
-
+	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => claimPanelReviewRequest(data, runPanelReview));
 	pi.on("session_start", () => lifecycle.startSession());
-
 	pi.on("session_shutdown", () => {
 		activeAbort?.abort();
 		activeAbort = undefined;
@@ -452,10 +183,24 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
+function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]): PipelineDashboard | undefined {
+	if (ctx.mode !== "tui") return undefined;
+	const store = new PanelDashboardStore();
+	for (const reviewer of reviewers) store.addReviewer(reviewer.label, reviewer.label, modelCliId(reviewer));
+	const dispose = mountPanelDashboard(ctx.ui, store, {
+		stripTerminalSequences,
+		truncateToWidth: (text, width) => truncateToWidth(text, width),
+	});
+	return {
+		addLead: (id, label, model) => store.addLead(id, label, model),
+		markRunning: (id) => store.markRunning(id),
+		progress: (id, info) => store.progress(id, info),
+		complete: (id, info) => store.complete(id, info),
+		tick: () => store.tick(),
+		dispose,
+	};
+}
+
 function defaultGitExecSafe(args: string[], cwd: string): string {
-	try {
-		return defaultGitExec(args, cwd);
-	} catch {
-		return "";
-	}
+	try { return defaultGitExec(args, cwd); } catch { return ""; }
 }

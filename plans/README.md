@@ -27,10 +27,10 @@ not numbered and not superseded by anything below.
 | 009  | Split the pr-autopilot driver module | P3 | M | 004 | DONE — verified 2026-08-14 @ `7e18fff` (PR #39; driver.ts + autopilot-operations.ts, autopilot.ts is a shim) |
 | 010  | Cache parsed handoff history between tool calls | P3 | S | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #40; `clearHandoffParseCache` exported) |
 | 011  | Add a root AGENTS.md | P3 | S | — | DONE — verified 2026-08-14 @ `7e18fff` (PR #41; 47 lines) |
-| 012  | Extract one shared session-lifecycle core | P2 | M | — | TODO |
-| 013  | Characterization tests for the pr-autopilot drive loop | P2 | M | — | TODO |
-| 014  | Slim the kstack-router command handler | P3 | M | 012 (soft) | TODO |
-| 015  | Extract panel-review's run pipeline into phase modules | P3 | M | 012 (soft) | TODO |
+| 012  | Extract one shared session-lifecycle core | P2 | M | — | DONE — implemented 2026-08-14 (shared generation core; lifecycle suites green) |
+| 013  | Characterization tests for the pr-autopilot drive loop | P2 | M | — | DONE — implemented 2026-08-14 (9 drive-loop cases) |
+| 014  | Slim the kstack-router command handler | P3 | M | 012 (soft) | DONE — implemented 2026-08-14 (330 lines; resolver tests + smoke green) |
+| 015  | Extract panel-review's run pipeline into phase modules | P3 | M | 012 (soft) | DONE — implemented 2026-08-14 (203 lines; resolution/pipeline tests green) |
 
 Reconciled on 2026-08-14 against `7e18fff`: full suite 667/667 pass, typecheck clean.
 Plans 012–015 added in the same reconcile session (second audit round over the

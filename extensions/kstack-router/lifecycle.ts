@@ -1,64 +1,30 @@
 /** Session-aware lifecycle for one kstack-router operation. */
 
+import { SessionLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
 import type { RouteId } from "./types.ts";
 
-export interface DispatchToken {
-	readonly generation: number;
-	readonly dispatchId: string;
-}
+export interface DispatchToken extends SessionToken { readonly dispatchId: string; }
+export interface ActiveDispatch { readonly token: DispatchToken; readonly route: RouteId; }
+export interface ToolSnapshot { tools: string[]; }
 
-export interface ActiveDispatch {
-	readonly token: DispatchToken;
-	readonly route: RouteId;
-}
-
-export interface ToolSnapshot {
-	tools: string[];
-}
-
-export class RouterLifecycle {
-	private generation = 0;
-	private sessionActive = false;
+export class RouterLifecycle extends SessionLifecycle {
 	private dispatchIdCounter = 0;
 	private currentDispatch: DispatchToken | undefined;
 	private currentRoute: RouteId | undefined;
 	private toolSnapshot: ToolSnapshot | undefined;
 	private classifier: AbortController | undefined;
 
-	startSession(): void {
-		this.generation++;
-		this.sessionActive = true;
-		this.currentDispatch = undefined;
-		this.currentRoute = undefined;
-		this.toolSnapshot = undefined;
-		this.classifier = undefined;
+	sessionToken(): SessionToken | undefined {
+		return this.currentSessionToken();
 	}
 
-	shutdownSession(): void {
-		this.sessionActive = false;
-		this.generation++;
-		this.classifier?.abort();
-		this.classifier = undefined;
-		this.currentDispatch = undefined;
-		this.currentRoute = undefined;
-		this.toolSnapshot = undefined;
-	}
-
-	sessionToken(): { generation: number } | undefined {
-		return this.sessionActive ? { generation: this.generation } : undefined;
-	}
-
-	isSessionCurrent(token: { generation: number }): boolean {
-		return this.sessionActive && token.generation === this.generation;
-	}
-
-	beginClassifier(token: { generation: number }): AbortController | undefined {
+	beginClassifier(token: SessionToken): AbortController | undefined {
 		if (!this.isSessionCurrent(token) || this.classifier || this.currentDispatch) return undefined;
 		this.classifier = new AbortController();
 		return this.classifier;
 	}
 
-	endClassifier(token: { generation: number }): void {
+	endClassifier(token: SessionToken): void {
 		if (this.isSessionCurrent(token)) this.classifier = undefined;
 	}
 
@@ -68,13 +34,10 @@ export class RouterLifecycle {
 		return true;
 	}
 
-	beginDispatch(
-		token: { generation: number },
-		options: { route: RouteId; toolSnapshot?: string[] },
-	): DispatchToken | undefined {
+	beginDispatch(token: SessionToken, options: { route: RouteId; toolSnapshot?: string[] }): DispatchToken | undefined {
 		if (!this.isSessionCurrent(token) || this.currentDispatch || this.classifier) return undefined;
 		const dispatch: DispatchToken = {
-			generation: this.generation,
+			generation: token.generation,
 			dispatchId: `dispatch-${++this.dispatchIdCounter}`,
 		};
 		this.currentDispatch = dispatch;
@@ -100,6 +63,21 @@ export class RouterLifecycle {
 
 	endDispatch(dispatch: DispatchToken): void {
 		if (!this.isCurrentDispatch(dispatch)) return;
+		this.clearDispatch();
+	}
+
+	protected override onStart(): void {
+		this.classifier = undefined;
+		this.clearDispatch();
+	}
+
+	protected override onShutdown(): void {
+		this.classifier?.abort();
+		this.classifier = undefined;
+		this.clearDispatch();
+	}
+
+	private clearDispatch(): void {
 		this.currentDispatch = undefined;
 		this.currentRoute = undefined;
 		this.toolSnapshot = undefined;
