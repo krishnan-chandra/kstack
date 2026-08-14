@@ -283,5 +283,5 @@ Unit tests make no provider calls:
 node --test extensions/plan-implement/*.test.ts
 ```
 
-The full design and deferred boundaries are recorded in
-[`../../plans/plan-implement.md`](../../plans/plan-implement.md).
+Implementation plans are temporary working state under `local/plans/` and are
+not tracked. This README, the source, and the tests document the shipped contract.
