@@ -20,7 +20,8 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { AutopilotLifecycle } from "./lifecycle.ts";
 import { resolveModels, loadConfig, modelCliId } from "./config.ts";
 import { parseArgs } from "./command.ts";
-import { runAutopilot, type LifecyclePhase } from "./autopilot.ts";
+import { runAutopilot, type AutopilotResult, type LifecyclePhase } from "./autopilot.ts";
+import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { isChildModelAvailable } from "../plan-implement/model-availability.ts";
 import type { AutopilotMode, ExecFn, ExecFnResult } from "./types.ts";
 
@@ -114,28 +115,33 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	/** Core runner for an autopilot request that has crossed validation/naming. */
 	async function runAutopilotCommand(
-		mode: string,
+		mode: AutopilotMode,
 		prNumber: number | undefined,
 		ctx: ExtensionCommandContext,
-	): Promise<void> {
+	): Promise<AutopilotResult> {
+		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({
+			status, mergeReady: false, cyclesCompleted: 0, blockedReasons: [reason],
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+		});
 		const notify = ctx.ui.notify.bind(ctx.ui);
 		if (!ctx.hasUI) {
 			notify("pr-autopilot requires interactive (TUI/RPC) mode.", "error");
-			return;
+			return early("blocked", "pr-autopilot requires interactive (TUI/RPC) mode");
 		}
 		if (lifecycle.isRunning()) {
-			notify("A pr-autopilot run is already active. Press Ctrl+Shift+B to abort it.", "warning");
-			return;
+			const reason = "A pr-autopilot run is already active. Press Ctrl+Shift+B to abort it.";
+			notify(reason, "warning");
+			return early("blocked", reason);
 		}
 
 		const sessionToken = lifecycle.currentSessionToken();
-		if (!sessionToken) return;
+		if (!sessionToken) return early("aborted", "session is not active");
 
 		// Load and validate config.
 		const configLoad = loadConfig();
 		if (configLoad.status === "invalid") {
 			notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
-			return;
+			return early("failed", configLoad.error);
 		}
 
 		const modelDeps = {
@@ -144,7 +150,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		const modelResolution = resolveModels(configLoad, modelDeps);
 		if (!modelResolution.ok) {
 			notify(modelResolution.error, "error");
-			return;
+			return early("failed", modelResolution.error);
 		}
 		const config = modelResolution.config;
 
@@ -164,12 +170,13 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 				"- Stops at merge-ready (never auto-merges)\n" +
 				"- Only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash)",
 		);
-		if (!lifecycle.isSessionCurrent(sessionToken) || !confirmed) return;
+		if (!lifecycle.isSessionCurrent(sessionToken)) return early("aborted", "session changed during confirmation");
+		if (!confirmed) return early("declined", "autopilot confirmation declined");
 
 		const runToken = lifecycle.beginRun(sessionToken);
 		if (!runToken) {
 			notify("The session changed or another run started before confirmation completed.", "warning");
-			return;
+			return early("blocked", "another autopilot run started before confirmation completed");
 		}
 
 		const abort = new AbortController();
@@ -234,6 +241,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					notify(`PR autopilot ended: ${result.status}. ${result.blockedReasons.join("; ") || ""}`, result.status === "failed" ? "error" : "warning");
 				}
 			}
+			return result;
 		} finally {
 			abortController = undefined;
 			lifecycle.endRun(runToken);
@@ -265,41 +273,6 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	// Listen for in-process API requests from the router or other extensions.
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
-		claimRequest(data, (mode, prNumber, ctx) => runAutopilotCommand(mode, prNumber, ctx));
+		claimPrAutopilotRequest(data, (mode, prNumber, ctx) => runAutopilotCommand(mode, prNumber, ctx));
 	});
-}
-
-// --- In-process API request contract ---
-
-export const PRAUTOPILOT_REQUEST_EVENT = "kstack:pr-autopilot:request";
-
-export interface PrAutopilotRequest {
-	schemaVersion: 1;
-	mode: string;
-	prNumber: number | undefined;
-	ctx: ExtensionCommandContext;
-	claimed: boolean;
-	completion?: Promise<void>;
-}
-
-export function isPrAutopilotRequest(value: unknown): value is PrAutopilotRequest {
-	if (typeof value !== "object" || value === null) return false;
-	const r = value as Partial<PrAutopilotRequest>;
-	return (
-		r.schemaVersion === 1 &&
-		typeof r.ctx === "object" &&
-		r.ctx !== null &&
-		typeof r.mode === "string" &&
-		(r.prNumber === undefined || (typeof r.prNumber === "number" && r.prNumber > 0))
-	);
-}
-
-export function claimRequest(
-	value: unknown,
-	run: (mode: string, prNumber: number | undefined, ctx: ExtensionCommandContext) => Promise<void>,
-): boolean {
-	if (!isPrAutopilotRequest(value) || value.claimed) return false;
-	value.claimed = true;
-	value.completion = run(value.mode, value.prNumber, value.ctx);
-	return true;
 }

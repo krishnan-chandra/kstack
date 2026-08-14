@@ -67,7 +67,7 @@ export type LifecyclePhase =
 
 /** Outcome of a full autopilot run. */
 export interface AutopilotResult {
-	status: "merge-ready" | "blocked" | "incomplete" | "cleaned" | "aborted" | "failed";
+	status: "merge-ready" | "blocked" | "declined" | "incomplete" | "cleaned" | "aborted" | "failed";
 	prState?: PRState;
 	mergeReady: boolean;
 	cyclesCompleted: number;
