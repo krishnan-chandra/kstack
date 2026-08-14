@@ -29,7 +29,6 @@ import {
 	currentBranch,
 	currentHead,
 	findLowestUnmergedPR,
-	type GHPrJson,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
@@ -45,6 +44,7 @@ import {
 	viewPR,
 	watchChecks,
 } from "./github.ts";
+import type { GHPrJson } from "./github-parse.ts";
 import {
 	type AutopilotAgentRole,
 	type AutopilotMode,

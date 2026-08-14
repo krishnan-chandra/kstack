@@ -19,7 +19,7 @@ import {
 	summarizeTriage,
 } from "./autopilot.ts";
 import { DEFAULT_TINY_MODELS } from "./config.ts";
-import type { GHPrJson } from "./github.ts";
+import type { GHPrJson } from "./github-parse.ts";
 import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
