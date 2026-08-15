@@ -74,6 +74,7 @@ export class RouterLifecycle extends SessionLifecycle {
 	}
 
 	protected override onStart(): void {
+		this.classifier?.abort();
 		this.classifier = undefined;
 		this.clearDispatch();
 	}

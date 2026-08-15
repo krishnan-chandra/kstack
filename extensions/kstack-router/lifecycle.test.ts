@@ -91,6 +91,26 @@ describe("RouterLifecycle", () => {
 		assert.ok(lifecycle.beginDispatch(session, { route: "investigate" }));
 	});
 
+	it("aborts classification when a replacement session starts", () => {
+		const lifecycle = new RouterLifecycle();
+		lifecycle.startSession();
+		const firstToken = lifecycle.sessionToken();
+		assert.ok(firstToken);
+
+		const controller = lifecycle.beginClassifier(firstToken);
+		assert.ok(controller);
+		assert.equal(controller.signal.aborted, false);
+
+		lifecycle.startSession();
+		assert.ok(controller.signal.aborted);
+		assert.equal(lifecycle.isSessionCurrent(firstToken), false);
+		assert.equal(lifecycle.abortClassifier(), false);
+
+		const nextToken = lifecycle.sessionToken();
+		assert.ok(nextToken);
+		assert.ok(lifecycle.beginClassifier(nextToken));
+	});
+
 	it("does not overlap classification and dispatch", () => {
 		const lifecycle = new RouterLifecycle();
 		lifecycle.startSession();
