@@ -7,6 +7,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { requestLand } from "../land/api.ts";
 import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
+import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import {
 	CHANGE_KINDS,
 	type ChangeKind,
@@ -274,6 +275,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					},
 					requestLand: (prNumber, cwd) =>
 						requestLand(pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
+					requestAutopilot: (prNumber, cwd) => requestPrAutopilot(pi, "drive", prNumber, ctx, cwd),
 				},
 			);
 		} finally {
