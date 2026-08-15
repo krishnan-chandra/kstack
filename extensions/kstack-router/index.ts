@@ -2,6 +2,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
@@ -26,6 +27,7 @@ interface PendingDispatch {
 }
 
 export default function (pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "kstack");
 	const lifecycle = new RouterLifecycle();
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.

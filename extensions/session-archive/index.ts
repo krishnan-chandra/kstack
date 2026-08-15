@@ -10,10 +10,12 @@
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-files.ts";
 import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
 
 export default async function (pi: ExtensionAPI) {
+	guardCommandFallthrough(pi, "session-archive", "session-archives", "session-archive-other", "session-archive-all");
 	let sqliteAvailable = true;
 	try {
 		await import("node:sqlite");

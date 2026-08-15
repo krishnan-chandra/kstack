@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
@@ -45,6 +46,7 @@ interface PhaseDetails {
 }
 
 export default function prAutopilotExtension(pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "pr-autopilot");
 	const lifecycle = new AutopilotLifecycle();
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
