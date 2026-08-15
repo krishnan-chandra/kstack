@@ -17,6 +17,6 @@ test("rejects the unimplemented stack surface", () => {
 
 test("rejects malformed and duplicate options", () => {
 	assert.equal(parseLandArgs("--pr nope").ok, false);
-	assert.equal(parseLandArgs("--method merge --method squash").ok, false);
+	assert.equal(parseLandArgs("--method squash --method rebase").ok, false);
 	assert.equal(parseLandArgs("--readiness check --readiness watch").ok, false);
 });

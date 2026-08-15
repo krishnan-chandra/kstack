@@ -1,6 +1,6 @@
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 
-export type MergeMethod = "merge" | "squash" | "rebase";
+export type MergeMethod = "squash" | "rebase";
 export type ReadinessMode = "check" | "watch";
 interface LandTarget {
 	kind: "single";

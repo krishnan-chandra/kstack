@@ -14,6 +14,8 @@ interface LandDeps {
 	confirmMerge(preview: string): Promise<boolean>;
 	now(): number;
 	sleep(ms: number, signal: AbortSignal): Promise<void>;
+	/** Per-repo method from kstack.json land config, or undefined. */
+	configuredMethodFor?: (nameWithOwner: string) => MergeMethod | undefined;
 }
 
 function empty(status: LandResult["status"], blocker: string): LandResult {
@@ -77,10 +79,20 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 				blockers: ["GitHub no longer matches autopilot's exact-head readiness evidence."],
 			};
 		}
-		const method = options.method ?? (await deps.selectMethod(repo.allowedMethods));
+		// Block early when GitHub only supports merge commits — kstack never allows them
+		if (repo.allowedMethods.length === 0) {
+			return {
+				...base,
+				status: "blocked",
+				blockers: [
+					"Repository only allows merge commits; kstack does not support merge commits. Enable squash or rebase merging in repository settings.",
+				],
+			};
+		}
+		const configuredMethod = deps.configuredMethodFor?.(repo.nameWithOwner);
+		// Priority: CLI --method > per-repo config > prompt
+		const method = options.method ?? configuredMethod ?? (await deps.selectMethod(repo.allowedMethods));
 		if (!method) return { ...base, status: "declined", blockers: ["No merge method selected."] };
-		if (!repo.allowedMethods.includes(method))
-			return { ...base, status: "blocked", blockers: [`Repository does not allow ${method} merges.`] };
 
 		frontier = {
 			prNumber: ready.number,
@@ -89,11 +101,15 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			method,
 			state: "not-attempted",
 		};
-		const confirmed = await deps.confirmMerge(
-			`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`,
-		);
-		if (!confirmed)
-			return { ...base, status: "declined", frontiers: [frontier], blockers: ["Merge confirmation declined."] };
+		// When method comes from per-repo config (not CLI --method), skip confirmation
+		const skipConfirm = configuredMethod !== undefined && options.method === undefined;
+		if (!skipConfirm) {
+			const confirmed = await deps.confirmMerge(
+				`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`,
+			);
+			if (!confirmed)
+				return { ...base, status: "declined", frontiers: [frontier], blockers: ["Merge confirmation declined."] };
+		}
 
 		const revalidated = await getPullRequest(deps.exec, deps.cwd, ready.number, deps.signal);
 		if (

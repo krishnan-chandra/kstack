@@ -4,7 +4,7 @@ import type { LandOptions, LandResult } from "./types.ts";
 
 export const LAND_REQUEST_EVENT = "kstack:land:request";
 const READINESS_MODES = new Set<unknown>(["check", "watch"]);
-const MERGE_METHODS = new Set<unknown>(["merge", "squash", "rebase"]);
+const MERGE_METHODS = new Set<unknown>(["squash", "rebase"]);
 
 interface LandPayload {
 	options: LandOptions;

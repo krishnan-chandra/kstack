@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 import { runLand } from "./orchestrator.ts";
-import type { ExecFn, ExecResult } from "./types.ts";
+import type { ExecFn, ExecResult, MergeMethod } from "./types.ts";
 
 const OLD = "a".repeat(40);
 const NEW = "b".repeat(40);
 const repo = JSON.stringify({
 	nameWithOwner: "o/r",
 	defaultBranchRef: { name: "main" },
-	mergeCommitAllowed: true,
 	squashMergeAllowed: true,
 	rebaseMergeAllowed: false,
 });
@@ -156,4 +155,124 @@ test("reports partial landing when polling is aborted after acceptance", async (
 	assert.equal(result.status, "partially-landed");
 	assert.match(result.completedMutations.join("\n"), /accepted merge\/queue/);
 	assert.match(result.blockers.join("\n"), /aborted after GitHub accepted/);
+});
+
+test("configured method skips selectMethod and confirmMerge when no CLI --method", async () => {
+	let selectMethodCalled = false;
+	let confirmMergeCalled = false;
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			// views: 0=initial, 1=ready, 2=revalidate (skip confirm), 3=waitForMerge
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		configuredMethodFor: () => "squash" as const,
+		selectMethod: async (): Promise<MergeMethod | undefined> => {
+			selectMethodCalled = true;
+			return "squash";
+		},
+		confirmMerge: async (): Promise<boolean> => {
+			confirmMergeCalled = true;
+			return true;
+		},
+	};
+	const result = await runLand({ target: { kind: "single", prNumber: 7 }, readiness: "check" }, runDeps);
+	assert.equal(result.status, "landed");
+	assert.equal(selectMethodCalled, false, "selectMethod should not be called with configured method");
+	assert.equal(confirmMergeCalled, false, "confirmMerge should not be called with configured method");
+});
+
+test("CLI --method takes priority over configured method and still confirms", async () => {
+	let selectMethodCalled = false;
+	let confirmMergeCalled = false;
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			// views: 0=initial, 1=ready, 2=revalidate (confirm shown), 3=waitForMerge
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		configuredMethodFor: () => "squash" as const,
+		selectMethod: async (): Promise<MergeMethod | undefined> => {
+			selectMethodCalled = true;
+			return "squash";
+		},
+		confirmMerge: async (): Promise<boolean> => {
+			confirmMergeCalled = true;
+			return true;
+		},
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		runDeps,
+	);
+	assert.equal(result.status, "landed");
+	assert.equal(selectMethodCalled, false, "selectMethod should not be called when CLI --method is set");
+	assert.equal(confirmMergeCalled, true, "confirmMerge should be called when CLI --method is set");
+});
+
+test("unconfigured repo falls through to selectMethod prompt", async () => {
+	let selectMethodCalled = false;
+	let confirmMergeCalled = false;
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			// views: 0=initial, 1=ready, 2=revalidate (confirm shown), 3=waitForMerge
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		configuredMethodFor: () => undefined,
+		selectMethod: async (): Promise<MergeMethod | undefined> => {
+			selectMethodCalled = true;
+			return "squash";
+		},
+		confirmMerge: async (): Promise<boolean> => {
+			confirmMergeCalled = true;
+			return true;
+		},
+	};
+	const result = await runLand({ target: { kind: "single", prNumber: 7 }, readiness: "check" }, runDeps);
+	assert.equal(result.status, "landed");
+	assert.equal(selectMethodCalled, true, "selectMethod should be called without configured method");
+	assert.equal(confirmMergeCalled, true, "confirmMerge should be called without configured method");
+});
+
+test("blocks early when GitHub only allows merge commits (no squash or rebase)", async () => {
+	const mergeOnly = JSON.stringify({
+		nameWithOwner: "o/m",
+		defaultBranchRef: { name: "main" },
+		squashMergeAllowed: false,
+		rebaseMergeAllowed: false,
+	});
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: mergeOnly, stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") return { code: 0, stdout: pr(NEW), stderr: "" };
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec),
+	);
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockers.join("\n"), /only allows merge commits/i);
+	assert.match(result.blockers.join("\n"), /kstack does not support/i);
 });
