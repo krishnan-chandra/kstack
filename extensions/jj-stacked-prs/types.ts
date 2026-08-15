@@ -291,3 +291,13 @@ export interface StackPublicationRequestInput {
 	remote?: string;
 	signal?: AbortSignal;
 }
+
+export interface StackLandingRequestInput {
+	repositoryPath: string;
+	prNumber: number;
+	headBookmark: string;
+	readiness: StackReadinessMode;
+	method?: StackMergeMethod;
+}
+
+export type StackPrefixLandOutcome = { status: "not-stack" } | { status: "stack"; outcome: StackLandOutcome };

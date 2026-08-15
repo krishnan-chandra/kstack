@@ -18,7 +18,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git worktrees, with a live multi-phase TUI dashboard and transcript inspector. |
 | [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation child for an explicit, bounded change on a local Git branch, jj bookmark, or managed Git worktree. It preserves inspection, verification, and recorded checkpoints, but deliberately skips independent planning and review; it supports single-PR local workstreams only and never publishes. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
-| [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
+| [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 | [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, advances, and lands linear GitHub PR stacks on a colocated jj workspace. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
 
 Writable workstreams use a dedicated `kstack/<task-slug>` Git branch or jj
@@ -246,8 +246,8 @@ the review/fix/CI loop with only tiny models:
 /pr-autopilot --mode threads          # address review comments only, then push
 /pr-autopilot --mode cleanup          # after merge: remove managed worktree and branch
 /pr-autopilot --mode drive --pr 42    # run on a specific PR instead of auto-detecting
-/land --pr 42 --method squash          # confirm and land the exact merge-ready head
-/land --pr 42 --readiness watch        # let autopilot watch first, then confirm landing
+/land --pr 42 --method squash          # land one PR, or its local jj stack prefix
+/land --pr 42 --readiness watch        # run autopilot for each selected frontier
 ```
 
 `pr-autopilot` uses only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek

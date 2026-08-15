@@ -8,13 +8,15 @@ import { issueLandConfirmation } from "../land/confirmation.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
 	claimJjStackCapabilities,
+	claimStackLanding,
 	claimStackPublication,
 	JJ_STACK_CAPABILITIES,
 	JJ_STACK_CAPABILITIES_EVENT,
+	JJ_STACK_LANDING_EVENT,
 	JJ_STACK_PUBLICATION_EVENT,
 } from "./api.ts";
 import { completeJjStackArgs, parseJjStackArgs } from "./args.ts";
-import { landStack, landStackFromTool } from "./land.ts";
+import { landStack, landStackFromTool, landStackThroughPullRequest } from "./land.ts";
 import {
 	advanceStack,
 	inspectStack,
@@ -137,6 +139,37 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 						signal: combinePublicationSignals(signal, ctx.signal),
 					}),
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
+			);
+		}),
+	);
+	pi.events.on(JJ_STACK_LANDING_EVENT, (data) =>
+		claimStackLanding(data, async (input, ctx) => {
+			if (!ctx.hasUI) {
+				return {
+					status: "stack",
+					outcome: {
+						status: "blocked",
+						blockers: [{ code: "land-unavailable", message: "Stack landing requires interactive TUI/RPC mode." }],
+					},
+				};
+			}
+			return withRun(
+				ctx,
+				(signal) =>
+					landStackThroughPullRequest(
+						{
+							cwd: input.repositoryPath,
+							prNumber: input.prNumber,
+							headBookmark: input.headBookmark,
+							method: input.method,
+							readiness: input.readiness,
+						},
+						landDeps(ctx, combinePublicationSignals(signal, ctx.signal)),
+					),
+				() => ({
+					status: "stack" as const,
+					outcome: { status: "busy" as const, message: "Another stacked-PR run is active." },
+				}),
 			);
 		}),
 	);

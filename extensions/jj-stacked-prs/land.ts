@@ -1,6 +1,12 @@
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
-import { createGitHubAdapter, type GitHubAdapter, GitHubError } from "./github.ts";
+import {
+	createGitHubAdapter,
+	findKstackComment,
+	type GitHubAdapter,
+	GitHubError,
+	parseNavigationCommentEntries,
+} from "./github.ts";
 import { createJjAdapter, JjError } from "./jj.ts";
 import { applyAdvance, inspectStack, type OrchestratorDeps, publishStackFromTool } from "./orchestrator.ts";
 import { renderLandConfirmation } from "./render.ts";
@@ -10,6 +16,7 @@ import type {
 	StackLandFrontier,
 	StackLandOutcome,
 	StackMergeMethod,
+	StackPrefixLandOutcome,
 	StackReadinessMode,
 } from "./types.ts";
 
@@ -31,6 +38,106 @@ interface MappedLandSlice {
 	baseRef: string;
 	draft: boolean;
 	alreadyMerged: boolean;
+}
+
+export async function landStackThroughPullRequest(
+	options: {
+		cwd: string;
+		prNumber: number;
+		headBookmark: string;
+		readiness: StackReadinessMode;
+		method?: StackMergeMethod;
+	},
+	deps: OrchestratorDeps,
+): Promise<StackPrefixLandOutcome> {
+	const jj = deps.jj ?? createJjAdapter(deps.run);
+	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const localBookmarks = await jj.listLocalBookmarks(options.cwd, deps.signal);
+	const hasLocalHead = localBookmarks.some((bookmark) => bookmark.name === options.headBookmark);
+	const model = hasLocalHead ? await inspectStack({ cwd: options.cwd, top: options.headBookmark }, deps) : undefined;
+	if (model && model.slices.length > 1 && model.blockers.length > 0) {
+		return { status: "stack", outcome: { status: "blocked", blockers: model.blockers } };
+	}
+
+	const candidates: Array<{ remote: string; repository: { owner: string; repo: string } }> = [];
+	for (const remote of await jj.listRemotes(options.cwd, deps.signal)) {
+		if (!remote.github) continue;
+		const prs = await github.listOpenPrs(remote.github, options.cwd, deps.signal);
+		if (prs.some((pr) => pr.number === options.prNumber && pr.headRef === options.headBookmark)) {
+			candidates.push({ remote: remote.name, repository: remote.github });
+		}
+	}
+	if (candidates.length !== 1) {
+		const message =
+			candidates.length === 0
+				? `Could not map PR #${options.prNumber} and bookmark ${JSON.stringify(options.headBookmark)} to a GitHub remote.`
+				: `PR #${options.prNumber} and bookmark ${JSON.stringify(options.headBookmark)} match multiple GitHub remotes.`;
+		return {
+			status: "stack",
+			outcome: {
+				status: "blocked",
+				blockers: [{ code: candidates.length === 0 ? "missing-remote" : "ambiguous-remote", message }],
+			},
+		};
+	}
+
+	const candidate = candidates[0];
+	let metadataConfirmsPrefix = false;
+	if (!model || model.slices.length <= 1) {
+		const user = await github.getAuthenticatedUser(options.cwd, deps.signal);
+		const comments = await github.getPrComments(candidate.repository, options.prNumber, options.cwd, deps.signal);
+		const navigation = findKstackComment(comments, user);
+		const entries = navigation ? parseNavigationCommentEntries(navigation.body) : [];
+		const selectedIndex = entries.findIndex(
+			(entry) => entry.prNumber === options.prNumber && entry.bookmark === options.headBookmark,
+		);
+		metadataConfirmsPrefix = selectedIndex > 0;
+	}
+
+	if (!model) {
+		if (!metadataConfirmsPrefix) return { status: "not-stack" };
+		return {
+			status: "stack",
+			outcome: {
+				status: "blocked",
+				blockers: [
+					{
+						code: "ambiguous-local-bookmark",
+						bookmark: options.headBookmark,
+						message: `PR #${options.prNumber} belongs to a kstack prefix, but its head bookmark is not available locally.`,
+					},
+				],
+			},
+		};
+	}
+	if (model.slices.length <= 1 && !metadataConfirmsPrefix) return { status: "not-stack" };
+	if (model.blockers.length > 0) return { status: "stack", outcome: { status: "blocked", blockers: model.blockers } };
+	if (model.slices.length <= 1) {
+		return {
+			status: "stack",
+			outcome: {
+				status: "blocked",
+				blockers: [
+					{
+						code: "not-rooted-at-trunk",
+						message: `PR #${options.prNumber} has kstack predecessors that are missing from the local stack.`,
+					},
+				],
+			},
+		};
+	}
+
+	const outcome = await landStack(
+		{
+			cwd: options.cwd,
+			top: options.headBookmark,
+			remote: candidate.remote,
+			method: options.method,
+			readiness: options.readiness,
+		},
+		deps,
+	);
+	return { status: "stack", outcome };
 }
 
 export async function landStack(options: LandStackOptions, deps: OrchestratorDeps): Promise<StackLandOutcome> {

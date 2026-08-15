@@ -155,14 +155,20 @@ Never advance a middle bookmark while an earlier slice is still in the local
 stack. Never derive the abandon boundary from the next bookmark's parent. One
 PR slice may contain several unbookmarked changes.
 
-## 9. Land the entire stack
+## 9. Land a stack prefix
 
-After the stack is published and you want it merged bottom-up:
+After the stack is published, choose the top PR or bookmark that you want to
+merge through:
 
 ```text
+/land --pr <top-pr-number>
 /jj-stack land --top <top> --remote <remote>
 jj_stack_land({ top: "<top>", remote: "<remote>" })
 ```
+
+In jj mode, `/land` maps the selected PR head to the local stack and lands every
+slice from trunk through that PR. Use `/jj-stack land` or `jj_stack_land` when
+you need to set the remote, trunk revset, or maximum stack size explicitly.
 
 The command confirms the ordered plan once. The model tool treats an explicit
 land request as authorization. Both paths preflight the base chain and head

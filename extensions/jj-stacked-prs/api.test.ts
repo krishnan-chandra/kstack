@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	claimJjStackCapabilities,
+	claimStackLanding,
 	claimStackPublication,
 	isJjStackCapabilitiesRequest,
+	isJjStackLandingRequest,
 	isJjStackPublicationRequest,
 	JJ_STACK_CAPABILITIES,
 	JJ_STACK_CAPABILITIES_EVENT,
+	JJ_STACK_LANDING_EVENT,
 	JJ_STACK_PUBLICATION_EVENT,
 	requestJjStackCapabilities,
+	requestStackLanding,
 	requestStackPublication,
 } from "./api.ts";
 import type { StackPublicationOutcome } from "./types.ts";
@@ -45,6 +49,39 @@ describe("jj-stack request channels", () => {
 		assert.deepEqual(await requestJjStackCapabilities({ events: { emit: () => {} } } as never), {
 			handled: false,
 		});
+	});
+
+	it("claims stack-prefix landing and rejects malformed payloads", async () => {
+		const listeners: Array<(value: unknown) => void> = [];
+		const pi = {
+			events: {
+				on: (_name: string, listener: (value: unknown) => void) => listeners.push(listener),
+				emit: (name: string, value: unknown) => {
+					assert.equal(name, JJ_STACK_LANDING_EVENT);
+					for (const listener of listeners) listener(value);
+				},
+			},
+		};
+		pi.events.on(JJ_STACK_LANDING_EVENT, (value) => claimStackLanding(value, async () => ({ status: "not-stack" })));
+		assert.deepEqual(
+			await requestStackLanding(
+				pi as never,
+				{ repositoryPath: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
+				{} as never,
+			),
+			{ handled: true, outcome: { status: "not-stack" } },
+		);
+		assert.equal(
+			isJjStackLandingRequest({
+				schemaVersion: 1,
+				payload: {
+					input: { repositoryPath: "/repo", prNumber: 0, headBookmark: "feat2", readiness: "watch" },
+					ctx: {},
+				},
+				claimed: false,
+			}),
+			false,
+		);
 	});
 
 	it("claims publication once and rejects malformed payloads", async () => {

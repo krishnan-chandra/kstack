@@ -111,7 +111,7 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 7. **Stop at merge-ready.** The autopilot declares a PR looks merge-ready and
    stops. It never merges, never arms merge-when-ready, and never touches
    branch protection. Drafts that are code-ready ask once to `gh pr ready`.
-   Use `/jj-stack advance` or your normal merge flow to land.
+   Use `/land` or `/jj-stack land` to merge.
 
 8. **One autopilot per stack.** If a run is already active, a second
    `/pr-autopilot` is rejected.
@@ -170,3 +170,8 @@ draft PR. `/kstack` can also dispatch it:
 
 Omit `--pr` to keep the existing lowest-unmerged auto-detection. The router
 collects a missing mode or PR through deterministic prompts; it does not merge.
+
+When Land selects an upper PR in a local jj stack, `jj-stacked-prs` invokes PR
+Autopilot for each frontier in bottom-up order. Autopilot still handles one
+frontier at a time and returns exact-head readiness evidence. The stack workflow,
+not Autopilot, performs each merge and continues through the selected PR.

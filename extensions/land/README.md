@@ -1,8 +1,9 @@
 # Land
 
-`/land` merges one GitHub pull request after `pr-autopilot` verifies that its
-current head is ready. The command confirms the exact PR, head SHA, base branch,
-and merge method before it asks GitHub to merge or enqueue the PR.
+`/land` merges a GitHub pull request after `pr-autopilot` verifies its current
+head. In jj mode, selecting an upper PR in a confirmed local stack lands the
+complete prefix from trunk through that PR. Land confirms the stack once, then
+revalidates each frontier before it asks GitHub to merge or enqueue the PR.
 
 ## Usage
 
@@ -16,8 +17,17 @@ and merge method before it asks GitHub to merge or enqueue the PR.
 If you omit `--pr`, Land resolves the one open PR whose head matches the current
 Git branch or jj bookmark, according to the shared `vcs.backend` setting. Land
 stops when Git is detached, when the current jj change has no unique bookmark,
-or when GitHub finds zero or multiple matching PRs. Pass `--pr` to land without
-selecting its local head ref.
+or when GitHub finds zero or multiple matching PRs. Pass `--pr` to select a PR
+without checking out its local head.
+
+In jj mode, Land asks `jj-stacked-prs` whether the selected PR head closes a
+local linear stack. A stack with two or more slices lands bottom-up through the
+selected PR. An owned kstack navigation comment also prevents single-PR fallback
+when local predecessors are missing. A PR that maps to one slice and has no such
+metadata keeps the ordinary single-PR path. Once Land identifies a multi-PR
+stack, discovery or preflight failures stop the run. Land never falls back to an
+individual middle-stack merge. If the `jj-stacked-prs` listener is unavailable,
+Land stops before mutation.
 
 Land runs the configured backend's preflight before resolving or mutating the
 target. Git mode refuses jj-managed workspaces. jj mode requires jj 0.44 or
@@ -74,7 +84,8 @@ cannot undo a merge or remove a request from a merge queue.
 
 The `kstack:land:request` event accepts typed `LandOptions` with a positive PR
 number and returns a structured `LandResult`. The request is claimed
-synchronously, and callers await its completion.
+synchronously, and callers await its completion. In jj mode, the request uses
+the same stack-prefix discovery as `/land`.
 
 Trusted in-process callers such as `/jj-stack land` may pass a capability from
 `issueLandConfirmation()` after they have already obtained consent for that
@@ -91,10 +102,11 @@ pins the exact head, and passes `--match-head-commit`.
 - Retained diagnostic output: 8 KiB
 - Concurrent Land runs per session: 1
 
-`/land` remains a single-PR command. To land a published jj stack, use
-`/jj-stack land` or `jj_stack_land`. That loop calls this extension once per
-frontier with a minted confirmation and keeps Land's revalidation, head pin, and
-`--match-head-commit` checks.
+`/land --pr <number>` lands through the selected PR when its head closes a
+confirmed local jj stack. Use `/jj-stack land` or `jj_stack_land` when you want
+to name the top bookmark, remote, trunk revset, or stack-size limit explicitly.
+Both paths call Land once per frontier with a minted confirmation and retain its
+head pin, revalidation, and `--match-head-commit` checks.
 
 ## Development
 

@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { requestStackLanding } from "../jj-stacked-prs/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
@@ -8,9 +9,10 @@ import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
 import { getRepoMethod, loadLandConfig } from "./config.ts";
-import { findOpenPullRequestByHead } from "./github.ts";
+import { findOpenPullRequestByHead, getPullRequest } from "./github.ts";
 import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
+import { routeLand } from "./routing.ts";
 import { abortableSleep } from "./sleep.ts";
 import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 
@@ -70,33 +72,54 @@ export default function landExtension(pi: ExtensionAPI): void {
 			? { ok: true, backend: preparedBackend }
 			: await configuredBackend(ctx, cwd);
 		if (!resolved.ok) return blocked(resolved.error);
-		const token = lifecycle.begin();
-		if (!token) return blocked("Another landing run is active.");
-		ctx.ui.setStatus("land", "land: resolving target");
-		const landConfig = loadLandConfig();
-		try {
-			const result = await runLand(options, {
-				exec: makeExec(pi),
-				cwd,
-				signal: token.signal,
-				runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd),
-				selectMethod: async (allowed) => selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
-				confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),
-				configuredMethodFor: (nameWithOwner) => getRepoMethod(landConfig, nameWithOwner),
-				now: Date.now,
-				sleep: abortableSleep,
-			});
-			pi.sendMessage({
-				customType: "land",
-				content: [...result.blockers, ...result.completedMutations].join("\n"),
-				display: true,
-				details: result,
-			});
-			return result;
-		} finally {
-			lifecycle.end(token);
-			ctx.ui.setStatus("land", undefined);
-		}
+		const exec = makeExec(pi);
+		const result = await routeLand(options, {
+			backend: resolved.backend.id,
+			requestStackLanding: async () => {
+				const selected = await getPullRequest(exec, cwd, options.target.prNumber, ctx.signal);
+				return requestStackLanding(
+					pi,
+					{
+						repositoryPath: cwd,
+						prNumber: selected.number,
+						headBookmark: selected.headRef,
+						readiness: options.readiness,
+						method: options.method,
+					},
+					ctx,
+				);
+			},
+			runSingle: async () => {
+				const token = lifecycle.begin();
+				if (!token) return blocked("Another landing run is active.");
+				ctx.ui.setStatus("land", "land: resolving target");
+				const landConfig = loadLandConfig();
+				try {
+					return await runLand(options, {
+						exec,
+						cwd,
+						signal: token.signal,
+						runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd),
+						selectMethod: async (allowed) =>
+							selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
+						confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),
+						configuredMethodFor: (nameWithOwner) => getRepoMethod(landConfig, nameWithOwner),
+						now: Date.now,
+						sleep: abortableSleep,
+					});
+				} finally {
+					lifecycle.end(token);
+					ctx.ui.setStatus("land", undefined);
+				}
+			},
+		});
+		pi.sendMessage({
+			customType: "land",
+			content: [...result.blockers, ...result.completedMutations].join("\n"),
+			display: true,
+			details: result,
+		});
+		return result;
 	}
 
 	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, execute));
