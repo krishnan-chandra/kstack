@@ -1,4 +1,5 @@
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import { isLandConfirmation } from "./confirmation.ts";
 import { getPullRequest, getRepository, mergePullRequest, waitForMerge } from "./github.ts";
 import type { ExecFn, FrontierResult, LandOptions, LandResult, MergeMethod } from "./types.ts";
 
@@ -102,9 +103,9 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			state: "not-attempted",
 		};
 		// Skip confirmation when the method comes from per-repo config (not CLI
-		// --method) or when a trusted in-process caller already confirmed.
+		// --method) or when a caller presents a minted confirmation capability.
 		const skipConfirm =
-			options.confirmedByCaller === true || (configuredMethod !== undefined && options.method === undefined);
+			isLandConfirmation(options.confirmation) || (configuredMethod !== undefined && options.method === undefined);
 		if (!skipConfirm) {
 			const confirmed = await deps.confirmMerge(
 				`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`,

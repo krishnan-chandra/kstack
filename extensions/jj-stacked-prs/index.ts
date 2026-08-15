@@ -2,6 +2,9 @@
 
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { requestLand } from "../land/api.ts";
+import { getRepoMethod, loadLandConfig } from "../land/config.ts";
+import { issueLandConfirmation } from "../land/confirmation.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
 	claimJjStackCapabilities,
@@ -11,9 +14,11 @@ import {
 	JJ_STACK_PUBLICATION_EVENT,
 } from "./api.ts";
 import { completeJjStackArgs, parseJjStackArgs } from "./args.ts";
+import { landStack, landStackFromTool } from "./land.ts";
 import {
 	advanceStack,
 	inspectStack,
+	type OrchestratorDeps,
 	planStack,
 	publishStack,
 	publishStackFromTool,
@@ -22,7 +27,7 @@ import {
 	syncStack,
 } from "./orchestrator.ts";
 import { createProcessRunner } from "./process.ts";
-import { boundText, renderInspect, renderOutcome, renderPlan } from "./render.ts";
+import { boundText, renderInspect, renderLandOutcome, renderOutcome, renderPlan } from "./render.ts";
 import { combinePublicationSignals } from "./signals.ts";
 import { DEFAULT_MAX_STACK, MIN_MAX_STACK, type StackPublicationRequestInput } from "./types.ts";
 
@@ -75,6 +80,28 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		};
 	}
 
+	function landDeps(ctx: ExtensionContext, signal: AbortSignal): OrchestratorDeps {
+		const config = loadLandConfig();
+		return {
+			run,
+			ui: uiFrom(ctx),
+			signal,
+			configuredMethodFor: (nameWithOwner) => getRepoMethod(config, nameWithOwner),
+			landPr: async ({ prNumber, readiness, method }) =>
+				requestLand(
+					pi,
+					{
+						target: { kind: "single", prNumber },
+						readiness,
+						method,
+						cwd: ctx.cwd,
+						confirmation: issueLandConfirmation(),
+					},
+					ctx,
+				),
+		};
+	}
+
 	async function withRun<T>(
 		ctx: ExtensionContext,
 		work: (signal: AbortSignal) => Promise<T>,
@@ -115,7 +142,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 	);
 
 	pi.registerCommand("jj-stack", {
-		description: "Inspect, plan, publish, sync, or advance a linear jj PR stack",
+		description: "Inspect, plan, publish, sync, advance, or land a linear jj PR stack",
 		getArgumentCompletions: completeJjStackArgs,
 		handler: async (text, ctx) => {
 			await ctx.waitForIdle();
@@ -155,6 +182,32 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("This /jj-stack action requires interactive TUI/RPC mode.", "error");
 				return;
 			}
+			if (command.action === "land") {
+				const landOutcome = await withRun(
+					ctx,
+					(signal) =>
+						landStack(
+							{
+								cwd: ctx.cwd,
+								top: command.top,
+								remote: command.remote,
+								trunk: command.trunk,
+								maxStack: command.maxStack,
+								method: command.method,
+								readiness: command.readiness,
+							},
+							landDeps(ctx, signal),
+						),
+					() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
+				);
+				ctx.ui.notify(
+					renderLandOutcome(landOutcome),
+					landOutcome.status === "completed" || landOutcome.status === "declined" || landOutcome.status === "busy"
+						? "info"
+						: "warning",
+				);
+				return;
+			}
 			const outcome = await withRun(
 				ctx,
 				async (signal) => {
@@ -167,6 +220,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 								remote: command.remote,
 								trunk: command.trunk,
 								maxStack: command.maxStack,
+								ready: command.ready,
 							},
 							deps,
 						);
@@ -320,6 +374,9 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			remote: Type.String({ description: "Git remote name" }),
 			trunk: Type.Optional(Type.String({ description: "Trunk revset (default trunk())" })),
 			maxStack: Type.Optional(Type.Integer({ minimum: MIN_MAX_STACK, maximum: DEFAULT_MAX_STACK })),
+			ready: Type.Optional(
+				Type.Boolean({ description: "Mark created and existing draft PRs ready after publication" }),
+			),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const outcome = await withRun(
@@ -332,6 +389,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 							remote: params.remote,
 							trunk: params.trunk,
 							maxStack: params.maxStack,
+							ready: params.ready === true,
 						},
 						{ run, ui: uiFrom(ctx), signal: combinePublicationSignals(runSignal, signal) },
 					),
@@ -339,6 +397,57 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			);
 			return {
 				content: [{ type: "text" as const, text: boundText(renderOutcome(outcome)) }],
+				details: outcome,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "jj_stack_land",
+		label: "Land stacked PRs",
+		description:
+			"Land a linear jj bookmark stack bottom-up through the land extension. Marks drafts ready, merges each frontier, advances locally, republishes the remainder, and deletes verified merged branches. Mutates remotes immediately without UI confirmation.",
+		promptSnippet: "Land the current jj stack without a redundant confirmation after an explicit user request.",
+		promptGuidelines: [
+			"Call jj_stack_land only when the user explicitly asks to land the current stack; landing merges to trunk and cannot be undone.",
+			"Do not call jj_stack_land merely because implementation or review finished.",
+		],
+		parameters: Type.Object({
+			top: Type.String({ description: "Top bookmark" }),
+			remote: Type.String({ description: "Git remote name" }),
+			trunk: Type.Optional(Type.String({ description: "Trunk revset (default trunk())" })),
+			method: Type.Optional(
+				Type.Union([Type.Literal("squash"), Type.Literal("rebase")], { description: "squash or rebase" }),
+			),
+			readiness: Type.Optional(
+				Type.Union([Type.Literal("check"), Type.Literal("watch")], {
+					description: "check or watch (default watch)",
+				}),
+			),
+			maxStack: Type.Optional(Type.Integer({ minimum: MIN_MAX_STACK, maximum: DEFAULT_MAX_STACK })),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const method = params.method === "squash" || params.method === "rebase" ? params.method : undefined;
+			const readiness = params.readiness === "check" ? "check" : "watch";
+			const outcome = await withRun(
+				ctx,
+				(runSignal) =>
+					landStackFromTool(
+						{
+							cwd: ctx.cwd,
+							top: params.top,
+							remote: params.remote,
+							trunk: params.trunk,
+							maxStack: params.maxStack,
+							method,
+							readiness,
+						},
+						landDeps(ctx, combinePublicationSignals(runSignal, signal)),
+					),
+				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
+			);
+			return {
+				content: [{ type: "text" as const, text: boundText(renderLandOutcome(outcome)) }],
 				details: outcome,
 			};
 		},

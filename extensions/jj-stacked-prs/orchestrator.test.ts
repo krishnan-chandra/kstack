@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { GitHubAdapter } from "./github.ts";
 import { GitHubError } from "./github.ts";
-import { type JjAdapter, JjError } from "./jj.ts";
+import { JjError } from "./jj.ts";
+import { landStack, landStackFromTool } from "./land.ts";
 import {
 	advanceStack,
 	inspectStack,
@@ -12,107 +12,8 @@ import {
 	requestPublicationFromInput,
 	syncStack,
 } from "./orchestrator.ts";
-import type { BookmarkTarget, OpenPullRequest, RemoteInfo, StackCommit } from "./types.ts";
-
-function commit(changeId: string, bookmark: string, parent = "trunk"): StackCommit {
-	return {
-		changeId,
-		commitId: `${changeId}-commit`,
-		subject: `feat: ${changeId}`,
-		bookmarks: [bookmark],
-		remoteBookmarks: [],
-		parentCommitIds: [parent],
-		empty: false,
-		conflict: false,
-		divergent: false,
-		merge: false,
-		workingCopy: false,
-	};
-}
-
-function remote(): RemoteInfo {
-	return {
-		name: "origin",
-		url: "https://github.com/o/r.git",
-		redactedUrl: "https://github.com/o/r.git",
-		github: { owner: "o", repo: "r" },
-	};
-}
-
-function fakeJj(overrides: Partial<JjAdapter> = {}): JjAdapter & { calls: string[] } {
-	const calls: string[] = [];
-	const adapter: JjAdapter & { calls: string[] } = {
-		calls,
-		preflight: async () => ({ workspaceRoot: "/repo", jjVersion: "jj 0.44.0" }),
-		resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : `${revset}-id`),
-		workingCopyChangeId: async () => undefined,
-		listLocalBookmarks: async () => [
-			{ name: "feat1", commitId: "aaa-commit" },
-			{ name: "feat2", commitId: "bbb-commit" },
-		],
-		listRemoteBookmarks: async () => [],
-		fetchStack: async () => [commit("aaa", "feat1"), commit("bbb", "feat2")],
-		listRemotes: async () => [remote()],
-		getRemote: async () => remote(),
-		currentOperationId: async () => "op1",
-		pushBookmark: async (_cwd, _remote, bookmark) => {
-			calls.push(`push:${bookmark}`);
-		},
-		fetchRemote: async () => {
-			calls.push("fetch");
-		},
-		rebaseStack: async () => {
-			calls.push("rebase");
-		},
-		abandonRange: async (_cwd, trunk, merged) => {
-			calls.push(`abandon:${trunk}..${merged}`);
-		},
-		...overrides,
-	};
-	return adapter;
-}
-
-function fakeGithub(overrides: Partial<GitHubAdapter> = {}): GitHubAdapter & { comments: string[] } {
-	const comments: string[] = [];
-	return {
-		comments,
-		getDefaultBranch: async () => "main",
-		listOpenPrs: async () => [],
-		listPrsForHead: async (_repo, head) => {
-			const listed = overrides.listOpenPrs ? await overrides.listOpenPrs({ owner: "o", repo: "r" }, "/repo") : [];
-			return listed.filter((pr) => pr.headRef === head);
-		},
-		getAuthenticatedUser: async () => "publisher",
-		getPrStatus: async () => "open",
-		getPrComments: async () => [],
-		createDraftPr: async (input) => ({
-			number: input.bookmark === "feat1" ? 11 : 12,
-			headRef: input.bookmark,
-			headCommitId: input.bookmark === "feat1" ? "aaa-commit" : "bbb-commit",
-			baseRef: input.base,
-			title: input.title,
-			draft: true,
-			url: `https://example/${input.bookmark}`,
-			headOwner: "o",
-		}),
-		updatePrBase: async () => {},
-		createOrUpdateComment: async (input) => {
-			comments.push(input.body);
-			return { id: 1 };
-		},
-		...overrides,
-	};
-}
-
-function ui(overrides: { confirm?: boolean; hasUI?: boolean; select?: string } = {}) {
-	return {
-		hasUI: overrides.hasUI ?? true,
-		confirm: async () => overrides.confirm ?? true,
-		select: async () => overrides.select,
-		notify: () => {},
-		setStatus: () => {},
-	};
-}
+import { commit, fakeGithub, fakeJj, landed, openPrs, ui } from "./test-fixtures.ts";
+import type { BookmarkTarget, OpenPullRequest } from "./types.ts";
 
 describe("inspect and plan", () => {
 	it("inspects an injected stack that is independent of this repository's trunk", async () => {
@@ -165,6 +66,25 @@ describe("publishStack", () => {
 		);
 		assert.deepEqual(jj.calls, []);
 		assert.equal(github.comments.length, 0);
+	});
+
+	it("marks draft PRs ready when publish is asked to", async () => {
+		const ready: number[] = [];
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin", ready: true },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj: fakeJj(),
+				github: fakeGithub({
+					markPrReady: async (_repo, prNumber) => {
+						ready.push(prNumber);
+					},
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(ready, [11, 12]);
 	});
 
 	it("publishes from the model tool without prompting", async () => {
@@ -765,5 +685,276 @@ describe("requestPublicationFromInput", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
+	});
+});
+
+describe("landStack", () => {
+	it("blocks a mismatched base chain before any mutation", async () => {
+		const jj = fakeJj();
+		const github = fakeGithub({
+			listOpenPrs: async () => [{ ...openPrs()[0] }, { ...openPrs()[1], baseRef: "wrong" }],
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github,
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "blocked");
+		if (result.status === "blocked") {
+			assert.ok(result.blockers.some((blocker) => blocker.code === "base-chain-mismatch"));
+		}
+		assert.deepEqual(jj.calls, []);
+	});
+
+	it("lands three-step order: ready, land, advance, republish, delete", async () => {
+		const calls: string[] = [];
+		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];
+		const prs = openPrs();
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+			abandonRange: async (_cwd, trunk, merged) => {
+				calls.push(`abandon:${trunk}..${merged}`);
+				stack = stack.filter((item) => !item.bookmarks.includes(merged));
+			},
+		});
+		const github = fakeGithub({
+			listOpenPrs: async () => prs.filter((pr) => stack.some((item) => item.bookmarks.includes(pr.headRef))),
+			updatePrBase: async (input) => {
+				const pr = prs.find((item) => item.number === input.prNumber);
+				if (pr) pr.baseRef = input.base;
+			},
+			markPrReady: async (_repo, prNumber) => {
+				calls.push(`ready:${prNumber}`);
+			},
+			deleteRemoteBranch: async (_repo, branch) => {
+				calls.push(`delete:${branch}`);
+				return "deleted";
+			},
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github,
+				landPr: async ({ prNumber }) => {
+					calls.push(`land:${prNumber}`);
+					return {
+						handled: true,
+						outcome: landed(prNumber, prNumber === 11 ? "aaa-commit" : "bbb-commit"),
+					};
+				},
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(
+			calls.filter(
+				(item) =>
+					item.startsWith("ready:") ||
+					item.startsWith("land:") ||
+					item.startsWith("abandon:") ||
+					item.startsWith("delete:"),
+			),
+			[
+				"ready:11",
+				"land:11",
+				"abandon:trunk..feat1",
+				"delete:feat1",
+				"land:12",
+				"abandon:trunk..feat2",
+				"delete:feat2",
+			],
+		);
+	});
+
+	it("resumes an already-merged bottom PR with advance only", async () => {
+		const calls: string[] = [];
+		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];
+		const prs = openPrs().map((pr) => (pr.number === 11 ? { ...pr, draft: false } : pr));
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+			abandonRange: async (_cwd, trunk, merged) => {
+				calls.push(`abandon:${trunk}..${merged}`);
+				stack = stack.filter((item) => !item.bookmarks.includes(merged));
+			},
+		});
+		const github = fakeGithub({
+			listOpenPrs: async () =>
+				prs.filter((pr) => pr.headRef !== "feat1" && stack.some((item) => item.bookmarks.includes(pr.headRef))),
+			listPrsForHead: async (_repo, head) => prs.filter((pr) => pr.headRef === head),
+			getPrStatus: async (_repo, prNumber) => (prNumber === 11 ? "merged" : "open"),
+			updatePrBase: async (input) => {
+				const pr = prs.find((item) => item.number === input.prNumber);
+				if (pr) pr.baseRef = input.base;
+			},
+		});
+		const result = await landStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: {
+					...ui({ hasUI: false }),
+					confirm: async () => {
+						throw new Error("the model tool must not prompt");
+					},
+				},
+				jj,
+				github,
+				landPr: async ({ prNumber }) => {
+					calls.push(`land:${prNumber}`);
+					return { handled: true, outcome: landed(prNumber, "bbb-commit") };
+				},
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(calls, ["abandon:trunk..feat1", "land:12", "abandon:trunk..feat2"]);
+	});
+
+	it("stops without advancing when land reports partially-landed", async () => {
+		const jj = fakeJj();
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
+				landPr: async () => ({
+					handled: true,
+					outcome: {
+						status: "partially-landed",
+						frontiers: [
+							{
+								prNumber: 11,
+								url: "https://example/11",
+								expectedHeadSha: "aaa-commit",
+								method: "squash",
+								state: "queued",
+							},
+						],
+						autopilotRan: true,
+						remainingBookmarks: [],
+						completedMutations: ["GitHub accepted merge/queue request for PR #11"],
+						blockers: ["unverified"],
+					},
+				}),
+			},
+		);
+		assert.equal(result.status, "partial");
+		assert.deepEqual(jj.calls, []);
+	});
+
+	it("keeps structured progress when trunk ancestry lookup throws", async () => {
+		const jj = fakeJj({
+			isAncestor: async () => {
+				throw new JjError("lookup failed");
+			},
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") {
+			assert.match(result.error, /lookup failed/);
+			assert.equal(result.frontiers[0]?.prNumber, 11);
+			assert.equal(result.frontiers[0]?.state, "landed");
+			assert.ok(result.completedMutations.some((line) => /accepted merge\/queue request for PR #11/.test(line)));
+			assert.ok(result.recoveryOperationIds.length > 0);
+		}
+	});
+
+	it("does not advance when the merged PR head differs from the pinned head", async () => {
+		const jj = fakeJj({
+			abandonRange: async () => {
+				throw new Error("advance must not run");
+			},
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listOpenPrs: async () => openPrs(),
+					getMergeCommit: async () => ({
+						merged: true,
+						mergeCommitOid: "merge-11",
+						headCommitId: "different-head",
+						headRef: "feat1",
+					}),
+				}),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") assert.match(result.error, /head .* does not match pinned head/);
+		assert.ok(!jj.calls.some((call) => call.startsWith("abandon:")));
+	});
+
+	it("stops when the merge commit is not on trunk after fetch", async () => {
+		const jj = fakeJj({
+			isAncestor: async () => false,
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") {
+			assert.match(result.error, /not an ancestor/);
+			assert.deepEqual(result.remainingBookmarks, ["feat2"]);
+		}
+	});
+
+	it("reports a branch deletion failure and continues", async () => {
+		let stack = [commit("aaa", "feat1")];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+			abandonRange: async () => {
+				stack = [];
+			},
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listOpenPrs: async () => [openPrs()[0]],
+					deleteRemoteBranch: async () => {
+						throw new GitHubError("delete failed");
+					},
+				}),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		if (result.status === "completed") {
+			assert.ok(result.completedMutations.some((line) => /Failed to delete remote branch feat1/.test(line)));
+		}
 	});
 });

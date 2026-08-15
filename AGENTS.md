@@ -38,6 +38,8 @@ PYTHONPYCACHEPREFIX=/tmp/kstack-pycache python3 -m py_compile skills/git-worktre
 - Colocate `node:test` coverage in `*.test.ts` files.
 - Keep extension `index.ts` files as thin Pi adapters. Put domain behavior in
   named modules and inject filesystem, Git, process, time, and model effects.
+- Prefer exhaustive `if` / `else if` / `switch` over nested ternaries. A
+  one-level `a ? b : c` is fine; a chain of `? :` is not.
 - Avoid runtime dependencies unless the platform cannot provide the capability.
 - Export a symbol only for a real consumer: another module, a colocated test, or a marked contract (`/* exported: <reason> */`). `npm run check:exports` enforces this.
 

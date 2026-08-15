@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createGitHubAdapter, GitHubError } from "./github.ts";
+import { createGitHubAdapter, GitHubError, parseAllowedMergeMethods, parseMergeCommit } from "./github.ts";
 import type { CommandResult } from "./process.ts";
 
 describe("createDraftPr", () => {
@@ -46,5 +46,34 @@ describe("createDraftPr", () => {
 			}),
 			(error: unknown) => error instanceof GitHubError && error.kind === "indeterminate",
 		);
+	});
+});
+
+describe("landing adapters", () => {
+	it("parses allowed methods and merge commits", () => {
+		assert.deepEqual(parseAllowedMergeMethods('{"squash":true,"rebase":false}', { owner: "o", repo: "r" }), ["squash"]);
+		assert.deepEqual(
+			parseMergeCommit('{"merged":true,"mergeCommitOid":"abc","headCommitId":"def","headRef":"feat"}', 7),
+			{
+				merged: true,
+				mergeCommitOid: "abc",
+				headCommitId: "def",
+				headRef: "feat",
+			},
+		);
+	});
+
+	it("marks one PR ready and treats a missing branch delete as already-gone", async () => {
+		const calls: string[][] = [];
+		const adapter = createGitHubAdapter(async (argv) => {
+			calls.push([...argv]);
+			if (argv.includes("-X") && argv.includes("DELETE")) {
+				return { kind: "nonzero", code: 1, stdout: "", stderr: "HTTP 404: Not Found", message: "HTTP 404: Not Found" };
+			}
+			return { kind: "ok", code: 0, stdout: "", stderr: "" };
+		});
+		await adapter.markPrReady({ owner: "o", repo: "r" }, 11, ".");
+		assert.deepEqual(calls[0], ["gh", "pr", "ready", "11", "--repo", "o/r"]);
+		assert.equal(await adapter.deleteRemoteBranch({ owner: "o", repo: "r" }, "feat1", "."), "already-gone");
 	});
 });

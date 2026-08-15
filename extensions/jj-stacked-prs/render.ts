@@ -7,7 +7,11 @@ import {
 	type InspectModel,
 	PLAN_ID_DISPLAY_CHARS,
 	type PublicationPlan,
+	type StackLandFrontier,
+	type StackLandOutcome,
+	type StackMergeMethod,
 	type StackPublicationOutcome,
+	type StackReadinessMode,
 	TOOL_CONTENT_MAX_BYTES,
 	TOOL_CONTENT_MAX_LINES,
 } from "./types.ts";
@@ -58,6 +62,86 @@ export function renderPlan(plan: PublicationPlan): string {
 		for (const blocker of plan.blockers) lines.push(`- [${blocker.code}] ${blocker.message}`);
 	}
 	return boundText(lines.join("\n"));
+}
+
+export function renderLandConfirmation(input: {
+	slices: readonly { bookmark: string; prNumber: number; url: string; draft: boolean; alreadyMerged: boolean }[];
+	method: StackMergeMethod;
+	readiness: StackReadinessMode;
+}): { ok: true; body: string } | { ok: false; reason: string } {
+	const lines = [
+		`Land ${input.slices.length} stacked PR(s) bottom-up.`,
+		`Method: ${input.method}`,
+		`Readiness: ${input.readiness}`,
+		"Later frontiers are re-pinned at their own land time because restacks rewrite their heads.",
+		"",
+		"Order:",
+	];
+	for (const slice of input.slices) {
+		let state = "land";
+		if (slice.alreadyMerged) state = "already merged; advance only";
+		else if (slice.draft) state = "draft → ready, then land";
+		lines.push(`- #${slice.prNumber} ${slice.bookmark} (${state}) ${slice.url}`);
+	}
+	const body = boundText(lines.join("\n"));
+	if (input.slices.some((slice) => !body.includes(`#${slice.prNumber}`) || !body.includes(slice.bookmark))) {
+		return { ok: false, reason: "The confirmation cannot show every stacked PR." };
+	}
+	return { ok: true, body };
+}
+
+export function renderLandOutcome(outcome: StackLandOutcome): string {
+	switch (outcome.status) {
+		case "completed":
+			return boundText(
+				[
+					`Landed ${outcome.frontiers.length} stacked PR(s).`,
+					...outcome.frontiers.map(renderFrontierLine),
+					...(outcome.completedMutations.length > 0 ? ["", ...outcome.completedMutations] : []),
+				].join("\n"),
+			);
+		case "partial":
+			return boundText(
+				[
+					`Stack landing stopped: ${outcome.error}`,
+					...outcome.frontiers.map(renderFrontierLine),
+					...(outcome.remainingBookmarks.length > 0 ? [`Remaining: ${outcome.remainingBookmarks.join(", ")}`] : []),
+					...(outcome.recoveryOperationIds.length > 0
+						? [`Recovery: jj op restore ${outcome.recoveryOperationIds.at(-1)}`]
+						: []),
+				].join("\n"),
+			);
+		case "blocked":
+			return boundText(
+				["Stack landing blocked:", ...outcome.blockers.map((blocker) => `- [${blocker.code}] ${blocker.message}`)].join(
+					"\n",
+				),
+			);
+		case "declined":
+			return "Stack landing declined.";
+		case "busy":
+			return outcome.message;
+		case "cancelled":
+			return "Stack landing cancelled.";
+		case "indeterminate":
+			return boundText(
+				[
+					`Stack landing is indeterminate: ${outcome.inFlight}`,
+					...outcome.frontiers.map(renderFrontierLine),
+					outcome.recovery ?? "Inspect GitHub and local bookmarks before retrying.",
+				].join("\n"),
+			);
+		case "failed":
+			return `Stack landing failed: ${outcome.error}`;
+		default: {
+			const _exhaustive: never = outcome;
+			return _exhaustive;
+		}
+	}
+}
+
+function renderFrontierLine(frontier: StackLandFrontier): string {
+	return `- #${frontier.prNumber} ${frontier.bookmark} ${frontier.state}`;
 }
 
 export function renderConfirmation(plan: PublicationPlan): { ok: true; body: string } | { ok: false; reason: string } {

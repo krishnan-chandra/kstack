@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import { issueLandConfirmation } from "./confirmation.ts";
 import { runLand } from "./orchestrator.ts";
 import type { ExecFn, ExecResult, MergeMethod } from "./types.ts";
 
@@ -224,7 +225,7 @@ test("CLI --method takes priority over configured method and still confirms", as
 	assert.equal(confirmMergeCalled, true, "confirmMerge should be called when CLI --method is set");
 });
 
-test("confirmedByCaller skips confirmMerge and still revalidates", async () => {
+test("minted confirmation skips confirmMerge and still revalidates", async () => {
 	let confirmMergeCalled = false;
 	let views = 0;
 	const exec: ExecFn = async (_command, args) => {
@@ -244,14 +245,51 @@ test("confirmedByCaller skips confirmMerge and still revalidates", async () => {
 		},
 	};
 	const result = await runLand(
-		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash", confirmedByCaller: true },
+		{
+			target: { kind: "single", prNumber: 7 },
+			readiness: "check",
+			method: "squash",
+			confirmation: issueLandConfirmation(),
+		},
 		runDeps,
 	);
 	assert.equal(result.status, "landed");
-	assert.equal(confirmMergeCalled, false, "confirmMerge should not be called when confirmedByCaller is set");
+	assert.equal(confirmMergeCalled, false, "confirmMerge should not be called when a minted confirmation is set");
 });
 
-test("confirmedByCaller still blocks when the PR head changes before merge", async () => {
+test("a reconstructed confirmation object does not skip confirmMerge", async () => {
+	let confirmMergeCalled = false;
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		confirmMerge: async (): Promise<boolean> => {
+			confirmMergeCalled = true;
+			return true;
+		},
+	};
+	const result = await runLand(
+		{
+			target: { kind: "single", prNumber: 7 },
+			readiness: "check",
+			method: "squash",
+			confirmation: {} as never,
+		},
+		runDeps,
+	);
+	assert.equal(result.status, "landed");
+	assert.equal(confirmMergeCalled, true, "a reconstructed object must not skip confirmation");
+});
+
+test("minted confirmation still blocks when the PR head changes before merge", async () => {
 	const CHANGED = "c".repeat(40);
 	const calls: string[][] = [];
 	let views = 0;
@@ -266,7 +304,12 @@ test("confirmedByCaller still blocks when the PR head changes before merge", asy
 		return { code: 0, stdout: "", stderr: "" };
 	};
 	const result = await runLand(
-		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash", confirmedByCaller: true },
+		{
+			target: { kind: "single", prNumber: 7 },
+			readiness: "check",
+			method: "squash",
+			confirmation: issueLandConfirmation(),
+		},
 		deps(exec),
 	);
 	assert.equal(result.status, "blocked");

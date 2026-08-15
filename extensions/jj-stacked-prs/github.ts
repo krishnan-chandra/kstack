@@ -11,6 +11,7 @@ import {
 	type NavigationEntry,
 	type NavigationStatus,
 	type OpenPullRequest,
+	type StackMergeMethod,
 } from "./types.ts";
 
 const GITHUB_URL_PATTERN =
@@ -170,22 +171,30 @@ export function reconcileStackEntries(input: {
 		const status = entry.prNumber === undefined ? "unknown" : (input.statusByPr[entry.prNumber] ?? entry.status);
 		return { ...entry, status: normalizeNavigationStatus(status) };
 	});
-	const active = input.published.map((slice) => ({
-		prNumber: slice.prNumber,
-		bookmark: slice.bookmark,
-		base: slice.targetBase.replace(/^refs\/heads\//, "") || input.defaultBranch,
-		status: normalizeNavigationStatus(
-			slice.prNumber === undefined
-				? "unknown"
-				: (input.statusByPr[slice.prNumber] ?? (slice.createPr ? "draft" : "open")),
-		),
-	}));
+	const active = input.published.map((slice) => {
+		let status = slice.createPr ? "draft" : "open";
+		if (slice.prNumber === undefined) status = "unknown";
+		else if (input.statusByPr[slice.prNumber] !== undefined) status = input.statusByPr[slice.prNumber];
+		return {
+			prNumber: slice.prNumber,
+			bookmark: slice.bookmark,
+			base: slice.targetBase.replace(/^refs\/heads\//, "") || input.defaultBranch,
+			status: normalizeNavigationStatus(status),
+		};
+	});
 	return [...ancestors, ...active];
 }
 
 export function findPrForBookmark(prs: readonly OpenPullRequest[], bookmark: string): OpenPullRequest | undefined {
 	const matches = prs.filter((pr) => pr.headRef === bookmark);
 	return matches.length === 1 ? matches[0] : undefined;
+}
+
+interface MergedPrInfo {
+	merged: boolean;
+	mergeCommitOid: string | undefined;
+	headCommitId: string;
+	headRef: string;
 }
 
 export interface GitHubAdapter {
@@ -195,6 +204,21 @@ export interface GitHubAdapter {
 	getAuthenticatedUser(cwd: string, signal?: AbortSignal): Promise<string | undefined>;
 	getPrStatus(repo: GitHubRepository, prNumber: number, cwd: string, signal?: AbortSignal): Promise<NavigationStatus>;
 	getPrComments(repo: GitHubRepository, prNumber: number, cwd: string, signal?: AbortSignal): Promise<GitHubComment[]>;
+	getMergeCommit(repo: GitHubRepository, prNumber: number, cwd: string, signal?: AbortSignal): Promise<MergedPrInfo>;
+	getAllowedMergeMethods(repo: GitHubRepository, cwd: string, signal?: AbortSignal): Promise<StackMergeMethod[]>;
+	getRemoteBranchSha(
+		repo: GitHubRepository,
+		branch: string,
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<string | undefined>;
+	markPrReady(repo: GitHubRepository, prNumber: number, cwd: string, signal?: AbortSignal): Promise<void>;
+	deleteRemoteBranch(
+		repo: GitHubRepository,
+		branch: string,
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<"deleted" | "already-gone">;
 	createDraftPr(input: {
 		repo: GitHubRepository;
 		bookmark: string;
@@ -275,6 +299,67 @@ export function createGitHubAdapter(run: ProcessRunner): GitHubAdapter {
 				{ cwd, signal },
 			);
 			return parseComments(result.stdout, prNumber);
+		},
+		async getAllowedMergeMethods(repo, cwd, signal) {
+			const result = await runGh(
+				run,
+				[
+					"api",
+					`/repos/${repo.owner}/${repo.repo}`,
+					"--jq",
+					"{squash: .allow_squash_merge, rebase: .allow_rebase_merge}",
+				],
+				{ cwd, signal },
+			);
+			return parseAllowedMergeMethods(result.stdout, repo);
+		},
+		async getMergeCommit(repo, prNumber, cwd, signal) {
+			const result = await runGh(
+				run,
+				[
+					"api",
+					`/repos/${repo.owner}/${repo.repo}/pulls/${prNumber}`,
+					"--jq",
+					"{merged, mergeCommitOid: .merge_commit_sha, headCommitId: .head.sha, headRef: .head.ref}",
+				],
+				{ cwd, signal },
+			);
+			return parseMergeCommit(result.stdout, prNumber);
+		},
+		async getRemoteBranchSha(repo, branch, cwd, signal) {
+			assertRefName(branch);
+			try {
+				const result = await runGh(
+					run,
+					["api", `/repos/${repo.owner}/${repo.repo}/git/ref/heads/${branch}`, "--jq", ".object.sha"],
+					{ cwd, signal },
+				);
+				const sha = result.stdout.trim();
+				if (!sha) throw new GitHubError(`Could not read remote branch ${JSON.stringify(branch)}.`);
+				return sha;
+			} catch (error) {
+				if (isNotFound(error)) return undefined;
+				throw error;
+			}
+		},
+		async markPrReady(repo, prNumber, cwd, signal) {
+			await runGh(run, ["pr", "ready", String(prNumber), "--repo", `${repo.owner}/${repo.repo}`], {
+				cwd,
+				signal,
+			});
+		},
+		async deleteRemoteBranch(repo, branch, cwd, signal) {
+			assertRefName(branch);
+			try {
+				await runGh(run, ["api", "-X", "DELETE", `/repos/${repo.owner}/${repo.repo}/git/refs/heads/${branch}`], {
+					cwd,
+					signal,
+				});
+				return "deleted";
+			} catch (error) {
+				if (isNotFound(error)) return "already-gone";
+				throw error;
+			}
 		},
 		async createDraftPr(input) {
 			const created = await runGh(
@@ -402,6 +487,53 @@ export function parseOpenPrs(text: string, repo: GitHubRepository): OpenPullRequ
 		});
 	}
 	return prs;
+}
+
+export function parseAllowedMergeMethods(text: string, repo: GitHubRepository): StackMergeMethod[] {
+	let payload: unknown;
+	try {
+		payload = JSON.parse(text);
+	} catch {
+		throw new GitHubError(`Could not parse merge methods for ${repo.owner}/${repo.repo}: invalid JSON.`);
+	}
+	if (typeof payload !== "object" || payload === null) {
+		throw new GitHubError(`Could not parse merge methods for ${repo.owner}/${repo.repo}: invalid response.`);
+	}
+	const record = payload as Record<string, unknown>;
+	const methods: StackMergeMethod[] = [];
+	if (record.squash === true) methods.push("squash");
+	if (record.rebase === true) methods.push("rebase");
+	return methods;
+}
+
+export function parseMergeCommit(text: string, prNumber: number): MergedPrInfo {
+	let payload: unknown;
+	try {
+		payload = JSON.parse(text);
+	} catch {
+		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid JSON.`);
+	}
+	if (typeof payload !== "object" || payload === null) {
+		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid response.`);
+	}
+	const record = payload as Record<string, unknown>;
+	if (
+		typeof record.merged !== "boolean" ||
+		typeof record.headCommitId !== "string" ||
+		typeof record.headRef !== "string"
+	) {
+		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid response.`);
+	}
+	const oid = record.mergeCommitOid;
+	if (oid !== null && oid !== undefined && typeof oid !== "string") {
+		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid merge commit.`);
+	}
+	return {
+		merged: record.merged,
+		mergeCommitOid: typeof oid === "string" && oid.length > 0 ? oid : undefined,
+		headCommitId: record.headCommitId,
+		headRef: record.headRef,
+	};
 }
 
 export function parsePrStatus(text: string, prNumber: number): NavigationStatus {
@@ -565,6 +697,17 @@ async function runGh(
 		);
 	}
 	return { stdout: result.stdout };
+}
+
+function isNotFound(error: unknown): boolean {
+	if (!(error instanceof GitHubError)) return false;
+	return /\b404\b|not found/i.test(error.message);
+}
+
+function assertRefName(value: string): void {
+	if (!value || value.length > 256 || /[\0\n\r\s]/.test(value)) {
+		throw new GitHubError(`Invalid branch name: ${JSON.stringify(value)}.`);
+	}
 }
 
 function toGitHubError(result: CommandFailure, args: string[]): GitHubError {

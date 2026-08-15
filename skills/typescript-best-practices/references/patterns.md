@@ -222,6 +222,27 @@ function handle(s: Shape): void {
 
 Return-style in value-returning switches; void-style in statement switches.
 
+## Exhaustive ifs
+
+A one-level `a ? b : c` is fine. A chain of `? :` hides the cases and fights the formatter. Use `if` / `else if`, or a `switch` when the discriminant is a union.
+
+```ts
+// Don't. The third case is buried in the nest.
+const flags =
+  action === "inspect"
+    ? ["--top"]
+    : action === "land"
+      ? ["--top", "--method"]
+      : ["--top", "--remote"];
+
+// Do. Each case is a branch the compiler can exhaust.
+function flagsFor(action: string): string[] {
+  if (action === "inspect") return ["--top"];
+  if (action === "land") return ["--top", "--method"];
+  return ["--top", "--remote"];
+}
+```
+
 ## `satisfies` over `as`
 
 `satisfies` validates without widening literal types.
