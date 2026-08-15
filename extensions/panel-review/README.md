@@ -70,7 +70,8 @@ ignores the outcome.
    activity, and a bounded rolling line of recent visible assistant text
    (thinking content is never displayed). Queued reviewers stay visible when
    `maxConcurrency` is below the panel size, and after the reviewers finish a
-   distinct lead/synthesis row appears beneath them. The header shows summary
+   distinct lead/synthesis row appears beneath them with the selected lead
+   model. The header shows summary
    counts, elapsed time, and shortcuts: **Ctrl+Shift+V** (`^⇧V`) to open the
    read-only inspector overlay, and **Ctrl+Shift+X** (`^⇧X`) to abort. On
    narrow terminals the model and activity columns drop first; labels and

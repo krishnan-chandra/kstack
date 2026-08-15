@@ -91,7 +91,7 @@ describe("PanelDashboardStore", () => {
 		const lines = renderDashboard(store, 100, theme).join("\n");
 		assert.match(lines, /A — failed \(m1\) · 30s · idle timeout/);
 		assert.match(lines, /B — aborted \(m2\) · 20s/);
-		assert.match(lines, /lead — running \(lead synthesis\) · 3s/);
+		assert.match(lines, /lead — running \(m3\) · 3s/);
 	});
 
 	it("notifies subscribers on every mutation including tick", () => {
@@ -126,7 +126,7 @@ describe("renderDashboard", () => {
 		assert.match(body, /R4 — queued/);
 	});
 
-	it("shows the lead as a distinct synthesis row after reviewers finish", () => {
+	it("shows the lead model in a distinct synthesis row after reviewers finish", () => {
 		const { store } = makeStore();
 		store.addReviewer("a", "A", "m1");
 		store.markRunning("a");
@@ -138,8 +138,7 @@ describe("renderDashboard", () => {
 		assert.ok(lines.some((l) => l.includes("A — completed")));
 		const leadLine = lines.find((l) => l.includes("lead — running"));
 		assert.ok(leadLine);
-		assert.match(leadLine, /\(lead synthesis\)/);
-		assert.ok(!leadLine.includes("synth-model"), "lead row uses the synthesis tag, not a plain model");
+		assert.match(leadLine, /\(synth-model\)/);
 	});
 
 	it("never emits a line wider than the terminal, wide chars included", () => {
