@@ -233,9 +233,9 @@ describe("InspectorComponent", () => {
 		assert.equal(comp.getState().follow, true);
 		assert.equal(comp.getState().scrollOffset, 0);
 
-		// Abort shortcut (Ctrl+Shift+X)
-		comp.handleInput("\x18"); // Ctrl+X / Ctrl+Shift+X fallback
-		assert.equal(aborted, true);
+		// Plain Ctrl+X is not an abort shortcut.
+		comp.handleInput("\x18");
+		assert.equal(aborted, false);
 
 		// Escape
 		comp.handleInput("\x1b");

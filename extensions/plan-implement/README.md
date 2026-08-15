@@ -163,6 +163,21 @@ model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an active
 the plan-approval boundary the shortcut reports that no child is running and
 does not pre-abort the future implementer.
 
+## Live TUI Dashboard & Transcript Inspector
+
+In TUI mode, plan-implement mounts a live dashboard widget above the editor and provides an interactive read-only inspector overlay:
+
+- **Live Dashboard**: Mounted above the editor during the workflow. Displays status icons (`○` queued, `●` running, `✓` completed, `✗` failed, `⊘` aborted), turns, elapsed time, current tool activity, and a rolling single-line preview of streaming assistant text for each child phase (Planner, Implementer, and subsequent Review fixer / Publisher phases).
+- **Transcript Inspector Overlay (`Ctrl+Shift+P`)**: A strictly read-only popup overlay allowing the user to inspect the streaming and historical transcripts of each phase (Planner, Implementer, Review fixer, Publisher).
+  - Use `←` / `→` or `Tab` / `Shift+Tab` to switch between child tabs.
+  - Use `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End` / `g` / `G` to scroll.
+  - Press `f` to toggle auto-follow tail.
+  - Press `Escape` to close the overlay.
+  - Press `Ctrl+Shift+I` or `Ctrl+Shift+X` to abort the running child.
+  - Displays lifecycle notes, tool calls with elapsed durations, turn boundaries with input/output token counts and costs, wrapped assistant text, and the real-time live streaming tail.
+
+Live dashboard state and transcripts are ephemeral (capped at 128 KiB per child) and never written to the session or disk.
+
 ## In-process API (composability)
 
 The extension exposes an in-process event-bus API (`kstack:plan-implement:request`)

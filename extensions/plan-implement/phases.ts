@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import type { ChildEvent } from "../shared/child-agent-runner.ts";
 import {
 	createCurrentWorkstreamBranch,
 	verifyCommittedWorkstream,
@@ -17,6 +18,7 @@ import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command
 import type { ExecFn } from "./delivery-mode.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
+import type { PlanPipelineDashboard } from "./live-dashboard.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
@@ -40,6 +42,7 @@ export interface PhaseEffects {
 		prNumber: number,
 		cwd: string,
 	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
+	dashboard?: PlanPipelineDashboard;
 }
 
 export interface ApprovedWorkflowOptions {
@@ -103,6 +106,11 @@ export async function runPostReviewPhases(
 			if (controller) {
 				try {
 					fx.setStatus(`plan-implement: fixer ${implementerModel}…`);
+					if (fx.isCurrent()) {
+						fx.dashboard?.addPhase("fixer", "Review fixer", implementerModel, "fixer");
+						fx.dashboard?.markRunning("fixer");
+						fx.dashboard?.note("fixer", "Review fixer started");
+					}
 					const fixer = await executeAgent({
 						role: "fixer",
 						model: implementerModel,
@@ -112,14 +120,30 @@ export async function runPostReviewPhases(
 						cwd: state.workflowCwd,
 						signal: controller.signal,
 						deps: { timeoutMs },
-						onProgress: ({ role, turns, activity }) =>
-							fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
+						onProgress: ({ role, turns, activity, preview }) => {
+							if (fx.isCurrent()) {
+								fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+								fx.dashboard?.progress(role, { turns, activity, preview });
+							}
+						},
+						onEvent: (event) => {
+							if (fx.isCurrent()) fx.dashboard?.event("fixer", event);
+						},
 						mode,
 						workLocation,
 						skillPaths,
 						supplementalPrompts: changePrompts,
 					});
 					if (fx.isCurrent()) {
+						fx.dashboard?.complete("fixer", {
+							status: fixer.status,
+							turns: fixer.status === "completed" ? fixer.usage.turns : undefined,
+							error: fixer.status === "failed" ? fixer.error : undefined,
+						});
+						fx.dashboard?.note(
+							"fixer",
+							`Review fixer ${fixer.status}${fixer.status === "failed" ? `: ${fixer.error}` : ""}`,
+						);
 						fx.sendPhase(fixer);
 						if (fixer.status !== "completed") {
 							fx.notify(
@@ -164,6 +188,11 @@ export async function runPostReviewPhases(
 		let publisher: AgentRunResult | undefined;
 		try {
 			fx.setStatus(`plan-implement: publisher ${implementerModel}…`);
+			if (fx.isCurrent()) {
+				fx.dashboard?.addPhase("publisher", "Publisher", implementerModel, "publisher");
+				fx.dashboard?.markRunning("publisher");
+				fx.dashboard?.note("publisher", "Publisher started");
+			}
 			publisher = await executeAgent({
 				role: "publisher",
 				model: implementerModel,
@@ -173,13 +202,29 @@ export async function runPostReviewPhases(
 				cwd: state.workflowCwd,
 				signal: controller.signal,
 				deps: { timeoutMs },
-				onProgress: ({ role, turns, activity }) =>
-					fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`),
+				onProgress: ({ role, turns, activity, preview }) => {
+					if (fx.isCurrent()) {
+						fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+						fx.dashboard?.progress(role, { turns, activity, preview });
+					}
+				},
+				onEvent: (event) => {
+					if (fx.isCurrent()) fx.dashboard?.event("publisher", event);
+				},
 				mode,
 				workLocation,
 				skillPaths,
 			});
 			if (fx.isCurrent()) {
+				fx.dashboard?.complete("publisher", {
+					status: publisher.status,
+					turns: publisher.status === "completed" ? publisher.usage.turns : undefined,
+					error: publisher.status === "failed" ? publisher.error : undefined,
+				});
+				fx.dashboard?.note(
+					"publisher",
+					`Publisher ${publisher.status}${publisher.status === "failed" ? `: ${publisher.error}` : ""}`,
+				);
 				fx.sendPhase(publisher);
 				fx.notify(
 					publisher.status === "completed"
@@ -291,8 +336,24 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		workflowCwd: initialCwd,
 		workstreamCheckpoint: worktreePlan ? { branch: worktreePlan.branch, baseSha: worktreePlan.baseSha } : undefined,
 	};
-	const progress = ({ role, turns, activity }: { role: AgentRole; turns: number; activity: string }) => {
-		if (fx.isCurrent()) fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+	const progress = ({
+		role,
+		turns,
+		activity,
+		preview,
+	}: {
+		role: AgentRole;
+		turns: number;
+		activity: string;
+		preview?: string;
+	}) => {
+		if (fx.isCurrent()) {
+			fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
+			fx.dashboard?.progress(role, { turns, activity, preview });
+		}
+	};
+	const onEvent = (role: AgentRole) => (event: ChildEvent) => {
+		if (fx.isCurrent()) fx.dashboard?.event(role, event);
 	};
 	let tempDir: string | undefined;
 	let reviewOptions: PanelArgs | undefined;
@@ -311,7 +372,11 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					if (!controller) return { status: "aborted", role: "planner", model: plannerModel };
 					try {
 						fx.setStatus(`plan-implement: planner ${plannerModel}…`);
-						return await executeAgent({
+						if (fx.isCurrent()) {
+							fx.dashboard?.markRunning("planner");
+							fx.dashboard?.note("planner", "Planner started");
+						}
+						const result = await executeAgent({
 							role: "planner",
 							model: plannerModel,
 							promptFile: join(promptsDir, "planner.md"),
@@ -320,11 +385,24 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							signal: controller.signal,
 							deps: { timeoutMs },
 							onProgress: progress,
+							onEvent: onEvent("planner"),
 							mode,
 							workLocation,
 							skillPaths,
 							supplementalPrompts: changePrompts,
 						});
+						if (fx.isCurrent()) {
+							fx.dashboard?.complete("planner", {
+								status: result.status,
+								turns: result.status === "completed" ? result.usage.turns : undefined,
+								error: result.status === "failed" ? result.error : undefined,
+							});
+							fx.dashboard?.note(
+								"planner",
+								`Planner ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
+							);
+						}
+						return result;
 					} finally {
 						fx.endChild(controller);
 					}
@@ -357,17 +435,35 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					);
 				},
 				runImplementer: async () => {
+					const completeEarly = (result: AgentRunResult): AgentRunResult => {
+						if (fx.isCurrent()) {
+							fx.dashboard?.complete("implementer", {
+								status: result.status,
+								error: result.status === "failed" ? result.error : undefined,
+							});
+							fx.dashboard?.note(
+								"implementer",
+								`Implementer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
+							);
+						}
+						return result;
+					};
 					const controller = fx.beginChild("implementing");
-					if (!controller) return { status: "aborted", role: "implementer", model: implementerModel };
+					if (!controller) return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
 					try {
 						if (worktreePlan && state.workflowCwd === initialCwd) {
 							fx.setStatus("plan-implement: creating managed worktree…");
 							const created = await createManagedWorktree(worktreePlan, fx.exec);
 							if (!created.ok)
-								return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+								return completeEarly({
+									status: "failed",
+									role: "implementer",
+									model: implementerModel,
+									error: created.error,
+								});
 							state.workflowCwd = created.plan.path;
 							if (!fx.isCurrent() || controller.signal.aborted)
-								return { status: "aborted", role: "implementer", model: implementerModel };
+								return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
 							fx.notify(
 								`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.branch}).`,
 								"info",
@@ -376,18 +472,27 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							fx.setStatus("plan-implement: creating task branch…");
 							const created = await createCurrentWorkstreamBranch(state.workflowCwd, task, fx.exec);
 							if (!created.ok)
-								return { status: "failed", role: "implementer", model: implementerModel, error: created.error };
+								return completeEarly({
+									status: "failed",
+									role: "implementer",
+									model: implementerModel,
+									error: created.error,
+								});
 							state.workstreamCheckpoint = { branch: created.branch, baseSha: created.baseSha };
 							fx.notify(`Task branch created: ${created.branch}.`, "info");
 						}
 						fx.setStatus(`plan-implement: implementer ${implementerModel}…`);
 						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
-							return {
+							return completeEarly({
 								status: "failed",
 								role: "implementer",
 								model: implementerModel,
 								error: "Approved plan changed before implementation; the plan is read-only.",
-							};
+							});
+						if (fx.isCurrent()) {
+							fx.dashboard?.markRunning("implementer");
+							fx.dashboard?.note("implementer", "Implementer started");
+						}
 						const result = await executeAgent({
 							role: "implementer",
 							model: implementerModel,
@@ -399,11 +504,23 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							signal: controller.signal,
 							deps: { timeoutMs },
 							onProgress: progress,
+							onEvent: onEvent("implementer"),
 							mode,
 							workLocation,
 							skillPaths,
 							supplementalPrompts: changePrompts,
 						});
+						if (fx.isCurrent()) {
+							fx.dashboard?.complete("implementer", {
+								status: result.status,
+								turns: result.status === "completed" ? result.usage.turns : undefined,
+								error: result.status === "failed" ? result.error : undefined,
+							});
+							fx.dashboard?.note(
+								"implementer",
+								`Implementer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
+							);
+						}
 						if (result.status !== "completed") return result;
 						if (readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
 							return {

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { requestLand } from "../land/api.ts";
 import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
@@ -23,9 +23,16 @@ import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.t
 import { parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { preflightStack } from "./delivery-mode.ts";
+import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
+import {
+	mountPlanImplementDashboard,
+	PlanImplementDashboardStore,
+	type PlanPipelineDashboard,
+} from "./live-dashboard.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
+import { PlanImplementTranscriptStore } from "./transcript-store.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -63,16 +70,54 @@ function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[]
 }
 export default function planImplementExtension(pi: ExtensionAPI): void {
 	const lifecycle = new WorkflowLifecycle();
+	let activeInspector: OpenInspectorResult | undefined;
+	let activeStores: { dashboard: PlanImplementDashboardStore; transcripts: PlanImplementTranscriptStore } | undefined;
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => lifecycle.shutdownSession());
+	pi.on("session_shutdown", () => {
+		activeInspector?.close();
+		activeInspector = undefined;
+		activeStores = undefined;
+		lifecycle.shutdownSession();
+	});
+	pi.registerShortcut("ctrl+shift+p", {
+		description: "Inspect plan/implement child transcripts",
+		handler: async (ctx) => {
+			if (ctx.mode !== "tui" || !activeStores || !lifecycle.isRunning()) {
+				ctx.ui.notify("No plan/implement run is active.", "info");
+				return;
+			}
+			if (activeInspector) return;
+			const { dashboard, transcripts } = activeStores;
+			const inspector = openInspector(ctx, dashboard, transcripts, {
+				text: {
+					stripTerminalSequences,
+					truncateToWidth: (text, width) => truncateToWidth(text, width),
+				},
+				onAbort: () => {
+					if (!lifecycle.abortActiveChild()) {
+						const suffix =
+							lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
+						ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
+					}
+				},
+			});
+			activeInspector = inspector;
+			inspector.closed.finally(() => {
+				if (activeInspector === inspector) activeInspector = undefined;
+			});
+		},
+	});
 	pi.registerShortcut("ctrl+shift+i", {
 		description: "Abort the running plan/implement agent",
 		handler: async (ctx) => {
-			if (lifecycle.abortActiveChild()) ctx.ui.setStatus("plan-implement", "plan-implement: aborting child process…");
-			else {
+			if (lifecycle.abortActiveChild()) {
+				if (ctx.mode !== "tui") {
+					ctx.ui.setStatus("plan-implement", "plan-implement: aborting child process…");
+				}
+			} else {
 				const suffix =
 					lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
 				ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
@@ -228,6 +273,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
 			return;
 		}
+		const dashboard = createDashboard(ctx, plannerModel, implementerModel);
 		try {
 			await runApprovedWorkflow(
 				{
@@ -276,9 +322,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					requestLand: (prNumber, cwd) =>
 						requestLand(pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
 					requestAutopilot: (prNumber, cwd) => requestPrAutopilot(pi, "drive", prNumber, ctx, cwd),
+					dashboard,
 				},
 			);
 		} finally {
+			dashboard?.dispose();
 			lifecycle.finishWorkflow(token);
 		}
 	}
@@ -347,4 +395,49 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		},
 	});
 	pi.events.on(PLAN_IMPLEMENT_REQUEST_EVENT, (data) => claimPlanImplementRequest(data, runPlanImplement));
+
+	function createDashboard(
+		ctx: ExtensionCommandContext,
+		plannerModel: string,
+		implementerModel: string,
+	): PlanPipelineDashboard | undefined {
+		if (ctx.mode !== "tui") return undefined;
+		const dashboardStore = new PlanImplementDashboardStore();
+		const transcriptStore = new PlanImplementTranscriptStore();
+		dashboardStore.addPhase("planner", "Planner", plannerModel, "planner");
+		transcriptStore.addChild("planner");
+		dashboardStore.addPhase("implementer", "Implementer", implementerModel, "implementer");
+		transcriptStore.addChild("implementer");
+
+		activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
+		const disposeWidget = mountPlanImplementDashboard(ctx.ui, dashboardStore, {
+			stripTerminalSequences,
+			truncateToWidth: (text, width) => truncateToWidth(text, width),
+		});
+		const ticker = setInterval(() => {
+			dashboardStore.tick();
+		}, 1000);
+		ticker.unref?.();
+
+		return {
+			addPhase: (id, label, model, role) => {
+				dashboardStore.addPhase(id, label, model, role);
+				transcriptStore.addChild(id);
+			},
+			markRunning: (id) => dashboardStore.markRunning(id),
+			progress: (id, info) => dashboardStore.progress(id, info),
+			complete: (id, info) => dashboardStore.complete(id, info),
+			event: (id, ev) => transcriptStore.push(id, ev),
+			note: (id, text) => transcriptStore.note(id, text),
+			tick: () => dashboardStore.tick(),
+			dispose: () => {
+				clearInterval(ticker);
+				activeInspector?.close();
+				activeInspector = undefined;
+				activeStores = undefined;
+				transcriptStore.dispose();
+				disposeWidget();
+			},
+		};
+	}
 }

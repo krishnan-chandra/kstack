@@ -8,5 +8,5 @@ export {
 
 import { ChildTranscriptStore } from "../shared/transcript-store.ts";
 
-/** Panel-review name for the shared bounded child transcript store. */
-export class PanelTranscriptStore extends ChildTranscriptStore {}
+/** Plan-implement name for the shared bounded child transcript store. */
+export class PlanImplementTranscriptStore extends ChildTranscriptStore {}
