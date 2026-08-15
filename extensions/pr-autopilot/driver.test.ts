@@ -8,6 +8,7 @@ import { type DriverOps, runAutopilot } from "./driver.ts";
 import type { AutopilotPersistedState, ExecFn, ExecFnResult, ResolvedAutopilotConfig } from "./types.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
+const MERGED_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 const BRANCH = "kstack/fix-thing";
 const config: ResolvedAutopilotConfig = {
 	models: [
@@ -56,6 +57,7 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 	const roles: string[] = [];
 	const unexpected: string[] = [];
 	let statusReads = 0;
+	let mergedBase = false;
 	const ok = (stdout = ""): ExecFnResult => ({ code: 0, stdout, stderr: "" });
 	const exec: ExecFn = async (command, args) => {
 		const key = `${command} ${args.join(" ")}`;
@@ -113,14 +115,18 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 			return ok(JSON.stringify(scenario.checks ?? [{ name: "test", state: "SUCCESS", bucket: "pass" }]));
 		}
 		if (command === "git" && args[0] === "branch") return ok(`${scenario.branch ?? BRANCH}\n`);
-		if (command === "git" && args[0] === "rev-parse") return ok(`${SHA}\n`);
+		if (command === "git" && args[0] === "rev-parse") return ok(`${mergedBase ? MERGED_SHA : SHA}\n`);
 		if (command === "git" && args[0] === "status") {
 			statusReads++;
 			if (scenario.dirty) return ok(" M user-work.ts\n");
 			if (scenario.fixerChanges && statusReads % 2 === 0) return ok(" M src/a.ts\n");
 			return ok();
 		}
-		if (command === "git" && ["fetch", "merge", "push", "add", "commit"].includes(args[0] ?? "")) return ok();
+		if (command === "git" && args[0] === "merge") {
+			mergedBase = true;
+			return ok();
+		}
+		if (command === "git" && ["fetch", "push", "add", "commit"].includes(args[0] ?? "")) return ok();
 		unexpected.push(key);
 		return { code: 1, stdout: "", stderr: `unexpected command: ${key}` };
 	};
