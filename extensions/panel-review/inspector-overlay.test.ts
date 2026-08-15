@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { matchesKey } from "@earendil-works/pi-tui";
+import type { DashboardTheme } from "../shared/live-dashboard.ts";
+import type { TerminalText } from "../shared/terminal-text.ts";
 import {
 	formatTokens,
 	InspectorComponent,
@@ -9,7 +11,7 @@ import {
 	sanitizeMultilineText,
 	wrapAndSanitizeText,
 } from "./inspector-overlay.ts";
-import { type DashboardTheme, PanelDashboardStore, type TerminalText } from "./live-dashboard.ts";
+import { PanelDashboardStore } from "./live-dashboard.ts";
 import { PanelTranscriptStore } from "./transcript-store.ts";
 
 const fakeTheme: DashboardTheme = {

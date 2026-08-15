@@ -1,30 +1,6 @@
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
-import {
-	type DashboardPolicy,
-	type DashboardTheme,
-	LiveDashboardComponent,
-	LiveDashboardStore,
-	mountLiveDashboard,
-	type RenderRequester,
-	renderDashboard as renderSharedDashboard,
-	type WidgetUi,
-} from "../shared/live-dashboard.ts";
-import { fallbackTerminalText, type TerminalText } from "../shared/terminal-text.ts";
+import { LiveDashboardStore } from "../shared/live-dashboard.ts";
 import type { AgentRole } from "./types.ts";
-
-export {
-	type DashboardRow,
-	type DashboardStatus,
-	type DashboardTheme,
-	rowElapsedSeconds,
-	STATUS_ICON,
-} from "../shared/live-dashboard.ts";
-export {
-	codePointWidth,
-	sanitizeDisplayText,
-	stripTerminalSequencesFallback,
-	type TerminalText,
-} from "../shared/terminal-text.ts";
 
 export interface PlanPipelineDashboard {
 	addPhase(id: string, label: string, model: string, role: AgentRole): void;
@@ -37,50 +13,12 @@ export interface PlanPipelineDashboard {
 	dispose(): void;
 }
 
-const PLAN_POLICY: DashboardPolicy = {
-	copy: { title: "■ Plan & implement", help: " — ^⇧P inspect · ^⇧I abort" },
-	modelColor: () => "dim",
-	clearPreviewOnComplete: true,
-};
-
 export class PlanImplementDashboardStore extends LiveDashboardStore {
 	constructor(now: () => number = () => Date.now()) {
-		super(PLAN_POLICY, now);
+		super("■ Plan & implement", " — ^⇧P inspect · ^⇧I abort", true, now);
 	}
 
-	addPhase(id: string, label: string, model: string, role: AgentRole): void {
-		this.addRow(id, label, model, role, true);
+	addPhase(id: string, label: string, model: string, _role: AgentRole): void {
+		this.addRow(id, label, model, "dim", true);
 	}
-}
-
-export function renderDashboard(
-	store: PlanImplementDashboardStore,
-	width: number,
-	theme: DashboardTheme,
-	text: TerminalText = fallbackTerminalText,
-): string[] {
-	return renderSharedDashboard(store, width, theme, text);
-}
-
-export class PlanImplementDashboardComponent extends LiveDashboardComponent {
-	constructor(
-		store: PlanImplementDashboardStore,
-		tui: RenderRequester,
-		theme: DashboardTheme,
-		text: TerminalText = fallbackTerminalText,
-	) {
-		super(store, tui, theme, text);
-	}
-}
-
-export function mountPlanImplementDashboard(
-	ui: WidgetUi,
-	store: PlanImplementDashboardStore,
-	text: TerminalText = fallbackTerminalText,
-): () => void {
-	return mountLiveDashboard(
-		ui,
-		"plan-implement",
-		(tui, theme) => new PlanImplementDashboardComponent(store, tui, theme, text),
-	);
 }

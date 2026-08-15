@@ -17,6 +17,7 @@ import {
 } from "../shared/change-kind.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
+import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
@@ -30,11 +31,7 @@ import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { preflightStack } from "./delivery-mode.ts";
 import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
-import {
-	mountPlanImplementDashboard,
-	PlanImplementDashboardStore,
-	type PlanPipelineDashboard,
-} from "./live-dashboard.ts";
+import { PlanImplementDashboardStore, type PlanPipelineDashboard } from "./live-dashboard.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { PlanImplementTranscriptStore } from "./transcript-store.ts";
@@ -436,7 +433,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		transcriptStore.addChild("implementer");
 
 		activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
-		const disposeWidget = mountPlanImplementDashboard(ctx.ui, dashboardStore, {
+		const disposeWidget = mountLiveDashboard(ctx.ui, "plan-implement", dashboardStore, {
 			stripTerminalSequences,
 			truncateToWidth: (text, width) => truncateToWidth(text, width),
 		});

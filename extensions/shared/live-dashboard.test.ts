@@ -1,22 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-	type DashboardPolicy,
-	type DashboardTheme,
-	LiveDashboardStore,
-	renderDashboard,
-	rowElapsedSeconds,
-} from "./live-dashboard.ts";
-
-const policy: DashboardPolicy = {
-	copy: { title: "■ Test", help: " — inspect" },
-	modelColor: () => "dim",
-	clearPreviewOnComplete: true,
-};
+import { type DashboardTheme, LiveDashboardStore, renderDashboard, rowElapsedSeconds } from "./live-dashboard.ts";
 
 class TestStore extends LiveDashboardStore {
 	add(id: string): void {
-		this.addRow(id, id.toUpperCase(), `model/${id}`, "test", true);
+		this.addRow(id, id.toUpperCase(), `model/${id}`, "dim", true);
 	}
 }
 
@@ -25,7 +13,7 @@ const theme: DashboardTheme = { fg: (_color, text) => text };
 describe("LiveDashboardStore", () => {
 	it("tracks add, progress, complete, and tick transitions", () => {
 		let now = 1000;
-		const store = new TestStore(policy, () => now);
+		const store = new TestStore("■ Test", " — inspect", true, () => now);
 		let emissions = 0;
 		store.subscribe(() => emissions++);
 		store.add("a");
@@ -41,8 +29,16 @@ describe("LiveDashboardStore", () => {
 		assert.equal(emissions, 4);
 	});
 
+	it("retains previews when configured", () => {
+		const store = new TestStore("■ Test", " — inspect", false, () => 1000);
+		store.add("a");
+		store.progress("a", { turns: 1, preview: "final preview" });
+		store.complete("a", { status: "completed" });
+		assert.equal(store.getRows()[0].preview, "final preview");
+	});
+
 	it("renders configured copy and bounded rows", () => {
-		const store = new TestStore(policy, () => 1000);
+		const store = new TestStore("■ Test", " — inspect", true, () => 1000);
 		store.add("a");
 		const lines = renderDashboard(store, 80, theme);
 		assert.match(lines[0], /■ Test — 0\/1 done · 0s — inspect/);

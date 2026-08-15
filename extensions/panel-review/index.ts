@@ -4,12 +4,13 @@ import { rmSync } from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
+import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
 import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
-import { mountPanelDashboard, PanelDashboardStore } from "./live-dashboard.ts";
+import { PanelDashboardStore } from "./live-dashboard.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { type PipelineDashboard, resolvePanel, runReviewPipeline, type VerdictDetails } from "./run-phases.ts";
 import { PanelTranscriptStore } from "./transcript-store.ts";
@@ -235,7 +236,7 @@ export default function (pi: ExtensionAPI): void {
 			transcriptStore.addChild(reviewer.label);
 		}
 		activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
-		const disposeWidget = mountPanelDashboard(ctx.ui, dashboardStore, {
+		const disposeWidget = mountLiveDashboard(ctx.ui, "panel-review", dashboardStore, {
 			stripTerminalSequences,
 			truncateToWidth: (text, width) => truncateToWidth(text, width),
 		});

@@ -10,7 +10,9 @@ import {
 	sanitizeMultilineText,
 	wrapAndSanitizeText,
 } from "../shared/inspector-overlay.ts";
-import type { DashboardTheme, PlanImplementDashboardStore, TerminalText } from "./live-dashboard.ts";
+import type { DashboardTheme } from "../shared/live-dashboard.ts";
+import type { TerminalText } from "../shared/terminal-text.ts";
+import type { PlanImplementDashboardStore } from "./live-dashboard.ts";
 import type { PlanImplementTranscriptStore } from "./transcript-store.ts";
 
 const COPY = {

@@ -3,11 +3,11 @@ import { fallbackTerminalText, sanitizeDisplayText, type TerminalText } from "./
 
 export type DashboardStatus = "queued" | "running" | "completed" | "failed" | "aborted";
 
-export interface DashboardRow {
+interface DashboardRow {
 	id: string;
 	label: string;
 	model: string;
-	kind: string;
+	modelColor: "accent" | "dim";
 	status: DashboardStatus;
 	turns: number;
 	activity?: string;
@@ -19,17 +19,6 @@ export interface DashboardRow {
 
 export interface DashboardTheme {
 	fg(color: string, text: string): string;
-}
-
-interface DashboardCopy {
-	title: string;
-	help: string;
-}
-
-export interface DashboardPolicy {
-	copy: DashboardCopy;
-	modelColor(row: DashboardRow): string;
-	clearPreviewOnComplete: boolean;
 }
 
 export const STATUS_ICON: Record<DashboardStatus, { icon: string; color: string }> = {
@@ -48,12 +37,16 @@ export function rowElapsedSeconds(row: DashboardRow, now: number): number | unde
 export class LiveDashboardStore {
 	private rows: DashboardRow[] = [];
 	private listeners = new Set<() => void>();
-	private readonly policy: DashboardPolicy;
+	private readonly clearPreviewOnComplete: boolean;
 	private readonly now: () => number;
+	readonly title: string;
+	readonly help: string;
 	readonly startedAt: number;
 
-	constructor(policy: DashboardPolicy, now: () => number = () => Date.now()) {
-		this.policy = policy;
+	constructor(title: string, help: string, clearPreviewOnComplete: boolean, now: () => number = () => Date.now()) {
+		this.title = title;
+		this.help = help;
+		this.clearPreviewOnComplete = clearPreviewOnComplete;
 		this.now = now;
 		this.startedAt = now();
 	}
@@ -75,9 +68,9 @@ export class LiveDashboardStore {
 		return this.rows.find((row) => row.id === id);
 	}
 
-	protected addRow(id: string, label: string, model: string, kind: string, deduplicate: boolean): void {
+	protected addRow(id: string, label: string, model: string, modelColor: "accent" | "dim", deduplicate: boolean): void {
 		if (deduplicate && this.find(id)) return;
-		this.rows.push({ id, label, model, kind, status: "queued", turns: 0 });
+		this.rows.push({ id, label, model, modelColor, status: "queued", turns: 0 });
 		this.emit();
 	}
 
@@ -110,7 +103,7 @@ export class LiveDashboardStore {
 		if (result.turns !== undefined) row.turns = result.turns;
 		if (result.status === "failed" && result.error) row.error = result.error;
 		row.activity = undefined;
-		if (this.policy.clearPreviewOnComplete) row.preview = undefined;
+		if (this.clearPreviewOnComplete) row.preview = undefined;
 		this.emit();
 	}
 
@@ -139,10 +132,6 @@ export class LiveDashboardStore {
 	elapsedSeconds(): number {
 		return Math.max(0, Math.round((this.now() - this.startedAt) / 1000));
 	}
-
-	getPolicy(): DashboardPolicy {
-		return this.policy;
-	}
 }
 
 export function renderDashboard(
@@ -154,11 +143,10 @@ export function renderDashboard(
 	const lines: string[] = [];
 	const summary = store.summary();
 	const done = summary.completed + summary.failed + summary.aborted;
-	const { copy, modelColor } = store.getPolicy();
 	const header =
-		theme.fg("success", copy.title) +
+		theme.fg("success", store.title) +
 		theme.fg("muted", ` — ${done}/${summary.total} done · ${store.elapsedSeconds()}s`) +
-		theme.fg("dim", copy.help);
+		theme.fg("dim", store.help);
 	lines.push(text.truncateToWidth(header, width));
 
 	const showModel = width >= 60;
@@ -169,7 +157,7 @@ export function renderDashboard(
 		const safeLabel = sanitizeDisplayText(row.label, text);
 		const safeModel = sanitizeDisplayText(row.model, text);
 		let line = `${theme.fg(color, icon)} ${safeLabel}${theme.fg("muted", ` — ${row.status}`)}`;
-		if (showModel) line += theme.fg(modelColor(row), ` (${safeModel})`);
+		if (showModel) line += theme.fg(row.modelColor, ` (${safeModel})`);
 		const elapsed = rowElapsedSeconds(row, store.nowMs());
 		if (showActivity) {
 			const meta: string[] = [];
@@ -222,19 +210,20 @@ export class LiveDashboardComponent implements Component {
 	}
 }
 
-export interface WidgetUi {
+interface WidgetUi {
 	setWidget(key: string, content: unknown): void;
 }
 
 export function mountLiveDashboard(
 	ui: WidgetUi,
 	key: string,
-	createComponent: (tui: RenderRequester, theme: DashboardTheme) => LiveDashboardComponent,
+	store: LiveDashboardStore,
+	text: TerminalText = fallbackTerminalText,
 ): () => void {
 	let component: LiveDashboardComponent | undefined;
 	let disposed = false;
 	ui.setWidget(key, (tui: RenderRequester, theme: DashboardTheme) => {
-		component = createComponent(tui, theme);
+		component = new LiveDashboardComponent(store, tui, theme, text);
 		return component;
 	});
 	return () => {

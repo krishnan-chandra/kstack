@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-	codePointWidth,
 	type DashboardTheme,
-	mountPlanImplementDashboard,
-	PlanImplementDashboardComponent,
-	PlanImplementDashboardStore,
+	LiveDashboardComponent,
+	mountLiveDashboard,
 	renderDashboard,
 	rowElapsedSeconds,
+} from "../shared/live-dashboard.ts";
+import {
+	codePointWidth,
 	sanitizeDisplayText,
 	stripTerminalSequencesFallback,
 	type TerminalText,
-} from "./live-dashboard.ts";
+} from "../shared/terminal-text.ts";
+import { PlanImplementDashboardStore } from "./live-dashboard.ts";
 
 const fakeTheme: DashboardTheme = {
 	fg: (_color, text) => text,
@@ -142,7 +144,7 @@ describe("sanitizeDisplayText and helpers", () => {
 	});
 });
 
-describe("mountPlanImplementDashboard", () => {
+describe("mountLiveDashboard", () => {
 	it("mounts widget and disposes cleanly", () => {
 		const store = new PlanImplementDashboardStore();
 		let widgetKey: string | undefined;
@@ -154,7 +156,7 @@ describe("mountPlanImplementDashboard", () => {
 			},
 		};
 
-		const unmount = mountPlanImplementDashboard(ui, store, fakeText);
+		const unmount = mountLiveDashboard(ui, "plan-implement", store, fakeText);
 		assert.equal(widgetKey, "plan-implement");
 		assert.equal(typeof widgetFactory, "function");
 
@@ -162,7 +164,7 @@ describe("mountPlanImplementDashboard", () => {
 		assert.equal(widgetFactory, undefined);
 	});
 
-	it("PlanImplementDashboardComponent renders and invalidates", () => {
+	it("LiveDashboardComponent renders and invalidates", () => {
 		const store = new PlanImplementDashboardStore();
 		store.addPhase("planner", "Planner", "model/p", "planner");
 		let renders = 0;
@@ -171,7 +173,7 @@ describe("mountPlanImplementDashboard", () => {
 				renders++;
 			},
 		};
-		const component = new PlanImplementDashboardComponent(store, tui, fakeTheme, fakeText);
+		const component = new LiveDashboardComponent(store, tui, fakeTheme, fakeText);
 		const lines = component.render(80);
 		assert.ok(lines.length >= 2);
 

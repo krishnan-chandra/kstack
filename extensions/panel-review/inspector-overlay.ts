@@ -10,7 +10,9 @@ import {
 	sanitizeMultilineText,
 	wrapAndSanitizeText,
 } from "../shared/inspector-overlay.ts";
-import type { DashboardTheme, PanelDashboardStore, TerminalText } from "./live-dashboard.ts";
+import type { DashboardTheme } from "../shared/live-dashboard.ts";
+import type { TerminalText } from "../shared/terminal-text.ts";
+import type { PanelDashboardStore } from "./live-dashboard.ts";
 import type { PanelTranscriptStore } from "./transcript-store.ts";
 
 export type { InspectorState, OpenInspectorResult, RenderRequester };

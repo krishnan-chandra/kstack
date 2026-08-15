@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-	codePointWidth,
 	type DashboardTheme,
-	mountPanelDashboard,
-	PanelDashboardComponent,
-	PanelDashboardStore,
+	LiveDashboardComponent,
+	mountLiveDashboard,
 	renderDashboard,
-	sanitizeDisplayText,
-} from "./live-dashboard.ts";
+} from "../shared/live-dashboard.ts";
+import { codePointWidth, sanitizeDisplayText } from "../shared/terminal-text.ts";
+import { PanelDashboardStore } from "./live-dashboard.ts";
 
 const ESC = "\u001b";
 const BEL = "\u0007";
@@ -236,12 +235,12 @@ describe("dashboard rendering sanitation", () => {
 	});
 });
 
-describe("PanelDashboardComponent + mountPanelDashboard", () => {
+describe("LiveDashboardComponent + mountLiveDashboard", () => {
 	it("requests a render on store updates and stops after dispose", () => {
 		const { store } = makeStore();
 		store.addReviewer("a", "A", "m1");
 		let renders = 0;
-		const component = new PanelDashboardComponent(store, { requestRender: () => renders++ }, theme);
+		const component = new LiveDashboardComponent(store, { requestRender: () => renders++ }, theme);
 		store.markRunning("a");
 		store.progress("a", { turns: 1 });
 		assert.equal(renders, 2);
@@ -263,12 +262,12 @@ describe("PanelDashboardComponent + mountPanelDashboard", () => {
 		};
 		const { store } = makeStore();
 		store.addReviewer("a", "A", "m1");
-		const dispose = mountPanelDashboard(ui, store);
+		const dispose = mountLiveDashboard(ui, "panel-review", store);
 		assert.ok(widgets.has("panel-review"));
 		const factory = widgets.get("panel-review") as (
 			tui: { requestRender(): void },
 			th: DashboardTheme,
-		) => PanelDashboardComponent;
+		) => LiveDashboardComponent;
 		let renders = 0;
 		const component = factory({ requestRender: () => renders++ }, theme);
 		assert.ok(component);

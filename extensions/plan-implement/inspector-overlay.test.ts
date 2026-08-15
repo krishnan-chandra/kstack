@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { DashboardTheme } from "../shared/live-dashboard.ts";
+import { stripTerminalSequencesFallback, type TerminalText } from "../shared/terminal-text.ts";
 import {
 	formatTokens,
 	InspectorComponent,
@@ -9,12 +11,7 @@ import {
 	sanitizeMultilineText,
 	wrapAndSanitizeText,
 } from "./inspector-overlay.ts";
-import {
-	type DashboardTheme,
-	PlanImplementDashboardStore,
-	stripTerminalSequencesFallback,
-	type TerminalText,
-} from "./live-dashboard.ts";
+import { PlanImplementDashboardStore } from "./live-dashboard.ts";
 import { PlanImplementTranscriptStore } from "./transcript-store.ts";
 
 const fakeTheme: DashboardTheme = {
