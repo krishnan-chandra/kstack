@@ -3,7 +3,7 @@
 import { SessionRunLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
 
 export type WorkflowPhase = "idle" | "planning" | "approval" | "implementing" | "fixing" | "publishing";
-export type WorkflowToken = SessionToken;
+type WorkflowToken = SessionToken;
 
 export class WorkflowLifecycle extends SessionRunLifecycle {
 	private phase: WorkflowPhase = "idle";

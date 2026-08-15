@@ -254,7 +254,7 @@ describe("archive-store", () => {
 			// Re-import with same bytes is a no-op
 			assert.equal(importSessionPending(db, importFromContent(content)), "already-archived");
 			// Same id, different bytes: hard error
-			const other = richSessionJsonl({ id: TEST_SESSION_ID }) + "";
+			const other = `${richSessionJsonl({ id: TEST_SESSION_ID })}`;
 			const tampered = other.replace("hello archive world", "tampered content here");
 			assert.throws(() => importSessionPending(db, importFromContent(tampered)), ArchiveStoreError);
 		} finally {

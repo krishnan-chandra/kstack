@@ -10,7 +10,7 @@
 
 import { type ChildEvent, type ChildUsage, truncateHeadUtf8, truncateTailUtf8 } from "../shared/child-agent-runner.ts";
 
-export type TranscriptEntry =
+type TranscriptEntry =
 	| { kind: "note"; text: string; at: number }
 	| { kind: "tool"; summary: string; durationMs?: number; at: number }
 	| { kind: "text"; text: string; turn: number; at: number }

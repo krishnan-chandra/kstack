@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { getKstackPath, loadConfig, resolveClassifierModel, validateRouterConfig } from "./config.ts";
+import { loadConfig, resolveClassifierModel, validateRouterConfig } from "./config.ts";
 
 describe("kstack-router config validation", () => {
 	it("accepts empty config", () => {
@@ -59,7 +59,7 @@ describe("kstack-router config loading", () => {
 
 	beforeEach(() => {
 		mkdirSync(tempDir, { recursive: true });
-		const env = { PI_CODING_AGENT_DIR: tempDir };
+		const _env = { PI_CODING_AGENT_DIR: tempDir };
 		// Override getKstackPath to use our temp dir.
 		// Use the original function via the module.
 	});

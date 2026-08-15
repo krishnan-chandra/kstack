@@ -40,17 +40,15 @@ class FakeProcess implements SpawnedProcess {
 }
 
 function event(text: string, extra: Record<string, unknown> = {}): string {
-	return (
-		JSON.stringify({
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [{ type: "text", text }],
-				usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, cost: { total: 0.25 } },
-				...extra,
-			},
-		}) + "\n"
-	);
+	return `${JSON.stringify({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, cost: { total: 0.25 } },
+			...extra,
+		},
+	})}\n`;
 }
 
 function run(child: FakeProcess, overrides: Record<string, unknown> = {}) {
@@ -241,25 +239,25 @@ describe("runChildAgent", () => {
 			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }) },
 		});
 		child.output(
-			JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "/repo/foo.ts" } }) + "\n",
+			`${JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "/repo/foo.ts" } })}\n`,
 		);
 		await new Promise((r) => setTimeout(r, 10));
-		child.output(JSON.stringify({ type: "tool_execution_end" }) + "\n");
+		child.output(`${JSON.stringify({ type: "tool_execution_end" })}\n`);
 		child.output(
-			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello " } }) + "\n",
+			`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello " } })}\n`,
 		);
 		child.output(
-			JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } }) + "\n",
+			`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } })}\n`,
 		);
 		child.output(
-			JSON.stringify({
+			`${JSON.stringify({
 				type: "message_end",
 				message: {
 					role: "assistant",
 					content: [{ type: "text", text: "hello world" }],
 					usage: { input: 100, output: 20, cacheRead: 5, cacheWrite: 2, cost: { total: 0.05 } },
 				},
-			}) + "\n",
+			})}\n`,
 		);
 		child.close(0);
 		const result = await promise;

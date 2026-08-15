@@ -299,7 +299,7 @@ export function readHandoffHistory(
 	const db = openArchiveDbReadOnly(dbPath);
 	try {
 		const session = getSessionRow(db, source.sessionId);
-		if (!session || session.state !== "archived") {
+		if (session?.state !== "archived") {
 			throw new Error(`Previous session ${source.sessionId} is not active or finalized in the archive.`);
 		}
 		const total = countEntries(db, source.sessionId);
@@ -358,7 +358,7 @@ export function searchHandoffHistory(
 		const db = openArchiveDbReadOnly(dbPath);
 		try {
 			const session = getSessionRow(db, source.sessionId);
-			if (!session || session.state !== "archived") {
+			if (session?.state !== "archived") {
 				throw new Error(`Previous session ${source.sessionId} is not active or finalized in the archive.`);
 			}
 			const hits = searchArchive(db, {

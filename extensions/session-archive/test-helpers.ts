@@ -15,7 +15,7 @@ export function sessionJsonl(entries: Record<string, unknown>[], header: Record<
 		cwd: "/Users/test/Code/project",
 		...header,
 	};
-	return [head, ...entries].map((e) => JSON.stringify(e)).join("\n") + "\n";
+	return `${[head, ...entries].map((e) => JSON.stringify(e)).join("\n")}\n`;
 }
 
 export function messageEntry(

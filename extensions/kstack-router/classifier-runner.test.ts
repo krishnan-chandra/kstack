@@ -46,16 +46,14 @@ class FakeProcess implements SpawnedProcess {
 }
 
 function assistantEvent(text: string, usage: Record<string, unknown> = {}): string {
-	return (
-		JSON.stringify({
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [{ type: "text", text }],
-				usage: { input: 10, output: 5, cost: { total: 0.001 }, ...usage },
-			},
-		}) + "\n"
-	);
+	return `${JSON.stringify({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			usage: { input: 10, output: 5, cost: { total: 0.001 }, ...usage },
+		},
+	})}\n`;
 }
 
 function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
@@ -153,7 +151,7 @@ describe("runClassifier", () => {
 		const process = new FakeProcess();
 		const promise = runClassifier(options(process));
 		process.emitStdout('{"type":"turn_start"}\nnot-json\n');
-		process.emitStdout(JSON.stringify({ type: "message_end", message: { role: "toolResult" } }) + "\n");
+		process.emitStdout(`${JSON.stringify({ type: "message_end", message: { role: "toolResult" } })}\n`);
 		process.emitStdout(assistantEvent(ENVELOPE));
 		process.close(0);
 		const result = await promise;
@@ -183,10 +181,10 @@ describe("runClassifier", () => {
 		const process = new FakeProcess();
 		const promise = runClassifier(options(process));
 		process.emitStdout(
-			JSON.stringify({
+			`${JSON.stringify({
 				type: "message_end",
 				message: { role: "assistant", errorMessage: "provider quota exceeded", content: [] },
-			}) + "\n",
+			})}\n`,
 		);
 		process.close(0);
 		const result = await promise;

@@ -28,40 +28,31 @@ import {
 	attachFailedLogs,
 	currentBranch,
 	currentHead,
-	findLowestUnmergedPR,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
 	integrateRemoteHead,
 	isForbiddenStagingPath,
-	markPrReady,
-	mergeBaseIntoHead,
 	parsePorcelainPaths,
 	replyToIssueComment,
 	replyToReviewComment,
-	rerunFailedRun,
 	resolveReviewThread,
 	viewPR,
-	watchChecks,
 } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import { buildPRState } from "./pr-state.ts";
 import {
-	type AutopilotAgentRole,
 	type AutopilotMode,
-	type AutopilotModelSpec,
 	type AutopilotPersistedState,
-	type CheckRun,
 	type ExecFn,
 	type FailureClass,
 	LIMITS,
 	type PRState,
-	type ResolvedAutopilotConfig,
 	type ReviewThread,
 	type ThreadDecision,
 	type UsageSummary,
 } from "./types.ts";
-import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
+import { shouldForceAsk } from "./untrusted.ts";
 
 interface PushResult {
 	ok: boolean;

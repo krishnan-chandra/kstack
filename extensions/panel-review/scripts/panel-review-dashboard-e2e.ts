@@ -46,7 +46,7 @@ if (process.argv.includes("--mode")) {
 		},
 	];
 	for (const line of lines) {
-		process.stdout.write(JSON.stringify(line) + "\n");
+		process.stdout.write(`${JSON.stringify(line)}\n`);
 		await sleep(120); // keep the child alive long enough for queue states to render
 	}
 	process.exit(0);

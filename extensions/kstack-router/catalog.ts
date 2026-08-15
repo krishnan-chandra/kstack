@@ -125,7 +125,7 @@ export function checkDependencies(
 	availableSkillNames: string[],
 ): string[] {
 	const meta = CATALOG[routeId];
-	if (!meta || !meta.requires) return [];
+	if (!meta?.requires) return [];
 
 	const missing: string[] = [];
 	for (const dep of meta.requires) {

@@ -255,7 +255,7 @@ export function createArchiveTools(deps: {
 		const db = deps.openArchiveDbReadOnly(deps.dbPath);
 		try {
 			const session = deps.getSessionRow(db, params.session_id);
-			if (!session || session.state !== "archived") {
+			if (session?.state !== "archived") {
 				throw new Error(`No archived session with id ${params.session_id}.`);
 			}
 			const offset = params.offset ?? 0;

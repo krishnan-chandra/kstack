@@ -190,10 +190,10 @@ describe("InspectorComponent", () => {
 
 		let closed = false;
 		let aborted = false;
-		let renders = 0;
+		let _renders = 0;
 		const fakeTui = {
 			requestRender: () => {
-				renders++;
+				_renders++;
 			},
 			terminal: { rows: 25 },
 		};

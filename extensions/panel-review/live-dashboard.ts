@@ -77,7 +77,7 @@ function fallbackTruncateToWidth(text: string, width: number): string {
 				out += c;
 				kept += cw;
 			}
-			return out + "…";
+			return `${out}…`;
 		}
 		used += w;
 	}
@@ -89,11 +89,11 @@ const fallbackTerminalText: TerminalText = {
 	truncateToWidth: fallbackTruncateToWidth,
 };
 
-export type DashboardStatus = "queued" | "running" | "completed" | "failed" | "aborted";
+type DashboardStatus = "queued" | "running" | "completed" | "failed" | "aborted";
 
 type DashboardRole = "reviewer" | "lead";
 
-export interface DashboardRow {
+interface DashboardRow {
 	id: string;
 	label: string;
 	model: string;

@@ -9,14 +9,7 @@ import {
 	type SpawnImpl,
 	truncateHeadUtf8,
 } from "../shared/child-agent-runner.ts";
-import {
-	type AgentRole,
-	type AgentRunResult,
-	type DeliveryMode,
-	LIMITS,
-	type UsageSummary,
-	type WorkLocation,
-} from "./types.ts";
+import { type AgentRole, type AgentRunResult, type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
 export type { SpawnedProcess, SpawnImpl };
 export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs" | "maxRuntimeMs"> {
