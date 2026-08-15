@@ -183,12 +183,16 @@ export async function prepareMutationCheckout(
 		backend.headSha(cwd),
 		backend.isWorkingCopyEmpty(cwd),
 	]);
-	const refName =
-		current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : undefined;
+	if (!current.ok) return current;
+	const refName = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
 	if (refName !== state.headRef) {
+		const actual =
+			current.ref.kind === "no-bookmark"
+				? `jj change ${current.ref.changeId.slice(0, 12)} with no bookmark`
+				: (refName ?? "a detached HEAD");
 		return {
 			ok: false,
-			error: `Selected PR #${state.number} uses ${state.headRef}, but the checkout is on ${refName ?? "a detached HEAD"}. Open its managed worktree first.`,
+			error: `Selected PR #${state.number} uses ${state.headRef}, but the current workstream is ${actual}. ${backend.id === "jj" ? `Move bookmark ${state.headRef} to @ or select its workspace before retrying.` : "Open its managed worktree first."}`,
 		};
 	}
 	if (!head.ok || head.sha !== state.headSha) {
@@ -198,7 +202,15 @@ export async function prepareMutationCheckout(
 		};
 	}
 	if (!clean.ok) return clean;
-	if (!clean.empty) return { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." };
+	if (!clean.empty) {
+		return {
+			ok: false,
+			error:
+				backend.id === "jj"
+					? `The jj PR head ${state.headRef} must target an empty working-copy checkpoint before pr-autopilot can add a fix. Record the current change, run jj new, move ${state.headRef} to @, and push it before retrying.`
+					: "The PR worktree must be clean before pr-autopilot can mutate it.",
+		};
+	}
 	const integrated = await backend.integrateRemoteHead(cwd, state.headRef);
 	if (!integrated.ok) return integrated;
 	const synchronizedHead = await backend.headSha(cwd);
@@ -230,10 +242,11 @@ export async function doCommitAndPush(
 	]);
 	const refName =
 		current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : undefined;
-	if (refName !== headRef || !head.ok || head.sha !== expectedHeadSha) {
+	const headMatches = head.ok && (backend.id === "jj" || head.sha === expectedHeadSha);
+	if (refName !== headRef || !headMatches) {
 		return {
 			ok: false,
-			error: `The fixer changed checkout identity (expected ${headRef}@${expectedHeadSha}, found ${refName ?? "detached"}@${head.ok ? head.sha : "unknown"}). Refusing to publish.`,
+			error: `The fixer changed workstream identity (expected ${headRef}${backend.id === "git" ? `@${expectedHeadSha}` : ""}, found ${refName ?? "detached"}@${head.ok ? head.sha : "unknown"}). Refusing to publish.`,
 		};
 	}
 	if (!changed.ok) return { ok: false, error: `Could not inspect fixer changes: ${changed.error}` };
@@ -257,6 +270,17 @@ export async function doCommitAndPush(
 		`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
 	);
 	if (!committed.ok) return committed;
+	if (backend.id === "jj") {
+		const empty = await backend.isWorkingCopyEmpty(cwd);
+		if (!empty.ok || !empty.empty) {
+			return {
+				ok: false,
+				error: empty.ok
+					? "jj commit did not leave an empty working-copy change; refusing to push an ambiguous fix."
+					: empty.error,
+			};
+		}
+	}
 	const pushed = await backend.push(cwd, headRef);
 	if (!pushed.ok) return pushed;
 	const committedHead = await backend.headSha(cwd);
@@ -269,6 +293,10 @@ export async function runCleanup(
 	confirm: (label: string, body: string) => Promise<boolean>,
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 ): Promise<boolean> {
+	if (backend.id === "jj") {
+		notify("Cleanup is a no-op with the jj backend; no Git worktree or branch was removed.", "info");
+		return true;
+	}
 	const current = await backend.currentRef(cwd);
 	const branch = current.ok && current.ref.kind === "branch" ? current.ref.name : "";
 

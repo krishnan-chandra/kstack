@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { JjBackend } from "../shared/vcs/jj-backend.ts";
 import {
 	applyForceAsk,
 	classifyBlockers,
+	doCommitAndPush,
 	fetchPRState,
 	loadPersistedState,
 	parseTriage,
 	persistPath,
 	prepareMutationCheckout,
+	runCleanup,
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
@@ -199,7 +202,42 @@ describe("pr-autopilot state machine", () => {
 			const state = buildPRState(makePr(), [], [], null);
 			const result = await prepareMutationCheckout(createGitBackend(exec), "/repo", state);
 			assert.equal(result.ok, false);
-			if (!result.ok) assert.match(result.error, /different|checkout is on/);
+			if (!result.ok) assert.match(result.error, /current workstream is/);
+		});
+
+		it("accepts a clean jj head checkpoint with the PR bookmark at @", async () => {
+			const pr = makePr();
+			const exec: ExecFn = async (command, args) => {
+				assert.equal(command, "jj");
+				if (args.includes("bookmark") && args.includes("list")) {
+					return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
+				}
+				if (args.includes('if(empty, "true", "false")')) {
+					return { code: 0, stdout: "true", stderr: "" };
+				}
+				if (args.includes("log")) return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
+			assert.deepEqual(result, { ok: true });
+		});
+
+		it("rejects a jj PR head without an empty automation checkpoint", async () => {
+			const pr = makePr();
+			const exec: ExecFn = async (_command, args) => {
+				if (args.includes("bookmark") && args.includes("list")) {
+					return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
+				}
+				if (args.includes('if(empty, "true", "false")')) {
+					return { code: 0, stdout: "false", stderr: "" };
+				}
+				if (args.includes("--summary")) return { code: 0, stdout: "M src/index.ts\n", stderr: "" };
+				if (args.includes("log")) return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /empty working-copy checkpoint/);
 		});
 
 		it("rejects a dirty selected checkout before running a fixer", async () => {
@@ -215,6 +253,61 @@ describe("pr-autopilot state machine", () => {
 				ok: false,
 				error: "The PR worktree must be clean before pr-autopilot can mutate it.",
 			});
+		});
+	});
+
+	describe("jj fixer publication", () => {
+		it("accepts jj snapshot SHA changes, commits the path diff, and pushes an empty checkpoint", async () => {
+			const expected = "1".repeat(40);
+			const edited = "2".repeat(40);
+			const checkpoint = "3".repeat(40);
+			let committed = false;
+			const calls: string[] = [];
+			const exec: ExecFn = async (_command, args) => {
+				calls.push(args.join(" "));
+				if (args.includes("bookmark") && args.includes("list")) {
+					return { code: 0, stdout: "feature\n", stderr: "" };
+				}
+				if (args.includes("--name-only")) return { code: 0, stdout: "src/fix.ts\n", stderr: "" };
+				if (args.includes("commit")) {
+					committed = true;
+					return { code: 0, stdout: "", stderr: "" };
+				}
+				if (args.includes('if(empty, "true", "false")')) {
+					return { code: 0, stdout: "true", stderr: "" };
+				}
+				if (args.includes("log")) {
+					return { code: 0, stdout: `${committed ? checkpoint : edited}\n`, stderr: "" };
+				}
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const result = await doCommitAndPush(new JjBackend(exec), "/repo", "feature", expected, 42, "VERIFY_OK");
+			assert.deepEqual(result, { ok: true, headSha: checkpoint });
+			assert.ok(calls.some((call) => call.includes("commit src/fix.ts -m Autopilot PR #42")));
+			assert.ok(calls.includes("--no-pager bookmark set feature -r @"));
+			assert.ok(calls.includes("--no-pager git push --bookmark feature"));
+		});
+	});
+
+	describe("cleanup semantics", () => {
+		it("is an explicit no-op for jj without asking to remove a Git worktree", async () => {
+			let confirmed = false;
+			const notices: string[] = [];
+			const exec: ExecFn = async () => {
+				throw new Error("jj cleanup must not execute a VCS command");
+			};
+			const cleaned = await runCleanup(
+				new JjBackend(exec),
+				"/repo",
+				async () => {
+					confirmed = true;
+					return true;
+				},
+				(message) => notices.push(message),
+			);
+			assert.equal(cleaned, true);
+			assert.equal(confirmed, false);
+			assert.match(notices.join("\n"), /no-op with the jj backend/);
 		});
 	});
 
@@ -374,13 +467,14 @@ describe("pr-autopilot state machine", () => {
 		);
 
 		it("buildTriagerTask fences untrusted text and includes logs", () => {
-			const task = buildTriagerTask(state);
+			const task = buildTriagerTask(state, "jj");
 			assert.match(task, /PR #42/);
 			assert.match(task, /Base: main/);
 			assert.match(task, /Failing/);
 			assert.match(task, /UNTRUSTED PR DATA/);
 			assert.match(task, /Error: expected 1/);
 			assert.match(task, /decision/);
+			assert.match(task, /VCS backend: jj/);
 		});
 
 		it("buildFixerTask includes triage and forbids workflow edits", () => {
@@ -388,11 +482,14 @@ describe("pr-autopilot state machine", () => {
 				state,
 				'{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}',
 				"all",
+				"jj",
 			);
 			assert.match(fixer, /PR #42/);
 			assert.match(fixer, /Fix Phase/);
 			assert.match(fixer, /VERIFY_FAIL/);
 			assert.match(fixer, /UNTRUSTED PR DATA/);
+			assert.match(fixer, /VCS backend: jj/);
+			assert.match(fixer, /Head ref: kstack\/fix-thing/);
 		});
 
 		it("fixer task for threads mode says threads only", () => {
@@ -400,6 +497,7 @@ describe("pr-autopilot state machine", () => {
 				state,
 				'{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}',
 				"threads",
+				"git",
 			);
 			assert.match(fixer, /review threads marked fix only/);
 		});
@@ -409,6 +507,7 @@ describe("pr-autopilot state machine", () => {
 				state,
 				'{"checks":[],"threads":[],"conflicts":false,"draft":false,"summary":""}',
 				"ci",
+				"git",
 			);
 			assert.match(fixer, /code CI failures only/);
 		});

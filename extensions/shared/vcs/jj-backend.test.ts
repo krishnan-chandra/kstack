@@ -127,6 +127,24 @@ describe("JjBackend mutations", () => {
 		assert.deepEqual(await backend.restorePaths("/repo", ["forbidden.txt"]), { ok: true });
 	});
 
+	it("moves the task bookmark to the current checkpoint before pushing", async () => {
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'description.first_line() ++ "\\n"']),
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")']),
+				result: { stdout: "true" },
+			},
+			{ command: "jj", args: noPager(["describe", "-m", "Automation checkpoint for feature"]) },
+			{ command: "jj", args: noPager(["bookmark", "set", "feature", "-r", "@"]) },
+			{ command: "jj", args: noPager(["git", "push", "--bookmark", "feature"]) },
+		]);
+		assert.deepEqual(await new JjBackend(exec).push("/repo", "feature"), { ok: true });
+	});
+
 	it("abandons a conflicted remote-head merge instead of moving the bookmark", async () => {
 		const remote = "4".repeat(40);
 		const exec = scriptedExec([

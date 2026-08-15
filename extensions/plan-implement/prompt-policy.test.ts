@@ -56,7 +56,7 @@ describe("plan-implement prompt policy", () => {
 	it("publishes with only the selected backend", () => {
 		assert.match(publisher, /Follow the parent `VCS backend` policy/);
 		assert.match(publisher, /jj git push --bookmark/);
-		assert.match(publisher, /do not create a Git branch/);
+		assert.match(publisher, /Do not create a Git branch/);
 		assert.match(publisher, /If unrecorded files belong to the requested workstream, stop and report them/);
 		assert.match(publisher, /never record additional changes/);
 	});

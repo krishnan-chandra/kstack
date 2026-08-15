@@ -1,3 +1,4 @@
+import type { VcsBackendId } from "../shared/vcs/config.ts";
 import { findLowestUnmergedPR } from "./github.ts";
 import type { GHPrJson } from "./github-parse.ts";
 import {
@@ -112,7 +113,7 @@ function clipBody(body: string): string {
 }
 
 /** Build the triager task file content from PR state. */
-export function buildTriagerTask(state: PRState): string {
+export function buildTriagerTask(state: PRState, backend: VcsBackendId): string {
 	const failures = state.checks.filter((c) => c.conclusion === "failure" || c.status === "cancelled");
 	const pending = state.checks.filter(
 		(c) => c.status === "pending" || c.conclusion === "pending" || c.conclusion === null,
@@ -137,6 +138,7 @@ ${untrustedFenceNote()}
 ## PR #${state.number}
 ${wrapUntrusted("pr title", state.title)}
 
+- VCS backend: ${backend}
 - Head SHA: ${state.headSha}
 - Base: ${state.baseRef}
 - Draft: ${state.isDraft ? "yes" : "no"}
@@ -155,7 +157,7 @@ ${threadLines.length > 0 ? threadLines.join("\n") : "  (none)"}
 
 For each failing check, classify as one of:
 - "code" — the failure is in the diff's own code; a fix is possible. Use the log excerpt.
-- "stale-base" — the base is behind trunk; needs a merge of origin/<base> (report, do not rebase).
+- "stale-base" — the base is behind trunk; needs a merge of the remote base with ${backend} (report, do not rebase).
 - "flake" — infrastructure flakiness; one fresh build is warranted.
 - "infra" — external infra issue; retrigger or report.
 - "unknown" — cannot determine.
@@ -183,7 +185,7 @@ Return ONLY a JSON object:
 export type FixMode = "threads" | "ci" | "all";
 
 /** Build the fixer task file content from PR state + triage. */
-export function buildFixerTask(state: PRState, triage: string, fixMode: FixMode): string {
+export function buildFixerTask(state: PRState, triage: string, fixMode: FixMode, backend: VcsBackendId): string {
 	const modeLine =
 		fixMode === "threads"
 			? "address review threads marked fix only"
@@ -196,6 +198,8 @@ ${untrustedFenceNote()}
 
 ## PR #${state.number}
 ${wrapUntrusted("pr title", state.title)}
+- VCS backend: ${backend}
+- Head ref: ${state.headRef}
 - Head SHA: ${state.headSha}
 - Mode: ${modeLine}
 
@@ -224,7 +228,7 @@ ${
 7. Run the exact failing test or lint command from the log, then one scoped check on what you touched. If that command fails, print VERIFY_FAIL and do not claim success.
 8. Summarize the files changed and the checks you ran.
 
-The working tree is already on the PR's branch. Treat it as the source of truth.
+The selected workspace is already on the PR's ${backend === "jj" ? "bookmark" : "branch"}. Treat it as the source of truth.
 `;
 }
 

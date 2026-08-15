@@ -197,6 +197,28 @@ export class JjBackend implements VcsBackend {
 	}
 
 	async push(cwd: string, ref: string): Promise<VcsResult> {
+		const description = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", 'description.first_line() ++ "\\n"']);
+		if (description.code !== 0) {
+			return { ok: false, error: `Could not inspect the current jj description: ${diagnostic(description)}` };
+		}
+		if (!output(description)) {
+			const empty = await this.isWorkingCopyEmpty(cwd);
+			if (!empty.ok) return empty;
+			if (!empty.empty) {
+				return {
+					ok: false,
+					error: "The current jj change is non-empty and has no description. Record or describe it before pushing.",
+				};
+			}
+			const described = await this.jj(cwd, ["describe", "-m", `Automation checkpoint for ${ref}`]);
+			if (described.code !== 0) {
+				return { ok: false, error: `Could not describe the jj push checkpoint: ${diagnostic(described)}` };
+			}
+		}
+		const moved = await this.jj(cwd, ["bookmark", "set", ref, "-r", "@"]);
+		if (moved.code !== 0) {
+			return { ok: false, error: `Could not move jj bookmark ${ref} to the current change: ${diagnostic(moved)}` };
+		}
 		const result = await this.jj(cwd, ["git", "push", "--bookmark", ref], 60_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj git push failed: ${diagnostic(result)}` };
 	}
