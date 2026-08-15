@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { resolveInvestigationModel, validateInvestigationConfig } from "./investigation-model.mjs";
 
 const luna = { model: "openai/gpt-5.6-luna", thinking: "medium" };
@@ -57,7 +57,10 @@ describe("investigation model allowlist", () => {
 	it("prints the resolved model spec and rejects bad CLI arguments", () => {
 		const dir = mkdtempSync(join(tmpdir(), "kstack-investigation-cli-"));
 		try {
-			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ investigation: { allowedModels: [luna], defaultModel: luna.model } }));
+			writeFileSync(
+				join(dir, "kstack.json"),
+				JSON.stringify({ investigation: { allowedModels: [luna], defaultModel: luna.model } }),
+			);
 			const env = { ...process.env, PI_CODING_AGENT_DIR: dir };
 			const defaultRun = spawnSync(process.execPath, [script], { encoding: "utf8", env });
 			assert.equal(defaultRun.status, 0);

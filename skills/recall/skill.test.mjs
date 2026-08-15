@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const skillDir = dirname(fileURLToPath(import.meta.url));
@@ -28,10 +28,7 @@ test("recall enforces a read-only tool boundary on miners", async () => {
 	assert.match(skill, /investigation-model\.mjs/);
 	// The allowlist is the enforcement, not the prompt: built-in read-only
 	// tools plus the two read-only archive tools, and nothing else.
-	assert.match(
-		skill,
-		/--tools read,grep,find,ls,search_session_archive,read_session_archive/,
-	);
+	assert.match(skill, /--tools read,grep,find,ls,search_session_archive,read_session_archive/);
 	// Miners keep extensions enabled so the session-archive tools exist.
 	assert.doesNotMatch(skill, /--no-extensions/);
 	// No shell-based searching; bash stays out of the allowlist.
@@ -41,10 +38,7 @@ test("recall enforces a read-only tool boundary on miners", async () => {
 test("recall separates active-session reading from archive reads", async () => {
 	const skill = await read("SKILL.md");
 
-	assert.match(
-		skill,
-		/Never pass an\s+active session id to read_session_archive/,
-	);
+	assert.match(skill, /Never pass an\s+active session id to read_session_archive/);
 	assert.match(skill, /read the JSONL files directly/);
 });
 
