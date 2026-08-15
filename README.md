@@ -56,9 +56,13 @@ create branches.
 
 ## Configuration
 
+K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
+(default `~/.pi/agent/kstack.json`). The `vcs.backend` setting selects `"git"`
+or `"jj"` for repository mutations and defaults to `"git"` when omitted.
 Model assignments for panel-review, plan-implement, arena, swarm, and the
-`how` and `why` investigation skills live in a single unified config file:
-`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`). The optional `fast-implement` section configures its one-shot implementer independently of `plan-implement`.
+`how` and `why` investigation skills use sections in the same file. The optional
+`fast-implement` section configures its one-shot implementer independently of
+`plan-implement`.
 
 Copy the starter and edit:
 
@@ -67,9 +71,10 @@ cp kstack.example.json ~/.pi/agent/kstack.json
 ```
 
 See [`kstack.example.json`](kstack.example.json) for the full schema. Each
-section is optional — missing sections use built-in defaults or prompt for
-models at runtime. To discover the local Pi model catalog, validate selected
-providers, preview the update, and write only the user configuration, run:
+section is optional. Missing sections use built-in defaults or prompt for
+models at runtime. To choose the VCS backend, discover the local Pi model
+catalog, validate selected providers, preview the update, and write only the
+user configuration, run:
 
 ```text
 /skill:setup-kstack
