@@ -23,7 +23,8 @@ interface ArchiveDeps {
 	move?: (source: string, dest: string, sha256: string, size: number) => void;
 }
 
-type ArchiveResult =
+/* exported: return type for archive operations */
+export type ArchiveResult =
 	| { status: "archived"; message: string }
 	| { status: "cancelled"; message: string }
 	| { status: "rejected"; message: string }
@@ -60,6 +61,8 @@ interface ArchiveCurrentOptions {
 	notify: (message: string, level: "info" | "warning" | "error") => void;
 	/** Mirrors ctx.newSession: resolves after replacement, cancelled=true if vetoed. */
 	startNewSession: (withSession: (fresh: FreshSessionHandle) => Promise<void>) => Promise<{ cancelled: boolean }>;
+	/** Runs in the replacement session, after the archive move has succeeded. */
+	afterArchive?: (fresh: FreshSessionHandle) => Promise<void>;
 }
 
 interface StagedArchive {
@@ -213,6 +216,7 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 				}
 			});
 			fresh.notify(`Session archived: ${destPath}`, "info");
+			await options.afterArchive?.(fresh);
 		} catch (err) {
 			finalizationError = (err as Error).message;
 			fresh.notify(

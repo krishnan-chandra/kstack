@@ -13,6 +13,8 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
+import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
 import { findHandoffSource, type HandoffSource } from "./history-reader.ts";
@@ -92,7 +94,10 @@ export function createHandoffHandler(api: HandoffApi) {
 		// becomes stale after newSession succeeds.
 		const oldId = ctx.sessionManager.getSessionId();
 		const cwd = ctx.cwd;
-		const historyRef = formatHistoryReference(oldFile, oldId, cwd);
+		const baseHistoryRef = formatHistoryReference(oldFile, oldId, cwd);
+		const historyRef = parsed.archive
+			? `${baseHistoryRef}\nStorage: archived before this handoff; use the archive fallback by exact session ID.`
+			: baseHistoryRef;
 		const source: HandoffSource = { version: 1, sessionFile: oldFile, sessionId: oldId, cwd };
 		const draft = buildReferenceHandoffPrompt(goal, historyRef);
 
@@ -193,74 +198,107 @@ export function createHandoffHandler(api: HandoffApi) {
 
 		let result: { cancelled: boolean };
 		let replacementSessionStarted = false;
+		const sessionOptions: Parameters<ExtensionCommandContext["newSession"]>[0] = {
+			parentSession: oldFile,
+			setup: async (sm) => {
+				sm.appendSessionInfo(replacementSessionName);
+				sm.appendCustomMessageEntry("handoff", historyRef, true, source);
+			},
+			withSession: async (fresh) => {
+				replacementSessionStarted = true;
+				// Report the model and effort the replacement session actually
+				// started on. A startup --model / --thinking flag or active
+				// model scoping can override the switch made above; never
+				// claim otherwise.
+				const actual = fresh.model;
+				const actualEffort = readFreshEffort(fresh.thinkingLevel);
+				const expectedModel = targetModel ?? previousModel;
+				const expectedEffort = appliedEffort;
+				const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
+				const effortMismatch = Boolean(expectedEffort && actualEffort && actualEffort !== expectedEffort);
+				if ((modelMismatch || effortMismatch) && actual) {
+					const actualLabel = formatModelEffort(actual, actualEffort);
+					const expectedLabel = expectedModel
+						? formatModelEffort(expectedModel, expectedEffort)
+						: (expectedEffort ?? "the requested selection");
+					const reason = targetModel
+						? "a startup --model/--thinking flag or model scoping overrides handoff selection"
+						: "a startup --model/--thinking flag or model scoping overrides inheritance";
+					fresh.ui.notify(
+						`Handoff started, but the session is on ${actualLabel} instead of ${expectedLabel} (${reason}). Previous session: ${oldFile}`,
+						"warning",
+					);
+				} else if (actual && (targetModel || expectedEffort)) {
+					const label = formatModelEffort(actual, actualEffort ?? expectedEffort);
+					fresh.ui.notify(`Handoff started. Model: ${label}. Previous session: ${oldFile}`, "info");
+				} else {
+					fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
+				}
+				// The editor already confirmed this text. Check the failures Pi
+				// raises before accepting a user message, and only restore the
+				// editor for those known pre-submission failures. Once sending
+				// starts, an error may occur after the message was persisted, so
+				// restoring it could create a duplicate turn on retry.
+				const leavePromptInEditor = (reason: string): void => {
+					fresh.ui.setEditorText(edited);
+					fresh.ui.notify(`Handoff prompt is ready to submit: ${reason}`, "warning");
+				};
+				if (!actual) {
+					leavePromptInEditor("No model selected");
+					return;
+				}
+
+				let hasAuth = fresh.modelRegistry.hasConfiguredAuth(actual);
+				if (!hasAuth) {
+					try {
+						hasAuth = (await fresh.modelRegistry.getProviderAuth(actual.provider)) !== undefined;
+					} catch (err) {
+						leavePromptInEditor(`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`);
+						return;
+					}
+				}
+				if (!hasAuth) {
+					leavePromptInEditor(`No credentials available for ${formatModelRef(actual)}`);
+					return;
+				}
+
+				await fresh.sendUserMessage(edited);
+			},
+		};
 		try {
-			result = await ctx.newSession({
-				parentSession: oldFile,
-				setup: async (sm) => {
-					sm.appendSessionInfo(replacementSessionName);
-					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
-				},
-				withSession: async (fresh) => {
-					replacementSessionStarted = true;
-					// Report the model and effort the replacement session actually
-					// started on. A startup --model / --thinking flag or active
-					// model scoping can override the switch made above; never
-					// claim otherwise.
-					const actual = fresh.model;
-					const actualEffort = readFreshEffort(fresh.thinkingLevel);
-					const expectedModel = targetModel ?? previousModel;
-					const expectedEffort = appliedEffort;
-					const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
-					const effortMismatch = Boolean(expectedEffort && actualEffort && actualEffort !== expectedEffort);
-					if ((modelMismatch || effortMismatch) && actual) {
-						const actualLabel = formatModelEffort(actual, actualEffort);
-						const expectedLabel = expectedModel
-							? formatModelEffort(expectedModel, expectedEffort)
-							: (expectedEffort ?? "the requested selection");
-						const reason = targetModel
-							? "a startup --model/--thinking flag or model scoping overrides handoff selection"
-							: "a startup --model/--thinking flag or model scoping overrides inheritance";
-						fresh.ui.notify(
-							`Handoff started, but the session is on ${actualLabel} instead of ${expectedLabel} (${reason}). Previous session: ${oldFile}`,
-							"warning",
-						);
-					} else if (actual && (targetModel || expectedEffort)) {
-						const label = formatModelEffort(actual, actualEffort ?? expectedEffort);
-						fresh.ui.notify(`Handoff started. Model: ${label}. Previous session: ${oldFile}`, "info");
-					} else {
-						fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
-					}
-					// The editor already confirmed this text. Check the failures Pi
-					// raises before accepting a user message, and only restore the
-					// editor for those known pre-submission failures. Once sending
-					// starts, an error may occur after the message was persisted, so
-					// restoring it could create a duplicate turn on retry.
-					const leavePromptInEditor = (reason: string): void => {
-						fresh.ui.setEditorText(edited);
-						fresh.ui.notify(`Handoff prompt is ready to submit: ${reason}`, "warning");
-					};
-					if (!actual) {
-						leavePromptInEditor("No model selected");
-						return;
-					}
-
-					let hasAuth = fresh.modelRegistry.hasConfiguredAuth(actual);
-					if (!hasAuth) {
-						try {
-							hasAuth = (await fresh.modelRegistry.getProviderAuth(actual.provider)) !== undefined;
-						} catch (err) {
-							leavePromptInEditor(`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`);
-							return;
-						}
-					}
-					if (!hasAuth) {
-						leavePromptInEditor(`No credentials available for ${formatModelRef(actual)}`);
-						return;
-					}
-
-					await fresh.sendUserMessage(edited);
-				},
-			});
+			if (parsed.archive) {
+				const archiveRoot = getArchiveRoot();
+				let continueInFresh: (() => Promise<void>) | undefined;
+				const archiveResult = await archiveCurrentSession({
+					deps: { archiveRoot, dbPath: getArchiveDbPath(archiveRoot) },
+					snapshot: {
+						sourcePath: oldFile,
+						sessionId: oldId,
+						sessionDir: ctx.sessionManager.getSessionDir(),
+						sessionName: ctx.sessionManager.getSessionName()?.trim() || undefined,
+					},
+					waitForIdle: () => ctx.waitForIdle(),
+					confirm: (title, message) => ctx.ui.confirm(title, message),
+					notify: (message, level) => ctx.ui.notify(message, level),
+					startNewSession: (archiveInFresh) =>
+						ctx.newSession({
+							// The active parent path is moved before continuation; the
+							// structured handoff metadata preserves durable provenance.
+							...sessionOptions,
+							parentSession: undefined,
+							withSession: async (fresh) => {
+								continueInFresh = () => sessionOptions.withSession?.(fresh) ?? Promise.resolve();
+								await archiveInFresh({ notify: (message, level) => fresh.ui.notify(message, level) });
+							},
+						}),
+					afterArchive: async () => {
+						await continueInFresh?.();
+					},
+				});
+				result = { cancelled: archiveResult.status === "cancelled" };
+			} else {
+				result = await ctx.newSession(sessionOptions);
+			}
 		} catch (err) {
 			// Once withSession begins, the old API is stale. In particular, a
 			// send failure must propagate without trying to restore the old model.

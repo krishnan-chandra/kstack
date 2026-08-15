@@ -4,21 +4,26 @@ Continue work in a fresh, lean Pi session while keeping a durable reference to t
 
 `/handoff` does **not** copy the old conversation into the new context and does not call an LLM to summarize it. It builds a small editable prompt containing the user's goal and the previous session reference. Saving that editor is the only confirmation: the linked replacement session starts immediately with the saved prompt. The next agent uses read-only handoff tools to retrieve only the history it needs.
 
-The sessions are linked twice:
+By default, the sessions are linked twice:
 
 - `parentSession` in the new session header preserves Pi's native provenance.
 - A visible `handoff` `custom_message` stores the old session's exact file path, session ID, and cwd.
+
+With `--archive`, the active parent path is moved, so the replacement omits the stale `parentSession` path and uses the structured handoff message plus exact archived session ID as its durable provenance.
 
 ## Usage
 
 ```text
 /handoff now implement this for teams as well
+/handoff --archive continue in a new session and archive this one
 /handoff execute phase one of the plan
 /handoff --model anthropic/claude-sonnet-4-5 execute phase one of the plan
 /handoff --model openai/gpt-5.2:high continue the work
 /handoff -m anthropic/claude-opus-4-6:max finish the refactor
 /handoff                          # continue from the prior resume point
 ```
+
+`--archive` opts into archiving the current session before the confirmed handoff prompt is sent. The archive confirmation shows the source and destination. If confirmed, the old session becomes read-only and leaves `/resume`; the replacement session records that its predecessor is archived and reads it through the exact-ID archive fallback. If archiving fails, the continuation prompt is not sent.
 
 `--model` (also `-m` or `--model=provider/model-id[:effort]`) selects the model
 and optional effort for the replacement session. It accepts a canonical
@@ -63,6 +68,7 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 ## Behavior notes
 
 - **Reference-only:** no conversation serialization, synthesis call, generated summary, or inherited conversation payload.
+- **Optional archive-first handoff:** `--archive` runs the session archive state machine before sending the continuation prompt. The replacement metadata explicitly marks the predecessor archived. Archive cancellation leaves the old session active; archive finalization failure leaves the replacement active without auto-submitting the prompt and reports the pending archive recovery instructions.
 - **Immediate naming:** the replacement session receives a short lowercase slug derived from the handoff goal during setup, before the confirmed prompt is sent.
 - **On-demand history:** the replacement agent retrieves normalized recent entries or targeted matches through the handoff-specific tools.
 - **Model and effort selection:** `--model` switches to the requested model right before the replacement session is created; an optional `:<effort>` suffix then sets that thinking level. Without a suffix, the parent session's effective effort is pinned. Without `--model`, both the parent model and its effort are pinned so the new session starts on them. Model is applied first so Pi clamps effort against the selected model's capabilities. Both paths use `pi.setModel()` and `pi.setThinkingLevel()` before `ctx.newSession()`, because a brand-new session resolves model and thinking from the configured defaults. An unknown or ambiguous model reference fails before the editor opens; a requested model without an API key cancels the handoff. If the requested effort is unsupported, the handoff warns and continues with the clamped effective level. Choosing a model or effort also persists it as the configured default, the same as `/model` or Shift+Tab. Pinning an already-current effort may briefly bounce through another supported level so Pi writes the default a fresh session can inherit; that can append a bounded thinking-level change to the outgoing session.

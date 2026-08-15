@@ -73,12 +73,17 @@ describe("archiveCurrentSession lifecycle", () => {
 			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
 			snapshot: snapshotFor(tree, source),
 			...fake,
+			afterArchive: async () => {
+				assert.ok(!existsSync(source), "continuation must run after the source moves");
+				fake.calls.push({ kind: "afterArchive" });
+			},
 		});
 
 		assert.equal(result.status, "archived");
 		const kinds = fake.calls.map((c) => c.kind);
 		assert.deepEqual(kinds.slice(0, 3), ["waitForIdle", "confirm", "newSession"]);
 		assert.ok(kinds.includes("fresh-notify:info"));
+		assert.ok(kinds.indexOf("fresh-notify:info") < kinds.indexOf("afterArchive"));
 
 		// File moved out of the active dir, bytes identical, read-only.
 		assert.ok(!existsSync(source));

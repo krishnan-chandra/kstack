@@ -29,7 +29,9 @@ export interface HandoffModel {
 	name?: string;
 }
 
-type HandoffParseResult = { ok: true; goal: string; modelRef?: string } | { ok: false; error: string };
+type HandoffParseResult =
+	| { ok: true; goal: string; modelRef?: string; archive: boolean }
+	| { ok: false; error: string };
 
 type ModelResolution =
 	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel }
@@ -47,11 +49,15 @@ export function isHandoffEffortLevel(value: string): value is HandoffEffortLevel
 export function parseHandoffArgs(raw: string): HandoffParseResult {
 	const tokens = raw.trim() === "" ? [] : raw.trim().split(/\s+/);
 	let modelRef: string | undefined;
+	let archive = false;
 	const goalTokens: string[] = [];
 
 	for (let i = 0; i < tokens.length; i++) {
 		const token = tokens[i];
-		if (token === "--model" || token === "-m") {
+		if (token === "--archive") {
+			if (archive) return { ok: false, error: "handoff accepts --archive only once" };
+			archive = true;
+		} else if (token === "--model" || token === "-m") {
 			if (modelRef !== undefined) {
 				return { ok: false, error: "handoff accepts only one --model value" };
 			}
@@ -78,7 +84,7 @@ export function parseHandoffArgs(raw: string): HandoffParseResult {
 		}
 	}
 
-	return { ok: true, goal: goalTokens.join(" "), modelRef };
+	return { ok: true, goal: goalTokens.join(" "), modelRef, archive };
 }
 
 /**
