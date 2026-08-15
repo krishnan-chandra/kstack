@@ -58,6 +58,8 @@ interface ArchiveCurrentOptions {
 	snapshot: ActiveSessionSnapshot;
 	waitForIdle: () => Promise<void>;
 	confirm: (title: string, message: string) => Promise<boolean>;
+	/** Skip the archive dialog when the invoking command already expressed explicit archive intent. */
+	skipConfirmation?: boolean;
 	notify: (message: string, level: "info" | "warning" | "error") => void;
 	/** Mirrors ctx.newSession: resolves after replacement, cancelled=true if vetoed. */
 	startNewSession: (withSession: (fresh: FreshSessionHandle) => Promise<void>) => Promise<{ cancelled: boolean }>;
@@ -164,16 +166,18 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 	}
 	const staged = stagedOrRejected.staged;
 
-	const confirmed = await options.confirm(
-		"Archive current session?",
-		[
-			`Session: ${staged.displayName}`,
-			`From: ${staged.canonicalSource}`,
-			`To: ${staged.destPath}`,
-			"",
-			"The session becomes read-only and leaves the /resume list. Pi will continue in a new empty session.",
-		].join("\n"),
-	);
+	const confirmed =
+		options.skipConfirmation === true ||
+		(await options.confirm(
+			"Archive current session?",
+			[
+				`Session: ${staged.displayName}`,
+				`From: ${staged.canonicalSource}`,
+				`To: ${staged.destPath}`,
+				"",
+				"The session becomes read-only and leaves the /resume list. Pi will continue in a new empty session.",
+			].join("\n"),
+		));
 	if (!confirmed) {
 		const cancelled: ArchiveResult = { status: "cancelled", message: "Archive cancelled." };
 		options.notify(cancelled.message, "info");

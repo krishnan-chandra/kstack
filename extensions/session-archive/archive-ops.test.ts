@@ -106,6 +106,25 @@ describe("archiveCurrentSession lifecycle", () => {
 		}
 	});
 
+	it("skips confirmation when the caller already captured explicit archive intent", async () => {
+		const tree = makeTempTree();
+		const source = tree.writeSession(TEST_SESSION_ID, richSessionJsonl());
+		const fake = makeFakeCtx({});
+
+		const result = await archiveCurrentSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			snapshot: snapshotFor(tree, source),
+			...fake,
+			skipConfirmation: true,
+			confirm: async () => {
+				throw new Error("confirmation must not be requested");
+			},
+		});
+
+		assert.equal(result.status, "archived");
+		assert.ok(!fake.calls.some((call) => call.kind === "confirm"));
+	});
+
 	it("proves the DB pending import happens before the session switch", async () => {
 		const tree = makeTempTree();
 		const content = richSessionJsonl();
