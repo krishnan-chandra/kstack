@@ -339,24 +339,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/t
 PYTHONPYCACHEPREFIX=/tmp/kstack-pycache python3 -m py_compile skills/git-worktrees/scripts/*.py
 ```
 
-The router also has a headless smoke test that registers the real extension
-against a mock Pi and drives the dispatch lifecycle (tool gating, playbook
-injection, restoration, delegation):
-
-```bash
-node extensions/kstack-router/scripts/smoke-mock-pi.mjs
-```
-
 The package also includes the skills listed in the table above. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
-
-### Session archive smoke test
-
-The full smoke test starts isolated Pi RPC processes, archives an unnamed inactive fixture and a named live session, makes a few small model calls, and does not touch the normal Pi session directory:
-
-```bash
-python3 extensions/session-archive/scripts/e2e-smoke.py
-```
 
 See the [session archive README](extensions/session-archive/README.md) for commands, storage paths, recovery behavior, and security limitations.
