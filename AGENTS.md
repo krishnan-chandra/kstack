@@ -40,6 +40,21 @@ before changing anything under `extensions/`.
 Name branches `kstack/<task-slug>` and use imperative commit subjects. Never
 push, publish, or open a pull request without explicit confirmation.
 
+Write commit messages and PR descriptions to temp files (`local/` is
+gitignored and suitable) and use `git commit -F` / `gh pr create --body-file`
+instead of inline flags. This avoids shell escaping issues with multi-line
+text and special characters.
+
+## Hooks
+
+`hk.pkl` at the repository root configures [hk](https://hk.jdx.dev) git hooks.
+The pre-commit hook runs `biome check` on staged `.ts` files and blocks the
+commit on any diagnostics at the `error` level. Install hooks with:
+
+```bash
+hk install
+```
+
 ## Layout notes
 
 - `local/` is gitignored, session-local working state. jj never snapshots it.

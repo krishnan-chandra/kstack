@@ -417,6 +417,65 @@ describe("plan-implement child runner", () => {
 	it("bounds UTF-8 output with disclosure", () => {
 		const output = truncateUtf8("🙂".repeat(20), 17);
 		assert.match(output, /truncated at 17 bytes/);
-		assert.ok(!output.includes("�"));
+		assert.ok(!output.includes("\uFFFD"));
+	});
+
+	it("forwards progress preview and onEvent structured events", async () => {
+		const process = new FakeProcess();
+		const events: unknown[] = [];
+		const previews: string[] = [];
+
+		const promise = runAgent(
+			options(process, {
+				onProgress: (p: { turns: number; activity: string; preview?: string }) => {
+					if (p.preview) previews.push(p.preview);
+				},
+				onEvent: (e: unknown) => {
+					events.push(e);
+				},
+			}),
+		);
+
+		process.stdout.emit(
+			"data",
+			Buffer.from(
+				`${JSON.stringify({
+					type: "tool_execution_start",
+					toolName: "read",
+					args: { path: "src/index.ts" },
+				})}\n`,
+			),
+		);
+
+		process.stdout.emit(
+			"data",
+			Buffer.from(
+				`${JSON.stringify({
+					type: "message_update",
+					assistantMessageEvent: { type: "text_delta", delta: "Here is step 1" },
+				})}\n`,
+			),
+		);
+
+		process.stdout.emit(
+			"data",
+			Buffer.from(
+				`${JSON.stringify({
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "stop",
+						content: [{ type: "text", text: "Here is step 1" }],
+						usage: { input: 10, output: 5, cost: { total: 0.01 } },
+					},
+				})}\n`,
+			),
+		);
+		process.close(0);
+
+		const result = await promise;
+		assert.equal(result.status, "completed");
+		assert.ok(events.length >= 2, `events was: ${JSON.stringify(events)}`);
+		assert.ok(previews.includes("Here is step 1"), `previews was: ${JSON.stringify(previews)}`);
 	});
 });
