@@ -456,6 +456,14 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					try {
 						if (worktreePlan && state.workflowCwd === initialCwd) {
 							fx.setStatus("plan-implement: creating managed worktree…");
+							if (fx.backend.id !== "git") {
+								return completeEarly({
+									status: "failed",
+									role: "implementer",
+									model: implementerModel,
+									error: "A Git worktree plan cannot run with the jj backend.",
+								});
+							}
 							const created = await fx.backend.createIsolation(worktreePlan);
 							if (!created.ok)
 								return completeEarly({

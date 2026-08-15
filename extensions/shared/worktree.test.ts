@@ -44,8 +44,7 @@ describe("managed Git worktrees", () => {
 		const planned = await backend(exec).planIsolation("/start", "Add archive search");
 		assert.equal(planned.ok, true);
 		if (!planned.ok) return;
-		assert.match(planned.plan.repositoryId, /^repo-[0-9a-f]{8}$/);
-		assert.equal(planned.plan.path, `/managed/${planned.plan.repositoryId}/add-archive-search`);
+		assert.match(planned.plan.path, /^\/managed\/repo-[0-9a-f]{8}\/add-archive-search$/);
 		assert.equal(planned.plan.ref, "kstack/add-archive-search");
 		assert.equal(planned.plan.baseRef, "refs/remotes/origin/main");
 		assert.equal(planned.plan.baseSha, BASE_SHA);
@@ -72,7 +71,7 @@ describe("managed Git worktrees", () => {
 		const { exec } = fakeGit({ occupiedBranches: new Set(["kstack/add-search"]) });
 		const planned = await backend(exec).planIsolation("/start", "Add search");
 		assert.equal(planned.ok, true);
-		if (planned.ok) assert.equal(planned.plan.slug, "add-search-2");
+		if (planned.ok) assert.equal(planned.plan.path.split("/").at(-1), "add-search-2");
 	});
 
 	it("creates only the repository namespace and invokes git without a shell", async () => {
@@ -84,7 +83,7 @@ describe("managed Git worktrees", () => {
 		if (!planned.ok) return;
 		const created = await vcs.createIsolation(planned.plan);
 		assert.equal(created.ok, true);
-		assert.deepEqual(made, [`/managed/${planned.plan.repositoryId}`]);
+		assert.deepEqual(made, [planned.plan.path.slice(0, planned.plan.path.lastIndexOf("/"))]);
 		assert.ok(
 			calls.some(
 				(call) =>
@@ -97,12 +96,7 @@ describe("managed Git worktrees", () => {
 	it("revalidates collisions immediately before creation", async () => {
 		const { exec } = fakeGit({ occupiedBranches: new Set(["kstack/add-search"]) });
 		const plan = {
-			kind: "git-worktree" as const,
 			sourceRepoRoot: "/repo",
-			commonGitDir: "/repo/.git",
-			managedRoot: "/managed",
-			repositoryId: "repo-12345678",
-			slug: "add-search",
 			ref: "kstack/add-search",
 			path: "/managed/repo-12345678/add-search",
 			baseRef: "refs/remotes/origin/main",

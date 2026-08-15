@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import type { VcsBackend } from "../shared/vcs/backend.ts";
+import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
@@ -50,12 +50,15 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
-	async function configuredBackend(ctx: ExtensionCommandContext, cwd: string): Promise<VcsBackend | string> {
+	async function configuredBackend(
+		ctx: ExtensionCommandContext,
+		cwd: string,
+	): Promise<VcsResult<{ backend: VcsBackend }>> {
 		const config = loadVcsBackend();
 		for (const warning of config.warnings) ctx.ui.notify(warning, "warning");
 		const backend = createVcsBackend(config.backend, makeExec(pi));
 		const preflight = await backend.preflight(cwd);
-		return preflight.ok ? backend : preflight.error;
+		return preflight.ok ? { ok: true, backend } : preflight;
 	}
 
 	async function execute(
@@ -65,8 +68,10 @@ export default function landExtension(pi: ExtensionAPI): void {
 	): Promise<LandResult> {
 		if (!ctx.hasUI) return blocked("Land requires interactive TUI/RPC mode.");
 		const cwd = options.cwd ?? ctx.cwd;
-		const resolved = preparedBackend ?? (await configuredBackend(ctx, cwd));
-		if (typeof resolved === "string") return blocked(resolved);
+		const resolved: VcsResult<{ backend: VcsBackend }> = preparedBackend
+			? { ok: true, backend: preparedBackend }
+			: await configuredBackend(ctx, cwd);
+		if (!resolved.ok) return blocked(resolved.error);
 		const token = lifecycle.begin();
 		if (!token) return blocked("Another landing run is active.");
 		ctx.ui.setStatus("land", "land: resolving target");
@@ -109,13 +114,14 @@ export default function landExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			const resolved = await configuredBackend(ctx, ctx.cwd);
-			if (typeof resolved === "string") {
-				ctx.ui.notify(resolved, "error");
+			if (!resolved.ok) {
+				ctx.ui.notify(resolved.error, "error");
 				return;
 			}
+			const backend = resolved.backend;
 			let prNumber = parsed.args.pr;
 			if (!prNumber) {
-				const current = await resolved.currentRef(ctx.cwd);
+				const current = await backend.currentRef(ctx.cwd);
 				if (!current.ok) {
 					ctx.ui.notify(current.error, "error");
 					return;
@@ -139,7 +145,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 			await execute(
 				{ target: { kind: "single", prNumber }, readiness: parsed.args.readiness, method: parsed.args.method },
 				ctx,
-				resolved,
+				backend,
 			);
 		},
 	});

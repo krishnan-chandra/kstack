@@ -68,11 +68,6 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const backend = createVcsBackend(vcsConfig.backend, makeExec(pi));
-		const preflight = await backend.preflight(ctx.cwd);
-		if (!preflight.ok) {
-			ctx.ui.notify(preflight.error, "error");
-			return;
-		}
 		const role = resolveRole(config.status === "loaded" ? config.config : null, (provider, model) =>
 			isChildModelAvailable(ctx.modelRegistry, provider, model),
 		);

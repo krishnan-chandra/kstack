@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { isForbiddenStagingPath } from "./github.ts";
 
 describe("porcelain and forbidden paths", () => {
 	it("parses git status --porcelain paths including renames", async () => {
-		const backend = createGitBackend(async () => ({
+		const backend = new GitBackend(async () => ({
 			code: 0,
 			stdout: " M src/a.ts\n?? new.ts\nR  old.ts -> dest.ts\n",
 			stderr: "",

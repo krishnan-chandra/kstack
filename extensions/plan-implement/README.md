@@ -27,9 +27,9 @@ another option. Put `--` before a task that starts with dashes.
 
 ## Behavior
 
-1. Requires TUI or RPC mode, a Git working tree, the `panel-review`
-   extension, and the `write-pr` and `find-reviewers` skills in the session's
-   discovered skill set (the publish phase consults both).
+1. Requires TUI or RPC mode, a workspace accepted by the configured VCS
+   backend, the `panel-review` extension, and the `write-pr` and
+   `find-reviewers` skills in the session's discovered skill set.
 2. Names an unnamed parent session with a short task slug as soon as the task
    is validated, before waiting, preflight, or any child model call. An
    explicit or previously assigned session name is preserved.
@@ -46,16 +46,17 @@ another option. Put `--` before a task that starts with dashes.
    the review fixer (implementer model, full tools) with the task and the
    verdict passed through mode-`0600` temp files. The fixer addresses Act On
    findings, verifies each against the repository, re-runs focused tests, and
-   commits verified fixes on the existing workstream branch.
+   records verified fixes on the existing branch or bookmark.
 9. Asks whether to publish, then runs the publisher (implementer model): it
-   follows `write-pr` to push the branch and create a draft PR (or update an
-   existing PR's title/body), then follows `find-reviewers` to recommend 2–5
+   follows `write-pr` to push the configured backend's branch or bookmark and
+   create a draft PR (or update an existing PR's title/body), then follows
+   `find-reviewers` to recommend 2–5
    reviewers with evidence and a review order. Its final report — PR URL,
    title, and the full reviewer recommendation — is displayed as the run's
    terminal output. The publisher never marks PRs ready, merges, or
    force-pushes.
 10. After a successful single-PR publication, resolves the open PR from the
-    workflow branch using live GitHub state and offers an optional `/land`
+    workflow branch or bookmark using live GitHub state and offers an optional `/land`
     continuation. If accepted, `/land` watches pr-autopilot readiness and keeps
     its own exact-head merge confirmation. Stack mode is excluded, and a
     missing land extension or unresolved PR ends cleanly at the published draft. Managed-worktree runs pass the retained workflow checkout to both landing and pr-autopilot.
@@ -92,17 +93,23 @@ Skills and context files intentionally remain enabled. A task can therefore
 compose with `create-pi-extension`, `create-skill`, `find-reviewers`, or any
 other matching installed/project skill without running recursive extensions.
 
-After plan approval, the extension inspects `git status`. In the current
-working tree it stops if tracked or untracked files already exist, then
-recommends `--worktree`. On a clean tree it creates and selects a dedicated
-`kstack/<task-slug>` branch from the current `HEAD` (numeric suffix on
-collision) before launching the implementer. The implementer verifies that
-branch and commits each coherent, verified increment. It never pushes or publishes. Finish with no uncommitted task changes. If a local Git
-identity, hook, or signing requirement blocks a commit, the agent stops and
-reports the blocker.
+The shared `vcs.backend` setting selects the single-PR workstream:
 
-The review fixer stays on that branch and commits each independent, verified
-fix batch. It does not start another branch.
+- Git mode requires a plain Git working tree. It stops on tracked or untracked
+  pre-existing changes and recommends `--worktree`. On a clean tree, it creates
+  `kstack/<task-slug>` from the current `HEAD`, adding a numeric collision
+  suffix when needed.
+- jj mode requires a colocated jj/Git workspace. It creates a `trunk()`-based
+  change with a collision-safe `kstack/<task-slug>` bookmark. jj's automatic
+  snapshot model replaces Git dirty-tree and staging assumptions.
+
+The parent injects backend-specific guidance into every child. The implementer
+and review fixer stay on the prepared workstream, record coherent verified
+increments with only the selected backend, and never publish. Git mode finishes
+with a clean tree. jj mode finishes with an empty working-copy change above the
+recorded implementation. The publisher describes that empty jj checkpoint,
+moves the task bookmark to `@`, and pushes it so later automation can add fixes
+without rewriting implementation changes.
 
 ### Managed worktree mode (`--worktree`)
 
@@ -123,9 +130,10 @@ worktree necessarily shares Git metadata and branch refs. The worktree is
 retained on success, failure, abort, and publication. Use the `git-worktrees`
 skill to inspect and clean it up explicitly.
 
-`--worktree` currently supports single-PR delivery only. Combining it with
-`--stack` fails before model calls because a Git linked worktree is not a jj
-workspace.
+`--worktree` requires the Git backend and supports single-PR delivery only.
+The jj backend rejects it before model calls; jj single delivery runs in the
+current workspace. Combining `--worktree` with `--stack` also fails before
+model calls.
 
 ### Stacked-PR mode (`--stack`)
 
@@ -133,9 +141,11 @@ Stacked-PR mode builds a **local** Jujutsu stack of changes and bookmarks, one
 bookmark per PR, and reviews it once. The implementer never publishes; the
 final publish phase owns publication.
 
-Stack mode adds a preflight before any model call:
+Stack mode requires `vcs.backend: "jj"` and adds a preflight before any model
+call:
 
 - `jj >= 0.44` is available and the directory is a Jujutsu workspace;
+- `user.name` and `user.email` are configured for jj;
 - the workspace is colocated with a Git worktree;
 - the `trunk()` revset resolves to exactly one 40-hex Git-backed commit (used as
   the immutable panel-review base);
@@ -188,14 +198,19 @@ The request carries a structured `{ task, mode, workLocation, changeKind, ctx }`
 synchronous `claimed` flag and an awaited completion promise. The slash command
 and the event listener call the same internal runner. Only the slash command
 collects flags and editor input. Both paths retain task validation,
-Git/panel/model preflight, confirmations, lifecycle checks, cleanup, and panel
+VCS/panel/model preflight, confirmations, lifecycle checks, cleanup, and panel
 review.
 
 See `api.ts` for the full contract and `api.test.ts` for usage examples.
 
 ## Configuration
 
-Configuration is the `"plan-implement"` section of
+The shared `vcs.backend` setting selects `"git"` or `"jj"` and defaults to
+`"git"` when omitted. The extension reads that setting once at the adapter
+boundary, runs the corresponding preflight, and passes one backend through all
+mutation phases. Repository-local overrides are not supported.
+
+Model configuration is the `"plan-implement"` section of
 `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
 
 ```json
@@ -251,19 +266,20 @@ instructions; child system prompts tell agents to honor trusted instructions
 and the explicit user task. The planner's Pi tool set is read-only, but OS file
 permissions are unchanged.
 
-In current-working-tree mode the implementer refuses a dirty tree, so panel
-review sees the committed task branch rather than mixed pre-existing edits.
-Worktree mode reviews only the managed linked worktree against its pinned
-base. The review-fixer and publisher children run with the user's Pi/OS
-permissions; the publisher's confirmation is the only gate before it pushes a
-branch and opens a draft PR on the user's GitHub account. Publication stops if
-uncommitted files belong to the requested workstream.
+In Git current-checkout mode, the implementer refuses a dirty tree so panel
+review sees only the committed task branch. Managed-worktree mode reviews the
+linked worktree against its pinned base. In jj mode, the parent verifies the
+bookmark ancestry, requires at least one non-empty change, and requires an
+empty working-copy change before review. The review-fixer and publisher
+children run with the user's Pi/OS permissions; the publisher's confirmation
+is the only gate before it pushes a branch or bookmark and opens a draft PR.
+Publication stops when workstream changes have not been recorded.
 
 ## Failure policy
 
-- Invalid config, unavailable models, missing Git/panel-review, missing
-  `write-pr`/`find-reviewers` skills, and bad task input stop before model
-  calls.
+- Invalid config, unavailable models, VCS preflight failures, a missing
+  panel-review extension, missing `write-pr`/`find-reviewers` skills, and bad
+  task input stop before model calls.
 - Stack-mode preflight failures (no jj, not a workspace, no colocated git, no
   single `trunk()` commit, missing `jj-stacked-prs` skill, Arena not excludable)
   stop before model calls.
@@ -271,10 +287,9 @@ uncommitted files belong to the requested workstream.
   only after plan approval; a creation failure stops before the implementer and
   reports any directory or branch that may need inspection.
 - Planner failure or plan rejection stops before the implementer.
-- Implementer failure is displayed and warns that committed checkpoints may
-  exist on the task branch and that uncommitted partial edits may remain; it
-  does not start panel review. Inspect the branch and `git status` before
-  retrying.
+- Implementer failure is displayed and warns that recorded checkpoints and
+  partial edits may remain; it does not start panel review. Inspect the retained
+  branch or jj change with the configured backend before retrying.
 - Successful implementation invokes panel-review directly through its claimed
   event-bus request. Missing listeners and request failures are reported.
   Panel confirmation, partial reviewer failures, and synthesis behavior remain
@@ -284,8 +299,8 @@ uncommitted files belong to the requested workstream.
 - Review-fixer failure is displayed; the publish phase is still offered
   afterwards (the PR ships the implementation plus whatever fixes landed).
 - Publisher failure (including `gh` auth/network errors) is displayed; the PR
-  may exist partially (e.g. pushed branch without a PR). Re-run `/plan-implement`
-  or finish publishing manually with the `write-pr` skill.
+  may exist partially, such as a pushed branch or bookmark without a PR. Re-run
+  `/plan-implement` or finish publishing manually with the `write-pr` skill.
 - Abort sends SIGTERM to the child process group and SIGKILL after five seconds.
   Session shutdown invalidates stale callbacks and uses the same cleanup path.
 

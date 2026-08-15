@@ -41,6 +41,18 @@ describe("current workstream branch policy", () => {
 	});
 });
 
+describe("remote head synchronization", () => {
+	it("fetches and resolves the remote head without merging it", async () => {
+		const remote = "3".repeat(40);
+		const { exec, calls } = fakeExec({
+			"fetch origin feature": {},
+			"rev-parse origin/feature": { stdout: `${remote}\n` },
+		});
+		assert.deepEqual(await new GitBackend(exec).fetchRemoteHead("/repo", "feature"), { ok: true, sha: remote });
+		assert.deepEqual(calls, ["fetch origin feature", "rev-parse origin/feature"]);
+	});
+});
+
 describe("committed workstream postcondition", () => {
 	it("requires the expected branch, a new commit, and a clean tree", async () => {
 		const base = "1".repeat(40);

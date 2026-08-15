@@ -13,20 +13,17 @@ export interface WorkstreamCheckpoint {
 	baseSha: string;
 }
 
-interface GitIsolationPlan {
-	kind: "git-worktree";
+export interface IsolationPlan {
 	sourceRepoRoot: string;
-	commonGitDir: string;
-	managedRoot: string;
-	repositoryId: string;
-	slug: string;
 	ref: string;
 	path: string;
 	baseRef: string;
 	baseSha: string;
 }
 
-export type IsolationPlan = GitIsolationPlan;
+export type WorkstreamIdentity =
+	| { kind: "git"; ref: string; headSha: string }
+	| { kind: "jj"; ref: string; changeId: string; parentCommitIds: string[] };
 
 export type MergeBaseResult =
 	| { kind: "clean"; headSha: string }
@@ -34,12 +31,12 @@ export type MergeBaseResult =
 	| { kind: "needs-human"; files: string[]; error: string }
 	| { kind: "failed"; error: string };
 
-export interface VcsBackend {
+interface BaseVcsBackend {
 	readonly id: VcsBackendId;
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>>;
-	workspaceRoot(cwd: string): Promise<VcsResult<{ path: string }>>;
 	headSha(cwd: string): Promise<VcsResult<{ sha: string }>>;
 	currentRef(cwd: string): Promise<VcsResult<{ ref: CurrentRef }>>;
+	workstreamIdentity(cwd: string): Promise<VcsResult<{ identity: WorkstreamIdentity }>>;
 	changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>>;
 	isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>>;
 	createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>>;
@@ -47,13 +44,22 @@ export interface VcsBackend {
 		cwd: string,
 		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
 	): Promise<VcsResult<{ headSha: string }>>;
-	planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>>;
-	createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>>;
-	removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>>;
 	commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult>;
 	restorePaths(cwd: string, paths: string[]): Promise<VcsResult>;
 	push(cwd: string, ref: string): Promise<VcsResult>;
-	fetch(cwd: string, ref?: string): Promise<VcsResult>;
-	integrateRemoteHead(cwd: string, ref: string): Promise<VcsResult>;
+	fetchRemoteHead(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>>;
 	mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult>;
 }
+
+export interface GitVcsBackend extends BaseVcsBackend {
+	readonly id: "git";
+	planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>>;
+	createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>>;
+	removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>>;
+}
+
+export interface JjVcsBackend extends BaseVcsBackend {
+	readonly id: "jj";
+}
+
+export type VcsBackend = GitVcsBackend | JjVcsBackend;

@@ -159,13 +159,6 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		for (const warning of vcsConfig.warnings) notify(warning, "warning");
 		const exec = makeExec(pi);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
-		if (mode !== "check") {
-			const preflight = await backend.preflight(cwd);
-			if (!preflight.ok) {
-				notify(preflight.error, "error");
-				return early("blocked", preflight.error);
-			}
-		}
 
 		// Confirm the run before starting.
 		const modelsDisplay = config.models.map((m) => `  ${m.label}: ${modelCliId(m)}`).join("\n");

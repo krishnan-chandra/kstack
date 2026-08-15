@@ -7,7 +7,6 @@ export type VcsBackendId = "git" | "jj";
 export interface VcsBackendConfig {
 	backend: VcsBackendId;
 	warnings: string[];
-	path: string;
 }
 
 const DEFAULT_BACKEND: VcsBackendId = "git";
@@ -26,13 +25,12 @@ function parseBackend(value: unknown): VcsBackendId | undefined {
 export function loadVcsBackend(env: NodeJS.ProcessEnv = process.env): VcsBackendConfig {
 	const section = loadKstackSection("vcs", env);
 	if (section.status === "missing") {
-		return { backend: DEFAULT_BACKEND, warnings: [], path: section.path };
+		return { backend: DEFAULT_BACKEND, warnings: [] };
 	}
 	if (section.status === "invalid") {
 		return {
 			backend: DEFAULT_BACKEND,
 			warnings: [`Invalid ${section.path}: ${section.error} Defaulting to the git backend.`],
-			path: section.path,
 		};
 	}
 	const backend = parseBackend(section.value);
@@ -40,8 +38,7 @@ export function loadVcsBackend(env: NodeJS.ProcessEnv = process.env): VcsBackend
 		return {
 			backend: DEFAULT_BACKEND,
 			warnings: [`Invalid ${section.path}: "vcs.backend" must be "git" or "jj". Defaulting to the git backend.`],
-			path: section.path,
 		};
 	}
-	return { backend, warnings: [], path: section.path };
+	return { backend, warnings: [] };
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { GitBackend } from "../shared/vcs/git-backend.ts";
 import type { RunAgentOptions } from "./agent-runner.ts";
 import {
 	type ApprovedWorkflowOptions,
@@ -45,7 +45,7 @@ function effects(overrides: Partial<PhaseEffects> = {}): { fx: PhaseEffects; not
 		isSessionCurrent: () => true,
 		beginChild: () => new AbortController(),
 		endChild: () => {},
-		backend: createGitBackend(async () => ({ code: 1, stdout: "", stderr: "not configured" })),
+		backend: new GitBackend(async () => ({ code: 1, stdout: "", stderr: "not configured" })),
 		requestPanelReview: async () => ({ handled: false }),
 		resolvePublishedPr: async () => ({ ok: false, error: "not resolved (test default)" }),
 		requestLand: async () => ({ handled: false }),
@@ -122,7 +122,7 @@ describe("plan-implement phases", () => {
 				output: validLedger,
 				usage,
 			}),
-			backend: createGitBackend(async () => ({ code: 0, stdout: "wrong-branch\n", stderr: "" })),
+			backend: new GitBackend(async () => ({ code: 0, stdout: "wrong-branch\n", stderr: "" })),
 		});
 		await runPostReviewPhases(
 			"fix it",

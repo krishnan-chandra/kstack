@@ -47,6 +47,31 @@ describe("JjBackend references and workstreams", () => {
 		});
 	});
 
+	it("identifies a bookmarked workstream by stable change and parent commits", async () => {
+		const parent = "1".repeat(40);
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "stable-change-id\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "parents(@)", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${parent}\n` },
+			},
+		]);
+		assert.deepEqual(await new JjBackend(exec).workstreamIdentity("/repo"), {
+			ok: true,
+			identity: { kind: "jj", ref: "feature", changeId: "stable-change-id", parentCommitIds: [parent] },
+		});
+	});
+
 	it("creates a trunk-based change with a collision-safe task bookmark", async () => {
 		const base = "1".repeat(40);
 		const exec = scriptedExec([
@@ -145,7 +170,7 @@ describe("JjBackend mutations", () => {
 		assert.deepEqual(await new JjBackend(exec).push("/repo", "feature"), { ok: true });
 	});
 
-	it("abandons a conflicted remote-head merge instead of moving the bookmark", async () => {
+	it("fetches and reports the remote head without rewriting the current change", async () => {
 		const remote = "4".repeat(40);
 		const exec = scriptedExec([
 			{ command: "jj", args: noPager(["git", "fetch", "--remote", "origin"]) },
@@ -154,30 +179,11 @@ describe("JjBackend mutations", () => {
 				args: noPager(["log", "-r", "feature@origin", "--no-graph", "-T", commitTemplate]),
 				result: { stdout: `${remote}\n` },
 			},
-			{ command: "jj", args: noPager(["log", "-r", `${remote} & ::@`, "--no-graph", "-T", commitTemplate]) },
-			{
-				command: "jj",
-				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
-				result: { stdout: "feature\n" },
-			},
-			{ command: "jj", args: noPager(["new", "@", "feature@origin", "-m", "Merge feature@origin"]) },
-			{
-				command: "jj",
-				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(conflict, "true", "false")']),
-				result: { stdout: "true" },
-			},
-			{ command: "jj", args: noPager(["resolve", "--list"]), result: { stdout: "src/conflict.ts 2-sided conflict\n" } },
-			{ command: "jj", args: noPager(["abandon", "@"]) },
 		]);
-		const result = await new JjBackend(exec).integrateRemoteHead("/repo", "feature");
-		assert.equal(result.ok, false);
-		assert.match(result.ok ? "" : result.error, /conflict/i);
-	});
-
-	it("refuses worktree isolation", async () => {
-		const result = await new JjBackend(scriptedExec([])).planIsolation("/repo", "task");
-		assert.equal(result.ok, false);
-		assert.match(result.ok ? "" : result.error, /unavailable with the jj backend/);
+		assert.deepEqual(await new JjBackend(exec).fetchRemoteHead("/repo", "feature"), {
+			ok: true,
+			sha: remote,
+		});
 	});
 });
 

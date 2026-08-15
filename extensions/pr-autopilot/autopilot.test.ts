@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { JjBackend } from "../shared/vcs/jj-backend.ts";
 import {
 	applyForceAsk,
@@ -27,6 +27,8 @@ import {
 	pickModel,
 } from "./pr-state.ts";
 import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
+
+const changeTemplate = 'change_id ++ "\\n"';
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
 	return {
@@ -200,7 +202,7 @@ describe("pr-autopilot state machine", () => {
 				return { code: 0, stdout: "", stderr: "" };
 			};
 			const state = buildPRState(makePr(), [], [], null);
-			const result = await prepareMutationCheckout(createGitBackend(exec), "/repo", state);
+			const result = await prepareMutationCheckout(new GitBackend(exec), "/repo", state);
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.match(result.error, /current workstream is/);
 		});
@@ -219,7 +221,37 @@ describe("pr-autopilot state machine", () => {
 				return { code: 0, stdout: "", stderr: "" };
 			};
 			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
-			assert.deepEqual(result, { ok: true });
+			assert.deepEqual(result, {
+				ok: true,
+				identity: { kind: "jj", ref: pr.headRefName, changeId: pr.headSha, parentCommitIds: [pr.headSha] },
+			});
+		});
+
+		it("rejects an advanced remote jj head without creating a merge", async () => {
+			const pr = makePr();
+			const advanced = "8".repeat(40);
+			const calls: string[] = [];
+			const exec: ExecFn = async (_command, args) => {
+				calls.push(args.join(" "));
+				if (args.includes("bookmark") && args.includes("list")) {
+					return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
+				}
+				if (args.includes('if(empty, "true", "false")')) {
+					return { code: 0, stdout: "true", stderr: "" };
+				}
+				if (args.includes(`${pr.headRefName}@origin`)) {
+					return { code: 0, stdout: `${advanced}\n`, stderr: "" };
+				}
+				if (args.includes("log")) return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, new RegExp(advanced));
+			assert.equal(
+				calls.some((call) => call.includes(" new ")),
+				false,
+			);
 		});
 
 		it("rejects a jj PR head without an empty automation checkpoint", async () => {
@@ -248,7 +280,7 @@ describe("pr-autopilot state machine", () => {
 				if (args[0] === "status") return { code: 0, stdout: " M user-work.ts\n", stderr: "" };
 				return { code: 0, stdout: "", stderr: "" };
 			};
-			const result = await prepareMutationCheckout(createGitBackend(exec), "/repo", buildPRState(pr, [], [], null));
+			const result = await prepareMutationCheckout(new GitBackend(exec), "/repo", buildPRState(pr, [], [], null));
 			assert.deepEqual(result, {
 				ok: false,
 				error: "The PR worktree must be clean before pr-autopilot can mutate it.",
@@ -258,7 +290,7 @@ describe("pr-autopilot state machine", () => {
 
 	describe("jj fixer publication", () => {
 		it("accepts jj snapshot SHA changes, commits the path diff, and pushes an empty checkpoint", async () => {
-			const expected = "1".repeat(40);
+			const expectedChangeId = "stable-change-id";
 			const edited = "2".repeat(40);
 			const checkpoint = "3".repeat(40);
 			let committed = false;
@@ -276,16 +308,46 @@ describe("pr-autopilot state machine", () => {
 				if (args.includes('if(empty, "true", "false")')) {
 					return { code: 0, stdout: "true", stderr: "" };
 				}
+				if (args.includes(changeTemplate)) {
+					return { code: 0, stdout: `${expectedChangeId}\n`, stderr: "" };
+				}
 				if (args.includes("log")) {
 					return { code: 0, stdout: `${committed ? checkpoint : edited}\n`, stderr: "" };
 				}
 				return { code: 0, stdout: "", stderr: "" };
 			};
-			const result = await doCommitAndPush(new JjBackend(exec), "/repo", "feature", expected, 42, "VERIFY_OK");
-			assert.deepEqual(result, { ok: true, headSha: checkpoint });
+			const result = await doCommitAndPush(
+				new JjBackend(exec),
+				"/repo",
+				{ kind: "jj", ref: "feature", changeId: expectedChangeId, parentCommitIds: [edited] },
+				42,
+				"VERIFY_OK",
+			);
+			assert.deepEqual(result, { kind: "pushed", headSha: checkpoint });
 			assert.ok(calls.some((call) => call.includes("commit src/fix.ts -m Autopilot PR #42")));
 			assert.ok(calls.includes("--no-pager bookmark set feature -r @"));
 			assert.ok(calls.includes("--no-pager git push --bookmark feature"));
+		});
+
+		it("rejects a fixer that replaces the native jj change identity", async () => {
+			const exec: ExecFn = async (_command, args) => {
+				if (args.includes("bookmark") && args.includes("list")) {
+					return { code: 0, stdout: "feature\n", stderr: "" };
+				}
+				if (args.includes("--name-only")) return { code: 0, stdout: "src/fix.ts\n", stderr: "" };
+				if (args.includes(changeTemplate)) return { code: 0, stdout: "stable-change-id\n", stderr: "" };
+				if (args.includes("log")) return { code: 0, stdout: `${"9".repeat(40)}\n`, stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
+			};
+			const result = await doCommitAndPush(
+				new JjBackend(exec),
+				"/repo",
+				{ kind: "jj", ref: "feature", changeId: "stable-change-id", parentCommitIds: ["1".repeat(40)] },
+				42,
+				"VERIFY_OK",
+			);
+			assert.equal(result.kind, "failed");
+			if (result.kind === "failed") assert.match(result.error, /identity/);
 		});
 	});
 

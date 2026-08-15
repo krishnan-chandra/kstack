@@ -36,7 +36,7 @@ describe("VCS preflight", () => {
 		const result = await preflightVcs("/repo", "git", gitRoot, { exists: (path) => path === "/repo/.jj" });
 		assert.equal(result.ok, false);
 		assert.match(result.ok ? "" : result.error, /jj-managed/);
-		assert.match(result.ok ? "" : result.error, /setup-kstack/);
+		assert.match(result.ok ? "" : result.error, /skill:setup-kstack/);
 	});
 
 	it("rejects a missing Git working tree", async () => {
@@ -85,6 +85,18 @@ describe("VCS preflight", () => {
 		);
 		assert.equal(result.ok, false);
 		assert.match(result.ok ? "" : result.error, /jj config set --user user\.email/);
+	});
+
+	it("turns later jj spawn failures into preflight errors", async () => {
+		const exec: ExecFn = async (command, args) => {
+			if (command === "jj" && args[0] === "--version") {
+				return { code: 0, stdout: "jj 0.44.0\n", stderr: "" };
+			}
+			throw new Error(`spawn ${command} ${args.join(" ")} EACCES`);
+		};
+		const result = await preflightVcs("/repo", "jj", exec);
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /EACCES/);
 	});
 });
 

@@ -45,7 +45,7 @@ async function preflightGit(
 		return {
 			ok: false,
 			error:
-				"This repository is jj-managed but kstack.json selects the git backend. Run /setup-kstack to switch the backend to jj, or remove the jj workspace.",
+				"This repository is jj-managed but kstack.json selects the git backend. Run /skill:setup-kstack to switch the backend to jj, or remove the jj workspace.",
 		};
 	}
 	return { ok: true, workspaceRoot };
@@ -77,33 +77,43 @@ async function preflightJj(
 		};
 	}
 
-	const workspace = await exec("jj", ["workspace", "root"], { cwd, timeout: 8_000 });
-	const workspaceRoot = workspace.stdout.trim();
-	if (workspace.code !== 0 || !workspaceRoot) {
-		return { ok: false, error: `${cwd} is not a Jujutsu workspace (jj workspace root failed).` };
-	}
-	const git = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 8_000 });
-	const gitRoot = git.stdout.trim();
-	if (git.code !== 0 || !gitRoot) {
-		return { ok: false, error: "The jj backend requires a colocated Git worktree; this directory is not inside one." };
-	}
-	if (!sameRealPath(workspaceRoot, gitRoot, deps.realpath)) {
-		return {
-			ok: false,
-			error: `The jj workspace root (${workspaceRoot}) and Git worktree (${gitRoot}) differ. K-Stack requires a colocated jj/Git workspace.`,
-		};
-	}
-
-	for (const key of ["user.name", "user.email"] as const) {
-		const configured = await exec("jj", ["config", "get", key], { cwd: workspaceRoot, timeout: 8_000 });
-		if (configured.code !== 0 || !configured.stdout.trim()) {
+	try {
+		const workspace = await exec("jj", ["workspace", "root"], { cwd, timeout: 8_000 });
+		const workspaceRoot = workspace.stdout.trim();
+		if (workspace.code !== 0 || !workspaceRoot) {
+			return { ok: false, error: `${cwd} is not a Jujutsu workspace (jj workspace root failed).` };
+		}
+		const git = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 8_000 });
+		const gitRoot = git.stdout.trim();
+		if (git.code !== 0 || !gitRoot) {
 			return {
 				ok: false,
-				error: `The jj backend requires ${key}. Configure it with: jj config set --user ${key} ${key === "user.name" ? '"Your Name"' : '"you@example.com"'}`,
+				error: "The jj backend requires a colocated Git worktree; this directory is not inside one.",
 			};
 		}
+		if (!sameRealPath(workspaceRoot, gitRoot, deps.realpath)) {
+			return {
+				ok: false,
+				error: `The jj workspace root (${workspaceRoot}) and Git worktree (${gitRoot}) differ. K-Stack requires a colocated jj/Git workspace.`,
+			};
+		}
+
+		for (const key of ["user.name", "user.email"] as const) {
+			const configured = await exec("jj", ["config", "get", key], { cwd: workspaceRoot, timeout: 8_000 });
+			if (configured.code !== 0 || !configured.stdout.trim()) {
+				return {
+					ok: false,
+					error: `The jj backend requires ${key}. Configure it with: jj config set --user ${key} ${key === "user.name" ? '"Your Name"' : '"you@example.com"'}`,
+				};
+			}
+		}
+		return { ok: true, workspaceRoot };
+	} catch (error) {
+		return {
+			ok: false,
+			error: `The jj backend preflight command failed: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
-	return { ok: true, workspaceRoot };
 }
 
 /** Parse "jj 0.44.0" (or similar) into a comparable [major, minor] tuple. */
