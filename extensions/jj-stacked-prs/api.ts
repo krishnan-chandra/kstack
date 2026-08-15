@@ -17,7 +17,7 @@ export const JJ_STACK_PUBLICATION_EVENT = "kstack:jj-stack:publish";
 export const JJ_STACK_CAPABILITIES: JjStackCapabilities = {
 	schemaVersion: SCHEMA_VERSION,
 	commands: ["inspect", "plan", "publish", "sync", "advance"],
-	tools: ["jj_stack_inspect", "jj_stack_plan"],
+	tools: ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish"],
 	publication: true,
 };
 
