@@ -15,8 +15,8 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including a multi-selected batch of inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
-| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated branch with incremental local commits, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git worktrees, with a live multi-phase TUI dashboard and transcript inspector. |
-| [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation child for an explicit, bounded change on a local branch or managed worktree. It preserves inspection, verification, and commits, but deliberately skips independent planning and review; it supports single-PR local workstreams only and never publishes. |
+| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git worktrees, with a live multi-phase TUI dashboard and transcript inspector. |
+| [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation child for an explicit, bounded change on a local Git branch, jj bookmark, or managed Git worktree. It preserves inspection, verification, and recorded checkpoints, but deliberately skips independent planning and review; it supports single-PR local workstreams only and never publishes. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 
@@ -82,6 +82,13 @@ user configuration, run:
 
 `setup-kstack` does not modify repository defaults unless you explicitly ask for
 a separate follow-up change.
+
+The backends are exclusive for each run. Git mode requires a plain Git working
+tree and supports current-checkout or managed-worktree single delivery. jj mode
+requires jj 0.44 or newer, a configured jj user name and email, and a colocated
+jj/Git workspace. It supports current-workspace single delivery and stacked
+PRs, but not Git worktree isolation. K-Stack refuses a mismatched workspace
+before launching a model or mutating repository state.
 
 `how` and `why` use only models in `investigation.allowedModels`. The resolver
 requires every entry to come from kstack's curated fast-model set and to use at

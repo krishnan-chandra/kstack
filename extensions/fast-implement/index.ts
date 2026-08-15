@@ -4,7 +4,8 @@ import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { loadVcsBackend } from "../shared/vcs/config.ts";
+import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimFastImplementRequest, FAST_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { parseFastImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRole } from "./config.ts";
@@ -60,6 +61,18 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 			ctx.ui.notify(`Invalid ${config.path}: ${config.error}`, "error");
 			return;
 		}
+		const vcsConfig = loadVcsBackend();
+		for (const warning of vcsConfig.warnings) ctx.ui.notify(warning, "warning");
+		if (request.workLocation === "worktree" && vcsConfig.backend !== "git") {
+			ctx.ui.notify("--worktree requires the git backend. The jj backend runs in the current workspace.", "error");
+			return;
+		}
+		const backend = createVcsBackend(vcsConfig.backend, makeExec(pi));
+		const preflight = await backend.preflight(ctx.cwd);
+		if (!preflight.ok) {
+			ctx.ui.notify(preflight.error, "error");
+			return;
+		}
 		const role = resolveRole(config.status === "loaded" ? config.config : null, (provider, model) =>
 			isChildModelAvailable(ctx.modelRegistry, provider, model),
 		);
@@ -83,12 +96,12 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 		try {
 			const confirmed = await ctx.ui.confirm(
 				"Run one fast implementation child?",
-				`Implementer: ${modelCliId(role.role.implementer)}\nChange kind: ${request.changeKind}\nLocation: ${request.workLocation === "worktree" ? "managed worktree" : "current checkout"}\nTimeout: ${role.role.timeoutMinutes} min\n\nFast mode skips independent planning and panel review, but still requires inspection, verification, and local commits. It never publishes automatically.`,
+				`Implementer: ${modelCliId(role.role.implementer)}\nVCS backend: ${backend.id}\nChange kind: ${request.changeKind}\nLocation: ${request.workLocation === "worktree" ? "managed Git worktree" : backend.id === "jj" ? "current jj workspace" : "current Git checkout"}\nTimeout: ${role.role.timeoutMinutes} min\n\nFast mode skips independent planning and panel review, but still requires inspection, verification, and locally recorded changes. It never publishes automatically.`,
 			);
 			if (!confirmed || !lifecycle.isCurrent(runToken)) return;
 			ctx.ui.setStatus("fast-implement", "fast-implement: implementing…");
 			const outcome = await runFastImplement(request, role.role, ctx.cwd, {
-				backend: createGitBackend(makeExec(pi)),
+				backend,
 				signal: runSignal,
 			});
 			const retained =

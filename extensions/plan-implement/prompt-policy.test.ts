@@ -16,50 +16,52 @@ describe("plan-implement prompt policy", () => {
 	const fixer = readPrompt("review-fixer.md");
 	const publisher = readPrompt("publisher.md");
 
-	it("requires a dedicated current-mode branch before the first edit", () => {
-		assert.match(planner, /kstack\/<task-slug>/);
-		assert.match(planner, /current `HEAD`/);
-		assert.match(implementer, /parent creates and selects a dedicated `kstack\/<task-slug>` branch/);
-		assert.match(implementer, /Do not create a second branch/);
+	it("requires the parent-prepared workstream before the first edit", () => {
+		assert.match(planner, /dedicated workstream prepared by the parent/);
+		assert.match(planner, /Git in the current checkout/);
+		assert.match(planner, /jj in the current workspace/);
+		assert.match(implementer, /parent creates and selects a dedicated `kstack\/<task-slug>` workstream/);
+		assert.match(implementer, /Do not create a second one/);
 	});
 
-	it("reuses a parent-created managed-worktree branch", () => {
-		assert.match(planner, /managed worktree: verify and reuse/i);
-		assert.match(implementer, /managed worktree/);
-		assert.match(implementer, /Do not create a second branch/);
+	it("reuses a parent-created managed Git worktree", () => {
+		assert.match(planner, /Git in a managed worktree/);
+		assert.match(implementer, /reusing the prepared workstream/);
+		assert.match(implementer, /Do not create a second one/);
 	});
 
-	it("stops on a dirty current working tree", () => {
-		assert.match(implementer, /tracked or untracked pre-existing changes/);
+	it("applies dirty-tree rules only to Git mode", () => {
+		assert.match(implementer, /In Git mode, if `git status`/);
 		assert.match(implementer, /recommend rerunning with `--worktree`/);
 		assert.match(implementer, /Do not stash, move, discard, or commit those files/);
-		assert.match(fixer, /unrelated pre-existing changes, stop and report them/);
+		assert.match(implementer, /In jj mode, use jj's working-copy model/);
+		assert.match(fixer, /In Git mode, if `git status`/);
 	});
 
-	it("requires incremental focused commits and forbids push or publication", () => {
-		assert.match(planner, /coherent commit checkpoints/);
-		assert.match(implementer, /Commit one coherent, reviewable milestone/);
-		assert.match(implementer, /Stage only workstream files/);
-		assert.match(implementer, /Finish with no uncommitted task changes/);
+	it("requires incremental focused changes and forbids publication", () => {
+		assert.match(planner, /change checkpoint as one reviewable, verified milestone/);
+		assert.match(implementer, /Record one coherent, reviewable milestone/);
+		assert.match(implementer, /Include only workstream files/);
+		assert.match(implementer, /empty jj working-copy change/);
 		assert.match(implementer, /Never push, publish, force-push, or create a PR/);
-		assert.match(implementer, /ordered commit SHAs\/subjects/);
 		assert.match(fixer, /Never push, publish, force-push, or create PRs/);
 	});
 
-	it("keeps review fixes on the existing branch and commits verified batches", () => {
-		assert.match(fixer, /Stay on the existing workstream branch/);
-		assert.match(fixer, /commit each independent, verified fix batch/);
-		assert.match(fixer, /commits created \(SHA and subject\)/i);
+	it("keeps review fixes on the existing branch or bookmark", () => {
+		assert.match(fixer, /Stay on the existing workstream branch or bookmark/);
+		assert.match(fixer, /record each independent, verified fix batch/);
+		assert.match(fixer, /commits or jj changes created/);
 	});
 
-	it("stops publication when uncommitted workstream files remain", () => {
-		assert.match(publisher, /If uncommitted files belong to the requested workstream, stop and report them/);
-		assert.match(publisher, /do not publish an incomplete committed diff/i);
-		assert.match(publisher, /Report unrelated uncommitted files without committing them/);
-		assert.match(publisher, /never commit uncommitted work/);
+	it("publishes with only the selected backend", () => {
+		assert.match(publisher, /Follow the parent `VCS backend` policy/);
+		assert.match(publisher, /jj git push --bookmark/);
+		assert.match(publisher, /do not create a Git branch/);
+		assert.match(publisher, /If unrecorded files belong to the requested workstream, stop and report them/);
+		assert.match(publisher, /never record additional changes/);
 	});
 
-	it("does not tell implementer or fixer roles to skip local commits", () => {
+	it("does not tell implementer or fixer roles to skip local changes", () => {
 		assert.doesNotMatch(implementer, /Do not commit, push, publish/);
 		assert.doesNotMatch(fixer, /Do not commit, push, publish/);
 		assert.doesNotMatch(implementer, /does not commit/);

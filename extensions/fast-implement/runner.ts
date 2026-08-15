@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
 import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
+import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { type FastImplementOutcome, type FastImplementRequest, LIMITS, type ResolvedRole } from "./types.ts";
 
 const extensionDir = new URL(".", import.meta.url);
@@ -57,12 +58,17 @@ export async function runFastImplement(
 		temp = mkdtempSync(join(tmpdir(), "kstack-fast-implement-"));
 		const taskFile = join(temp, "task.md");
 		const promptFile = join(temp, "prompt.md");
-		writeFileSync(taskFile, request.task, { mode: 0o600 });
+		writeFileSync(
+			taskFile,
+			`# User task\n\n${request.task}\n\nVCS backend: ${fx.backend.id}\nWorkstream: ${checkpoint.ref}\n`,
+			{ mode: 0o600 },
+		);
 		const playbook = changeKindPlaybookFile(request.changeKind);
 		const guidance = [
 			readFileSync(new URL("implementer.md", new URL("prompts/", extensionDir)), "utf8"),
 			readFileSync(new URL("engineering-principles.md", sharedPlaybooks), "utf8"),
 			...(playbook ? [readFileSync(new URL(playbook, sharedPlaybooks), "utf8")] : []),
+			vcsChildGuidance(fx.backend.id),
 		].join("\n\n---\n\n");
 		writeFileSync(promptFile, guidance, { mode: 0o600 });
 		chmodSync(taskFile, 0o600);

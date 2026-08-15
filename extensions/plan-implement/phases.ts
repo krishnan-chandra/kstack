@@ -85,7 +85,11 @@ export async function runPostReviewPhases(
 		reviewDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-review-"));
 		const taskFile = join(reviewDir, "task.md");
 		const verdictFile = join(reviewDir, "panel-verdict.md");
-		writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
+		writeFileSync(
+			taskFile,
+			`# User task\n\n${task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${mode}\n${state.workstreamCheckpoint ? `Workstream: ${state.workstreamCheckpoint.ref}\n` : ""}`,
+			{ encoding: "utf8", mode: 0o600 },
+		);
 		writeFileSync(verdictFile, `# Panel-review verdict\n\n${verdict}\n`, { encoding: "utf8", mode: 0o600 });
 
 		const fixConfirmed = await fx.confirm(
@@ -359,7 +363,10 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 			const ledgerFile = join(tempDir, "execution-ledger.md");
 			let immutablePlanSnapshot: string | undefined;
 			let planValidationError: string | undefined;
-			writeFileSync(taskFile, `# User task\n\n${task}\n`, { encoding: "utf8", mode: 0o600 });
+			writeFileSync(taskFile, `# User task\n\n${task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${mode}\n`, {
+				encoding: "utf8",
+				mode: 0o600,
+			});
 			const outcome = await runWorkflow({
 				runPlanner: async () => {
 					const controller = fx.beginChild("planning");
@@ -425,7 +432,9 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						"Approve planner output?",
 						mode === "stack"
 							? `Review the Planner card above. Continue with ${implementerModel}, which creates local jj changes and bookmarks?`
-							: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`,
+							: fx.backend.id === "jj"
+								? `Review the Planner card above. Continue with ${implementerModel}, which creates a trunk-based jj change and task bookmark?`
+								: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`,
 					);
 				},
 				runImplementer: async () => {
@@ -460,7 +469,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
 							fx.notify(`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.ref}).`, "info");
 						} else if (mode === "single" && !state.workstreamCheckpoint) {
-							fx.setStatus("plan-implement: creating task branch…");
+							fx.setStatus(`plan-implement: creating task ${fx.backend.id === "jj" ? "bookmark" : "branch"}…`);
 							const created = await fx.backend.createWorkstream(state.workflowCwd, task);
 							if (!created.ok)
 								return completeEarly({
@@ -470,7 +479,14 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 									error: created.error,
 								});
 							state.workstreamCheckpoint = created;
-							fx.notify(`Task branch created: ${created.ref}.`, "info");
+							fx.notify(`Task ${fx.backend.id === "jj" ? "bookmark" : "branch"} created: ${created.ref}.`, "info");
+						}
+						if (state.workstreamCheckpoint) {
+							writeFileSync(
+								taskFile,
+								`# User task\n\n${task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${mode}\nWorkstream: ${state.workstreamCheckpoint.ref}\n`,
+								{ encoding: "utf8", mode: 0o600 },
+							);
 						}
 						fx.setStatus(`plan-implement: implementer ${implementerModel}…`);
 						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
