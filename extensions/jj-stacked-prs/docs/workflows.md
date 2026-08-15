@@ -18,11 +18,11 @@ request to publish as authorization and does not ask again. Both paths recompute
 the plan and refuse a stale identity before mutation:
 
 ```text
-/jj-stack plan --top <top> --remote <remote>
-/jj-stack publish --top <top> --remote <remote>
-/jj-stack publish --top <top> --remote <remote> --ready
-jj_stack_publish({ top: "<top>", remote: "<remote>" })
-jj_stack_publish({ top: "<top>", remote: "<remote>", ready: true })
+/jj-stack plan --top <top> [--remote <remote>]
+/jj-stack publish --top <top> [--remote <remote>]
+/jj-stack publish --top <top> [--remote <remote>] --ready
+jj_stack_publish({ top: "<top>" })
+jj_stack_publish({ top: "<top>", ready: true })
 ```
 
 ## 1. Start a stack
@@ -162,8 +162,8 @@ merge through:
 
 ```text
 /land --pr <top-pr-number>
-/jj-stack land --top <top> --remote <remote>
-jj_stack_land({ top: "<top>", remote: "<remote>" })
+/jj-stack land --top <top> [--remote <remote>]
+jj_stack_land({ top: "<top>" })
 ```
 
 In jj mode, `/land` maps the selected PR head to the local stack and lands every
@@ -184,6 +184,6 @@ Do not land a child PR before its base. Do not call `gh pr merge` directly.
 
 ## Choosing the remote
 
-If there is exactly one GitHub remote, use it. If there are several, ask;
-don't guess. Confirm with `git remote -v`. The extension rejects a
-non-GitHub remote.
+`--remote` defaults to `origin`. If a repository uses another GitHub remote,
+pass it explicitly (e.g. `--remote upstream`). Confirm with `git remote -v`.
+The extension rejects a non-GitHub remote.

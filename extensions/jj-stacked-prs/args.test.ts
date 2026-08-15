@@ -10,18 +10,21 @@ describe("parseJjStackArgs", () => {
 		});
 	});
 
-	it("requires top and remote for plan/publish/sync", () => {
-		assert.equal(parseJjStackArgs("plan --top feat").ok, false);
-		assert.equal(parseJjStackArgs("publish --remote origin").ok, false);
-		assert.deepEqual(parseJjStackArgs("sync --top feat --remote origin"), {
+	it("requires top and defaults remote to origin for plan/publish/sync", () => {
+		assert.deepEqual(parseJjStackArgs("plan --top feat"), {
 			ok: true,
-			command: { action: "sync", top: "feat", remote: "origin", trunk: "trunk()", maxStack: 50 },
+			command: { action: "plan", top: "feat", remote: "origin", trunk: "trunk()", maxStack: 50 },
+		});
+		assert.equal(parseJjStackArgs("publish --remote origin").ok, false);
+		assert.deepEqual(parseJjStackArgs("sync --top feat --remote upstream"), {
+			ok: true,
+			command: { action: "sync", top: "feat", remote: "upstream", trunk: "trunk()", maxStack: 50 },
 		});
 	});
 
-	it("requires merged, top, and remote for advance", () => {
-		assert.equal(parseJjStackArgs("advance --top feat --remote origin").ok, false);
-		assert.deepEqual(parseJjStackArgs("advance --merged feat1 --top feat2 --remote origin"), {
+	it("requires merged and top for advance with optional remote", () => {
+		assert.equal(parseJjStackArgs("advance --top feat").ok, false);
+		assert.deepEqual(parseJjStackArgs("advance --merged feat1 --top feat2"), {
 			ok: true,
 			command: {
 				action: "advance",
@@ -32,10 +35,21 @@ describe("parseJjStackArgs", () => {
 				maxStack: 50,
 			},
 		});
+		assert.deepEqual(parseJjStackArgs("advance --merged feat1 --top feat2 --remote upstream"), {
+			ok: true,
+			command: {
+				action: "advance",
+				merged: "feat1",
+				top: "feat2",
+				remote: "upstream",
+				trunk: "trunk()",
+				maxStack: 50,
+			},
+		});
 	});
 
-	it("parses land with watch default and optional method", () => {
-		assert.deepEqual(parseJjStackArgs("land --top feat2 --remote origin"), {
+	it("parses land with watch default and optional method/remote", () => {
+		assert.deepEqual(parseJjStackArgs("land --top feat2"), {
 			ok: true,
 			command: {
 				action: "land",
@@ -47,19 +61,19 @@ describe("parseJjStackArgs", () => {
 				readiness: "watch",
 			},
 		});
-		assert.deepEqual(parseJjStackArgs("land --top feat2 --remote origin --method squash --readiness check"), {
+		assert.deepEqual(parseJjStackArgs("land --top feat2 --remote upstream --method squash --readiness check"), {
 			ok: true,
 			command: {
 				action: "land",
 				top: "feat2",
-				remote: "origin",
+				remote: "upstream",
 				trunk: "trunk()",
 				maxStack: 50,
 				method: "squash",
 				readiness: "check",
 			},
 		});
-		assert.equal(parseJjStackArgs("land --top feat2 --remote origin --method merge").ok, false);
+		assert.equal(parseJjStackArgs("land --top feat2 --method merge").ok, false);
 	});
 
 	it("parses publish --ready as a boolean flag", () => {

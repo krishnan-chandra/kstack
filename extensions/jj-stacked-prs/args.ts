@@ -68,24 +68,24 @@ export function parseJjStackArgs(text: string): { ok: true; command: JjStackComm
 		maxStack = parsed;
 	}
 	const top = flags.get("--top");
-	const remote = flags.get("--remote");
+	const remote = flags.get("--remote") ?? "origin";
 	const merged = flags.get("--merged");
 	if (trunk.length === 0 || trunk.length > MAX_REVSET_CHARS) return { ok: false, error: "Invalid --trunk revset." };
 	if (top !== undefined && !validName(top)) return { ok: false, error: "Invalid --top bookmark." };
-	if (remote !== undefined && !validName(remote)) return { ok: false, error: "Invalid --remote name." };
+	if (!validName(remote)) return { ok: false, error: "Invalid --remote name." };
 	if (merged !== undefined && !validName(merged)) return { ok: false, error: "Invalid --merged bookmark." };
 
 	if (action === "inspect") {
 		return { ok: true, command: { action: "inspect", top, trunk, maxStack } };
 	}
 	if (action === "advance") {
-		if (!merged || !top || !remote) {
-			return { ok: false, error: "advance requires --merged, --top, and --remote." };
+		if (!merged || !top) {
+			return { ok: false, error: "advance requires --merged and --top." };
 		}
 		return { ok: true, command: { action: "advance", merged, top, remote, trunk, maxStack } };
 	}
 	if (action === "land") {
-		if (!top || !remote) return { ok: false, error: "land requires --top and --remote." };
+		if (!top) return { ok: false, error: "land requires --top." };
 		const methodRaw = flags.get("--method");
 		if (methodRaw !== undefined && !isMergeMethod(methodRaw)) {
 			return { ok: false, error: "--method must be squash or rebase." };
@@ -110,7 +110,7 @@ export function parseJjStackArgs(text: string): { ok: true; command: JjStackComm
 	if (action !== "plan" && action !== "publish" && action !== "sync") {
 		return { ok: false, error: `Unknown /jj-stack action: ${action}.` };
 	}
-	if (!top || !remote) return { ok: false, error: `${action} requires --top and --remote.` };
+	if (!top) return { ok: false, error: `${action} requires --top.` };
 	if (action === "publish") {
 		return { ok: true, command: { action: "publish", top, remote, trunk, maxStack, ready: flags.has("--ready") } };
 	}

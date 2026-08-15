@@ -7,20 +7,20 @@ Model-callable tools treat the user's explicit request as authorization.
 
 ```text
 /jj-stack inspect [--top <bookmark>] [--trunk <revset>] [--max-stack <1..50>]
-/jj-stack plan --top <bookmark> --remote <name> [--trunk <revset>] [--max-stack <1..50>]
-/jj-stack publish --top <bookmark> --remote <name> [--trunk <revset>] [--max-stack <1..50>] [--ready]
-/jj-stack sync --top <bookmark> --remote <name> [--trunk <revset>]
-/jj-stack advance --merged <bookmark> --top <bookmark> --remote <name> [--trunk <revset>]
-/jj-stack land --top <bookmark> --remote <name> [--trunk <revset>] [--method squash|rebase] [--readiness check|watch] [--max-stack <1..50>]
+/jj-stack plan --top <bookmark> [--remote <name>] [--trunk <revset>] [--max-stack <1..50>]
+/jj-stack publish --top <bookmark> [--remote <name>] [--trunk <revset>] [--max-stack <1..50>] [--ready]
+/jj-stack sync --top <bookmark> [--remote <name>] [--trunk <revset>]
+/jj-stack advance --merged <bookmark> --top <bookmark> [--remote <name>] [--trunk <revset>]
+/jj-stack land --top <bookmark> [--remote <name>] [--trunk <revset>] [--method squash|rebase] [--readiness check|watch] [--max-stack <1..50>]
 ```
 
 Model tools:
 
 ```text
 jj_stack_inspect({ top?, trunk?, maxStack? })
-jj_stack_plan({ top, remote, trunk?, maxStack? })
-jj_stack_publish({ top, remote, trunk?, maxStack?, ready? })
-jj_stack_land({ top, remote, trunk?, method?, readiness?, maxStack? })
+jj_stack_plan({ top, remote?, trunk?, maxStack? })
+jj_stack_publish({ top, remote?, trunk?, maxStack?, ready? })
+jj_stack_land({ top, remote?, trunk?, method?, readiness?, maxStack? })
 ```
 
 `jj_stack_publish` pushes bookmarks, creates draft PRs, repairs PR bases, and

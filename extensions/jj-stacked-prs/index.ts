@@ -356,7 +356,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		promptSnippet: "Use jj_stack_plan to preview stacked publication; a plan ID is not authorization to apply.",
 		parameters: Type.Object({
 			top: Type.String({ description: "Top bookmark" }),
-			remote: Type.String({ description: "Git remote name" }),
+			remote: Type.Optional(Type.String({ description: "Git remote name (default origin)" })),
 			trunk: Type.Optional(Type.String({ description: "Trunk revset (default trunk())" })),
 			maxStack: Type.Optional(Type.Integer({ minimum: MIN_MAX_STACK, maximum: DEFAULT_MAX_STACK })),
 		}),
@@ -365,7 +365,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 				{
 					cwd: ctx.cwd,
 					top: params.top,
-					remote: params.remote,
+					remote: params.remote ?? "origin",
 					trunk: params.trunk,
 					maxStack: params.maxStack,
 				},
@@ -406,7 +406,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		],
 		parameters: Type.Object({
 			top: Type.String({ description: "Top bookmark" }),
-			remote: Type.String({ description: "Git remote name" }),
+			remote: Type.Optional(Type.String({ description: "Git remote name (default origin)" })),
 			trunk: Type.Optional(Type.String({ description: "Trunk revset (default trunk())" })),
 			maxStack: Type.Optional(Type.Integer({ minimum: MIN_MAX_STACK, maximum: DEFAULT_MAX_STACK })),
 			ready: Type.Optional(
@@ -421,7 +421,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 						{
 							cwd: ctx.cwd,
 							top: params.top,
-							remote: params.remote,
+							remote: params.remote ?? "origin",
 							trunk: params.trunk,
 							maxStack: params.maxStack,
 							ready: params.ready === true,
@@ -449,7 +449,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		],
 		parameters: Type.Object({
 			top: Type.String({ description: "Top bookmark" }),
-			remote: Type.String({ description: "Git remote name" }),
+			remote: Type.Optional(Type.String({ description: "Git remote name (default origin)" })),
 			trunk: Type.Optional(Type.String({ description: "Trunk revset (default trunk())" })),
 			method: Type.Optional(
 				Type.Union([Type.Literal("squash"), Type.Literal("rebase")], { description: "squash or rebase" }),
@@ -471,7 +471,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 						{
 							cwd: ctx.cwd,
 							top: params.top,
-							remote: params.remote,
+							remote: params.remote ?? "origin",
 							trunk: params.trunk,
 							maxStack: params.maxStack,
 							method,
