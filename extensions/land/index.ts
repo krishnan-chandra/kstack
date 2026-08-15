@@ -2,7 +2,9 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
+import { loadVcsBackend } from "../shared/vcs/config.ts";
+import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
 import { findOpenPullRequestByHead } from "./github.ts";
@@ -48,12 +50,26 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
-	async function execute(options: LandOptions, ctx: ExtensionCommandContext): Promise<LandResult> {
+	async function configuredBackend(ctx: ExtensionCommandContext, cwd: string): Promise<VcsBackend | string> {
+		const config = loadVcsBackend();
+		for (const warning of config.warnings) ctx.ui.notify(warning, "warning");
+		const backend = createVcsBackend(config.backend, makeExec(pi));
+		const preflight = await backend.preflight(cwd);
+		return preflight.ok ? backend : preflight.error;
+	}
+
+	async function execute(
+		options: LandOptions,
+		ctx: ExtensionCommandContext,
+		preparedBackend?: VcsBackend,
+	): Promise<LandResult> {
 		if (!ctx.hasUI) return blocked("Land requires interactive TUI/RPC mode.");
+		const cwd = options.cwd ?? ctx.cwd;
+		const resolved = preparedBackend ?? (await configuredBackend(ctx, cwd));
+		if (typeof resolved === "string") return blocked(resolved);
 		const token = lifecycle.begin();
 		if (!token) return blocked("Another landing run is active.");
 		ctx.ui.setStatus("land", "land: resolving target");
-		const cwd = options.cwd ?? ctx.cwd;
 		try {
 			const result = await runLand(options, {
 				exec: makeExec(pi),
@@ -92,13 +108,25 @@ export default function landExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(parsed.error, "error");
 				return;
 			}
+			const resolved = await configuredBackend(ctx, ctx.cwd);
+			if (typeof resolved === "string") {
+				ctx.ui.notify(resolved, "error");
+				return;
+			}
 			let prNumber = parsed.args.pr;
 			if (!prNumber) {
-				const backend = createGitBackend(makeExec(pi));
-				const current = await backend.currentRef(ctx.cwd);
-				const ref = current.ok && current.ref.kind === "branch" ? current.ref.name : undefined;
+				const current = await resolved.currentRef(ctx.cwd);
+				if (!current.ok) {
+					ctx.ui.notify(current.error, "error");
+					return;
+				}
+				const ref = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
 				if (!ref) {
-					ctx.ui.notify("Could not resolve a current Git branch; pass --pr explicitly.", "error");
+					const detail =
+						current.ref.kind === "no-bookmark"
+							? `Current jj change ${current.ref.changeId.slice(0, 12)} has no bookmark. Create one with jj bookmark create <name> -r @, or pass --pr explicitly.`
+							: "The current VCS state has no branch or bookmark; pass --pr explicitly.";
+					ctx.ui.notify(detail, "error");
 					return;
 				}
 				try {
@@ -111,6 +139,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 			await execute(
 				{ target: { kind: "single", prNumber }, readiness: parsed.args.readiness, method: parsed.args.method },
 				ctx,
+				resolved,
 			);
 		},
 	});

@@ -18,5 +18,20 @@ workspace.
 
 `preflightVcs` enforces the selected backend before a workflow mutates the
 repository. Git mode refuses a workspace whose root contains `.jj`. The jj
-implementation requires a colocated Git and jj workspace so that GitHub and
-read-only Git inspection continue to address the same repository.
+implementation requires jj 0.44 or newer, a configured `user.name` and
+`user.email`, and a colocated Git and jj workspace so that GitHub and read-only
+Git inspection continue to address the same repository.
+
+## Workstream semantics
+
+The Git backend creates a clean `kstack/<task-slug>` branch and can create a
+managed linked worktree. The jj backend creates a `trunk()`-based change with a
+collision-safe `kstack/<task-slug>` bookmark. A completed jj workstream keeps
+the bookmark on an ancestor of the current change, contains at least one
+non-empty change above its checkpoint, and leaves an empty working-copy change.
+Git worktree isolation is unavailable in jj mode.
+
+Path-scoped commit and restore operations, fetch, push, remote-head integration,
+and base merges have backend-native implementations. A conflicted jj merge is
+reported as a structured human-required result and the temporary merge change
+is abandoned; K-Stack does not auto-resolve competing intent.
