@@ -396,13 +396,16 @@ export class GitBackend implements GitVcsBackend {
 			.map((line) => line.trim())
 			.filter(Boolean);
 		await this.git(cwd, ["merge", "--abort"]);
+		if (files.length > 0) {
+			return {
+				kind: "needs-human",
+				files,
+				error: `Merge of origin/${baseRef} conflicted in ${files.join(", ")}. Competing intents need a human.`,
+			};
+		}
 		return {
-			kind: "needs-human",
-			files,
-			error:
-				files.length > 0
-					? `Merge of origin/${baseRef} conflicted in ${files.join(", ")}. Competing intents need a human.`
-					: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
+			kind: "failed",
+			error: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
 		};
 	}
 
