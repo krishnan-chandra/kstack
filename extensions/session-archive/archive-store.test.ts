@@ -128,7 +128,7 @@ describe("archive-store", () => {
 				sha256Hex(content),
 			);
 			const hits = searchArchive(db, { query: "archiving" });
-			assert.ok(hits.some((h) => h.entry_id === "a1"));
+			assert.ok(hits.some((h) => h.entry_id === "a1" && h.ordinal === 2));
 			assert.ok(hits.some((h) => h.snippet.includes("[")));
 		} finally {
 			db.close();

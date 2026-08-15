@@ -367,7 +367,10 @@ export function searchHandoffHistory(
 				hits.length === 0
 					? `No matches in archived previous session ${source.sessionId}.`
 					: `Matches in archived previous session ${source.sessionId}:\n\n${hits
-							.map((hit) => `[${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`)
+							.map(
+								(hit) =>
+									`#${hit.ordinal} [${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`,
+							)
 							.join("\n\n")}`;
 		} finally {
 			db.close();

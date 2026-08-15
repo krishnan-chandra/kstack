@@ -61,7 +61,7 @@ Edit or cancel this prompt before any session replacement occurs. Saving it star
 ## Read-only history tools
 
 - **`read_handoff_history`** pages through normalized entries from the linked previous session. It defaults to the latest 20 entries and supports `offset`, `limit`, `chunk`, and `from=start|tail`.
-- **`search_handoff_history`** searches only the linked previous session, with optional role and result limits.
+- **`search_handoff_history`** searches only the linked previous session, with optional role and result limits. Each match starts with a `#N` offset that you can pass to `read_handoff_history`.
 
 A history page can return roughly 42 KB. For a targeted lookup, search first and page only the region the match identifies.
 

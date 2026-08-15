@@ -74,8 +74,9 @@ export default async function (pi: ExtensionAPI) {
 		name: "search_handoff_history",
 		label: "Search Handoff History",
 		description:
-			"Search normalized text only within the previous session linked by /handoff. Searches the active JSONL " +
-			"or transparently falls back to its archived FTS index. Read-only; accepts no filesystem path.",
+			"Search normalized text only within the previous session linked by /handoff. Each match starts with the " +
+			"numeric offset accepted by read_handoff_history. Searches the active JSONL or transparently falls back " +
+			"to its archived FTS index. Read-only; accepts no filesystem path.",
 		promptSnippet: "Search the previous /handoff session for a decision, file, error, or topic",
 		promptGuidelines: [
 			"Use search_handoff_history for targeted lookup when read_handoff_history would retrieve unrelated prior entries.",

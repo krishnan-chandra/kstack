@@ -58,7 +58,8 @@ roll back the sessions archived successfully before or after it.
 - `search_session_archive` — FTS5 search over finalized archived sessions
   (`words`, `"quoted phrases"`, `AND/OR/NOT`, `prefix*`) with optional `cwd`,
   `role`, `session_id`, and a bounded `limit`. Returns highlighted snippets
-  with session/entry ids.
+  with session IDs, entry IDs, and numeric offsets accepted by
+  `read_session_archive`.
 - `read_session_archive` — page one session's entries by exact session id,
   `normalized` (metadata + extracted text) or `raw` (exact JSONL lines),
   with bounded integer `offset`/`limit`. Raw pages are read from the immutable
