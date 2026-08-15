@@ -11,10 +11,12 @@ workspace. Callers may use commands such as `git diff`, `git log`, and
 `git rev-parse` when those commands do not change the working copy, index, or
 refs.
 
-Every repository write must use `VcsBackend`. This includes creating a branch or
-bookmark, committing, restoring paths, merging, pushing, and creating or
-removing isolation. Do not mix raw Git mutations with jj mutations in the same
-workspace.
+Every parent-side repository write must use the configured backend. The shared
+`VcsBackend` contract covers branches and bookmarks, commits, path restoration,
+merges, and pushes. Git-only worktree isolation stays on `GitBackend`; jj does
+not expose worktree methods. Delegated implementation children receive an
+explicit backend policy and may invoke only that backend's CLI. Do not mix Git
+mutations with jj mutations in the same workspace.
 
 `preflightVcs` enforces the selected backend before a workflow mutates the
 repository. Git mode refuses a workspace whose root contains `.jj`. The jj
@@ -31,11 +33,16 @@ the bookmark on an ancestor of the current change, contains at least one
 non-empty change above its checkpoint, and leaves an empty working-copy change.
 Git worktree isolation is unavailable in jj mode.
 
-Path-scoped commit and restore operations, fetch, push, remote-head integration,
-and base merges have backend-native implementations. Before a jj push, the
-backend describes an otherwise-undescribed empty `@` as an automation
-checkpoint and moves the task bookmark to it. This leaves implementation and
-fix commits in ancestors while giving later automation a clean change to edit.
-A conflicted jj merge is reported as a structured human-required result and the
-temporary merge change is abandoned; K-Stack does not auto-resolve competing
+Path-scoped commit and restore operations, fetch, push, and base merges have
+backend-native implementations. PR Autopilot fetches the remote PR head without
+merging it before a fixer runs. It stops if GitHub's head changed. After the
+fixer returns, Git mode requires the same branch and commit. jj mode requires
+the same bookmark, stable change ID, and parent commits, which permits normal
+snapshot changes but rejects a moved or replaced workstream.
+
+Before a jj push, the backend describes an otherwise-undescribed empty `@` as
+an automation checkpoint and moves the task bookmark to it. Implementation and
+fix commits remain in ancestors while later automation gets a clean change to
+edit. A conflicted jj base merge returns a structured human-required result and
+abandons the temporary merge change. K-Stack does not auto-resolve competing
 intent.

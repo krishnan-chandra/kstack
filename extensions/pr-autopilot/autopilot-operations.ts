@@ -23,7 +23,7 @@ import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { VcsBackend } from "../shared/vcs/backend.ts";
+import type { VcsBackend, VcsResult, WorkstreamIdentity } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
@@ -51,11 +51,7 @@ import {
 } from "./types.ts";
 import { shouldForceAsk } from "./untrusted.ts";
 
-interface PushResult {
-	ok: boolean;
-	headSha?: string;
-	error?: string;
-}
+type PushResult = { kind: "pushed"; headSha?: string } | { kind: "unchanged" } | { kind: "failed"; error: string };
 export function repoPersistKey(cwd: string): string {
 	return createHash("sha256").update(realpathSync(cwd)).digest("hex").slice(0, 12);
 }
@@ -177,7 +173,7 @@ export async function prepareMutationCheckout(
 	backend: VcsBackend,
 	cwd: string,
 	state: PRState,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<VcsResult<{ identity: WorkstreamIdentity }>> {
 	const [current, head, clean] = await Promise.all([
 		backend.currentRef(cwd),
 		backend.headSha(cwd),
@@ -211,70 +207,83 @@ export async function prepareMutationCheckout(
 					: "The PR worktree must be clean before pr-autopilot can mutate it.",
 		};
 	}
-	const integrated = await backend.integrateRemoteHead(cwd, state.headRef);
-	if (!integrated.ok) return integrated;
-	const synchronizedHead = await backend.headSha(cwd);
-	if (!synchronizedHead.ok || synchronizedHead.sha !== state.headSha) {
+	const remoteHead = await backend.fetchRemoteHead(cwd, state.headRef);
+	if (!remoteHead.ok) return remoteHead;
+	if (remoteHead.sha !== state.headSha) {
 		return {
 			ok: false,
-			error: `The remote PR head advanced to ${synchronizedHead.ok ? synchronizedHead.sha : "an unreadable SHA"}; refresh GitHub state before editing.`,
+			error: `The remote PR head advanced to ${remoteHead.sha}; refresh GitHub state before editing.`,
 		};
 	}
-	return { ok: true };
+	const identity = await backend.workstreamIdentity(cwd);
+	if (!identity.ok) return identity;
+	return identity.identity.ref === state.headRef
+		? identity
+		: { ok: false, error: `The current workstream identity no longer names ${state.headRef}.` };
+}
+
+function sameWorkstreamIdentity(expected: WorkstreamIdentity, actual: WorkstreamIdentity): boolean {
+	if (expected.kind !== actual.kind || expected.ref !== actual.ref) return false;
+	return expected.kind === "git" && actual.kind === "git"
+		? expected.headSha === actual.headSha
+		: expected.kind === "jj" &&
+				actual.kind === "jj" &&
+				expected.changeId === actual.changeId &&
+				expected.parentCommitIds.length === actual.parentCommitIds.length &&
+				expected.parentCommitIds.every((sha, index) => sha === actual.parentCommitIds[index]);
+}
+
+function describeWorkstreamIdentity(identity: WorkstreamIdentity): string {
+	return identity.kind === "git"
+		? `${identity.ref}@${identity.headSha}`
+		: `${identity.ref}@change:${identity.changeId}/parents:${identity.parentCommitIds.join(",")}`;
 }
 
 export async function doCommitAndPush(
 	backend: VcsBackend,
 	cwd: string,
-	headRef: string,
-	expectedHeadSha: string,
+	expectedIdentity: WorkstreamIdentity,
 	prNumber: number,
 	fixerOutput: string,
 ): Promise<PushResult> {
 	if (/\bVERIFY_FAIL\b/.test(fixerOutput)) {
-		return { ok: false, error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks." };
+		return { kind: "failed", error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks." };
 	}
 
-	const [current, head, changed] = await Promise.all([
-		backend.currentRef(cwd),
-		backend.headSha(cwd),
-		backend.changedPaths(cwd),
-	]);
-	const refName =
-		current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : undefined;
-	const headMatches = head.ok && (backend.id === "jj" || head.sha === expectedHeadSha);
-	if (refName !== headRef || !headMatches) {
+	const [identity, changed] = await Promise.all([backend.workstreamIdentity(cwd), backend.changedPaths(cwd)]);
+	if (!identity.ok || !sameWorkstreamIdentity(expectedIdentity, identity.identity)) {
 		return {
-			ok: false,
-			error: `The fixer changed workstream identity (expected ${headRef}${backend.id === "git" ? `@${expectedHeadSha}` : ""}, found ${refName ?? "detached"}@${head.ok ? head.sha : "unknown"}). Refusing to publish.`,
+			kind: "failed",
+			error: `The fixer changed workstream identity (expected ${describeWorkstreamIdentity(expectedIdentity)}, found ${identity.ok ? describeWorkstreamIdentity(identity.identity) : identity.error}). Refusing to publish.`,
 		};
 	}
-	if (!changed.ok) return { ok: false, error: `Could not inspect fixer changes: ${changed.error}` };
+	if (!changed.ok) return { kind: "failed", error: `Could not inspect fixer changes: ${changed.error}` };
+	const headRef = expectedIdentity.ref;
 	const paths = changed.paths;
-	if (paths.length === 0) return { ok: true, error: "no changes to commit" };
+	if (paths.length === 0) return { kind: "unchanged" };
 
 	const forbidden = paths.filter(isForbiddenStagingPath);
 	const allowed = paths.filter((p) => !isForbiddenStagingPath(p));
 	if (forbidden.length > 0) {
 		const restored = await backend.restorePaths(cwd, forbidden);
 		return {
-			ok: false,
+			kind: "failed",
 			error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restored.ok ? " Those changes were restored." : ` Automatic restoration failed: ${restored.error}`}`,
 		};
 	}
-	if (allowed.length === 0) return { ok: true, error: "no changes to commit" };
+	if (allowed.length === 0) return { kind: "unchanged" };
 
 	const committed = await backend.commitPaths(
 		cwd,
 		allowed,
 		`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
 	);
-	if (!committed.ok) return committed;
+	if (!committed.ok) return { kind: "failed", error: committed.error };
 	if (backend.id === "jj") {
 		const empty = await backend.isWorkingCopyEmpty(cwd);
 		if (!empty.ok || !empty.empty) {
 			return {
-				ok: false,
+				kind: "failed",
 				error: empty.ok
 					? "jj commit did not leave an empty working-copy change; refusing to push an ambiguous fix."
 					: empty.error,
@@ -282,9 +291,9 @@ export async function doCommitAndPush(
 		}
 	}
 	const pushed = await backend.push(cwd, headRef);
-	if (!pushed.ok) return pushed;
+	if (!pushed.ok) return { kind: "failed", error: pushed.error };
 	const committedHead = await backend.headSha(cwd);
-	return { ok: true, headSha: committedHead.ok ? committedHead.sha : undefined };
+	return committedHead.ok ? { kind: "pushed", headSha: committedHead.sha } : { kind: "pushed" };
 }
 
 export async function runCleanup(

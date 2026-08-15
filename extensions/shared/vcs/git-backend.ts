@@ -3,14 +3,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { extractSlug, MAX_SLUG_LENGTH, normalizePathSegment } from "../slug.ts";
 import type {
 	CurrentRef,
+	GitVcsBackend,
 	IsolationPlan,
 	MergeBaseResult,
-	VcsBackend,
 	VcsResult,
 	WorkstreamCheckpoint,
 } from "./backend.ts";
@@ -51,7 +51,7 @@ function parsePorcelainPaths(stdout: string): string[] {
 	return paths;
 }
 
-export class GitBackend implements VcsBackend {
+export class GitBackend implements GitVcsBackend {
 	readonly id = "git" as const;
 	private readonly exec: ExecFn;
 	private readonly deps: GitBackendDeps;
@@ -73,7 +73,7 @@ export class GitBackend implements VcsBackend {
 		return preflightVcs(cwd, this.id, this.exec, { exists: this.deps.exists });
 	}
 
-	async workspaceRoot(cwd: string): Promise<VcsResult<{ path: string }>> {
+	private async workspaceRoot(cwd: string): Promise<VcsResult<{ path: string }>> {
 		const result = await this.git(cwd, ["rev-parse", "--show-toplevel"], 8_000);
 		const path = oneLine(result);
 		return path ? { ok: true, path } : { ok: false, error: "The git backend requires a Git working tree." };
@@ -94,6 +94,18 @@ export class GitBackend implements VcsBackend {
 		}
 		const name = output(result);
 		return { ok: true, ref: name ? { kind: "branch", name } : { kind: "detached" } };
+	}
+
+	async workstreamIdentity(
+		cwd: string,
+	): Promise<VcsResult<{ identity: { kind: "git"; ref: string; headSha: string } }>> {
+		const [current, head] = await Promise.all([this.currentRef(cwd), this.headSha(cwd)]);
+		if (!current.ok) return current;
+		if (current.ref.kind !== "branch") {
+			return { ok: false, error: "The Git workstream has no current branch." };
+		}
+		if (!head.ok) return head;
+		return { ok: true, identity: { kind: "git", ref: current.ref.name, headSha: head.sha } };
 	}
 
 	async changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>> {
@@ -203,12 +215,7 @@ export class GitBackend implements VcsBackend {
 				return {
 					ok: true,
 					plan: {
-						kind: "git-worktree",
 						sourceRepoRoot,
-						commonGitDir,
-						managedRoot,
-						repositoryId,
-						slug,
 						ref,
 						path,
 						baseRef: base.ref,
@@ -224,7 +231,6 @@ export class GitBackend implements VcsBackend {
 	}
 
 	async createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		if (plan.kind !== "git-worktree") return { ok: false, error: "The Git backend requires a Git worktree plan." };
 		const branchLookup = await this.git(plan.sourceRepoRoot, [
 			"show-ref",
 			"--verify",
@@ -239,9 +245,7 @@ export class GitBackend implements VcsBackend {
 			};
 		}
 		try {
-			(this.deps.mkdir ?? ((path: string) => mkdirSync(path, { recursive: true })))(
-				join(plan.managedRoot, plan.repositoryId),
-			);
+			(this.deps.mkdir ?? ((path: string) => mkdirSync(path, { recursive: true })))(dirname(plan.path));
 		} catch (error) {
 			return { ok: false, error: `Could not create the managed worktree directory: ${failure(error).stderr}` };
 		}
@@ -318,22 +322,24 @@ export class GitBackend implements VcsBackend {
 		return result.code === 0 ? { ok: true } : { ok: false, error: `git push failed: ${result.stderr.trim()}` };
 	}
 
-	async fetch(cwd: string, ref?: string): Promise<VcsResult> {
+	private async fetch(cwd: string, ref?: string): Promise<VcsResult> {
 		const result = await this.git(cwd, ["fetch", "origin", ...(ref ? [ref] : [])], 60_000);
 		return result.code === 0
 			? { ok: true }
 			: { ok: false, error: `git fetch origin${ref ? ` ${ref}` : ""} failed: ${result.stderr.trim()}` };
 	}
 
-	async integrateRemoteHead(cwd: string, ref: string): Promise<VcsResult> {
+	async fetchRemoteHead(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>> {
 		const fetched = await this.fetch(cwd, ref);
 		if (!fetched.ok) return fetched;
-		const ff = await this.git(cwd, ["merge", "--ff-only", `origin/${ref}`], 15_000);
-		if (ff.code === 0) return { ok: true };
-		const merge = await this.git(cwd, ["merge", "--no-edit", `origin/${ref}`], 30_000);
-		if (merge.code === 0) return { ok: true };
-		await this.git(cwd, ["merge", "--abort"]);
-		return { ok: false, error: `Could not integrate origin/${ref} without a rebase. ${merge.stderr.trim()}` };
+		const result = await this.git(cwd, ["rev-parse", `origin/${ref}`], 5_000);
+		const sha = output(result);
+		return result.code === 0 && SHA_RE.test(sha)
+			? { ok: true, sha }
+			: {
+					ok: false,
+					error: `Could not resolve origin/${ref} after fetch: ${result.stderr.trim() || result.stdout.trim()}`,
+				};
 	}
 
 	async mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {
@@ -400,8 +406,4 @@ export class GitBackend implements VcsBackend {
 		}
 		return undefined;
 	}
-}
-
-export function createGitBackend(exec: ExecFn): VcsBackend {
-	return new GitBackend(exec);
 }

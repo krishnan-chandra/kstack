@@ -70,6 +70,22 @@ test("install registers the package before merging defaults into Pi's updated se
 	});
 });
 
+test("install preserves the user-owned kstack backend selection", () => {
+	const agentDir = tempAgentDir();
+	const configPath = join(agentDir, "kstack.json");
+	const config = '{"vcs":{"backend":"jj"},"custom":"keep"}\n';
+	writeFileSync(configPath, config);
+
+	install({
+		repoRoot: "/example/kstack",
+		agentDir,
+		defaultsDir,
+		installPackage() {},
+	});
+
+	assert.equal(readFileSync(configPath, "utf8"), config);
+});
+
 test("applyPiDefaults does not modify either file when existing JSON is malformed", () => {
 	const agentDir = tempAgentDir();
 	const settingsPath = join(agentDir, "settings.json");

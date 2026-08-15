@@ -20,10 +20,11 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 
-Writable workstreams start on a dedicated `kstack/<task-slug>` branch and commit
-coherent increments as work proceeds. They stop on a dirty current working tree
-and never push or publish without a later confirmation. Read-only routes do not
-create branches.
+Writable workstreams use a dedicated `kstack/<task-slug>` Git branch or jj
+bookmark and record coherent increments with the configured backend. Git
+current-checkout runs stop on a dirty tree; jj runs use automatic snapshots.
+Neither backend pushes or publishes without a later confirmation. Read-only
+routes do not create workstreams.
 
 ## Skills
 
@@ -89,6 +90,23 @@ requires jj 0.44 or newer, a configured jj user name and email, and a colocated
 jj/Git workspace. It supports current-workspace single delivery and stacked
 PRs, but not Git worktree isolation. K-Stack refuses a mismatched workspace
 before launching a model or mutating repository state.
+
+| Workflow | Git backend | jj backend |
+| --- | --- | --- |
+| `fast-implement` | Current branch or `--worktree` | Current workspace; no `--worktree` |
+| `plan-implement --single` | Current branch or `--worktree` | `trunk()`-based change and bookmark |
+| `plan-implement --stack` | Refused | Local jj stack |
+| `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push |
+| `land` auto-discovery | Current branch | Bookmark targeting `@` |
+
+### Migrating existing installations
+
+Existing installations that omit `vcs` continue to use Git. To adopt jj, run
+`/skill:setup-kstack`, select jj, review the preview, and approve the update to
+the user-level `kstack.json`. Ensure the repository is colocated and configure
+`jj config set --user user.name` and `user.email` first. The installer and
+package updates never create, overwrite, or migrate `kstack.json`; they preserve
+the user's backend choice.
 
 `how` and `why` use only models in `investigation.allowedModels`. The resolver
 requires every entry to come from kstack's curated fast-model set and to use at

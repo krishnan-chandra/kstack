@@ -2,14 +2,7 @@
 
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { extractSlug, MAX_SLUG_LENGTH } from "../slug.ts";
-import type {
-	CurrentRef,
-	IsolationPlan,
-	MergeBaseResult,
-	VcsBackend,
-	VcsResult,
-	WorkstreamCheckpoint,
-} from "./backend.ts";
+import type { CurrentRef, JjVcsBackend, MergeBaseResult, VcsResult, WorkstreamCheckpoint } from "./backend.ts";
 import { preflightVcs } from "./preflight.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
@@ -39,7 +32,7 @@ function diagnostic(result: ExecFnResult): string {
 	return result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`;
 }
 
-export class JjBackend implements VcsBackend {
+export class JjBackend implements JjVcsBackend {
 	readonly id = "jj" as const;
 	private readonly exec: ExecFn;
 
@@ -57,14 +50,6 @@ export class JjBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec);
-	}
-
-	async workspaceRoot(cwd: string): Promise<VcsResult<{ path: string }>> {
-		const result = await this.jj(cwd, ["workspace", "root"], 8_000);
-		const path = output(result);
-		return result.code === 0 && path
-			? { ok: true, path }
-			: { ok: false, error: `Could not resolve the jj workspace root: ${diagnostic(result)}` };
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {
@@ -90,6 +75,29 @@ export class JjBackend implements VcsBackend {
 		return change.code === 0 && changeId
 			? { ok: true, ref: { kind: "no-bookmark", changeId } }
 			: { ok: false, error: `Could not resolve the current jj change: ${diagnostic(change)}` };
+	}
+
+	async workstreamIdentity(
+		cwd: string,
+	): Promise<VcsResult<{ identity: { kind: "jj"; ref: string; changeId: string; parentCommitIds: string[] } }>> {
+		const [current, change, parents] = await Promise.all([
+			this.currentRef(cwd),
+			this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE], 5_000),
+			this.jj(cwd, ["log", "-r", "parents(@)", "--no-graph", "-T", COMMIT_ID_TEMPLATE], 5_000),
+		]);
+		if (!current.ok) return current;
+		if (current.ref.kind !== "bookmark") {
+			return { ok: false, error: "The jj workstream has no unique bookmark on its current change." };
+		}
+		const changeId = output(change);
+		if (change.code !== 0 || !changeId) {
+			return { ok: false, error: `Could not resolve the current jj change identity: ${diagnostic(change)}` };
+		}
+		const parentCommitIds = lines(parents.stdout).sort();
+		if (parents.code !== 0 || parentCommitIds.length === 0 || parentCommitIds.some((sha) => !SHA_RE.test(sha))) {
+			return { ok: false, error: `Could not resolve the current jj parent commits: ${diagnostic(parents)}` };
+		}
+		return { ok: true, identity: { kind: "jj", ref: current.ref.name, changeId, parentCommitIds } };
 	}
 
 	async changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>> {
@@ -171,21 +179,6 @@ export class JjBackend implements VcsBackend {
 			: { ok: false, error: `Workstream postcondition failed: ${head.error}` };
 	}
 
-	async planIsolation(_cwd: string, _task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		return {
-			ok: false,
-			error: "Worktree isolation is unavailable with the jj backend. Use single mode in the current jj workspace.",
-		};
-	}
-
-	async createIsolation(_plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		return { ok: false, error: "Git worktree plans cannot be created with the jj backend." };
-	}
-
-	async removeIsolation(_cwd: string, _ref: string): Promise<VcsResult<{ warning?: string }>> {
-		return { ok: true };
-	}
-
 	async commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
 		const result = await this.jj(cwd, ["commit", ...paths, "-m", message], 30_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj commit failed: ${diagnostic(result)}` };
@@ -223,33 +216,16 @@ export class JjBackend implements VcsBackend {
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj git push failed: ${diagnostic(result)}` };
 	}
 
-	async fetch(cwd: string, _ref?: string): Promise<VcsResult> {
+	private async fetch(cwd: string, _ref?: string): Promise<VcsResult> {
 		const result = await this.jj(cwd, ["git", "fetch", "--remote", "origin"], 60_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj git fetch failed: ${diagnostic(result)}` };
 	}
 
-	async integrateRemoteHead(cwd: string, ref: string): Promise<VcsResult> {
+	async fetchRemoteHead(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>> {
 		const fetched = await this.fetch(cwd, ref);
 		if (!fetched.ok) return fetched;
 		const remote = await this.resolveOne(cwd, `${ref}@origin`);
-		if (!remote.ok) return { ok: false, error: `Could not resolve ${ref}@origin after fetch: ${remote.error}` };
-		if (await this.isAncestorOfCurrent(cwd, remote.sha)) return { ok: true };
-		const current = await this.currentRef(cwd);
-		if (!current.ok || current.ref.kind !== "bookmark") {
-			return {
-				ok: false,
-				error: "Cannot integrate the remote jj head because the current change has no unique bookmark.",
-			};
-		}
-		const merged = await this.createMerge(cwd, `${ref}@origin`, `Merge ${ref}@origin`);
-		if (!merged.ok) return merged;
-		const moved = await this.jj(cwd, ["bookmark", "set", current.ref.name, "-r", "@"]);
-		return moved.code === 0
-			? { ok: true }
-			: {
-					ok: false,
-					error: `The merge succeeded but bookmark ${current.ref.name} could not be moved: ${diagnostic(moved)}`,
-				};
+		return remote.ok ? remote : { ok: false, error: `Could not resolve ${ref}@origin after fetch: ${remote.error}` };
 	}
 
 	async mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {

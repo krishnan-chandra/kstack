@@ -38,6 +38,9 @@ export async function runFastImplement(
 	let branch: string | undefined;
 	let checkpoint: WorkstreamCheckpoint;
 	if (request.workLocation === "worktree") {
+		if (fx.backend.id !== "git") {
+			return { status: "failed", error: "--worktree requires the git backend." };
+		}
 		const planned = await fx.backend.planIsolation(initialCwd, request.task);
 		if (!planned.ok) return { status: "failed", error: planned.error };
 		const created = await fx.backend.createIsolation(planned.plan);

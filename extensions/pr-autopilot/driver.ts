@@ -536,22 +536,26 @@ export async function runAutopilot(
 					usage,
 				};
 			}
-			const pushResult = await doCommitAndPush(backend, cwd, state.headRef, state.headSha, prNumber, fixerOutput);
-			if (pushResult.ok && pushResult.error === "no changes to commit") {
-				notify("Fixer found nothing to commit. Skipping push.", "warning");
-			} else if (!pushResult.ok) {
-				notify(`Push failed: ${pushResult.error}`, "error");
-				blockedReasons.push(`push failed: ${pushResult.error}`);
-				break;
-			} else {
-				notify(
-					`Pushed to ${state.headRef} (new HEAD: ${pushResult.headSha?.slice(0, 8) ?? "?"}). Prior CI on the old SHA is stale.`,
-					"info",
-				);
-				verifiedHeadSha = null;
-				persisted = { ...persisted, headSha: pushResult.headSha ?? "" };
-				pushedAFix = true;
+			const pushResult = await doCommitAndPush(backend, cwd, checkout.identity, prNumber, fixerOutput);
+			switch (pushResult.kind) {
+				case "unchanged":
+					notify("Fixer found nothing to commit. Skipping push.", "warning");
+					break;
+				case "failed":
+					notify(`Push failed: ${pushResult.error}`, "error");
+					blockedReasons.push(`push failed: ${pushResult.error}`);
+					break;
+				case "pushed":
+					notify(
+						`Pushed to ${state.headRef} (new HEAD: ${pushResult.headSha?.slice(0, 8) ?? "?"}). Prior CI on the old SHA is stale.`,
+						"info",
+					);
+					verifiedHeadSha = null;
+					persisted = { ...persisted, headSha: pushResult.headSha ?? "" };
+					pushedAFix = true;
+					break;
 			}
+			if (pushResult.kind === "failed") break;
 		}
 
 		setPhase("replying", cycle);

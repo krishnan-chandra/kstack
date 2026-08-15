@@ -263,6 +263,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			skillPaths = policy.skills.map((skill) => skill.baseDir);
 		} else if (workLocation === "worktree") {
+			if (backend.id !== "git") {
+				notify("--worktree requires the git backend.", "error");
+				return;
+			}
 			const planned = await backend.planIsolation(ctx.cwd, task);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!planned.ok) {

@@ -17,7 +17,6 @@ describe("VCS backend config", () => {
 		assert.deepEqual(loadVcsBackend({ PI_CODING_AGENT_DIR: dir }), {
 			backend: "git",
 			warnings: [],
-			path: join(dir, "kstack.json"),
 		});
 	});
 

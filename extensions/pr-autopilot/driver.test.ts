@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { type DriverOps, runAutopilot } from "./driver.ts";
 import type { AutopilotPersistedState, ExecFn, ExecFnResult, ResolvedAutopilotConfig } from "./types.ts";
 
@@ -180,7 +180,7 @@ async function run(mode: "check" | "drive", scenario: Scenario = {}) {
 		{
 			config,
 			exec: harness.exec,
-			backend: createGitBackend(harness.exec),
+			backend: new GitBackend(harness.exec),
 			cwd: harness.cwd,
 			explicitPR: 42,
 			promptDir: harness.cwd,
