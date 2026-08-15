@@ -1,6 +1,7 @@
 /** Isolated planner/implementer Pi subprocess lifecycle. */
 
 import {
+	type ChildEvent,
 	type ChildRunnerDeps,
 	childIsolationArgs,
 	getPiInvocation,
@@ -109,7 +110,8 @@ export interface RunAgentOptions extends BuildChildArgsOptions {
 	cwd: string;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
-	onProgress?: (progress: { role: AgentRole; turns: number; activity: string }) => void;
+	onProgress?: (progress: { role: AgentRole; turns: number; activity: string; preview?: string }) => void;
+	onEvent?: (event: ChildEvent) => void;
 }
 
 export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
@@ -130,7 +132,13 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 			killGraceMs: deps.killGraceMs ?? LIMITS.killGraceMs,
 		},
 		onProgress: (progress) =>
-			options.onProgress?.({ role: options.role, turns: progress.turns, activity: progress.activity ?? "thinking" }),
+			options.onProgress?.({
+				role: options.role,
+				turns: progress.turns,
+				activity: progress.activity ?? "thinking",
+				...(progress.preview !== undefined ? { preview: progress.preview } : {}),
+			}),
+		onEvent: options.onEvent,
 	});
 	const identity = { role: options.role, model: options.model };
 	if (result.status === "completed")
