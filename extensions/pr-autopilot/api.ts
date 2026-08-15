@@ -11,7 +11,7 @@ interface PrAutopilotPayload {
 	mode: AutopilotMode;
 	prNumber: number;
 	ctx: ExtensionCommandContext;
-	cwd?: string;
+	cwd: string;
 }
 
 /* exported: request-channel contract */
@@ -31,7 +31,9 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		"ctx" in value &&
 		typeof value.ctx === "object" &&
 		value.ctx !== null &&
-		(!("cwd" in value) || value.cwd === undefined || (typeof value.cwd === "string" && value.cwd.length > 0)),
+		"cwd" in value &&
+		typeof value.cwd === "string" &&
+		value.cwd.length > 0,
 });
 
 /* exported: request-channel contract */
@@ -43,9 +45,7 @@ export function claimPrAutopilotRequest(
 	value: unknown,
 	run: (mode: AutopilotMode, prNumber: number, ctx: ExtensionCommandContext, cwd: string) => Promise<AutopilotResult>,
 ): boolean {
-	return channel.claim(value, (payload) =>
-		run(payload.mode, payload.prNumber, payload.ctx, payload.cwd ?? payload.ctx.cwd),
-	);
+	return channel.claim(value, (payload) => run(payload.mode, payload.prNumber, payload.ctx, payload.cwd));
 }
 
 export function requestPrAutopilot(
@@ -53,7 +53,7 @@ export function requestPrAutopilot(
 	mode: AutopilotMode,
 	prNumber: number,
 	ctx: ExtensionCommandContext,
-	cwd?: string,
+	cwd: string,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
 	return channel.request(pi, { mode, prNumber, ctx, cwd });
 }

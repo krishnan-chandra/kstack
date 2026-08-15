@@ -42,23 +42,6 @@ describe("plan-implement in-process API", () => {
 		]);
 	});
 
-	it("keeps the legacy caller signature and missing workLocation payload compatible", async () => {
-		const ctx = {} as ExtensionCommandContext;
-		let received: WorkLocation | undefined;
-		const pi = {
-			events: fakeBus((data) => {
-				const request = data as { payload: { workLocation?: WorkLocation } };
-				delete request.payload.workLocation;
-				claimPlanImplementRequest(data, async (_task, _mode, workLocation) => {
-					received = workLocation;
-				});
-			}),
-		} as unknown as ExtensionAPI;
-		const result = await requestPlanImplement(pi, "Legacy task", "single", "generic", ctx);
-		assert.deepEqual(result, { handled: true });
-		assert.equal(received, "current");
-	});
-
 	it("reports unavailable when plan-implement has no listener", async () => {
 		const pi = { events: fakeBus() } as unknown as ExtensionAPI;
 		const result = await requestPlanImplement(pi, "", "single", "current", "generic", {} as ExtensionCommandContext);

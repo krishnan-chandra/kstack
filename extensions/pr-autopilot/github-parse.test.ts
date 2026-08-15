@@ -113,7 +113,6 @@ describe("github parsers", () => {
 				JSON.stringify([
 					{ id: 9, user: { login: "bugbot" }, body: "npe", html_url: "https://example/9" },
 					{ id: 10, user: { login: "me" }, body: "<!-- pr-autopilot -->\nAddressed." },
-					{ id: 11, user: { login: "me" }, body: "<!-- pr-babysit -->\nlegacy reply" },
 				]),
 			);
 			assert.equal(comments.length, 1);

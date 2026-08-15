@@ -2,24 +2,26 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	applyForceAsk,
-	buildFixerTask,
-	buildPRState,
-	buildTriagerTask,
 	classifyBlockers,
-	describeBlockers,
 	fetchPRState,
-	isCodeReady,
-	isMergeReady,
 	loadPersistedState,
 	parseTriage,
 	persistPath,
-	pickModel,
 	prepareMutationCheckout,
 	savePersistedState,
 	summarizeTriage,
-} from "./autopilot.ts";
+} from "./autopilot-operations.ts";
 import { DEFAULT_TINY_MODELS } from "./config.ts";
 import type { GHPrJson } from "./github-parse.ts";
+import {
+	buildFixerTask,
+	buildPRState,
+	buildTriagerTask,
+	describeBlockers,
+	isCodeReady,
+	isMergeReady,
+	pickModel,
+} from "./pr-state.ts";
 import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
@@ -286,20 +288,6 @@ describe("pr-autopilot state machine", () => {
 				assert.equal(result.summary, sampleTriage.summary);
 				assert.equal(result.threads[0].decision, "fix");
 			}
-		});
-
-		it("accepts legacy fixable booleans", () => {
-			const result = parseTriage(
-				JSON.stringify({
-					checks: [],
-					threads: [{ id: "t1", fixable: true, action: "nits", cls: "code" }],
-					conflicts: false,
-					draft: false,
-					summary: "ok",
-				}),
-			);
-			assert.equal("error" in result, false);
-			if (!("error" in result)) assert.equal(result.threads[0].decision, "fix");
 		});
 
 		it("extracts one fenced JSON block despite a conversational prefix", () => {

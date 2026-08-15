@@ -210,29 +210,4 @@ describe("pr-autopilot config", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
-
-	it("still loads a legacy pr-babysit section and warns to rename it", () => {
-		const dir = mkdtempSync(join(tmpdir(), "pr-autopilot-legacy-"));
-		try {
-			writeFileSync(
-				join(dir, "kstack.json"),
-				JSON.stringify({
-					"pr-babysit": {
-						models: [
-							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-							{ label: "lite", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
-						],
-					},
-				}),
-			);
-			const result = loadConfig({ PI_CODING_AGENT_DIR: dir });
-			assert.equal(result.status, "loaded");
-			if (result.status === "loaded") {
-				assert.match(result.config.warnings.join("\n"), /pr-babysit/);
-				assert.equal(result.config.models.length, 2);
-			}
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
 });

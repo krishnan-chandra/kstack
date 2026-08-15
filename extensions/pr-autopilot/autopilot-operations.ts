@@ -341,10 +341,8 @@ function parseFailureClass(raw: unknown): FailureClass {
 	return "unknown";
 }
 
-function parseDecision(raw: unknown, fixable: unknown): ThreadDecision | undefined {
+function parseDecision(raw: unknown): ThreadDecision | undefined {
 	if (raw === "fix" || raw === "dismiss" || raw === "ask") return raw;
-	if (fixable === true) return "fix";
-	if (fixable === false) return "ask";
 	return undefined;
 }
 
@@ -371,7 +369,7 @@ function parseThreadEntry(raw: unknown): ParsedThread | undefined {
 	const obj = raw as Record<string, unknown>;
 	const id = typeof obj.id === "string" ? obj.id : undefined;
 	if (!id) return undefined;
-	const decision = parseDecision(obj.decision, obj.fixable);
+	const decision = parseDecision(obj.decision);
 	if (!decision) return undefined;
 	const action = typeof obj.action === "string" ? obj.action : "";
 	const reply = typeof obj.reply === "string" ? obj.reply : action;

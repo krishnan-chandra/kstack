@@ -185,8 +185,7 @@ to allow other extensions (notably `kstack-router`) to invoke the workflow witho
 synthesizing slash-command strings.
 
 The request carries a structured `{ task, mode, workLocation, changeKind, ctx }` payload with a
-synchronous `claimed` flag and an awaited completion promise. For compatibility,
-older callers may omit `workLocation`, which means `current`. The slash command
+synchronous `claimed` flag and an awaited completion promise. The slash command
 and the event listener call the same internal runner. Only the slash command
 collects flags and editor input. Both paths retain task validation,
 Git/panel/model preflight, confirmations, lifecycle checks, cleanup, and panel
