@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { createGitBackend } from "../shared/vcs/git-backend.ts";
 import type { RunAgentOptions } from "./agent-runner.ts";
 import {
 	type ApprovedWorkflowOptions,
@@ -44,7 +45,7 @@ function effects(overrides: Partial<PhaseEffects> = {}): { fx: PhaseEffects; not
 		isSessionCurrent: () => true,
 		beginChild: () => new AbortController(),
 		endChild: () => {},
-		exec: async () => ({ code: 1, stdout: "", stderr: "not configured" }),
+		backend: createGitBackend(async () => ({ code: 1, stdout: "", stderr: "not configured" })),
 		requestPanelReview: async () => ({ handled: false }),
 		resolvePublishedPr: async () => ({ ok: false, error: "not resolved (test default)" }),
 		requestLand: async () => ({ handled: false }),
@@ -121,12 +122,12 @@ describe("plan-implement phases", () => {
 				output: validLedger,
 				usage,
 			}),
-			exec: async () => ({ code: 0, stdout: "wrong-branch\n", stderr: "" }),
+			backend: createGitBackend(async () => ({ code: 0, stdout: "wrong-branch\n", stderr: "" })),
 		});
 		await runPostReviewPhases(
 			"fix it",
 			{ ...options(), mode: "single" },
-			{ workflowCwd: "/repo", workstreamCheckpoint: { branch: "expected", baseSha: "a".repeat(40) } },
+			{ workflowCwd: "/repo", workstreamCheckpoint: { ref: "expected", baseSha: "a".repeat(40) } },
 			fx,
 		);
 		assert.equal(confirms, 1);

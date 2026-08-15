@@ -320,35 +320,6 @@ export async function markPrReady(exec: ExecFn, cwd: string, prNumber: number): 
 	return gh(exec, cwd, ["pr", "ready", String(prNumber)]);
 }
 
-export async function currentBranch(exec: ExecFn, cwd: string): Promise<ExecFnResult & { branch?: string }> {
-	const result = await exec("git", ["branch", "--show-current"], { cwd, timeout: 5_000 });
-	if (result.code !== 0) return { ...result, branch: undefined };
-	return { ...result, branch: result.stdout.trim() || undefined };
-}
-
-export async function currentHead(
-	exec: ExecFn,
-	cwd: string,
-	timeout = 5_000,
-): Promise<ExecFnResult & { sha?: string }> {
-	const result = await exec("git", ["rev-parse", "HEAD"], { cwd, timeout });
-	if (result.code !== 0) return { ...result, sha: undefined };
-	const sha = result.stdout.trim();
-	return /^[0-9a-f]{40}$/.test(sha) ? { ...result, sha } : { ...result, sha: undefined };
-}
-
-export function parsePorcelainPaths(stdout: string): string[] {
-	const paths: string[] = [];
-	for (const line of stdout.split("\n")) {
-		if (line.length < 4) continue;
-		const rest = line.slice(3);
-		const arrow = rest.indexOf(" -> ");
-		const path = (arrow === -1 ? rest : rest.slice(arrow + 4)).trim();
-		if (path) paths.push(path);
-	}
-	return paths;
-}
-
 export function isForbiddenStagingPath(path: string): boolean {
 	const normalized = path.replaceAll("\\", "/");
 	const base = normalized.split("/").pop() ?? normalized;
@@ -356,64 +327,4 @@ export function isForbiddenStagingPath(path: string): boolean {
 	if (normalized.includes(".github/workflows/")) return true;
 	if (base.endsWith(".pem") || base === "id_rsa" || base === "id_ed25519") return true;
 	return false;
-}
-
-type MergeBaseResult =
-	| { kind: "clean"; headSha: string }
-	| { kind: "already-current" }
-	| { kind: "needs-human"; files: string[]; error: string }
-	| { kind: "failed"; error: string };
-
-/**
- * Merge origin/<base> into the frontier head. Never rebases. Aborts if hunks
- * have competing intents (git reports conflicts).
- */
-export async function mergeBaseIntoHead(exec: ExecFn, cwd: string, baseRef: string): Promise<MergeBaseResult> {
-	const fetch = await exec("git", ["fetch", "origin", baseRef], { cwd, timeout: 60_000 });
-	if (fetch.code !== 0) return { kind: "failed", error: `git fetch origin ${baseRef} failed: ${fetch.stderr.trim()}` };
-
-	const merge = await exec("git", ["merge", "--no-edit", `origin/${baseRef}`], { cwd, timeout: 30_000 });
-	if (merge.code === 0) {
-		const already = /Already up to date/i.test(merge.stdout);
-		if (already) return { kind: "already-current" };
-		const head = await currentHead(exec, cwd);
-		if (!head.sha) return { kind: "failed", error: "merge succeeded but HEAD SHA could not be read." };
-		return { kind: "clean", headSha: head.sha };
-	}
-
-	const unmerged = await exec("git", ["diff", "--name-only", "--diff-filter=U"], { cwd, timeout: 5_000 });
-	const files = unmerged.stdout
-		.split("\n")
-		.map((l) => l.trim())
-		.filter(Boolean);
-	await exec("git", ["merge", "--abort"], { cwd, timeout: 10_000 });
-	return {
-		kind: "needs-human",
-		files,
-		error:
-			files.length > 0
-				? `Merge of origin/${baseRef} conflicted in ${files.join(", ")}. Competing intents need a human.`
-				: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
-	};
-}
-
-/**
- * Integrate the latest remote of the PR branch before committing. Never force-push.
- */
-export async function integrateRemoteHead(
-	exec: ExecFn,
-	cwd: string,
-	headRef: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-	const fetch = await exec("git", ["fetch", "origin", headRef], { cwd, timeout: 60_000 });
-	if (fetch.code !== 0) return { ok: false, error: `git fetch origin ${headRef} failed: ${fetch.stderr.trim()}` };
-
-	const ff = await exec("git", ["merge", "--ff-only", `origin/${headRef}`], { cwd, timeout: 15_000 });
-	if (ff.code === 0) return { ok: true };
-
-	const merge = await exec("git", ["merge", "--no-edit", `origin/${headRef}`], { cwd, timeout: 30_000 });
-	if (merge.code === 0) return { ok: true };
-
-	await exec("git", ["merge", "--abort"], { cwd, timeout: 10_000 });
-	return { ok: false, error: `Could not integrate origin/${headRef} without a rebase. ${merge.stderr.trim()}` };
 }

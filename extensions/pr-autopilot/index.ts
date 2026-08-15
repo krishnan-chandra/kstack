@@ -20,6 +20,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
+import { createGitBackend } from "../shared/vcs/git-backend.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
@@ -199,11 +200,13 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 				}
 			};
 
+			const exec = makeExec(pi);
 			const result = await runAutopilot(
 				mode,
 				{
 					config,
-					exec: makeExec(pi),
+					exec,
+					backend: createGitBackend(exec),
 					cwd,
 					explicitPR: prNumber,
 					promptDir: tempDir,

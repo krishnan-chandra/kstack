@@ -23,17 +23,14 @@ import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
-	currentBranch,
-	currentHead,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
-	integrateRemoteHead,
 	isForbiddenStagingPath,
-	parsePorcelainPaths,
 	replyToIssueComment,
 	replyToReviewComment,
 	resolveReviewThread,
@@ -177,55 +174,45 @@ export async function runChildRole(
 }
 
 export async function prepareMutationCheckout(
-	exec: ExecFn,
+	backend: VcsBackend,
 	cwd: string,
 	state: PRState,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-	const [branch, head, status] = await Promise.all([
-		currentBranch(exec, cwd),
-		currentHead(exec, cwd),
-		exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 }),
+	const [current, head, clean] = await Promise.all([
+		backend.currentRef(cwd),
+		backend.headSha(cwd),
+		backend.isWorkingCopyEmpty(cwd),
 	]);
-	if (branch.branch !== state.headRef) {
+	const refName =
+		current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : undefined;
+	if (refName !== state.headRef) {
 		return {
 			ok: false,
-			error: `Selected PR #${state.number} uses ${state.headRef}, but the checkout is on ${branch.branch ?? "a detached HEAD"}. Open its managed worktree first.`,
+			error: `Selected PR #${state.number} uses ${state.headRef}, but the checkout is on ${refName ?? "a detached HEAD"}. Open its managed worktree first.`,
 		};
 	}
-	if (head.sha !== state.headSha) {
+	if (!head.ok || head.sha !== state.headSha) {
 		return {
 			ok: false,
-			error: `Local HEAD ${head.sha ?? "could not be read"} does not match PR #${state.number} head ${state.headSha}. Synchronize the PR worktree first.`,
+			error: `Local HEAD ${head.ok ? head.sha : "could not be read"} does not match PR #${state.number} head ${state.headSha}. Synchronize the PR worktree first.`,
 		};
 	}
-	if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
-	if (status.stdout.trim())
-		return { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." };
-	const integrated = await integrateRemoteHead(exec, cwd, state.headRef);
+	if (!clean.ok) return clean;
+	if (!clean.empty) return { ok: false, error: "The PR worktree must be clean before pr-autopilot can mutate it." };
+	const integrated = await backend.integrateRemoteHead(cwd, state.headRef);
 	if (!integrated.ok) return integrated;
-	const synchronizedHead = await currentHead(exec, cwd);
-	if (synchronizedHead.sha !== state.headSha) {
+	const synchronizedHead = await backend.headSha(cwd);
+	if (!synchronizedHead.ok || synchronizedHead.sha !== state.headSha) {
 		return {
 			ok: false,
-			error: `The remote PR head advanced to ${synchronizedHead.sha ?? "an unreadable SHA"}; refresh GitHub state before editing.`,
+			error: `The remote PR head advanced to ${synchronizedHead.ok ? synchronizedHead.sha : "an unreadable SHA"}; refresh GitHub state before editing.`,
 		};
 	}
 	return { ok: true };
 }
 
-async function restoreForbiddenPaths(exec: ExecFn, cwd: string, paths: string[]): Promise<string | undefined> {
-	const errors: string[] = [];
-	for (const path of paths) {
-		const restore = await exec("git", ["restore", "--staged", "--worktree", "--", path], { cwd, timeout: 10_000 });
-		if (restore.code === 0) continue;
-		const clean = await exec("git", ["clean", "-f", "--", path], { cwd, timeout: 10_000 });
-		if (clean.code !== 0) errors.push(`${path}: ${restore.stderr.trim() || clean.stderr.trim()}`);
-	}
-	return errors.length > 0 ? errors.join("; ") : undefined;
-}
-
 export async function doCommitAndPush(
-	exec: ExecFn,
+	backend: VcsBackend,
 	cwd: string,
 	headRef: string,
 	expectedHeadSha: string,
@@ -236,61 +223,54 @@ export async function doCommitAndPush(
 		return { ok: false, error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks." };
 	}
 
-	const [branch, head, status] = await Promise.all([
-		currentBranch(exec, cwd),
-		currentHead(exec, cwd),
-		exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 }),
+	const [current, head, changed] = await Promise.all([
+		backend.currentRef(cwd),
+		backend.headSha(cwd),
+		backend.changedPaths(cwd),
 	]);
-	if (branch.branch !== headRef || head.sha !== expectedHeadSha) {
+	const refName =
+		current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : undefined;
+	if (refName !== headRef || !head.ok || head.sha !== expectedHeadSha) {
 		return {
 			ok: false,
-			error: `The fixer changed checkout identity (expected ${headRef}@${expectedHeadSha}, found ${branch.branch ?? "detached"}@${head.sha ?? "unknown"}). Refusing to publish.`,
+			error: `The fixer changed checkout identity (expected ${headRef}@${expectedHeadSha}, found ${refName ?? "detached"}@${head.ok ? head.sha : "unknown"}). Refusing to publish.`,
 		};
 	}
-	if (status.code !== 0) return { ok: false, error: `Could not inspect fixer changes: ${status.stderr.trim()}` };
-	const paths = parsePorcelainPaths(status.stdout);
+	if (!changed.ok) return { ok: false, error: `Could not inspect fixer changes: ${changed.error}` };
+	const paths = changed.paths;
 	if (paths.length === 0) return { ok: true, error: "no changes to commit" };
 
 	const forbidden = paths.filter(isForbiddenStagingPath);
 	const allowed = paths.filter((p) => !isForbiddenStagingPath(p));
 	if (forbidden.length > 0) {
-		const restoreError = await restoreForbiddenPaths(exec, cwd, forbidden);
+		const restored = await backend.restorePaths(cwd, forbidden);
 		return {
 			ok: false,
-			error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restoreError ? ` Automatic restoration failed: ${restoreError}` : " Those changes were restored."}`,
+			error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restored.ok ? " Those changes were restored." : ` Automatic restoration failed: ${restored.error}`}`,
 		};
 	}
 	if (allowed.length === 0) return { ok: true, error: "no changes to commit" };
 
-	const add = await exec("git", ["add", "--", ...allowed], { cwd, timeout: 10_000 });
-	if (add.code !== 0) return { ok: false, error: `git add failed: ${add.stderr.trim()}` };
-
-	const commit = await exec(
-		"git",
-		[
-			"commit",
-			"-m",
-			`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
-		],
-		{ cwd, timeout: 10_000 },
+	const committed = await backend.commitPaths(
+		cwd,
+		allowed,
+		`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
 	);
-	if (commit.code !== 0) return { ok: false, error: `git commit failed: ${commit.stderr.trim()}` };
-
-	const push = await exec("git", ["push", "origin", `HEAD:${headRef}`], { cwd, timeout: 30_000 });
-	if (push.code !== 0) return { ok: false, error: `git push failed: ${push.stderr.trim()}` };
-
-	const committedHead = await exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 5_000 });
-	return { ok: true, headSha: committedHead.stdout.trim() || undefined };
+	if (!committed.ok) return committed;
+	const pushed = await backend.push(cwd, headRef);
+	if (!pushed.ok) return pushed;
+	const committedHead = await backend.headSha(cwd);
+	return { ok: true, headSha: committedHead.ok ? committedHead.sha : undefined };
 }
 
 export async function runCleanup(
-	exec: ExecFn,
+	backend: VcsBackend,
 	cwd: string,
 	confirm: (label: string, body: string) => Promise<boolean>,
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 ): Promise<boolean> {
-	const branchResult = await exec("git", ["branch", "--show-current"], { cwd, timeout: 5_000 });
-	const branch = branchResult.stdout.trim();
+	const current = await backend.currentRef(cwd);
+	const branch = current.ok && current.ref.kind === "branch" ? current.ref.name : "";
 
 	if (!branch.startsWith("kstack/")) {
 		notify(
@@ -311,26 +291,12 @@ export async function runCleanup(
 	);
 	if (!confirmed) return false;
 
-	const commonDirResult = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
-		cwd,
-		timeout: 5_000,
-	});
-	const commonDir = commonDirResult.stdout.trim();
-	if (commonDirResult.code !== 0 || !commonDir) {
-		notify(`Could not locate the owning repository: ${commonDirResult.stderr.trim()}`, "error");
+	const removed = await backend.removeIsolation(cwd, branch);
+	if (!removed.ok) {
+		notify(removed.error, "error");
 		return false;
 	}
-	const ownerRoot = join(commonDir, "..");
-	const remove = await exec("git", ["worktree", "remove", cwd, "--force"], { cwd: ownerRoot, timeout: 15_000 });
-	if (remove.code !== 0) {
-		notify(`Worktree removal failed: ${remove.stderr.trim()}. You may need to remove it manually.`, "error");
-		return false;
-	}
-
-	const deleteResult = await exec("git", ["branch", "-d", branch], { cwd: ownerRoot, timeout: 5_000 });
-	if (deleteResult.code !== 0) {
-		notify(`Branch deletion warning: ${deleteResult.stderr.trim()}`, "warning");
-	}
+	if (removed.warning) notify(removed.warning, "warning");
 
 	notify("Managed worktree and branch removed. To archive the linked Pi session, run: /session-archive", "info");
 	return true;

@@ -20,6 +20,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
 import {
 	applyForceAsk,
 	applyThreadReplies,
@@ -35,7 +36,7 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import { markPrReady, mergeBaseIntoHead, rerunFailedRun, watchChecks } from "./github.ts";
+import { markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
 	buildFixerTask,
@@ -95,6 +96,7 @@ export async function runAutopilot(
 	params: {
 		config: ResolvedAutopilotConfig;
 		exec: ExecFn;
+		backend: VcsBackend;
 		cwd: string;
 		explicitPR?: number;
 		promptDir: string;
@@ -109,7 +111,7 @@ export async function runAutopilot(
 	signal: AbortSignal,
 	ops: DriverOps = defaultOps,
 ): Promise<AutopilotResult> {
-	const { config, exec, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
+	const { config, exec, backend, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
 	const { setPhase, notify, confirm } = handlers;
 	let usage = emptyUsage();
 	const blockedReasons: string[] = [];
@@ -126,6 +128,19 @@ export async function runAutopilot(
 	};
 
 	setPhase("discovering");
+	if (mode !== "check") {
+		const preflight = await backend.preflight(cwd);
+		if (!preflight.ok) {
+			notify(preflight.error, "error");
+			return {
+				status: "blocked",
+				mergeReady: false,
+				cyclesCompleted: 0,
+				blockedReasons: [preflight.error],
+				usage,
+			};
+		}
+	}
 	const target = await resolveTargetPR(exec, cwd, params.explicitPR);
 	if (target.error || !target.prNumber) {
 		const msg = target.error ?? "No PR to drive.";
@@ -174,7 +189,7 @@ export async function runAutopilot(
 
 	if (mode === "cleanup") {
 		setPhase("cleaning");
-		const ok = await runCleanup(exec, cwd, confirm, notify);
+		const ok = await runCleanup(backend, cwd, confirm, notify);
 		setPhase("idle");
 		return {
 			status: ok ? "cleaned" : "blocked",
@@ -290,7 +305,7 @@ export async function runAutopilot(
 		const ready = await declareReady(state);
 		if (ready) return ready;
 
-		const checkout = await prepareMutationCheckout(exec, cwd, state);
+		const checkout = await prepareMutationCheckout(backend, cwd, state);
 		if (!checkout.ok) {
 			notify(checkout.error, "error");
 			return {
@@ -313,16 +328,16 @@ export async function runAutopilot(
 				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging origin/${state.baseRef} (no rebase).`,
 				"info",
 			);
-			const merged = await mergeBaseIntoHead(exec, cwd, state.baseRef);
+			const merged = await backend.mergeBaseIntoHead(cwd, state.baseRef);
 			switch (merged.kind) {
 				case "already-current":
 					notify(`origin/${state.baseRef} is already in HEAD; refreshing GitHub state.`, "info");
 					cycle++;
 					continue;
 				case "clean": {
-					const push = await exec("git", ["push", "origin", `HEAD:${state.headRef}`], { cwd, timeout: 30_000 });
-					if (push.code !== 0) {
-						blockedReasons.push(`Could not push merged base: ${push.stderr.trim()}`);
+					const push = await backend.push(cwd, state.headRef);
+					if (!push.ok) {
+						blockedReasons.push(`Could not push merged base: ${push.error}`);
 						break;
 					}
 					notify(`Merged origin/${state.baseRef} and pushed ${merged.headSha.slice(0, 8)}.`, "info");
@@ -520,7 +535,7 @@ export async function runAutopilot(
 					usage,
 				};
 			}
-			const pushResult = await doCommitAndPush(exec, cwd, state.headRef, state.headSha, prNumber, fixerOutput);
+			const pushResult = await doCommitAndPush(backend, cwd, state.headRef, state.headSha, prNumber, fixerOutput);
 			if (pushResult.ok && pushResult.error === "no changes to commit") {
 				notify("Fixer found nothing to commit. Skipping push.", "warning");
 			} else if (!pushResult.ok) {
