@@ -48,9 +48,10 @@ freshness, not authorization.
   does not republish; run `/jj-stack publish` separately.
 - Lands the stack bottom-up through the `land` extension. One confirmation
   covers the whole plan. Each frontier is marked ready if needed, merged with
-  a minted Land confirmation, advanced locally, verified onto trunk, republished, and
-  has its remote branch deleted only after those checks. `--readiness` defaults
-  to `watch`. `/land` remains the single-PR command.
+  a minted Land confirmation, advanced locally, verified onto trunk, republished,
+  and has its remote branch deleted only after those checks. `--readiness`
+  defaults to `watch`. In jj mode, `/land --pr <number>` delegates here when the
+  selected PR closes a local stack with two or more slices.
 
 ## What it does not do
 
@@ -77,6 +78,9 @@ create PRs, repair bases, or update navigation comments.
 - `requestStackPublication(pi, input, ctx)` — discovery, planning, confirmation,
   stale checking, and apply for trusted in-process workflow callers. The
   extension owns that confirmation.
+- `requestStackLanding(pi, input, ctx)` — maps a selected PR head to a local jj
+  stack. It returns `not-stack` for one-slice work and otherwise lands the full
+  prefix through that PR.
 
 Completed outcomes return a base-to-top PR map. Other outcomes are
 `declined`, `busy`, `blocked`, `stale`, `partial`, `cancelled`,

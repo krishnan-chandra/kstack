@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { JJ_STACK_LANDING_EVENT } from "./api.ts";
 import jjStackedPrsExtension from "./index.ts";
 import { combinePublicationSignals } from "./signals.ts";
 
@@ -30,6 +31,7 @@ describe("jj-stacked-prs registration", () => {
 		assert.deepEqual(tools, ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish", "jj_stack_land"]);
 		assert.ok(events.includes("session_start"));
 		assert.ok(events.includes("session_shutdown"));
+		assert.ok(events.includes(JJ_STACK_LANDING_EVENT));
 		assert.ok(shortcuts.includes("ctrl+shift+j"));
 		for (const handler of sessionHandlers) handler();
 	});
