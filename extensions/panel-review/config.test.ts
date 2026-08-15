@@ -209,7 +209,7 @@ describe("resolveReviewers", () => {
 		const r = resolveReviewers(null, { find: find(available), scopedModels: [] });
 		assert.ok(r.ok);
 		assert.deepEqual(r.reviewers, [
-			{ label: "opus", model: "anthropic/claude-opus-4-6", thinking: "medium" },
+			{ label: "claude", model: "anthropic/claude-sonnet-5", thinking: "medium" },
 			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 			{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 			{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "high" },

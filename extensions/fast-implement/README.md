@@ -72,8 +72,8 @@ implementer:
 The implementer must match one of these model and thinking-level pairs:
 
 - `openai/gpt-5.6-sol:low`
-- `openrouter/x-ai/grok-4.6:high`
-- `anthropic/claude-opus-5:medium`
+- `openrouter/deepseek/deepseek-v4-flash:high`
+- `openrouter/moonshotai/kimi-k3:medium`
 
 You can omit `thinking`. If you set it, the value must match the pinned level
 for that model. Missing configuration selects the first authenticated model in

@@ -2,9 +2,8 @@
 	"vcs": { "backend": "git" },
 	"panel-review": {
 		"reviewers": [
-			{ "label": "opus", "model": "anthropic/claude-opus-4-6", "thinking": "medium" },
+			{ "label": "claude", "model": "anthropic/claude-sonnet-5", "thinking": "medium" },
 			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "medium" },
-			{ "label": "grok", "model": "openrouter/x-ai/grok-4.6", "thinking": "high" },
 			{ "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "high" }
 		],
 		"maxConcurrency": 5,
@@ -18,7 +17,7 @@
 		"timeoutMinutes": 30
 	},
 	"fast-implement": {
-		"implementer": { "model": "openai/gpt-5.6-sol", "thinking": "low" },
+		"implementer": { "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" },
 		"timeoutMinutes": 30
 	},
 	"kstack-router": {

@@ -11,8 +11,8 @@ export { modelCliId } from "../shared/model-spec.ts";
  */
 export const ALLOWED_IMPLEMENTERS: readonly RoleSpec[] = [
 	{ model: "openai/gpt-5.6-sol", thinking: "low" },
-	{ model: "openrouter/x-ai/grok-4.6", thinking: "high" },
-	{ model: "anthropic/claude-opus-5", thinking: "medium" },
+	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
+	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 ];
 export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = ALLOWED_IMPLEMENTERS;
 
