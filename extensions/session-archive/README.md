@@ -146,13 +146,6 @@ cross-process session-liveness detection described above.
 ```bash
 # Unit + integration tests (Node 22+; no Pi runtime imports needed)
 node --test ~/.pi/agent/extensions/session-archive/*.test.ts
-
-# Full end-to-end smoke test: drives a real pi RPC process with an isolated
-# PI_CODING_AGENT_DIR, selects an unnamed inactive fixture, archives a live
-# session named with Pi's built-in --name option, has the LLM call both tools and attempt a
-# blocked write, then restarts Pi.
-# Spends a small number of tokens on a few tiny prompts.
-python3 ~/.pi/agent/extensions/session-archive/scripts/e2e-smoke.py
 ```
 
 Structure:

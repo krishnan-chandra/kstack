@@ -199,8 +199,4 @@ discovered. Ensure this repository is installed as a Pi package: `pi install
 ```bash
 # Unit tests (pure modules: args, catalog, classification, config, runner, lifecycle, dispatch)
 node --test extensions/kstack-router/*.test.ts
-
-# Headless adapter smoke test: registers the real extension against a mock Pi
-# and drives tool gating, playbook injection, restoration, and delegation.
-node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 ```
