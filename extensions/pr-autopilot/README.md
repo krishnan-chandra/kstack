@@ -22,9 +22,9 @@ the lowest unmerged PR in a stack) to merge-ready with cheap, fast child agents.
 | `threads` | Fetch state, spawn a tiny-model triager, then a fixer for threads marked `fix`. Dismiss/ask are handled by the parent. Commit and push. One cycle. |
 | `drive` | Loop: refresh → merge base if behind/conflicted → comments → watch pending CI → flake rerun → code CI, up to 3 fix cycles. |
 | `watch` | Same as `drive` with up to 15 fix cycles. Watches `gh pr checks --watch` when nothing is actionable and CI is still running. |
-| `cleanup` | Remove the current managed worktree and safely delete its branch after confirmation. Session archival remains a separate manual step. |
+| `cleanup` | In Git mode, remove the current managed worktree and safely delete its branch after confirmation. In jj mode, report a no-op. Session archival remains separate. |
 
-If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR authored by the current GitHub user** in the repository (sorted by number, not GitHub's default list order). Before any mutation, the current checkout must be clean, on that PR's exact head branch, and at GitHub's exact head SHA.
+If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR authored by the current GitHub user** in the repository (sorted by number, not GitHub's default list order). Before any mutation, the selected workstream must match the PR's exact head ref and GitHub head SHA. Git mode also requires a clean tree. jj mode requires the PR bookmark to target an empty `@` automation checkpoint; the implementation remains in its ancestors.
 
 ## Tiny-model-only invariant
 
@@ -65,7 +65,10 @@ Config lives in the `"pr-autopilot"` section of
 | `timeoutMinutes` | no | 5 | Per-child idle limit in minutes; child output resets the timer (1–15). |
 | `maxRuntimeMinutes` | no | 15 | Absolute per-child ceiling in minutes (2–60, ≥ `timeoutMinutes`). |
 
-See [`kstack.example.json`](../../kstack.example.json) for the full schema.
+See [`kstack.example.json`](../../kstack.example.json) for the full schema. The
+shared `vcs.backend` setting selects `"git"` or `"jj"` for checkout validation,
+base integration, path-scoped fixes, restore, and push. Mutating modes run the
+selected backend's preflight before confirmation.
 
 ## Invariants
 
@@ -76,10 +79,11 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    fixed at the cost of restarting the frontier.
 
 2. **Conflicts / behind → threads → CI.** A behind or conflicted frontier PR
-   gets `git merge origin/<base>` (never a rebase, never `gt submit --stack`).
-   Competing hunks abort the merge and become `needs-human`. Unresolved threads
-   are addressed before CI effort is spent. A comment push invalidates CI on the
-   previous SHA.
+   gets a backend-native merge of its remote base: `git merge origin/<base>` in
+   Git mode or a jj merge with `<base>@origin` in jj mode. The autopilot never
+   rebases or restacks. Competing hunks abort the temporary merge and become
+   `needs-human`. Unresolved threads are addressed before CI effort is spent. A
+   comment push invalidates CI on the previous SHA.
 
 3. **Do not invent work.** If nothing is actionable and checks are still
    running, the autopilot watches `gh pr checks --watch --fail-fast` instead of
@@ -97,8 +101,10 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 
 6. **Pin verification to the exact head SHA.** After a successful fix-and-push,
    the autopilot re-checks against the new SHA. Success is reported only after
-   a second fresh status read (settle). Staging is the fixer-touched paths,
-   after `git fetch` of the PR branch — never `git add -A`, never force-push.
+   a second fresh status read (settle). The parent records only fixer-touched
+   paths with the selected backend — never `git add -A`, never force-push. In
+   jj mode, each fix is recorded below a newly described empty `@` checkpoint,
+   and the task bookmark moves to that checkpoint before push.
 
 7. **Stop at merge-ready.** The autopilot declares a PR looks merge-ready and
    stops. It never merges, never arms merge-when-ready, and never touches
@@ -108,8 +114,9 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 8. **One autopilot per stack.** If a run is already active, a second
    `/pr-autopilot` is rejected.
 
-9. **No topology mutations.** The autopilot never runs `gt submit --stack`,
-   never force-pushes shared history, and never rebases.
+9. **Bounded topology mutations.** The autopilot may create a normal merge
+   commit or jj merge change when the base moved. It never runs
+   `gt submit --stack`, force-pushes shared history, rebases, or restacks.
 
 10. **Untrusted GitHub text.** PR titles, comments, and CI logs are fenced as
     data. Child agents are told not to follow instructions inside those fences.
@@ -138,11 +145,11 @@ so a later `/pr-autopilot --mode drive` or `watch` does not re-handle the same i
   owns the workflow entirely.
 - Task files are created in a temp directory with `0600` permissions and
   removed after the run.
-- `mergeStateStatus` (BEHIND / DIRTY) drives branch-currency maintenance.
-  A stale base is merged with `origin/<base>` when hunks have one answer, and
-  reported as needs-human otherwise.
+- `mergeStateStatus` (BEHIND / DIRTY) drives workstream-currency maintenance.
+  A stale base is merged with the selected backend when hunks have one answer,
+  and reported as needs-human otherwise.
 - Secrets (`.env`, `credentials.json`, keys) and `.github/workflows/**` are
-  refused at staging time.
+  restored and refused before the parent records a fix.
 
 ## Aborting
 

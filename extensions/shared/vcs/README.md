@@ -32,6 +32,10 @@ non-empty change above its checkpoint, and leaves an empty working-copy change.
 Git worktree isolation is unavailable in jj mode.
 
 Path-scoped commit and restore operations, fetch, push, remote-head integration,
-and base merges have backend-native implementations. A conflicted jj merge is
-reported as a structured human-required result and the temporary merge change
-is abandoned; K-Stack does not auto-resolve competing intent.
+and base merges have backend-native implementations. Before a jj push, the
+backend describes an otherwise-undescribed empty `@` as an automation
+checkpoint and moves the task bookmark to it. This leaves implementation and
+fix commits in ancestors while giving later automation a clean change to edit.
+A conflicted jj merge is reported as a structured human-required result and the
+temporary merge change is abandoned; K-Stack does not auto-resolve competing
+intent.

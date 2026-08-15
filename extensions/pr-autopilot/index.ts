@@ -20,7 +20,9 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { loadVcsBackend } from "../shared/vcs/config.ts";
+import { createVcsBackend } from "../shared/vcs/factory.ts";
+import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
@@ -153,17 +155,29 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		const config = modelResolution.config;
 
 		for (const warning of config.warnings) notify(warning, "warning");
+		const vcsConfig = loadVcsBackend();
+		for (const warning of vcsConfig.warnings) notify(warning, "warning");
+		const exec = makeExec(pi);
+		const backend = createVcsBackend(vcsConfig.backend, exec);
+		if (mode !== "check") {
+			const preflight = await backend.preflight(cwd);
+			if (!preflight.ok) {
+				notify(preflight.error, "error");
+				return early("blocked", preflight.error);
+			}
+		}
 
 		// Confirm the run before starting.
 		const modelsDisplay = config.models.map((m) => `  ${m.label}: ${modelCliId(m)}`).join("\n");
 		const confirmed = await ctx.ui.confirm(
 			`Run pr-autopilot (${mode} mode)?`,
 			`PR: ${prNumber ? `#${prNumber}` : "lowest unmerged (auto-detected)"}\n` +
+				`VCS backend: ${backend.id}\n` +
 				`Models (tiny only):\n${modelsDisplay}\n\n` +
 				`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
 				"Bounded invariants:\n" +
 				"- Works the lowest unmerged PR first\n" +
-				"- Conflicts/behind: merge origin/<base> into the frontier (never rebase)\n" +
+				`- Conflicts/behind: merge the remote base with ${backend.id} (never rebase)\n` +
 				"- Comments before CI; watch pending checks instead of inventing work\n" +
 				"- Stops at merge-ready (never auto-merges)\n" +
 				"- Only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash)",
@@ -191,7 +205,11 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			const triagerPromptFile = join(tempDir, "triager-prompt.md");
 			const fixerPromptFile = join(tempDir, "fixer-prompt.md");
 			writeFileSync(triagerPromptFile, readPromptAsset(PROMPTS_DIR, "triager.md"), { encoding: "utf8", mode: 0o600 });
-			writeFileSync(fixerPromptFile, readPromptAsset(PROMPTS_DIR, "fixer.md"), { encoding: "utf8", mode: 0o600 });
+			writeFileSync(
+				fixerPromptFile,
+				`${readPromptAsset(PROMPTS_DIR, "fixer.md")}\n\n${vcsChildGuidance(backend.id)}\n`,
+				{ encoding: "utf8", mode: 0o600 },
+			);
 
 			const updateStatus = (phase: LifecyclePhase, cycles = 0) => {
 				if (lifecycle.isCurrent(runToken)) {
@@ -200,13 +218,12 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 				}
 			};
 
-			const exec = makeExec(pi);
 			const result = await runAutopilot(
 				mode,
 				{
 					config,
 					exec,
-					backend: createGitBackend(exec),
+					backend,
 					cwd,
 					explicitPR: prNumber,
 					promptDir: tempDir,
@@ -231,7 +248,12 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					);
 					sendPhaseMessage(mode, "idle", result.cyclesCompleted, modelList, "Looks merge-ready — stopped, not merged.");
 				} else if (result.status === "cleaned") {
-					notify("PR autopilot cleanup complete. Managed worktree removed; session archive is manual.", "info");
+					notify(
+						backend.id === "jj"
+							? "PR autopilot cleanup complete. jj mode has no managed Git worktree to remove."
+							: "PR autopilot cleanup complete. Managed worktree removed; session archive is manual.",
+						"info",
+					);
 				} else if (result.status === "blocked") {
 					notify(
 						`PR autopilot blocked: ${result.blockedReasons.join("; ")}. ` +

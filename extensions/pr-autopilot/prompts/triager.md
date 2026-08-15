@@ -33,8 +33,8 @@ Read the log excerpt before concluding anything. A local nothing-to-check
 result is not evidence that red CI is unrelated.
 
 - **code**: The failure is in the diff's own code. A code change can fix it.
-- **stale-base**: The base branch moved. Needs a merge of origin/<base> — report
-  it, do NOT rebase.
+- **stale-base**: The base branch moved. Needs a merge of the remote base with
+  the configured VCS backend — report it, do NOT rebase.
 - **flake**: Infrastructure flakiness — a fresh build may pass. Only one retry
   is ever warranted; if it fails again, treat it as not-flake.
 - **infra**: External infrastructure issue (network, service outage, missing

@@ -324,14 +324,15 @@ export async function runAutopilot(
 			state.mergeStateStatus === "BEHIND"
 		) {
 			setPhase("merging-base", cycle);
+			const remoteBase = backend.id === "jj" ? `${state.baseRef}@origin` : `origin/${state.baseRef}`;
 			notify(
-				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging origin/${state.baseRef} (no rebase).`,
+				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging ${remoteBase} with ${backend.id} (no rebase).`,
 				"info",
 			);
 			const merged = await backend.mergeBaseIntoHead(cwd, state.baseRef);
 			switch (merged.kind) {
 				case "already-current":
-					notify(`origin/${state.baseRef} is already in HEAD; refreshing GitHub state.`, "info");
+					notify(`${remoteBase} is already in the current workstream; refreshing GitHub state.`, "info");
 					cycle++;
 					continue;
 				case "clean": {
@@ -340,7 +341,7 @@ export async function runAutopilot(
 						blockedReasons.push(`Could not push merged base: ${push.error}`);
 						break;
 					}
-					notify(`Merged origin/${state.baseRef} and pushed ${merged.headSha.slice(0, 8)}.`, "info");
+					notify(`Merged ${remoteBase} and pushed ${merged.headSha.slice(0, 8)}.`, "info");
 					verifiedHeadSha = null;
 					persisted = { ...persisted, headSha: merged.headSha };
 					await ops.savePersistedState(persisted);
@@ -398,7 +399,7 @@ export async function runAutopilot(
 		setPhase("triaging", cycle);
 		const model = pickModel(config.models, cycle);
 		const taskFile = join(promptDir, `triager-${cycle + 1}.md`);
-		await writeFile(taskFile, buildTriagerTask(state), { mode: 0o600 });
+		await writeFile(taskFile, buildTriagerTask(state, backend.id), { mode: 0o600 });
 		const triagerResult = await ops.runChildRole(
 			"triager",
 			{
@@ -494,7 +495,9 @@ export async function runAutopilot(
 			const fixerModel = pickModel(config.models, cycle + 1);
 			setPhase("fixing", cycle);
 			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
-			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode), { mode: 0o600 });
+			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode, backend.id), {
+				mode: 0o600,
+			});
 			const fixerResult = await ops.runChildRole(
 				"fixer",
 				{
@@ -520,9 +523,7 @@ export async function runAutopilot(
 			const confirmed = await confirm(
 				`Push fixes to PR #${prNumber}?`,
 				`Cycle ${cycle + 1} fixer (${fixerModel.label}) completed.\n` +
-					"Integrating origin/" +
-					state.headRef +
-					", staging only touched paths, then pushing.\n" +
+					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then pushing.\n` +
 					"The autopilot will NOT rebase, restack, merge the PR, or touch merge settings.",
 			);
 			if (!confirmed) {
