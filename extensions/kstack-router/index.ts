@@ -341,6 +341,11 @@ export default function (pi: ExtensionAPI): void {
 					ctx,
 					postPr,
 				);
+				// Current-checkout fast implementation may have replaced the session
+				// before the request resolves. The pre-dispatch route card above is the
+				// final safe parent-session update; do not touch stale pi/ctx handles.
+				if (result.status === "takeover") return;
+
 				routeCard.dispatchStatus = result.status;
 				pi.sendMessage({
 					customType: "kstack-route",
@@ -357,7 +362,12 @@ export default function (pi: ExtensionAPI): void {
 				} else if (route === "change") {
 					notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
 				} else if (route === "fast-change") {
-					notify("Delegated to fast-implement. Use Ctrl+Shift+A to abort the implementation child.", "info");
+					notify(
+						worktree
+							? "Delegated to fast-implement. Use Ctrl+Shift+A to abort the worktree child."
+							: "Delegated to fast-implement. A fresh implementation session will take over the TUI.",
+						"info",
+					);
 				} else if (route === "review") {
 					notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
 				} else if (route === "pr-autopilot") {

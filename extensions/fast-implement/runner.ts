@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { changeKindPlaybookFile } from "../shared/change-kind.ts";
+import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
 import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
@@ -26,34 +26,35 @@ interface FastRunEffects {
 	deps?: ChildRunnerDeps;
 	signal?: AbortSignal;
 }
-export async function runFastImplement(
+
+export function buildImplementerGuidance(changeKind: ChangeKind, backend: VcsBackend["id"]): string {
+	const playbook = changeKindPlaybookFile(changeKind);
+	return [
+		readFileSync(new URL("implementer.md", new URL("prompts/", extensionDir)), "utf8"),
+		readFileSync(new URL("engineering-principles.md", sharedPlaybooks), "utf8"),
+		...(playbook ? [readFileSync(new URL(playbook, sharedPlaybooks), "utf8")] : []),
+		vcsChildGuidance(backend),
+	].join("\n\n---\n\n");
+}
+
+export async function runWorktreeFastImplement(
 	request: FastImplementRequest,
 	role: ResolvedRole,
 	initialCwd: string,
 	fx: FastRunEffects,
 ): Promise<FastImplementOutcome> {
+	if (request.workLocation !== "worktree" || fx.backend.id !== "git") {
+		return { status: "failed", error: "The child runner requires a Git worktree." };
+	}
 	const preflight = await fx.backend.preflight(initialCwd);
 	if (!preflight.ok) return { status: "failed", error: preflight.error };
-	let cwd = initialCwd;
-	let branch: string | undefined;
-	let checkpoint: WorkstreamCheckpoint;
-	if (request.workLocation === "worktree") {
-		if (fx.backend.id !== "git") {
-			return { status: "failed", error: "--worktree requires the git backend." };
-		}
-		const planned = await fx.backend.planIsolation(initialCwd, request.task);
-		if (!planned.ok) return { status: "failed", error: planned.error };
-		const created = await fx.backend.createIsolation(planned.plan);
-		if (!created.ok) return { status: "failed", error: created.error };
-		cwd = created.plan.path;
-		branch = created.plan.ref;
-		checkpoint = { ref: created.plan.ref, baseSha: created.plan.baseSha };
-	} else {
-		const created = await fx.backend.createWorkstream(initialCwd, request.task);
-		if (!created.ok) return { status: "failed", error: created.error };
-		branch = created.ref;
-		checkpoint = created;
-	}
+	const planned = await fx.backend.planIsolation(initialCwd, request.task);
+	if (!planned.ok) return { status: "failed", error: planned.error };
+	const created = await fx.backend.createIsolation(planned.plan);
+	if (!created.ok) return { status: "failed", error: created.error };
+	const cwd = created.plan.path;
+	const branch = created.plan.ref;
+	const checkpoint: WorkstreamCheckpoint = { ref: created.plan.ref, baseSha: created.plan.baseSha };
 	// Everything after workstream creation stays inside one outcome boundary so
 	// a throwing exec or filesystem failure still reports the retained branch.
 	let temp: string | undefined;
@@ -66,14 +67,7 @@ export async function runFastImplement(
 			`# User task\n\n${request.task}\n\nVCS backend: ${fx.backend.id}\nWorkstream: ${checkpoint.ref}\n`,
 			{ mode: 0o600 },
 		);
-		const playbook = changeKindPlaybookFile(request.changeKind);
-		const guidance = [
-			readFileSync(new URL("implementer.md", new URL("prompts/", extensionDir)), "utf8"),
-			readFileSync(new URL("engineering-principles.md", sharedPlaybooks), "utf8"),
-			...(playbook ? [readFileSync(new URL(playbook, sharedPlaybooks), "utf8")] : []),
-			vcsChildGuidance(fx.backend.id),
-		].join("\n\n---\n\n");
-		writeFileSync(promptFile, guidance, { mode: 0o600 });
+		writeFileSync(promptFile, buildImplementerGuidance(request.changeKind, fx.backend.id), { mode: 0o600 });
 		chmodSync(taskFile, 0o600);
 		chmodSync(promptFile, 0o600);
 		const child = await (fx.runChild ?? runChildAgent)({
