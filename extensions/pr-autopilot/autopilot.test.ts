@@ -324,9 +324,9 @@ describe("pr-autopilot state machine", () => {
 				"VERIFY_OK",
 			);
 			assert.deepEqual(result, { kind: "pushed", headSha: checkpoint });
-			assert.ok(calls.some((call) => call.includes("commit src/fix.ts -m Autopilot PR #42")));
+			assert.ok(calls.some((call) => call.includes('commit cwd:"src/fix.ts" -m Autopilot PR #42')));
 			assert.ok(calls.includes("--no-pager bookmark set feature -r @"));
-			assert.ok(calls.includes("--no-pager git push --bookmark feature"));
+			assert.ok(calls.includes("--no-pager git push --remote origin --bookmark feature"));
 		});
 
 		it("rejects a fixer that replaces the native jj change identity", async () => {
