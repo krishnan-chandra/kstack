@@ -338,12 +338,14 @@ class GitHubStackUnitTest(unittest.TestCase):
 
     def test_get_pr_status_distinguishes_merged_from_closed(self) -> None:
         responses = [
-            CommandResult('{"state":"closed","merged":true}', "", 0),
-            CommandResult('{"state":"closed","merged":false}', "", 0),
+            CommandResult('{"state":"closed","merged":true,"draft":false}', "", 0),
+            CommandResult('{"state":"closed","merged":false,"draft":false}', "", 0),
+            CommandResult('{"state":"open","merged":false,"draft":true}', "", 0),
         ]
         with patch("github_stack.run_gh", side_effect=responses):
             self.assertEqual(get_pr_status(GitHubRepo("o", "r"), 10, "."), "merged")
             self.assertEqual(get_pr_status(GitHubRepo("o", "r"), 11, "."), "closed")
+            self.assertEqual(get_pr_status(GitHubRepo("o", "r"), 12, "."), "draft")
 
     def test_get_pr_comments_raises_on_api_failure(self) -> None:
         with (
