@@ -6,7 +6,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -17,10 +17,10 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
 }
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-	const configured = env.PI_CODING_AGENT_DIR;
+	const configured = env.PI_CODING_AGENT_DIR?.trim();
 	if (!configured) return join(homedir(), ".pi", "agent");
 	if (configured === "~") return homedir();
-	return configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured;
+	return resolve(configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured);
 }
 
 export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {

@@ -234,7 +234,7 @@ describe("handoff command lifecycle", () => {
 		const { ctx, calls } = makeFakeCtx(order);
 		await createHandoffHandler(api)("   ", ctx as never);
 		assert.ok(calls.editorDrafts[0].includes(DEFAULT_HANDOFF_GOAL));
-		assert.deepEqual(calls.sessionNames, ["continue-implementation-from-the-previous"]);
+		assert.deepEqual(calls.sessionNames, ["continue-implementation"]);
 	});
 
 	it("names the replacement from an edited goal", async () => {
@@ -244,7 +244,7 @@ describe("handoff command lifecycle", () => {
 			editorResult: "Continue work.\n\n## Goal\nShip the corrected archive workflow.\n",
 		});
 		await createHandoffHandler(api)("old goal", ctx as never);
-		assert.deepEqual(calls.sessionNames, ["ship-the-corrected-archive-workflow"]);
+		assert.deepEqual(calls.sessionNames, ["ship-corrected-archive"]);
 	});
 
 	it("notifies and stays in the old session when replacement is cancelled", async () => {

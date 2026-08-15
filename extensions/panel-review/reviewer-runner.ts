@@ -3,18 +3,13 @@ import {
 	type ChildEvent,
 	type ChildRunnerDeps,
 	childIsolationArgs,
-	formatDuration,
-	getPiInvocation,
 	runChildAgent,
 	type SpawnedProcess,
 	type SpawnImpl,
-	summarizeToolCall,
-	truncateTailUtf8,
 } from "../shared/child-agent-runner.ts";
 import { LIMITS, type ReviewerResult, type ReviewerSpec } from "./types.ts";
 
 export type { ChildEvent, SpawnedProcess, SpawnImpl };
-export { formatDuration, getPiInvocation, summarizeToolCall, truncateTailUtf8 };
 export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
 	timeoutMs?: number;
 }

@@ -4,7 +4,6 @@ import {
 	type ChildEvent,
 	type ChildRunnerDeps,
 	childIsolationArgs,
-	getPiInvocation,
 	runChildAgent,
 	type SpawnedProcess,
 	type SpawnImpl,
@@ -99,8 +98,6 @@ function expandRepeatedFlag(flag: string, values: readonly string[] | undefined)
 	}
 	return args;
 }
-
-export { getPiInvocation };
 
 export function truncateUtf8(text: string, maxBytes: number, label = "Output"): string {
 	return truncateHeadUtf8(text, maxBytes, label);
