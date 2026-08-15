@@ -224,6 +224,59 @@ test("CLI --method takes priority over configured method and still confirms", as
 	assert.equal(confirmMergeCalled, true, "confirmMerge should be called when CLI --method is set");
 });
 
+test("confirmedByCaller skips confirmMerge and still revalidates", async () => {
+	let confirmMergeCalled = false;
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		confirmMerge: async (): Promise<boolean> => {
+			confirmMergeCalled = true;
+			return true;
+		},
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash", confirmedByCaller: true },
+		runDeps,
+	);
+	assert.equal(result.status, "landed");
+	assert.equal(confirmMergeCalled, false, "confirmMerge should not be called when confirmedByCaller is set");
+});
+
+test("confirmedByCaller still blocks when the PR head changes before merge", async () => {
+	const CHANGED = "c".repeat(40);
+	const calls: string[][] = [];
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			return { code: 0, stdout: current < 2 ? pr(NEW) : pr(CHANGED), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash", confirmedByCaller: true },
+		deps(exec),
+	);
+	assert.equal(result.status, "blocked");
+	assert.deepEqual(result.blockers, ["PR changed after confirmation; merge was not attempted."]);
+	assert.equal(
+		calls.some((args) => args[0] === "pr" && args[1] === "merge"),
+		false,
+	);
+});
+
 test("unconfigured repo falls through to selectMethod prompt", async () => {
 	let selectMethodCalled = false;
 	let confirmMergeCalled = false;

@@ -101,8 +101,10 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			method,
 			state: "not-attempted",
 		};
-		// When method comes from per-repo config (not CLI --method), skip confirmation
-		const skipConfirm = configuredMethod !== undefined && options.method === undefined;
+		// Skip confirmation when the method comes from per-repo config (not CLI
+		// --method) or when a trusted in-process caller already confirmed.
+		const skipConfirm =
+			options.confirmedByCaller === true || (configuredMethod !== undefined && options.method === undefined);
 		if (!skipConfirm) {
 			const confirmed = await deps.confirmMerge(
 				`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`,

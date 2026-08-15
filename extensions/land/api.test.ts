@@ -48,6 +48,28 @@ test("rejects malformed and removed stack requests", () => {
 		isLandRequest({
 			schemaVersion: 1,
 			payload: {
+				options: { target: { kind: "single", prNumber: 3 }, readiness: "check", confirmedByCaller: "yes" },
+				ctx: {},
+			},
+			claimed: false,
+		}),
+		false,
+	);
+	assert.equal(
+		isLandRequest({
+			schemaVersion: 1,
+			payload: {
+				options: { target: { kind: "single", prNumber: 3 }, readiness: "check", confirmedByCaller: true },
+				ctx: {},
+			},
+			claimed: false,
+		}),
+		true,
+	);
+	assert.equal(
+		isLandRequest({
+			schemaVersion: 1,
+			payload: {
 				options: { target: { kind: "single", prNumber: 0 }, readiness: "check" },
 				ctx: {},
 			},

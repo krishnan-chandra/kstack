@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { makeExec } from "../shared/git-exec.ts";
@@ -51,10 +51,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
-	async function configuredBackend(
-		ctx: ExtensionCommandContext,
-		cwd: string,
-	): Promise<VcsResult<{ backend: VcsBackend }>> {
+	async function configuredBackend(ctx: ExtensionContext, cwd: string): Promise<VcsResult<{ backend: VcsBackend }>> {
 		const config = loadVcsBackend();
 		for (const warning of config.warnings) ctx.ui.notify(warning, "warning");
 		const backend = createVcsBackend(config.backend, makeExec(pi));
@@ -64,7 +61,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 
 	async function execute(
 		options: LandOptions,
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		preparedBackend?: VcsBackend,
 	): Promise<LandResult> {
 		if (!ctx.hasUI) return blocked("Land requires interactive TUI/RPC mode.");

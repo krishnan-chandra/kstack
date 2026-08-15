@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
@@ -113,7 +113,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	async function runAutopilotCommand(
 		mode: AutopilotMode,
 		prNumber: number | undefined,
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		cwd = ctx.cwd,
 	): Promise<AutopilotResult> {
 		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({

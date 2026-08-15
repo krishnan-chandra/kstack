@@ -76,6 +76,11 @@ The `kstack:land:request` event accepts typed `LandOptions` with a positive PR
 number and returns a structured `LandResult`. The request is claimed
 synchronously, and callers await its completion.
 
+Trusted in-process callers such as `/jj-stack land` may set
+`confirmedByCaller: true` after they have already obtained consent for that
+exact PR. That flag skips only Land's interactive merge confirmation. Land
+still revalidates the PR, pins the exact head, and passes `--match-head-commit`.
+
 ## Limits
 
 - GitHub query timeout: 15 seconds
