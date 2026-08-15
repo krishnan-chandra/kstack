@@ -58,6 +58,11 @@ gitignored and suitable) and use `git commit -F` / `gh pr create --body-file`
 instead of inline flags. This avoids shell escaping issues with multi-line
 text and special characters.
 
+Keep output bounded when inspecting large jj diffs. Prefer
+`jj diff --summary | head -n 200`, or use `jj diff --summary | wc -l` when you
+only need the file count. Avoid `jj diff --stat` for ranges that may span many
+files.
+
 ## Hooks
 
 `hk.pkl` at the repository root configures [hk](https://hk.jdx.dev) git hooks.
