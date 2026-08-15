@@ -275,8 +275,7 @@ export function renderDashboard(
 		// State comes before model so truncation on narrow terminals always
 		// retains the label and its status.
 		let line = `${theme.fg(color, icon)} ${safeLabel}${theme.fg("muted", ` — ${row.status}`)}`;
-		if (row.role === "lead") line += theme.fg("accent", " (lead synthesis)");
-		else if (showModel) line += theme.fg("dim", ` (${safeModel})`);
+		if (showModel) line += theme.fg(row.role === "lead" ? "accent" : "dim", ` (${safeModel})`);
 		const elapsed = rowElapsedSeconds(row, store.nowMs());
 		if (showActivity) {
 			const meta: string[] = [];

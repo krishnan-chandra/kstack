@@ -181,7 +181,7 @@ assert.ok(
 
 const leadLines = flat.filter((s) => s.includes("lead — "));
 assert.ok(
-	leadLines.some((s) => s.includes("lead — running (lead synthesis)")),
+	leadLines.some((s) => s.includes("lead — running (fake/synth)")),
 	"lead row visible during synthesis",
 );
 assert.ok(
