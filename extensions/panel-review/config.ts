@@ -51,7 +51,7 @@ export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
  * least MIN_REVIEWERS must be available or the fallback chain continues.
  */
 export const DEFAULT_PANEL: ReviewerSpec[] = [
-	{ label: "claude", model: "anthropic/claude-sonnet-5", thinking: "medium" },
+	{ label: "sonnet", model: "anthropic/claude-sonnet-5", thinking: "medium" },
 	// DeepSeek V4 Pro at high thinking repeatedly produced no output for 20+ minutes;
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },

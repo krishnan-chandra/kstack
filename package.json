@@ -17,8 +17,8 @@
 		"check:exports": "node check-exports.mjs",
 		"format": "biome check --write .",
 		"lint": "biome check .",
-		"test": "node --test --test-concurrency=8 install.test.mjs check-exports.test.mjs \"extensions/**/*.test.ts\" \"skills/**/*.test.mjs\"",
-		"test:extensions": "node --test \"extensions/**/*.test.ts\"",
+		"test": "node --test --test-reporter=./test-reporter.mjs --test-concurrency=8 install.test.mjs check-exports.test.mjs test-reporter.test.mjs \"extensions/**/*.test.ts\" \"skills/**/*.test.mjs\"",
+		"test:extensions": "node --test --test-reporter=./test-reporter.mjs \"extensions/**/*.test.ts\"",
 		"typecheck": "tsc -p tsconfig.json"
 	}
 }
