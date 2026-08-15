@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { createGitBackend } from "../shared/vcs/git-backend.ts";
 import {
 	applyForceAsk,
 	classifyBlockers,
@@ -196,7 +197,7 @@ describe("pr-autopilot state machine", () => {
 				return { code: 0, stdout: "", stderr: "" };
 			};
 			const state = buildPRState(makePr(), [], [], null);
-			const result = await prepareMutationCheckout(exec, "/repo", state);
+			const result = await prepareMutationCheckout(createGitBackend(exec), "/repo", state);
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.match(result.error, /different|checkout is on/);
 		});
@@ -209,7 +210,7 @@ describe("pr-autopilot state machine", () => {
 				if (args[0] === "status") return { code: 0, stdout: " M user-work.ts\n", stderr: "" };
 				return { code: 0, stdout: "", stderr: "" };
 			};
-			const result = await prepareMutationCheckout(exec, "/repo", buildPRState(pr, [], [], null));
+			const result = await prepareMutationCheckout(createGitBackend(exec), "/repo", buildPRState(pr, [], [], null));
 			assert.deepEqual(result, {
 				ok: false,
 				error: "The PR worktree must be clean before pr-autopilot can mutate it.",

@@ -18,7 +18,8 @@ import {
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
-import { type ManagedWorktreePlan, planManagedWorktree } from "../shared/worktree.ts";
+import type { IsolationPlan } from "../shared/vcs/backend.ts";
+import { createGitBackend } from "../shared/vcs/git-backend.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
@@ -206,6 +207,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			notify(preflightError, "error");
 			return;
 		}
+		const backend = createGitBackend(makeExec(pi));
+		if (mode === "single") {
+			const preflight = await backend.preflight(ctx.cwd);
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			if (!preflight.ok) {
+				notify(preflight.error, "error");
+				return;
+			}
+		}
 		const discoveredSkills = discoveredSkillRefs(ctx);
 		const missingPublish = missingPublishSkills(discoveredSkills);
 		if (missingPublish.length > 0) {
@@ -232,7 +242,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const implementerModel = modelCliId(roles.implementer);
 		let trunkSha: string | undefined;
 		let skillPaths: string[] = [];
-		let worktreePlan: ManagedWorktreePlan | undefined;
+		let worktreePlan: IsolationPlan | undefined;
 		if (mode === "stack") {
 			const exec = makeExec(pi);
 			const preflight = await preflightStack(ctx.cwd, exec, exec);
@@ -249,7 +259,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			skillPaths = policy.skills.map((skill) => skill.baseDir);
 		} else if (workLocation === "worktree") {
-			const planned = await planManagedWorktree(ctx.cwd, task, makeExec(pi));
+			const planned = await backend.planIsolation(ctx.cwd, task);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!planned.ok) {
 				notify(planned.error, "error");
@@ -265,7 +275,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
 				? `Planner (read-only): ${plannerModel}\nImplementer (creates local jj changes + bookmarks): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nStack mode disables skill discovery in children and re-adds every discovered skill except arena, so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. The implementer builds a LOCAL stack only — it does not push or create PRs. You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. After the verdict you approve addressing its findings, then publishing the stack as draft PRs with reviewer recommendations.`
-				: `Planner (read-only): ${plannerModel}\nImplementer (creates a dedicated branch and incremental local commits): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.branch}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : "Location: current working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
+				: `Planner (read-only): ${plannerModel}\nImplementer (creates a dedicated branch and incremental local commits): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : "Location: current working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
 		const token = lifecycle.beginWorkflow(commandSession);
@@ -299,13 +309,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					isSessionCurrent: () => lifecycle.isSessionCurrent(token),
 					beginChild: (phase) => lifecycle.beginChild(token, phase),
 					endChild: (controller) => lifecycle.endChild(token, controller),
-					exec: makeExec(pi),
+					backend,
 					requestPanelReview: (options) => requestPanelReview(pi, options, ctx),
 					resolvePublishedPr: async (cwd) => {
-						const exec = makeExec(pi);
-						const branch = await exec("git", ["branch", "--show-current"], { cwd, timeout: 15_000 });
-						const head = branch.code === 0 ? branch.stdout.trim() : "";
-						if (!head) return { ok: false, error: "could not resolve the workflow branch." };
+						const current = await backend.currentRef(cwd);
+						const head =
+							current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : "";
+						if (!head) return { ok: false, error: "could not resolve the workflow branch or bookmark." };
 						try {
 							return {
 								ok: true,

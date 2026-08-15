@@ -1,8 +1,10 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
+import { createGitBackend } from "../shared/vcs/git-backend.ts";
 import { claimFastImplementRequest, FAST_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { parseFastImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRole } from "./config.ts";
@@ -86,7 +88,7 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 			if (!confirmed || !lifecycle.isCurrent(runToken)) return;
 			ctx.ui.setStatus("fast-implement", "fast-implement: implementing…");
 			const outcome = await runFastImplement(request, role.role, ctx.cwd, {
-				exec: (command, args, options) => pi.exec(command, args, options),
+				backend: createGitBackend(makeExec(pi)),
 				signal: runSignal,
 			});
 			const retained =

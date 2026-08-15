@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { makeExec } from "../shared/git-exec.ts";
+import { createGitBackend } from "../shared/vcs/git-backend.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
 import { findOpenPullRequestByHead } from "./github.ts";
@@ -9,11 +10,6 @@ import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { abortableSleep } from "./sleep.ts";
 import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
-
-async function currentBranch(pi: ExtensionAPI, cwd: string): Promise<string | undefined> {
-	const out = await pi.exec("git", ["branch", "--show-current"], { cwd, timeout: 15_000 });
-	return out.code === 0 && out.stdout.trim() ? out.stdout.trim() : undefined;
-}
 
 function selectedMethod(value: string | undefined): MergeMethod | undefined {
 	return value === "merge" || value === "squash" || value === "rebase" ? value : undefined;
@@ -98,13 +94,15 @@ export default function landExtension(pi: ExtensionAPI): void {
 			}
 			let prNumber = parsed.args.pr;
 			if (!prNumber) {
-				const branch = await currentBranch(pi, ctx.cwd);
-				if (!branch) {
+				const backend = createGitBackend(makeExec(pi));
+				const current = await backend.currentRef(ctx.cwd);
+				const ref = current.ok && current.ref.kind === "branch" ? current.ref.name : undefined;
+				if (!ref) {
 					ctx.ui.notify("Could not resolve a current Git branch; pass --pr explicitly.", "error");
 					return;
 				}
 				try {
-					prNumber = await findOpenPullRequestByHead(makeExec(pi), ctx.cwd, branch);
+					prNumber = await findOpenPullRequestByHead(makeExec(pi), ctx.cwd, ref);
 				} catch (error) {
 					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 					return;

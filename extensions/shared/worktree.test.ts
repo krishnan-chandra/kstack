@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
-import { createManagedWorktree, planManagedWorktree } from "./worktree.ts";
+import { GitBackend } from "./vcs/git-backend.ts";
 
 const BASE_SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -29,19 +29,24 @@ function fakeGit(options: { occupiedBranches?: Set<string>; addResult?: ExecFnRe
 	return { exec, calls };
 }
 
+function backend(exec: ExecFn, overrides: { mkdir?: (path: string) => void } = {}): GitBackend {
+	return new GitBackend(exec, {
+		managedRoot: "/managed",
+		realpath: (path) => path,
+		exists: () => false,
+		...overrides,
+	});
+}
+
 describe("managed Git worktrees", () => {
 	it("plans beneath the managed root using a repo identity hash and pinned base", async () => {
 		const { exec } = fakeGit();
-		const planned = await planManagedWorktree("/start", "Add archive search", exec, {
-			managedRoot: "/managed",
-			realpath: (path) => path,
-			exists: () => false,
-		});
+		const planned = await backend(exec).planIsolation("/start", "Add archive search");
 		assert.equal(planned.ok, true);
 		if (!planned.ok) return;
 		assert.match(planned.plan.repositoryId, /^repo-[0-9a-f]{8}$/);
 		assert.equal(planned.plan.path, `/managed/${planned.plan.repositoryId}/add-archive-search`);
-		assert.equal(planned.plan.branch, "kstack/add-archive-search");
+		assert.equal(planned.plan.ref, "kstack/add-archive-search");
 		assert.equal(planned.plan.baseRef, "refs/remotes/origin/main");
 		assert.equal(planned.plan.baseSha, BASE_SHA);
 	});
@@ -58,48 +63,33 @@ describe("managed Git worktrees", () => {
 			if (args[0] === "show-ref") return result(1);
 			return result(1, "", `unexpected in ${options.cwd}: ${args.join(" ")}`);
 		};
-		const planned = await planManagedWorktree("/repo", "Add search", exec, {
-			managedRoot: "/managed",
-			realpath: (path) => path,
-			exists: () => false,
-		});
+		const planned = await backend(exec).planIsolation("/repo", "Add search");
 		assert.equal(planned.ok, true);
 		if (planned.ok) assert.equal(planned.plan.baseRef, "refs/remotes/upstream/trunk");
 	});
 
 	it("adds a numeric suffix when a branch is already present", async () => {
 		const { exec } = fakeGit({ occupiedBranches: new Set(["kstack/add-search"]) });
-		const planned = await planManagedWorktree("/start", "Add search", exec, {
-			managedRoot: "/managed",
-			realpath: (path) => path,
-			exists: () => false,
-		});
+		const planned = await backend(exec).planIsolation("/start", "Add search");
 		assert.equal(planned.ok, true);
 		if (planned.ok) assert.equal(planned.plan.slug, "add-search-2");
 	});
 
 	it("creates only the repository namespace and invokes git without a shell", async () => {
 		const { exec, calls } = fakeGit();
-		const planned = await planManagedWorktree("/start", "Add search", exec, {
-			managedRoot: "/managed",
-			realpath: (path) => path,
-			exists: () => false,
-		});
+		const made: string[] = [];
+		const vcs = backend(exec, { mkdir: (path) => void made.push(path) });
+		const planned = await vcs.planIsolation("/start", "Add search");
 		assert.equal(planned.ok, true);
 		if (!planned.ok) return;
-		const made: string[] = [];
-		const created = await createManagedWorktree(planned.plan, exec, {
-			exists: () => false,
-			realpath: (path) => path,
-			mkdir: (path) => void made.push(path),
-		});
+		const created = await vcs.createIsolation(planned.plan);
 		assert.equal(created.ok, true);
 		assert.deepEqual(made, [`/managed/${planned.plan.repositoryId}`]);
 		assert.ok(
 			calls.some(
 				(call) =>
 					call.args.join(" ") ===
-					`worktree add --no-guess-remote -b ${planned.plan.branch} ${planned.plan.path} ${BASE_SHA}`,
+					`worktree add --no-guess-remote -b ${planned.plan.ref} ${planned.plan.path} ${BASE_SHA}`,
 			),
 		);
 	});
@@ -107,17 +97,18 @@ describe("managed Git worktrees", () => {
 	it("revalidates collisions immediately before creation", async () => {
 		const { exec } = fakeGit({ occupiedBranches: new Set(["kstack/add-search"]) });
 		const plan = {
+			kind: "git-worktree" as const,
 			sourceRepoRoot: "/repo",
 			commonGitDir: "/repo/.git",
 			managedRoot: "/managed",
 			repositoryId: "repo-12345678",
 			slug: "add-search",
-			branch: "kstack/add-search",
+			ref: "kstack/add-search",
 			path: "/managed/repo-12345678/add-search",
 			baseRef: "refs/remotes/origin/main",
 			baseSha: BASE_SHA,
 		};
-		const created = await createManagedWorktree(plan, exec, { exists: () => false, mkdir: () => {} });
+		const created = await backend(exec).createIsolation(plan);
 		assert.equal(created.ok, false);
 		if (!created.ok) assert.match(created.error, /Nothing was overwritten/);
 	});

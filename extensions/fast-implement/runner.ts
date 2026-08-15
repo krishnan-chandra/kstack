@@ -3,9 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
-import type { ExecFn } from "../shared/git-exec.ts";
-import { createCurrentWorkstreamBranch, verifyCommittedWorkstream } from "../shared/git-policy.ts";
-import { createManagedWorktree, planManagedWorktree } from "../shared/worktree.ts";
+import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { type FastImplementOutcome, type FastImplementRequest, LIMITS, type ResolvedRole } from "./types.ts";
 
 const extensionDir = new URL(".", import.meta.url);
@@ -22,7 +20,7 @@ export function buildChildArgs(model: string, promptFile: string, taskFile: stri
 	];
 }
 interface FastRunEffects {
-	exec: ExecFn;
+	backend: VcsBackend;
 	runChild?: typeof runChildAgent;
 	deps?: ChildRunnerDeps;
 	signal?: AbortSignal;
@@ -33,27 +31,29 @@ export async function runFastImplement(
 	initialCwd: string,
 	fx: FastRunEffects,
 ): Promise<FastImplementOutcome> {
+	const preflight = await fx.backend.preflight(initialCwd);
+	if (!preflight.ok) return { status: "failed", error: preflight.error };
 	let cwd = initialCwd;
 	let branch: string | undefined;
+	let checkpoint: WorkstreamCheckpoint;
 	if (request.workLocation === "worktree") {
-		const planned = await planManagedWorktree(initialCwd, request.task, fx.exec);
+		const planned = await fx.backend.planIsolation(initialCwd, request.task);
 		if (!planned.ok) return { status: "failed", error: planned.error };
-		const created = await createManagedWorktree(planned.plan, fx.exec);
+		const created = await fx.backend.createIsolation(planned.plan);
 		if (!created.ok) return { status: "failed", error: created.error };
 		cwd = created.plan.path;
-		branch = created.plan.branch;
+		branch = created.plan.ref;
+		checkpoint = { ref: created.plan.ref, baseSha: created.plan.baseSha };
 	} else {
-		const created = await createCurrentWorkstreamBranch(initialCwd, request.task, fx.exec);
+		const created = await fx.backend.createWorkstream(initialCwd, request.task);
 		if (!created.ok) return { status: "failed", error: created.error };
-		branch = created.branch;
+		branch = created.ref;
+		checkpoint = created;
 	}
 	// Everything after workstream creation stays inside one outcome boundary so
 	// a throwing exec or filesystem failure still reports the retained branch.
 	let temp: string | undefined;
 	try {
-		const base = await fx.exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 10_000 });
-		if (base.code !== 0)
-			return { status: "failed", error: "Could not resolve the prepared workstream base.", branch, cwd };
 		temp = mkdtempSync(join(tmpdir(), "kstack-fast-implement-"));
 		const taskFile = join(temp, "task.md");
 		const promptFile = join(temp, "prompt.md");
@@ -91,9 +91,8 @@ export async function runFastImplement(
 				branch,
 				cwd,
 			};
-		const verified = await verifyCommittedWorkstream(cwd, fx.exec, {
-			branch,
-			baseSha: base.stdout.trim(),
+		const verified = await fx.backend.verifyCommittedWorkstream(cwd, {
+			...checkpoint,
 			requireNewCommit: true,
 		});
 		return verified.ok

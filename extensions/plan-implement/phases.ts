@@ -7,15 +7,9 @@ import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
-import {
-	createCurrentWorkstreamBranch,
-	verifyCommittedWorkstream,
-	type WorkstreamCheckpoint,
-} from "../shared/git-policy.ts";
-import { createManagedWorktree, type ManagedWorktreePlan } from "../shared/worktree.ts";
+import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
-import type { ExecFn } from "./delivery-mode.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
 import type { PlanPipelineDashboard } from "./live-dashboard.ts";
@@ -34,7 +28,7 @@ export interface PhaseEffects {
 	isSessionCurrent(): boolean;
 	beginChild(phase: Exclude<WorkflowPhase, "idle" | "approval">): AbortController | undefined;
 	endChild(controller: AbortController): void;
-	exec: ExecFn;
+	backend: VcsBackend;
 	requestPanelReview(options: PanelArgs): Promise<{ handled: false } | { handled: true; outcome: PanelReviewOutcome }>;
 	resolvePublishedPr(cwd: string): Promise<{ ok: true; prNumber: number } | { ok: false; error: string }>;
 	requestLand(prNumber: number, cwd: string): Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
@@ -57,7 +51,7 @@ export interface ApprovedWorkflowOptions {
 	skillPaths: string[];
 	changePrompts: string[];
 	trunkSha?: string;
-	worktreePlan?: ManagedWorktreePlan;
+	worktreePlan?: IsolationPlan;
 }
 
 export function phaseErrorText(result: AgentRunResult): string {
@@ -153,7 +147,7 @@ export async function runPostReviewPhases(
 							return;
 						}
 						if (mode === "single" && state.workstreamCheckpoint) {
-							const verified = await verifyCommittedWorkstream(state.workflowCwd, fx.exec, {
+							const verified = await fx.backend.verifyCommittedWorkstream(state.workflowCwd, {
 								...state.workstreamCheckpoint,
 								requireNewCommit: false,
 							});
@@ -334,7 +328,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 	const executeAgent = fx.runAgent ?? runAgent;
 	const state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint } = {
 		workflowCwd: initialCwd,
-		workstreamCheckpoint: worktreePlan ? { branch: worktreePlan.branch, baseSha: worktreePlan.baseSha } : undefined,
+		workstreamCheckpoint: worktreePlan ? { ref: worktreePlan.ref, baseSha: worktreePlan.baseSha } : undefined,
 	};
 	const progress = ({
 		role,
@@ -453,7 +447,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					try {
 						if (worktreePlan && state.workflowCwd === initialCwd) {
 							fx.setStatus("plan-implement: creating managed worktree…");
-							const created = await createManagedWorktree(worktreePlan, fx.exec);
+							const created = await fx.backend.createIsolation(worktreePlan);
 							if (!created.ok)
 								return completeEarly({
 									status: "failed",
@@ -464,13 +458,10 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							state.workflowCwd = created.plan.path;
 							if (!fx.isCurrent() || controller.signal.aborted)
 								return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
-							fx.notify(
-								`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.branch}).`,
-								"info",
-							);
+							fx.notify(`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.ref}).`, "info");
 						} else if (mode === "single" && !state.workstreamCheckpoint) {
 							fx.setStatus("plan-implement: creating task branch…");
-							const created = await createCurrentWorkstreamBranch(state.workflowCwd, task, fx.exec);
+							const created = await fx.backend.createWorkstream(state.workflowCwd, task);
 							if (!created.ok)
 								return completeEarly({
 									status: "failed",
@@ -478,8 +469,8 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 									model: implementerModel,
 									error: created.error,
 								});
-							state.workstreamCheckpoint = { branch: created.branch, baseSha: created.baseSha };
-							fx.notify(`Task branch created: ${created.branch}.`, "info");
+							state.workstreamCheckpoint = created;
+							fx.notify(`Task branch created: ${created.ref}.`, "info");
 						}
 						fx.setStatus(`plan-implement: implementer ${implementerModel}…`);
 						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
@@ -537,7 +528,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						writeFileSync(ledgerFile, ledger, { encoding: "utf8", mode: 0o600 });
 						const withLedger = { ...result, executionLedger: ledger };
 						if (mode !== "single" || !state.workstreamCheckpoint) return withLedger;
-						const verified = await verifyCommittedWorkstream(state.workflowCwd, fx.exec, {
+						const verified = await fx.backend.verifyCommittedWorkstream(state.workflowCwd, {
 							...state.workstreamCheckpoint,
 							requireNewCommit: true,
 						});
