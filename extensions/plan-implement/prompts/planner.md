@@ -44,12 +44,13 @@ Use these exact machine-readable sections in every plan. Do not put implementati
 
 Use consecutive identifiers, keep each item on one line, and include every acceptance criterion from the user task. The implementer will be required to close every `[STEP-n]` and `[AC-n]` item in an execution ledger.
 
-Single-PR implementation must start on a dedicated task branch before the first edit:
+Single-PR implementation must start on the dedicated workstream prepared by the parent. Follow the injected `VCS backend` policy:
 
-- current working tree: create `kstack/<task-slug>` from the current `HEAD` (numeric suffix on collision) only when the tree is clean;
-- managed worktree: verify and reuse the parent-created `kstack/<task-slug>` branch; do not nest another branch.
+- Git in the current checkout: use the parent-created `kstack/<task-slug>` branch from the current `HEAD`, which requires a clean tree;
+- Git in a managed worktree: verify and reuse the parent-created `kstack/<task-slug>` branch; do not nest another branch;
+- jj in the current workspace: use the parent-created trunk-based change and `kstack/<task-slug>` bookmark; do not create a Git branch or apply Git dirty-tree assumptions.
 
-Treat a commit checkpoint as one reviewable, verified milestone. Do not plan a single terminal commit or a commit that is knowingly broken. Do not include push, `gh pr create`, or any publication step.
+Treat each change checkpoint as one reviewable, verified milestone recorded with the selected backend. Do not plan a single terminal change or a knowingly broken checkpoint. Do not include push, `gh pr create`, or any publication step.
 
 Resolve important ambiguity through repository evidence. If the task cannot safely be planned without user input, state the blocking questions instead of inventing requirements. Do not edit or write repository files.
 

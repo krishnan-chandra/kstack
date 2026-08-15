@@ -11,108 +11,90 @@ function fail(stderr: string, code = 1): ExecFnResult {
 	return { code, stderr, stdout: "" };
 }
 
-/** Build injected jj/git exec fakes controlled by behavior flags. */
-function fakes(
+function fakeExec(
 	opts: {
 		jjVersion?: ExecFnResult | Error;
 		workspace?: ExecFnResult;
 		gitTop?: ExecFnResult;
 		trunk?: ExecFnResult;
+		name?: ExecFnResult;
+		email?: ExecFnResult;
 	} = {},
-): { jj: ExecFn; git: ExecFn } {
-	const jj: ExecFn = async (_command, args) => {
-		if (args[0] === "--version") {
+): ExecFn {
+	return async (command, args) => {
+		if (command === "jj" && args[0] === "--version") {
 			if (opts.jjVersion instanceof Error) throw opts.jjVersion;
 			return opts.jjVersion ?? ok("jj 0.44.0\n");
 		}
-		if (args[0] === "workspace" && args[1] === "root") return opts.workspace ?? ok("/repo\n");
-		if (args[0] === "log" && args[1] === "-r" && args[2] === "trunk()") return opts.trunk ?? ok(`${FULL_SHA}\n`);
-		return fail("unexpected jj call");
+		if (command === "jj" && args[0] === "workspace" && args[1] === "root") return opts.workspace ?? ok("/repo\n");
+		if (command === "git" && args[0] === "rev-parse") return opts.gitTop ?? ok("/repo\n");
+		if (command === "jj" && args[0] === "config" && args[2] === "user.name") return opts.name ?? ok("User\n");
+		if (command === "jj" && args[0] === "config" && args[2] === "user.email")
+			return opts.email ?? ok("user@example.com\n");
+		if (command === "jj" && args[0] === "log" && args[2] === "trunk()") return opts.trunk ?? ok(`${FULL_SHA}\n`);
+		return fail(`unexpected call: ${command} ${args.join(" ")}`);
 	};
-	const git: ExecFn = async (_command, args) => {
-		if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return opts.gitTop ?? ok("/repo\n");
-		return fail("unexpected git call");
-	};
-	return { jj, git };
 }
 
 describe("preflightStack", () => {
-	it("resolves the immutable trunk() SHA when jj, a colocated git worktree, and trunk() all succeed", async () => {
-		const { jj, git } = fakes();
-		const result = await preflightStack("/repo", jj, git);
-		assert.equal(result.ok, true);
-		if (result.ok) {
-			assert.equal(result.trunkSha, FULL_SHA);
-			assert.equal(result.workspaceRoot, "/repo");
-		}
+	it("resolves the immutable trunk() SHA after the shared jj preflight", async () => {
+		const result = await preflightStack("/repo", fakeExec());
+		assert.deepEqual(result, { ok: true, trunkSha: FULL_SHA, workspaceRoot: "/repo" });
 	});
 
-	it("fails when jj is not found (exec throws)", async () => {
-		const { jj, git } = fakes({ jjVersion: new Error("not found") });
-		const result = await preflightStack("/repo", jj, git);
+	it("fails when jj is not found", async () => {
+		const result = await preflightStack("/repo", fakeExec({ jjVersion: new Error("not found") }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /jj/);
 	});
 
-	it("fails when jj --version exits nonzero", async () => {
-		const { jj, git } = fakes({ jjVersion: fail("boom") });
-		const result = await preflightStack("/repo", jj, git);
-		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /jj --version/);
-	});
-
 	it("fails when jj is older than the required minimum", async () => {
-		const { jj, git } = fakes({ jjVersion: ok("jj 0.30.0\n") });
-		const result = await preflightStack("/repo", jj, git);
+		const result = await preflightStack("/repo", fakeExec({ jjVersion: ok("jj 0.30.0\n") }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /requires jj >= 0\.44/);
 	});
 
-	it("fails when the jj version string cannot be parsed", async () => {
-		const { jj, git } = fakes({ jjVersion: ok("weird output\n") });
-		const result = await preflightStack("/repo", jj, git);
-		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /parse jj version/);
-	});
-
 	it("fails when the directory is not a jj workspace", async () => {
-		const { jj, git } = fakes({ workspace: fail("no repo") });
-		const result = await preflightStack("/repo", jj, git);
+		const result = await preflightStack("/repo", fakeExec({ workspace: fail("no repo") }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /Jujutsu workspace/);
 	});
 
 	it("fails when there is no colocated git worktree", async () => {
-		const { jj, git } = fakes({ gitTop: fail("not a git repo") });
-		const result = await preflightStack("/repo", jj, git);
+		const result = await preflightStack("/repo", fakeExec({ gitTop: fail("not a git repo") }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /colocated Git worktree/);
 	});
 
-	it("fails when the jj workspace root and git worktree differ (not colocated)", async () => {
-		const { jj, git } = fakes({ workspace: ok("/jj-workspace\n"), gitTop: ok("/unrelated-git-repo\n") });
-		const result = await preflightStack("/repo", jj, git);
+	it("fails when the jj workspace root and git worktree differ", async () => {
+		const result = await preflightStack(
+			"/repo",
+			fakeExec({ workspace: ok("/jj-workspace\n"), gitTop: ok("/unrelated-git-repo\n") }),
+		);
 		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /colocated/);
+		if (!result.ok) assert.match(result.error, /differ/);
 	});
 
-	it("fails when trunk() resolves to no commits", async () => {
-		const { jj, git } = fakes({ trunk: fail("no trunk") });
-		const result = await preflightStack("/repo", jj, git);
+	it("fails when the jj identity is incomplete", async () => {
+		const result = await preflightStack("/repo", fakeExec({ email: fail("unset") }));
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /user\.email/);
+	});
+
+	it("fails when trunk() cannot be resolved", async () => {
+		const result = await preflightStack("/repo", fakeExec({ trunk: fail("no trunk") }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /trunk\(\)/);
 	});
 
 	it("fails when trunk() resolves to multiple commits", async () => {
-		const { jj, git } = fakes({ trunk: ok(`${FULL_SHA}\n${FULL_SHA}\n`) });
-		const result = await preflightStack("/repo", jj, git);
+		const result = await preflightStack("/repo", fakeExec({ trunk: ok(`${FULL_SHA}\n${FULL_SHA}\n`) }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /single immutable base/);
 	});
 
-	it("fails when trunk() resolves to a non-40-hex (non-Git-backed) commit id", async () => {
-		const { jj, git } = fakes({ trunk: ok("notasha\n") });
-		const result = await preflightStack("/repo", jj, git);
+	it("fails when trunk() resolves to a non-Git-backed commit id", async () => {
+		const result = await preflightStack("/repo", fakeExec({ trunk: ok("notasha\n") }));
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /non-Git commit id/);
 	});

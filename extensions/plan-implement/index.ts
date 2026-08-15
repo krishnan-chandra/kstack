@@ -19,7 +19,9 @@ import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import type { IsolationPlan } from "../shared/vcs/backend.ts";
-import { createGitBackend } from "../shared/vcs/git-backend.ts";
+import { loadVcsBackend } from "../shared/vcs/config.ts";
+import { createVcsBackend } from "../shared/vcs/factory.ts";
+import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
@@ -35,6 +37,7 @@ import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { PlanImplementTranscriptStore } from "./transcript-store.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
+import { validateVcsMode } from "./vcs-mode.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
@@ -147,13 +150,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
-	async function checkBasicPreflights(ctx: ExtensionCommandContext): Promise<string | undefined> {
-		if (!pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review"))
-			return "plan-implement requires the panel-review extension to be loaded.";
-		const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 5000 });
-		return git.code === 0
+	async function checkBasicPreflights(_ctx: ExtensionCommandContext): Promise<string | undefined> {
+		return pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")
 			? undefined
-			: "plan-implement requires a Git working tree so the completed change can be panel-reviewed.";
+			: "plan-implement requires the panel-review extension to be loaded.";
 	}
 	function prepareTask(
 		rawTask: string,
@@ -191,23 +191,28 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
-		if (mode === "stack" && workLocation === "worktree") {
-			notify("--stack and --worktree cannot currently be combined.", "error");
+		const vcsConfig = loadVcsBackend();
+		for (const warning of vcsConfig.warnings) notify(warning, "warning");
+		const modeError = validateVcsMode(vcsConfig.backend, mode, workLocation);
+		if (modeError) {
+			notify(modeError, "error");
 			return;
 		}
+		const exec = makeExec(pi);
+		const backend = createVcsBackend(vcsConfig.backend, exec);
 		const engineeringPrinciplesPrompt = readFileSync(join(PLAYBOOKS_DIR, "engineering-principles.md"), "utf8");
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
+		const backendPrompt = vcsChildGuidance(vcsConfig.backend);
 		const changePrompts = playbookPrompt
-			? [engineeringPrinciplesPrompt, playbookPrompt]
-			: [engineeringPrinciplesPrompt];
+			? [engineeringPrinciplesPrompt, playbookPrompt, backendPrompt]
+			: [engineeringPrinciplesPrompt, backendPrompt];
 		const preflightError = await checkBasicPreflights(ctx);
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
 		if (preflightError) {
 			notify(preflightError, "error");
 			return;
 		}
-		const backend = createGitBackend(makeExec(pi));
 		if (mode === "single") {
 			const preflight = await backend.preflight(ctx.cwd);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
@@ -244,8 +249,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		let skillPaths: string[] = [];
 		let worktreePlan: IsolationPlan | undefined;
 		if (mode === "stack") {
-			const exec = makeExec(pi);
-			const preflight = await preflightStack(ctx.cwd, exec, exec);
+			const preflight = await preflightStack(ctx.cwd, exec);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!preflight.ok) {
 				notify(preflight.error, "error");
@@ -275,7 +279,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
 				? `Planner (read-only): ${plannerModel}\nImplementer (creates local jj changes + bookmarks): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nStack mode disables skill discovery in children and re-adds every discovered skill except arena, so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. The implementer builds a LOCAL stack only — it does not push or create PRs. You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. After the verdict you approve addressing its findings, then publishing the stack as draft PRs with reviewer recommendations.`
-				: `Planner (read-only): ${plannerModel}\nImplementer (creates a dedicated branch and incremental local commits): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : "Location: current working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
+				: `Planner (read-only): ${plannerModel}\nImplementer (${backend.id === "jj" ? "creates a dedicated jj change and task bookmark" : "creates a dedicated branch and incremental Git commits"}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : backend.id === "jj" ? "Location: current jj workspace\n" : "Location: current Git working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : backend.id === "jj" ? "The parent creates a trunk()-based jj change and task bookmark after plan approval. jj snapshots the current workspace state, so Git dirty-tree rules do not apply. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
 		const token = lifecycle.beginWorkflow(commandSession);

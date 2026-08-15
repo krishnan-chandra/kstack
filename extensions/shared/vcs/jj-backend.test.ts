@@ -1,0 +1,178 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { ExecFn, ExecFnResult } from "../git-exec.ts";
+import { createVcsBackend } from "./factory.ts";
+import { vcsChildGuidance } from "./guidance.ts";
+import { JjBackend } from "./jj-backend.ts";
+
+interface Step {
+	command: string;
+	args: string[];
+	result?: Partial<ExecFnResult>;
+}
+
+function scriptedExec(steps: Step[]): ExecFn {
+	return async (command, args) => {
+		const step = steps.shift();
+		assert.ok(step, `unexpected command: ${command} ${args.join(" ")}`);
+		assert.equal(command, step.command);
+		assert.deepEqual(args, step.args);
+		return { code: step.result?.code ?? 0, stdout: step.result?.stdout ?? "", stderr: step.result?.stderr ?? "" };
+	};
+}
+
+const noPager = (args: string[]): string[] => ["--no-pager", ...args];
+const commitTemplate = 'commit_id ++ "\\n"';
+const changeTemplate = 'change_id ++ "\\n"';
+const localBookmarkTemplate = 'if(self.remote(), "", self.name() ++ "\\n")';
+const bookmarkTargetTemplate =
+	'if(self.remote(), "", self.name() ++ "\\t" ++ self.normal_target().commit_id() ++ "\\n")';
+
+describe("JjBackend references and workstreams", () => {
+	it("reports a change ID when no bookmark targets the working-copy commit", async () => {
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "abcdefghijklmno\n" },
+			},
+		]);
+		assert.deepEqual(await new JjBackend(exec).currentRef("/repo"), {
+			ok: true,
+			ref: { kind: "no-bookmark", changeId: "abcdefghijklmno" },
+		});
+	});
+
+	it("creates a trunk-based change with a collision-safe task bookmark", async () => {
+		const base = "1".repeat(40);
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "trunk()", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${base}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "--all-remotes", "exact:kstack/add-search", "-T", 'name ++ "\\n"']),
+				result: { stdout: "kstack/add-search\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "--all-remotes", "exact:kstack/add-search-2", "-T", 'name ++ "\\n"']),
+			},
+			{ command: "jj", args: noPager(["new", "trunk()", "-m", "Add search"]) },
+			{ command: "jj", args: noPager(["bookmark", "create", "kstack/add-search-2", "-r", "@"]) },
+		]);
+		assert.deepEqual(await new JjBackend(exec).createWorkstream("/repo", "Add search"), {
+			ok: true,
+			ref: "kstack/add-search-2",
+			baseSha: base,
+		});
+	});
+
+	it("verifies bookmark ancestry, a non-empty change, and an empty working-copy commit", async () => {
+		const base = "1".repeat(40);
+		const bookmark = "2".repeat(40);
+		const head = "3".repeat(40);
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "exact:add-search", "-T", bookmarkTargetTemplate]),
+				result: { stdout: `add-search\t${bookmark}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", `${bookmark} & ::@`, "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${bookmark}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", `${base}..@ & ~empty()`, "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${bookmark}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")']),
+				result: { stdout: "true" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${head}\n` },
+			},
+		]);
+		assert.deepEqual(
+			await new JjBackend(exec).verifyCommittedWorkstream("/repo", {
+				ref: "add-search",
+				baseSha: base,
+				requireNewCommit: true,
+			}),
+			{ ok: true, headSha: head },
+		);
+	});
+});
+
+describe("JjBackend mutations", () => {
+	it("uses jj-native path-scoped commit and restore commands", async () => {
+		const exec = scriptedExec([
+			{ command: "jj", args: noPager(["commit", "a.ts", "b.ts", "-m", "Apply fixes"]) },
+			{ command: "jj", args: noPager(["restore", "forbidden.txt"]) },
+		]);
+		const backend = new JjBackend(exec);
+		assert.deepEqual(await backend.commitPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
+		assert.deepEqual(await backend.restorePaths("/repo", ["forbidden.txt"]), { ok: true });
+	});
+
+	it("abandons a conflicted remote-head merge instead of moving the bookmark", async () => {
+		const remote = "4".repeat(40);
+		const exec = scriptedExec([
+			{ command: "jj", args: noPager(["git", "fetch", "--remote", "origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "feature@origin", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${remote}\n` },
+			},
+			{ command: "jj", args: noPager(["log", "-r", `${remote} & ::@`, "--no-graph", "-T", commitTemplate]) },
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{ command: "jj", args: noPager(["new", "@", "feature@origin", "-m", "Merge feature@origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(conflict, "true", "false")']),
+				result: { stdout: "true" },
+			},
+			{ command: "jj", args: noPager(["resolve", "--list"]), result: { stdout: "src/conflict.ts 2-sided conflict\n" } },
+			{ command: "jj", args: noPager(["abandon", "@"]) },
+		]);
+		const result = await new JjBackend(exec).integrateRemoteHead("/repo", "feature");
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /conflict/i);
+	});
+
+	it("refuses worktree isolation", async () => {
+		const result = await new JjBackend(scriptedExec([])).planIsolation("/repo", "task");
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /unavailable with the jj backend/);
+	});
+});
+
+describe("configured VCS child policy", () => {
+	it("selects exactly the configured implementation", () => {
+		const exec = scriptedExec([]);
+		assert.equal(createVcsBackend("git", exec).id, "git");
+		assert.equal(createVcsBackend("jj", exec).id, "jj");
+	});
+
+	it("injects mutually exclusive mutation guidance", () => {
+		assert.match(vcsChildGuidance("git"), /Do not run jj commands/);
+		assert.match(vcsChildGuidance("jj"), /Do not run git status, add, commit/);
+		assert.match(vcsChildGuidance("jj"), /task bookmark/);
+	});
+});
