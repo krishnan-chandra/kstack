@@ -1,12 +1,13 @@
 # pr-autopilot — Bounded PR Autopilot
 
-Drives an open PR frontier through the check → triage → fix → push → recheck
-loop using **only tiny models**. Stops at merge-ready — never auto-merges, never
-rebases shared history, never restacks.
+Drives an open PR through the check → triage → fix → push → recheck loop using
+**one tiny model per run**, chosen at random from the configured pool. Stops at
+merge-ready — never auto-merges, never rebases shared history, never restacks.
 
 This is the bounded post-PR companion to `plan-implement`. Where
 `plan-implement` publishes a draft PR, `pr-autopilot` owns getting that PR (and
-the lowest unmerged PR in a stack) to merge-ready with cheap, fast child agents.
+the lowest unmerged PR in a stack) to merge-ready with one cheap, fast child
+model.
 
 ## Command
 
@@ -31,9 +32,8 @@ If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR a
 The autopilot is tiny-model-only by construction:
 
 - The config validator **rejects** any thinking level above `"low"`.
-- Every child agent is spawned with a model from the configured `models`
-  array — nothing else.
-- The default model set is GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek V4 Flash.
+- Every child agent in a run uses one model chosen at random from that array.
+- The default pool is GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek V4 Flash.
 
 If no `pr-autopilot` section exists in `kstack.json`, the built-in defaults are
 used, filtered to what is available in the Pi model registry.
@@ -60,7 +60,7 @@ Config lives in the `"pr-autopilot"` section of
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `models` | yes (≥2) | built-in tiny set | Tiny models for child agents. Each entry: `{label, model, thinking?}`. `thinking` must be `"off"`, `"minimal"`, or `"low"`. |
+| `models` | yes (≥2) | built-in tiny set | Pool of tiny models. Each run picks one entry at random for both the triager and the fixer. Each entry: `{label, model, thinking?}`. `thinking` must be `"off"`, `"minimal"`, or `"low"`. |
 | `maxConcurrency` | no | 3 | Max concurrent failed-log fetches (1–5). |
 | `timeoutMinutes` | no | 5 | Per-child idle limit in minutes; child output resets the timer (1–15). |
 | `maxRuntimeMinutes` | no | 15 | Absolute per-child ceiling in minutes (2–60, ≥ `timeoutMinutes`). |
@@ -125,7 +125,7 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 
 ## Child agents
 
-The autopilot spawns two kinds of tiny-model child agents:
+Each run picks one tiny model, then spawns two child agents with that model:
 
 - **Triager** — read-only (`read`, `grep`, `find`, `ls` tools only). Classifies
   CI check failures (with log excerpts) and review threads. Runs with

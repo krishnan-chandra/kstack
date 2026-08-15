@@ -40,6 +40,7 @@ interface Harness {
 	cwd: string;
 	calls: string[];
 	roles: string[];
+	models: string[];
 	unexpected: string[];
 	exec: ExecFn;
 	ops: DriverOps;
@@ -55,6 +56,7 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 	const cwd = await mkdtemp(join(tmpdir(), "kstack-driver-test-"));
 	const calls: string[] = [];
 	const roles: string[] = [];
+	const models: string[] = [];
 	const unexpected: string[] = [];
 	let statusReads = 0;
 	let mergedBase = false;
@@ -144,8 +146,9 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		savePersistedState: async (state) => {
 			persisted = structuredClone(state);
 		},
-		runChildRole: async (role) => {
+		runChildRole: async (role, opts) => {
 			roles.push(role);
+			models.push(opts.model);
 			return {
 				ok: true,
 				output: role === "triager" ? (scenario.triage ?? triage()) : (scenario.fixer ?? "fixed\nVERIFY_OK"),
@@ -157,6 +160,7 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		cwd,
 		calls,
 		roles,
+		models,
 		unexpected,
 		exec,
 		ops,
@@ -290,6 +294,20 @@ test("declining a fix push returns incomplete", async (t) => {
 		harness.calls.some((call) => call.startsWith("git push")),
 		false,
 	);
+});
+
+test("triager and fixer use the same randomly chosen model", async (t) => {
+	const { harness, result } = await run("drive", {
+		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
+		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		confirm: false,
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.deepEqual(harness.roles, ["triager", "fixer"]);
+	assert.equal(harness.models.length, 2);
+	assert.equal(harness.models[0], harness.models[1]);
+	assert.ok(config.models.some((model) => model.model === harness.models[0]));
 });
 
 test("drive mode stops at its configured cycle bound", async (t) => {

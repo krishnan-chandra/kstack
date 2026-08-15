@@ -15,6 +15,7 @@ import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { routeLand } from "./routing.ts";
 import { abortableSleep } from "./sleep.ts";
+import { summarizeLandResult } from "./summary.ts";
 import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 
 function selectedMethod(value: string | undefined): MergeMethod | undefined {
@@ -50,7 +51,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer("land", (message, { expanded, outputPad }, theme) => {
 		const details = message.details as LandResult;
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-		const summary = `Land — ${details.status} — ${details.frontiers.length} frontier(s)`;
+		const summary = summarizeLandResult(details);
 		box.addChild(new Text(expanded ? `${summary}\n${message.content}` : summary, 0, 0));
 		return box;
 	});

@@ -102,6 +102,8 @@ export async function runAutopilot(
 		promptDir: string;
 		triagerPromptFile: string;
 		fixerPromptFile: string;
+		/** One tiny model for every child in this run. Chosen before confirmation. */
+		selectedModel?: { model: string; label: string; thinking?: string };
 	},
 	handlers: {
 		setPhase: (phase: LifecyclePhase, cycles?: number) => void;
@@ -149,7 +151,8 @@ export async function runAutopilot(
 	}
 	const prNumber = target.prNumber;
 	const repoKey = repoPersistKey(cwd);
-	notify(`Driving PR #${prNumber} in ${mode} mode. Models: ${config.models.map((m) => m.label).join(", ")}`, "info");
+	const selected = params.selectedModel ?? pickModel(config.models);
+	notify(`Driving PR #${prNumber} in ${mode} mode. Model: ${selected.label}`, "info");
 
 	if (mode === "check") {
 		setPhase("checking");
@@ -397,14 +400,13 @@ export async function runAutopilot(
 		}
 
 		setPhase("triaging", cycle);
-		const model = pickModel(config.models, cycle);
 		const taskFile = join(promptDir, `triager-${cycle + 1}.md`);
 		await writeFile(taskFile, buildTriagerTask(state, backend.id), { mode: 0o600 });
 		const triagerResult = await ops.runChildRole(
 			"triager",
 			{
-				model: model.model,
-				thinking: model.thinking,
+				model: selected.model,
+				thinking: selected.thinking,
 				promptFile: triagerPromptFile,
 				taskFile,
 				timeoutMinutes: config.timeoutMinutes,
@@ -492,7 +494,6 @@ export async function runAutopilot(
 		let fixerOutput = "";
 		let pushedAFix = false;
 		if (fixThreads.length > 0 || (fixMode === "ci" && codeChecks.length > 0)) {
-			const fixerModel = pickModel(config.models, cycle + 1);
 			setPhase("fixing", cycle);
 			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
 			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode, backend.id), {
@@ -501,8 +502,8 @@ export async function runAutopilot(
 			const fixerResult = await ops.runChildRole(
 				"fixer",
 				{
-					model: fixerModel.model,
-					thinking: fixerModel.thinking,
+					model: selected.model,
+					thinking: selected.thinking,
 					promptFile: fixerPromptFile,
 					taskFile: fixerTaskFile,
 					timeoutMinutes: config.timeoutMinutes,
@@ -522,7 +523,7 @@ export async function runAutopilot(
 			setPhase("pushing", cycle);
 			const confirmed = await confirm(
 				`Push fixes to PR #${prNumber}?`,
-				`Cycle ${cycle + 1} fixer (${fixerModel.label}) completed.\n` +
+				`Cycle ${cycle + 1} fixer (${selected.label}) completed.\n` +
 					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then pushing.\n` +
 					"The autopilot will NOT rebase, restack, merge the PR, or touch merge settings.",
 			);

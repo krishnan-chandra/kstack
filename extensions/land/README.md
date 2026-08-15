@@ -3,7 +3,7 @@
 `/land` merges a GitHub pull request after `pr-autopilot` verifies its current
 head. In jj mode, selecting an upper PR in a confirmed local stack lands the
 complete prefix from trunk through that PR. Land confirms the stack once, then
-revalidates each frontier before it asks GitHub to merge or enqueue the PR.
+revalidates each pull request before it asks GitHub to merge or enqueue it.
 
 ## Usage
 
@@ -105,7 +105,7 @@ pins the exact head, and passes `--match-head-commit`.
 `/land --pr <number>` lands through the selected PR when its head closes a
 confirmed local jj stack. Use `/jj-stack land` or `jj_stack_land` when you want
 to name the top bookmark, remote, trunk revset, or stack-size limit explicitly.
-Both paths call Land once per frontier with a minted confirmation and retain its
+Both paths call Land once per pull request with a minted confirmation and retain its
 head pin, revalidation, and `--match-head-commit` checks.
 
 ## Development

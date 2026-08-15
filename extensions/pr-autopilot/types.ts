@@ -2,11 +2,11 @@
  * Shared types for the pr-autopilot extension.
  *
  * The PR autopilot is a bounded, tiny-model-only workflow: it owns a single
- * PR frontier at a time (the lowest unmerged PR), classifies its state with
- * small child agents, addresses review threads and CI failures it can fix,
+ * PR at a time (the lowest unmerged PR), classifies its state with one randomly
+ * chosen tiny-model child, addresses review threads and CI failures it can fix,
  * pushes, and re-checks — stopping at merge-ready. It never auto-merges, never
- * re-stacks shared history, and never uses anything other than the tiny models
- * recorded in kstack.json.
+ * re-stacks shared history, and never uses anything other than one model from
+ * the tiny-model pool in kstack.json.
  */
 
 import type { ExecFn, ExecFnOptions, ExecFnResult } from "../shared/git-exec.ts";

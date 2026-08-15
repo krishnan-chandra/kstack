@@ -1,11 +1,11 @@
 /**
  * Bounded PR Autopilot extension for Pi.
  *
- * Watches over an open PR frontier using only tiny models (GPT-5.6 Luna,
- * Gemini 3.7 Flash, DeepSeek V4 Flash) recorded in kstack.json. Spawns
- * isolated child agents with those models to triage CI/check status and
- * review threads, generates fixes, commits, and pushes — stopping at
- * merge-ready. Never auto-merges, never re-stacks shared history.
+ * Watches over an open PR using one tiny model per run, chosen at random
+ * from the configured pool (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4
+ * Flash by default). Spawns isolated child agents with that model to triage
+ * CI/check status and review threads, generates fixes, commits, and pushes —
+ * stopping at merge-ready. Never auto-merges, never re-stacks shared history.
  *
  * Command: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]
  * Config:  "pr-autopilot" section of $PI_CODING_AGENT_DIR/kstack.json (see README.md)
@@ -29,6 +29,7 @@ import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
 import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./driver.ts";
 import { AutopilotLifecycle } from "./lifecycle.ts";
+import { pickModel } from "./pr-state.ts";
 import type { AutopilotMode } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -80,7 +81,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			"",
 			`Status: ${details?.status ?? "running"}`,
 			`Cycles: ${details?.cycles ?? 0}`,
-			`Models: ${details?.models?.join(", ") ?? "(none)"}`,
+			`Model: ${details?.models?.join(", ") ?? "(none)"}`,
 			"",
 			message.content,
 		];
@@ -162,20 +163,20 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		const exec = makeExec(pi);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
 
-		// Confirm the run before starting.
-		const modelsDisplay = config.models.map((m) => `  ${m.label}: ${modelCliId(m)}`).join("\n");
+		// Confirm the run before starting. One randomly chosen tiny model runs the children.
+		const selected = pickModel(config.models);
 		const confirmed = await ctx.ui.confirm(
 			`Run pr-autopilot (${mode} mode)?`,
 			`PR: ${prNumber ? `#${prNumber}` : "lowest unmerged (auto-detected)"}\n` +
 				`VCS backend: ${backend.id}\n` +
-				`Models (tiny only):\n${modelsDisplay}\n\n` +
+				`Model (1 of ${config.models.length}, chosen at random): ${selected.label} (${modelCliId(selected)})\n\n` +
 				`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
 				"Bounded invariants:\n" +
 				"- Works the lowest unmerged PR first\n" +
 				`- Conflicts/behind: merge the remote base with ${backend.id} (never rebase)\n` +
 				"- Comments before CI; watch pending checks instead of inventing work\n" +
 				"- Stops at merge-ready (never auto-merges)\n" +
-				"- Only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash)",
+				"- One tiny model per run, chosen at random from the configured pool",
 		);
 		if (!lifecycle.isSessionCurrent(sessionToken)) return early("aborted", "session changed during confirmation");
 		if (!confirmed) return early("declined", "autopilot confirmation declined");
@@ -193,7 +194,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		}
 
 		let tempDir: string | undefined;
-		const modelList = config.models.map((m) => m.label);
+		const modelList = [selected.label];
 
 		try {
 			tempDir = mkdtempSync(join(tmpdir(), "pi-pr-autopilot-"));
@@ -224,6 +225,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					promptDir: tempDir,
 					triagerPromptFile,
 					fixerPromptFile,
+					selectedModel: selected,
 				},
 				{
 					setPhase: (phase, cycles) => updateStatus(phase, cycles),
@@ -280,7 +282,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("pr-autopilot", {
 		description:
-			"Keep an open PR merge-ready with tiny models only: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]. " +
+			"Keep an open PR merge-ready with one randomly chosen tiny model: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]. " +
 			"Stops at merge-ready; never auto-merges or rebases shared history.",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
