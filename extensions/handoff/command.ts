@@ -279,6 +279,7 @@ export function createHandoffHandler(api: HandoffApi) {
 					},
 					waitForIdle: () => ctx.waitForIdle(),
 					confirm: (title, message) => ctx.ui.confirm(title, message),
+					skipConfirmation: true,
 					notify: (message, level) => ctx.ui.notify(message, level),
 					startNewSession: (archiveInFresh) =>
 						ctx.newSession({

@@ -23,7 +23,7 @@ With `--archive`, the active parent path is moved, so the replacement omits the 
 /handoff                          # continue from the prior resume point
 ```
 
-`--archive` opts into archiving the current session before the confirmed handoff prompt is sent. The archive confirmation shows the source and destination. If confirmed, the old session becomes read-only and leaves `/resume`; the replacement session records that its predecessor is archived and reads it through the exact-ID archive fallback. If archiving fails, the continuation prompt is not sent.
+`--archive` opts into archiving the current session before the confirmed handoff prompt is sent. The flag itself is explicit archive intent, so no separate archive confirmation appears. After the handoff prompt is saved, the old session becomes read-only and leaves `/resume`; the replacement session records that its predecessor is archived and reads it through the exact-ID archive fallback. If archiving fails, the continuation prompt is not sent.
 
 `--model` (also `-m` or `--model=provider/model-id[:effort]`) selects the model
 and optional effort for the replacement session. It accepts a canonical
@@ -76,7 +76,7 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 - **No model required to open the handoff:** `/handoff` itself still makes no model call. Before auto-start, the extension checks that the replacement session has a model and credentials. If that preflight fails, the confirmed prompt stays in the editor.
 - **Persisted sessions only:** ephemeral `--no-session` sessions are rejected because they have no durable history artifact for the next agent to inspect.
 - **Interactive only:** the command requires TUI mode so the user can edit the continuation prompt.
-- **One confirmation:** saving the editor both confirms the prompt and starts the replacement session. There is no second submit after the switch. If preflight finds no model or credentials, the confirmed prompt is left in the editor instead. Errors after message submission begins are surfaced without restoring the prompt because the message might already be recorded; this avoids creating a duplicate turn if the user retries.
+- **One confirmation:** saving the editor both confirms the prompt and starts the replacement session. Even with `--archive`, there is no additional archive dialog or second submit after the switch. If preflight finds no model or credentials, the confirmed prompt is left in the editor instead. Errors after message submission begins are surfaced without restoring the prompt because the message might already be recorded; this avoids creating a duplicate turn if the user retries.
 - **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active. If an explicit `--model` or effort switch was already applied, both the parent model and effort are rolled back (model first, then effort) when replacement is cancelled or fails before the new session starts. If there was no previous model, the parent keeps the newly selected model and its effective effort. Once the replacement-session callback begins, the old session API is stale and is not used for recovery.
 
 ## Tests
