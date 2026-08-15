@@ -399,9 +399,7 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
             )
 
             # Check for existing kstack comment (only owned by gh_user)
-            existing_comments = existing_comments_by_pr.get(pr_num)
-            if existing_comments is None:
-                existing_comments = get_pr_comments(gh_repo, pr_num, cwd, args.timeout)
+            existing_comments = existing_comments_by_pr[pr_num]
             existing = find_kstack_comment(existing_comments, gh_user=gh_user)
             existing_id = existing.get("id") if existing else None
 

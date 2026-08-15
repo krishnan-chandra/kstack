@@ -41,13 +41,50 @@ function oneLine(result: ExecFnResult): string | undefined {
 
 function parsePorcelainPaths(stdout: string): string[] {
 	const paths: string[] = [];
-	for (const line of stdout.split("\n")) {
-		if (line.length < 4) continue;
-		const value = line.slice(3);
-		const arrow = value.indexOf(" -> ");
-		const path = (arrow === -1 ? value : value.slice(arrow + 4)).trim();
-		if (path) paths.push(path);
+	const seen = new Set<string>();
+	const fields = stdout.split("\0");
+
+	let i = 0;
+	while (i < fields.length) {
+		const field = fields[i];
+		if (field.length < 4) {
+			i++;
+			continue;
+		}
+
+		const xy = field.slice(0, 2);
+		const path = field.slice(3); // skip "XY<space>"
+		if (!path) {
+			i++;
+			continue;
+		}
+
+		// Rename/copy: destination first, source follows in next NUL field
+		if (xy[0] === "R" || xy[0] === "C" || xy[1] === "R" || xy[1] === "C") {
+			if (!seen.has(path)) {
+				seen.add(path);
+				paths.push(path); // destination
+			}
+			i++;
+			if (i < fields.length) {
+				const source = fields[i];
+				if (source && !seen.has(source)) {
+					seen.add(source);
+					paths.push(source);
+				}
+			}
+			i++;
+			continue;
+		}
+
+		// Ordinary entry
+		if (!seen.has(path)) {
+			seen.add(path);
+			paths.push(path);
+		}
+		i++;
 	}
+
 	return paths;
 }
 
@@ -109,7 +146,7 @@ export class GitBackend implements GitVcsBackend {
 	}
 
 	async changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>> {
-		const status = await this.git(cwd, ["status", "--porcelain"], 5_000);
+		const status = await this.git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], 5_000);
 		return status.code === 0
 			? { ok: true, paths: parsePorcelainPaths(status.stdout) }
 			: { ok: false, error: `Could not inspect working-copy changes: ${status.stderr.trim()}` };

@@ -824,7 +824,7 @@ def get_pr_status(
         [
             "api",
             f"/repos/{gh_repo.owner}/{gh_repo.repo}/pulls/{pr_number}",
-            "--jq", "{state, merged}",
+            "--jq", "{state, merged, draft}",
         ],
         cwd=cwd,
         timeout=timeout,
@@ -847,6 +847,8 @@ def get_pr_status(
         raise StackError(f"Could not parse status for PR #{pr_number}: invalid response.", 1)
     if payload["merged"]:
         return "merged"
+    if payload.get("draft"):
+        return "draft"
     return payload["state"]
 
 
