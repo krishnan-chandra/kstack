@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseBookmarkLines, parseStackCommits } from "./jj.ts";
+import { createJjAdapter, parseBookmarkLines, parseStackCommits } from "./jj.ts";
 
 describe("jj adapters", () => {
 	it("parses local bookmark rows and rejects malformed or duplicate output", () => {
@@ -19,6 +19,20 @@ describe("jj adapters", () => {
 		assert.equal(commits[0].changeId.length, 26);
 		assert.equal(commits[0].commitId.length, 40);
 		assert.throws(() => parseStackCommits('{"change_id":"a"}'), /missing commit_id/);
+	});
+
+	it("quotes bookmark names as exact revsets for mutation", async () => {
+		const calls: string[][] = [];
+		const adapter = createJjAdapter(async (argv) => {
+			calls.push([...argv]);
+			return { kind: "ok", code: 0, stdout: "", stderr: "" };
+		});
+		await adapter.rebaseStack(".", "feat|all()", "abc");
+		await adapter.abandonRange(".", "abc", "feat|all()");
+		assert.deepEqual(calls, [
+			["jj", "rebase", "-b", 'bookmarks(exact:"feat|all()")', "-o", "abc"],
+			["jj", "abandon", '(abc)..bookmarks(exact:"feat|all()")'],
+		]);
 	});
 
 	it("does not treat this repository's current trunk as a fixture", () => {

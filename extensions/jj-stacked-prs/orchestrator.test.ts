@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { GitHubAdapter } from "./github.ts";
 import { GitHubError } from "./github.ts";
-import type { JjAdapter } from "./jj.ts";
+import { type JjAdapter, JjError } from "./jj.ts";
 import {
 	advanceStack,
 	inspectStack,
@@ -87,6 +87,7 @@ function fakeGithub(overrides: Partial<GitHubAdapter> = {}): GitHubAdapter & { c
 		createDraftPr: async (input) => ({
 			number: input.bookmark === "feat1" ? 11 : 12,
 			headRef: input.bookmark,
+			headCommitId: input.bookmark === "feat1" ? "aaa-commit" : "bbb-commit",
 			baseRef: input.base,
 			title: input.title,
 			draft: true,
@@ -194,6 +195,7 @@ describe("publishStack", () => {
 			{
 				number: 11,
 				headRef: "feat1",
+				headCommitId: "aaa-commit",
 				baseRef: "old",
 				title: "Keep me",
 				draft: true,
@@ -203,6 +205,7 @@ describe("publishStack", () => {
 			{
 				number: 12,
 				headRef: "feat2",
+				headCommitId: "bbb-commit",
 				baseRef: "feat1",
 				title: "Also keep",
 				draft: true,
@@ -370,6 +373,7 @@ describe("publishStack", () => {
 			{
 				number: 11,
 				headRef: "feat1",
+				headCommitId: "aaa-commit",
 				baseRef: "main",
 				title: "First",
 				draft: true,
@@ -409,6 +413,87 @@ describe("sync and advance", () => {
 		assert.deepEqual(jj.calls, ["fetch", "rebase"]);
 	});
 
+	it("reports a partial sync when a later step fails after fetch", async () => {
+		const jj = fakeJj();
+		let fetched = false;
+		const fetchRemote = jj.fetchRemote;
+		jj.fetchRemote = async (...args) => {
+			await fetchRemote(...args);
+			fetched = true;
+		};
+		jj.resolveRevset = async (_cwd, revset) => {
+			if (fetched) throw new JjError("resolve failed");
+			return revset === "trunk()" ? "trunk" : `${revset}-id`;
+		};
+		const result = await syncStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{ run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }), ui: ui(), jj, github: fakeGithub() },
+		);
+		assert.equal(result.status, "partial");
+		assert.deepEqual(jj.calls, ["fetch"]);
+	});
+
+	it("does not abandon a stack that inspection found conflicted", async () => {
+		const conflicted = { ...commit("aaa", "feat1"), conflict: true };
+		const jj = fakeJj({
+			fetchStack: async () => [conflicted, commit("bbb", "feat2")],
+		});
+		const result = await advanceStack(
+			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listPrsForHead: async () => [
+						{
+							number: 11,
+							headRef: "feat1",
+							headCommitId: "aaa-commit",
+							baseRef: "main",
+							title: "x",
+							draft: false,
+							url: "u",
+							headOwner: "o",
+						},
+					],
+					getPrStatus: async () => "merged",
+				}),
+			},
+		);
+		assert.equal(result.status, "blocked");
+		assert.deepEqual(jj.calls, []);
+	});
+
+	it("does not trust a historical merged PR for a reused bookmark", async () => {
+		const jj = fakeJj();
+		const result = await advanceStack(
+			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listPrsForHead: async () => [
+						{
+							number: 3,
+							headRef: "feat1",
+							headCommitId: "historical-commit",
+							baseRef: "main",
+							title: "old",
+							draft: false,
+							url: "u",
+							headOwner: "o",
+						},
+					],
+					getPrStatus: async () => "merged",
+				}),
+			},
+		);
+		assert.equal(result.status, "blocked");
+		assert.deepEqual(jj.calls, []);
+	});
+
 	it("does not abandon when GitHub says the PR is still open", async () => {
 		const jj = fakeJj();
 		const result = await advanceStack(
@@ -422,6 +507,7 @@ describe("sync and advance", () => {
 						{
 							number: 11,
 							headRef: "feat1",
+							headCommitId: "aaa-commit",
 							baseRef: "main",
 							title: "x",
 							draft: false,
@@ -450,6 +536,7 @@ describe("sync and advance", () => {
 						{
 							number: 11,
 							headRef: "feat1",
+							headCommitId: "aaa-commit",
 							baseRef: "main",
 							title: "x",
 							draft: false,
@@ -462,11 +549,14 @@ describe("sync and advance", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
-		assert.deepEqual(jj.calls, ["abandon:trunk()..feat1", "fetch", "rebase"]);
+		assert.deepEqual(jj.calls, ["abandon:trunk..feat1", "fetch", "rebase"]);
 	});
 
 	it("abandons through the selected trunk revset, not a hardcoded trunk()", async () => {
-		const jj = fakeJj();
+		const jj = fakeJj({
+			resolveRevset: async (_cwd, revset) => (revset === "main@origin" ? "custom-trunk" : `${revset}-id`),
+			fetchStack: async () => [commit("aaa", "feat1", "custom-trunk"), commit("bbb", "feat2", "aaa-commit")],
+		});
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin", trunk: "main@origin" },
 			{
@@ -478,6 +568,7 @@ describe("sync and advance", () => {
 						{
 							number: 11,
 							headRef: "feat1",
+							headCommitId: "aaa-commit",
 							baseRef: "main",
 							title: "x",
 							draft: false,
@@ -490,7 +581,7 @@ describe("sync and advance", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
-		assert.ok(jj.calls.includes("abandon:main@origin..feat1"));
+		assert.ok(jj.calls.includes("abandon:custom-trunk..feat1"));
 	});
 
 	it("does not abandon unmerged predecessors when a middle bookmark is merged", async () => {
@@ -515,6 +606,7 @@ describe("sync and advance", () => {
 									{
 										number: 12,
 										headRef: "feat2",
+										headCommitId: "bbb-commit",
 										baseRef: "feat1",
 										title: "x",
 										draft: false,
@@ -534,6 +626,39 @@ describe("sync and advance", () => {
 		assert.deepEqual(jj.calls, []);
 	});
 
+	it("reports a partial advance when fetch fails after abandon", async () => {
+		const jj = fakeJj({
+			fetchRemote: async () => {
+				throw new JjError("fetch failed");
+			},
+		});
+		const result = await advanceStack(
+			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listPrsForHead: async () => [
+						{
+							number: 11,
+							headRef: "feat1",
+							headCommitId: "aaa-commit",
+							baseRef: "main",
+							title: "x",
+							draft: false,
+							url: "u",
+							headOwner: "o",
+						},
+					],
+					getPrStatus: async () => "merged",
+				}),
+			},
+		);
+		assert.equal(result.status, "partial");
+		assert.deepEqual(jj.calls, ["abandon:trunk..feat1"]);
+	});
+
 	it("reports an empty remainder when the merged bookmark was the top", async () => {
 		const jj = fakeJj({
 			fetchStack: async () => [commit("aaa", "feat1")],
@@ -550,6 +675,7 @@ describe("sync and advance", () => {
 						{
 							number: 11,
 							headRef: "feat1",
+							headCommitId: "aaa-commit",
 							baseRef: "main",
 							title: "x",
 							draft: false,
@@ -562,11 +688,29 @@ describe("sync and advance", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
-		assert.deepEqual(jj.calls, ["abandon:trunk()..feat1", "fetch"]);
+		assert.deepEqual(jj.calls, ["abandon:trunk..feat1", "fetch"]);
 	});
 });
 
 describe("requestPublicationFromInput", () => {
+	it("honors both the request and orchestrator cancellation signals", async () => {
+		const request = new AbortController();
+		const orchestrator = new AbortController();
+		orchestrator.abort();
+		const result = await requestPublicationFromInput(
+			{ repositoryPath: "/repo", topBookmark: "feat2", remote: "origin", signal: request.signal },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj(),
+				github: fakeGithub(),
+				realpath: (path) => path,
+				signal: orchestrator.signal,
+			},
+		);
+		assert.equal(result.status, "cancelled");
+	});
+
 	it("infers a unique GitHub remote and unique top", async () => {
 		const result = await requestPublicationFromInput(
 			{ repositoryPath: "/repo" },

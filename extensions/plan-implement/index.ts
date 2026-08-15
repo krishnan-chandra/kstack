@@ -1,5 +1,4 @@
 /** Two-model plan → approve → implement → panel-review orchestration. */
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
@@ -18,6 +17,7 @@ import {
 } from "../shared/change-kind.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
+import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import type { IsolationPlan } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
@@ -201,9 +201,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const exec = makeExec(pi);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
-		const engineeringPrinciplesPrompt = readFileSync(join(PLAYBOOKS_DIR, "engineering-principles.md"), "utf8");
+		const engineeringPrinciplesPrompt = readPromptAsset(PLAYBOOKS_DIR, "engineering-principles.md");
 		const playbookFile = changeKindPlaybookFile(changeKind);
-		const playbookPrompt = playbookFile ? readFileSync(join(PLAYBOOKS_DIR, playbookFile), "utf8") : undefined;
+		const playbookPrompt = playbookFile ? readPromptAsset(PLAYBOOKS_DIR, playbookFile) : undefined;
 		const backendPrompt = vcsChildGuidance(vcsConfig.backend);
 		const changePrompts = playbookPrompt
 			? [engineeringPrinciplesPrompt, playbookPrompt, backendPrompt]
@@ -264,13 +264,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			trunkSha = preflight.trunkSha;
-			const policy = buildStackSkillPolicy(discoveredSkills);
-			if (!policy.ok) {
-				notify(policy.error, "error");
-				return;
-			}
-			skillPaths = policy.skills.map((skill) => skill.baseDir);
-			mutationPrompts = [readFileSync(join(PROMPTS_DIR, "jj-stack-local.md"), "utf8")];
+			skillPaths = buildStackSkillPolicy(discoveredSkills).map((skill) => skill.baseDir);
+			mutationPrompts = [readPromptAsset(PROMPTS_DIR, "jj-stack-local.md")];
 		} else if (workLocation === "worktree") {
 			if (backend.id !== "git") {
 				notify("--worktree requires the git backend.", "error");

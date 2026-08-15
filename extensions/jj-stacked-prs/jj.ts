@@ -47,6 +47,11 @@ export interface JjAdapter {
 	abandonRange(cwd: string, trunk: string, mergedBookmark: string, signal?: AbortSignal): Promise<void>;
 }
 
+export function bookmarkRevset(bookmark: string): string {
+	assertBoundedName(bookmark, "bookmark", MAX_NAME_CHARS);
+	return `bookmarks(exact:${JSON.stringify(bookmark)})`;
+}
+
 export function createJjAdapter(run: ProcessRunner): JjAdapter {
 	const exec = async (
 		command: string,
@@ -151,14 +156,12 @@ export function createJjAdapter(run: ProcessRunner): JjAdapter {
 			await runJj(run, ["git", "fetch", "--remote", remote], { cwd, signal });
 		},
 		async rebaseStack(cwd, top, trunk, signal) {
-			assertBoundedName(top, "bookmark", MAX_NAME_CHARS);
 			assertBoundedName(trunk, "revset", MAX_REVSET_CHARS);
-			await runJj(run, ["rebase", "-b", top, "-o", trunk], { cwd, signal });
+			await runJj(run, ["rebase", "-b", bookmarkRevset(top), "-o", trunk], { cwd, signal });
 		},
 		async abandonRange(cwd, trunk, mergedBookmark, signal) {
 			assertBoundedName(trunk, "revset", MAX_REVSET_CHARS);
-			assertBoundedName(mergedBookmark, "bookmark", MAX_NAME_CHARS);
-			await runJj(run, ["abandon", `${trunk}..${mergedBookmark}`], { cwd, signal });
+			await runJj(run, ["abandon", `(${trunk})..${bookmarkRevset(mergedBookmark)}`], { cwd, signal });
 		},
 	};
 }

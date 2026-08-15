@@ -12,7 +12,12 @@ class FakeProcess implements SpawnedProcess {
 	killed = false;
 	ignoreTerm = false;
 
-	on(event: "close" | "error", cb: (...args: any[]) => void): void {
+	on(event: "close", cb: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+	on(event: "error", cb: (error: Error) => void): void;
+	on(
+		event: "close" | "error",
+		cb: ((code: number | null, signal: NodeJS.Signals | null) => void) | ((error: Error) => void),
+	): void {
 		this.events.on(event, cb);
 	}
 	kill(signal = "SIGTERM"): boolean {

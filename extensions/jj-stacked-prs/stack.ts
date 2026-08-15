@@ -124,7 +124,7 @@ function isAllowedEmptyWorkingCopy(commit: StackCommit): boolean {
 	return commit.empty && commit.workingCopy;
 }
 
-export function deriveSlices(stack: readonly StackCommit[], topBookmark: string): StackSlice[] {
+export function deriveSlices(stack: readonly StackCommit[]): StackSlice[] {
 	const bookmarkIndices: Array<{ index: number; bookmark: string }> = [];
 	for (const [index, entry] of stack.entries()) {
 		for (const bookmark of entry.bookmarks) bookmarkIndices.push({ index, bookmark });
@@ -144,7 +144,6 @@ export function deriveSlices(stack: readonly StackCommit[], topBookmark: string)
 		prevIndex = index + 1;
 		prevBookmark = bookmark;
 	}
-	void topBookmark;
 	return slices;
 }
 
@@ -236,7 +235,7 @@ export function detectBlockers(input: {
 		}
 	}
 	if (topBookmark && commits.length > 0) {
-		const slices = deriveSlices(commits, topBookmark);
+		const slices = deriveSlices(commits);
 		if (slices.length === 0 || slices[slices.length - 1].bookmark !== topBookmark) {
 			blockers.push({
 				code: "top-not-final-boundary",

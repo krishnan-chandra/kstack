@@ -2,6 +2,7 @@
 
 import type { CommandFailure, ProcessRunner } from "./process.ts";
 import {
+	GH_TIMEOUT_MS,
 	type GitHubRepository,
 	KSTACK_COMMENT_MARKER,
 	KSTACK_COMMENT_SCHEMA_VERSION,
@@ -16,7 +17,6 @@ const GITHUB_URL_PATTERN =
 	/^(?:https:\/\/(?:[^@]+@)?github\.com\/|git@github\.com:|ssh:\/\/(?:[^@]+@)?github\.com\/)([^/]+)\/([^/]+?)(?:\.git)?$/;
 const DATA_MARKER_PATTERN = /<!-- kstack-stack-data-v1: ([A-Za-z0-9_-]+) -->/;
 const VALID_NAVIGATION_STATUSES = new Set<NavigationStatus>(["open", "draft", "merged", "closed", "unknown"]);
-const GH_TIMEOUT_MS = 30_000;
 
 export interface GitHubComment {
 	id: number;
@@ -300,7 +300,7 @@ export function createGitHubAdapter(run: ProcessRunner): GitHubAdapter {
 			try {
 				const viewed = await runGh(
 					run,
-					["pr", "view", prUrl, "--json", "number,headRefName,baseRefName,title,isDraft,url"],
+					["pr", "view", prUrl, "--json", "number,headRefName,headRefOid,baseRefName,title,isDraft,url"],
 					{ cwd: input.cwd, signal: input.signal },
 				);
 				const info = parseCreatedPr(viewed.stdout, prUrl, input.repo);
@@ -356,7 +356,10 @@ export function createGitHubAdapter(run: ProcessRunner): GitHubAdapter {
 				/* keep a synthetic id only for an in-place update */
 			}
 			if (input.existingCommentId !== undefined) return { id: input.existingCommentId };
-			throw new GitHubError(`Created comment on PR #${input.prNumber}, but could not read its id.`);
+			throw new GitHubError(
+				`Created comment on PR #${input.prNumber}, but could not read its id. Inspect the PR before retrying.`,
+				"indeterminate",
+			);
 		},
 	};
 }
@@ -382,6 +385,7 @@ export function parseOpenPrs(text: string, repo: GitHubRepository): OpenPullRequ
 			!Number.isSafeInteger(record.number) ||
 			Number(record.number) <= 0 ||
 			typeof record.headRefName !== "string" ||
+			typeof record.headCommitId !== "string" ||
 			typeof record.baseRefName !== "string"
 		) {
 			continue;
@@ -389,6 +393,7 @@ export function parseOpenPrs(text: string, repo: GitHubRepository): OpenPullRequ
 		prs.push({
 			number: Number(record.number),
 			headRef: record.headRefName,
+			headCommitId: record.headCommitId,
 			baseRef: record.baseRefName,
 			title: typeof record.title === "string" ? record.title : "",
 			draft: Boolean(record.isDraft),
@@ -440,7 +445,7 @@ async function listPulls(
 			"per_page=100",
 			"--paginate",
 			"--jq",
-			".[] | {number, headRefName: .head.ref, baseRefName: .base.ref, title, isDraft: .draft, url: .html_url, headRepository: {nameWithOwner: .head.repo.full_name}, headRepositoryOwner: {login: .head.repo.owner.login}}",
+			".[] | {number, headRefName: .head.ref, headCommitId: .head.sha, baseRefName: .base.ref, title, isDraft: .draft, url: .html_url, headRepository: {nameWithOwner: .head.repo.full_name}, headRepositoryOwner: {login: .head.repo.owner.login}}",
 		],
 		{ cwd, signal },
 	);
@@ -470,10 +475,16 @@ function parseCreatedPr(text: string, fallbackUrl: string, repo: GitHubRepositor
 		if (typeof info !== "object" || info === null) return undefined;
 		const record = info as Record<string, unknown>;
 		if (!Number.isSafeInteger(record.number) || Number(record.number) <= 0) return undefined;
-		if (typeof record.headRefName !== "string" || typeof record.baseRefName !== "string") return undefined;
+		if (
+			typeof record.headRefName !== "string" ||
+			typeof record.headRefOid !== "string" ||
+			typeof record.baseRefName !== "string"
+		)
+			return undefined;
 		return {
 			number: Number(record.number),
 			headRef: record.headRefName,
+			headCommitId: record.headRefOid,
 			baseRef: record.baseRefName,
 			title: typeof record.title === "string" ? record.title : "",
 			draft: Boolean(record.isDraft),

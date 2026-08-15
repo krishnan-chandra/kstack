@@ -138,12 +138,14 @@ Only after GitHub reports the PR as merged:
 /jj-stack advance --merged <merged-bookmark> --top <top> --remote <remote>
 ```
 
-This verifies the remote MERGED state, requires `--merged` to be the bottom
-current slice, and abandons `<trunk>..<merged>` **before** fetch (because fetch
-may forget a deleted remote bookmark). A custom `--trunk` is used for both the
-abandon range and the later rebase. It then fetches and rebases only the
-remaining selected stack. It does not republish. Inspect and run
-`/jj-stack publish` separately to repair remaining PR bases and comments.
+This requires a blocker-free inspection and verifies three facts: `--merged`
+is the bottom slice, its local commit matches the PR head commit, and GitHub
+reports that PR as `MERGED`. The command abandons `<trunk>..<merged>` **before**
+fetch because fetch may forget a deleted remote bookmark. A custom `--trunk`
+is used for both the abandon range and the later rebase. The command then
+fetches and rebases only the remaining selected stack. It does not republish.
+Inspect and run `/jj-stack publish` separately to repair remaining PR bases and
+comments.
 
 Never advance a middle bookmark while an earlier slice is still in the local
 stack. Never derive the abandon boundary from the next bookmark's parent. One

@@ -37,8 +37,7 @@ describe("jj-stacked-prs registration", () => {
 	it("aborts publication when the plan-implement command context is cancelled", () => {
 		const session = new AbortController();
 		const ctx = new AbortController();
-		const input = new AbortController();
-		const combined = combinePublicationSignals(session.signal, ctx.signal, input.signal);
+		const combined = combinePublicationSignals(session.signal, ctx.signal);
 		assert.equal(combined.aborted, false);
 		ctx.abort();
 		assert.equal(combined.aborted, true);

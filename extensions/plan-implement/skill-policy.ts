@@ -6,40 +6,12 @@ export const ARENA_SKILL_NAME = "arena";
 const WRITE_PR_SKILL_NAME = "write-pr";
 const FIND_REVIEWERS_SKILL_NAME = "find-reviewers";
 
-interface SkillPolicyResult {
-	ok: true;
-	/** Skills to pass to children via repeated --skill (Arena excluded). */
-	skills: SkillRef[];
-	/** Arena was present in the discovered set and is excluded from the result. */
-	arenaExcluded: boolean;
-}
-
-interface SkillPolicyError {
-	ok: false;
-	error: string;
-}
-
 /**
- * Build the stack-mode skill policy from the parent session's discovered
- * skills. Arena is excluded by name; every other skill is re-added with
- * `--no-skills --skill <dir>` so children keep task-specific skills without
- * the parallel-candidate fan-out that would corrupt a shared jj operation log.
- *
- * Returns an error when Arena cannot be proven excluded (it was present and
- * remains in the filtered set).
+ * Exclude Arena from stack-mode children because parallel candidates would
+ * mutate the same jj operation log. Preserve every other discovered skill.
  */
-export function buildStackSkillPolicy(skills: SkillRef[]): SkillPolicyResult | SkillPolicyError {
-	const arenaOriginallyPresent = skills.some((s) => s.name === ARENA_SKILL_NAME);
-	const filtered = skills.filter((s) => s.name !== ARENA_SKILL_NAME);
-	const arenaStillPresent = filtered.some((s) => s.name === ARENA_SKILL_NAME);
-	if (arenaStillPresent) {
-		return { ok: false, error: `Could not exclude the "${ARENA_SKILL_NAME}" skill from stack mode.` };
-	}
-	return {
-		ok: true,
-		skills: filtered,
-		arenaExcluded: arenaOriginallyPresent,
-	};
+export function buildStackSkillPolicy(skills: SkillRef[]): SkillRef[] {
+	return skills.filter((skill) => skill.name !== ARENA_SKILL_NAME);
 }
 
 /**

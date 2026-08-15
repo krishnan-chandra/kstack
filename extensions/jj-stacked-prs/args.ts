@@ -74,9 +74,7 @@ export function completeJjStackArgs(prefix: string): Array<{ value: string; labe
 	const tokens = prefix.trim() ? prefix.trim().split(/\s+/) : [];
 	const last = prefix.endsWith(" ") ? "" : (tokens.at(-1) ?? "");
 	if (tokens.length === 0 || (tokens.length === 1 && !prefix.endsWith(" ") && !ACTIONS.has(tokens[0]))) {
-		return ["inspect", "plan", "publish", "sync", "advance"]
-			.filter((value) => value.startsWith(last))
-			.map((value) => ({ value, label: value }));
+		return [...ACTIONS].filter((value) => value.startsWith(last)).map((value) => ({ value, label: value }));
 	}
 	const action = tokens[0];
 	const options =

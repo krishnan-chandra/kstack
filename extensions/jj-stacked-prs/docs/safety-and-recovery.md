@@ -58,12 +58,15 @@ fails partway:
 - Re-run `/jj-stack plan` to see the residual plan. The publisher updates
   existing PRs rather than recreating them.
 - Do not manually force-push to finish it.
-- `partial` lists completed actions and the failed action.
+- `partial` means an earlier mutation completed before a later step failed.
+  Publication lists completed actions and the failed action. Sync and advance
+  include the recovery operation ID.
 - `completed` can still include `commentErrors`. Core publication succeeded;
   navigation comments did not. Re-run `/jj-stack publish` after fixing `gh`.
 - `indeterminate` means a mutator started and remote acceptance cannot be
   disproved. Inspect GitHub and local bookmarks before retrying. A created PR
-  whose number cannot be re-read is indeterminate, not a clean failure.
+  whose number cannot be re-read is indeterminate, not a clean failure. The
+  same rule applies when a newly created comment's ID cannot be read.
 
 ## Deleted remote bookmarks
 
@@ -82,7 +85,7 @@ performs GitHub authentication.
 
 - No `--ignore-immutable` without explicit, scoped approval.
 - No publication without confirmation and a fresh plan-ID match.
-- No `jj abandon` of a conflict without inspection.
+- No `jj abandon` while stack inspection reports a blocker.
 - No direct `git rebase` / `git reset` / force-push in colocated repos.
 - No installing of `gh`, and no GitHub authentication on the user's behalf.
 - No cross-process lock. Two Pi processes can still publish the same stack.

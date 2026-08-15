@@ -106,7 +106,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 					requestPublicationFromInput(input, {
 						run,
 						ui: uiFrom(ctx),
-						signal: combinePublicationSignals(signal, ctx.signal, input.signal),
+						signal: combinePublicationSignals(signal, ctx.signal),
 					}),
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
 			);

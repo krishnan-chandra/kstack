@@ -90,6 +90,7 @@ export interface RemoteInfo {
 export interface OpenPullRequest {
 	number: number;
 	headRef: string;
+	headCommitId: string;
 	baseRef: string;
 	title: string;
 	draft: boolean;

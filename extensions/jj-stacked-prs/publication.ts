@@ -21,7 +21,6 @@ export interface PublicationSnapshot {
 	repository: GitHubRepository;
 	remote: RemoteInfo;
 	defaultBranch: string;
-	commits: readonly StackCommit[];
 	slices: readonly StackSlice[];
 	localBookmarks: readonly BookmarkTarget[];
 	remoteBookmarks: readonly BookmarkTarget[];
@@ -32,7 +31,7 @@ export function slicesForPublication(
 	commits: readonly StackCommit[],
 	topBookmark: string,
 ): { slices: StackSlice[] } | { blocker: StackBlocker } {
-	const slices = deriveSlices(commits, topBookmark);
+	const slices = deriveSlices(commits);
 	if (slices.length === 0 || slices[slices.length - 1].bookmark !== topBookmark) {
 		return {
 			blocker: {
@@ -164,6 +163,7 @@ function computePlanId(
 		openPrs: snapshot.openPrs.map((pr) => ({
 			number: pr.number,
 			headRef: pr.headRef,
+			headCommitId: pr.headCommitId,
 			baseRef: pr.baseRef,
 			draft: pr.draft,
 		})),
@@ -176,6 +176,7 @@ function computePlanId(
 			localCommitId: slice.localCommitId,
 			remoteCommitId: slice.remoteCommitId,
 			existingPrNumber: slice.existingPr?.number ?? null,
+			existingPrHeadCommitId: slice.existingPr?.headCommitId ?? null,
 			existingPrBase: slice.existingPr?.baseRef ?? null,
 			existingPrDraft: slice.existingPr?.draft ?? null,
 		})),

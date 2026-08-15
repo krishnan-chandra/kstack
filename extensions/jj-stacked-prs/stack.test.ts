@@ -125,24 +125,20 @@ describe("inferUniqueTop", () => {
 
 describe("deriveSlices", () => {
 	it("derives a single bookmarked change", () => {
-		const slices = deriveSlices(
-			[commit({ changeId: "aaa", commitId: "1", bookmarks: ["feat1"], subject: "feat: add feature 1" })],
-			"feat1",
-		);
+		const slices = deriveSlices([
+			commit({ changeId: "aaa", commitId: "1", bookmarks: ["feat1"], subject: "feat: add feature 1" }),
+		]);
 		assert.deepEqual(slices, [
 			{ bookmark: "feat1", baseBookmark: null, changeIds: ["aaa"], subject: "feat: add feature 1" },
 		]);
 	});
 
 	it("assigns unbookmarked changes to the next bookmark", () => {
-		const slices = deriveSlices(
-			[
-				commit({ changeId: "aaa", commitId: "1", bookmarks: ["feat1"], subject: "feat: add feature 1" }),
-				commit({ changeId: "bbb", commitId: "2", subject: "wip" }),
-				commit({ changeId: "ccc", commitId: "3", bookmarks: ["feat2"], subject: "feat: add feature 2" }),
-			],
-			"feat2",
-		);
+		const slices = deriveSlices([
+			commit({ changeId: "aaa", commitId: "1", bookmarks: ["feat1"], subject: "feat: add feature 1" }),
+			commit({ changeId: "bbb", commitId: "2", subject: "wip" }),
+			commit({ changeId: "ccc", commitId: "3", bookmarks: ["feat2"], subject: "feat: add feature 2" }),
+		]);
 		assert.equal(slices.length, 2);
 		assert.deepEqual(slices[0].changeIds, ["aaa"]);
 		assert.equal(slices[0].baseBookmark, null);
@@ -155,14 +151,11 @@ describe("deriveSlices", () => {
 	});
 
 	it("leaves an unbookmarked tip out of every slice", () => {
-		const slices = deriveSlices(
-			[
-				commit({ changeId: "aaa", commitId: "1", subject: "wip" }),
-				commit({ changeId: "bbb", commitId: "2", bookmarks: ["feat1"], subject: "feat: first" }),
-				commit({ changeId: "ccc", commitId: "3", subject: "wip2" }),
-			],
-			"feat1",
-		);
+		const slices = deriveSlices([
+			commit({ changeId: "aaa", commitId: "1", subject: "wip" }),
+			commit({ changeId: "bbb", commitId: "2", bookmarks: ["feat1"], subject: "feat: first" }),
+			commit({ changeId: "ccc", commitId: "3", subject: "wip2" }),
+		]);
 		assert.equal(slices.length, 1);
 		assert.deepEqual(slices[0].changeIds, ["aaa", "bbb"]);
 	});

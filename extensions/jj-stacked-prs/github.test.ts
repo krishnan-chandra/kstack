@@ -29,4 +29,22 @@ describe("createDraftPr", () => {
 		}
 		assert.equal(calls[0]?.[2], "create");
 	});
+
+	it("treats a created comment whose id cannot be read as indeterminate", async () => {
+		const adapter = createGitHubAdapter(async () => ({
+			kind: "ok",
+			code: 0,
+			stdout: "{}",
+			stderr: "",
+		}));
+		await assert.rejects(
+			adapter.createOrUpdateComment({
+				repo: { owner: "o", repo: "r" },
+				prNumber: 7,
+				body: "navigation",
+				cwd: ".",
+			}),
+			(error: unknown) => error instanceof GitHubError && error.kind === "indeterminate",
+		);
+	});
 });

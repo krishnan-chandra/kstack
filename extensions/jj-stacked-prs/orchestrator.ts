@@ -12,7 +12,7 @@ import {
 	parseNavigationCommentEntries,
 	reconcileStackEntries,
 } from "./github.ts";
-import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
+import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
 import type { ProcessRunner } from "./process.ts";
 import { buildPublicationPlan, type PublicationSnapshot, slicesForPublication } from "./publication.ts";
 import { renderConfirmation } from "./render.ts";
@@ -97,19 +97,19 @@ export async function inspectStack(options: InspectOptions, deps: OrchestratorDe
 			},
 		]);
 	}
-	const preliminaryRevset = top ? `${trunkRevset}..${top}` : `${trunkRevset}..@`;
+	const preliminaryRevset = `(${trunkRevset})..${top ? bookmarkRevset(top) : "@"}`;
 	let commits = await jj.fetchStack(options.cwd, preliminaryRevset, deps.signal);
+	const wcChange = await jj.workingCopyChangeId(options.cwd, deps.signal);
 	let topCommitId: string | undefined;
-	if (top) topCommitId = await jj.resolveRevset(options.cwd, top, deps.signal);
+	if (top) topCommitId = await jj.resolveRevset(options.cwd, bookmarkRevset(top), deps.signal);
 	else {
-		const inferred = inferUniqueTop(markWorkingCopy(commits, await jj.workingCopyChangeId(options.cwd, deps.signal)));
+		const inferred = inferUniqueTop(markWorkingCopy(commits, wcChange));
 		if ("top" in inferred) {
 			top = inferred.top;
-			topCommitId = await jj.resolveRevset(options.cwd, top, deps.signal);
-			commits = await jj.fetchStack(options.cwd, `${trunkRevset}..${top}`, deps.signal);
+			topCommitId = await jj.resolveRevset(options.cwd, bookmarkRevset(top), deps.signal);
+			commits = await jj.fetchStack(options.cwd, `(${trunkRevset})..${bookmarkRevset(top)}`, deps.signal);
 		}
 	}
-	const wcChange = await jj.workingCopyChangeId(options.cwd, deps.signal);
 	const truncated = truncateStack(commits, maxStack);
 	const stack = markWorkingCopy(truncated.items, wcChange);
 	const blockers = detectBlockers({ commits: stack, trunkCommit, topBookmark: top });
@@ -192,8 +192,10 @@ export async function syncStack(options: SyncOptions, deps: OrchestratorDeps): P
 	);
 	if (deps.signal?.aborted) return { status: "cancelled", operationId };
 	if (!confirmed) return { status: "declined" };
+	let mutationCompleted = false;
 	try {
 		await jj.fetchRemote(options.cwd, options.remote, deps.signal);
+		mutationCompleted = true;
 		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
 		await jj.rebaseStack(options.cwd, options.top, trunk, deps.signal);
 		const after = await inspectStack(options, deps);
@@ -202,7 +204,7 @@ export async function syncStack(options: SyncOptions, deps: OrchestratorDeps): P
 			? { status: "partial", operationId, blockers: remaining, error: "Rebase recorded conflicts or other blockers." }
 			: { status: "completed", operationId, blockers: after.blockers };
 	} catch (error) {
-		return mutationFailure(error, deps.signal, operationId, "sync");
+		return mutationFailure(error, deps.signal, operationId, "sync", mutationCompleted);
 	}
 }
 
@@ -215,6 +217,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createGitHubAdapter(deps.run);
 	const model = await inspectStack(options, deps);
+	if (model.blockers.length > 0) return { status: "blocked", blockers: model.blockers };
 	if (!model.top || !model.slices.some((slice) => slice.bookmark === options.merged)) {
 		return {
 			status: "blocked",
@@ -260,6 +263,19 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 			],
 		};
 	}
+	const mergedCommit = model.stack.find((commit) => commit.bookmarks.includes(options.merged));
+	if (!mergedCommit || matches[0].headCommitId !== mergedCommit.commitId) {
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "ambiguous-pr",
+					message: `PR #${matches[0].number} head ${matches[0].headCommitId} does not match local bookmark ${JSON.stringify(options.merged)} at ${mergedCommit?.commitId ?? "an unknown commit"}. Refusing to abandon reused or unpublished history.`,
+					bookmark: options.merged,
+				},
+			],
+		};
+	}
 	if (status !== "merged") {
 		return {
 			status: "blocked",
@@ -296,8 +312,10 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 	);
 	if (deps.signal?.aborted) return { status: "cancelled", operationId };
 	if (!confirmed) return { status: "declined" };
+	let mutationCompleted = false;
 	try {
-		await jj.abandonRange(options.cwd, trunkRevset, options.merged, deps.signal);
+		await jj.abandonRange(options.cwd, model.trunk.commitId, options.merged, deps.signal);
+		mutationCompleted = true;
 		await jj.fetchRemote(options.cwd, options.remote, deps.signal);
 		if (options.merged === options.top) {
 			return { status: "completed", operationId, blockers: [] };
@@ -310,7 +328,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 			? { status: "partial", operationId, blockers: remaining, error: "Rebase recorded conflicts or other blockers." }
 			: { status: "completed", operationId, remainingTop: options.top, blockers: after.blockers };
 	} catch (error) {
-		return mutationFailure(error, deps.signal, operationId, "advance");
+		return mutationFailure(error, deps.signal, operationId, "advance", mutationCompleted);
 	}
 }
 
@@ -319,22 +337,20 @@ export async function requestPublicationFromInput(
 	deps: OrchestratorDeps,
 ): Promise<StackPublicationOutcome> {
 	const cwd = canonicalize(input.repositoryPath, deps.realpath);
-	const inspect = await inspectStack(
-		{ cwd, top: input.topBookmark, trunk: input.trunkRevset },
-		{ ...deps, signal: input.signal ?? deps.signal },
-	);
-	let top = input.topBookmark ?? inspect.top;
-	if (!input.topBookmark) {
+	const signal =
+		deps.signal && input.signal ? AbortSignal.any([deps.signal, input.signal]) : (deps.signal ?? input.signal);
+	const requestDeps = { ...deps, signal };
+	let top = input.topBookmark;
+	if (!top) {
+		const inspect = await inspectStack({ cwd, trunk: input.trunkRevset }, requestDeps);
 		const inferred = inferUniqueTop(inspect.stack);
 		if ("blocker" in inferred) return { status: "blocked", blockers: [inferred.blocker] };
 		top = inferred.top;
 	}
-	if (!top)
-		return { status: "blocked", blockers: [{ code: "missing-top", message: "No top bookmark could be inferred." }] };
-	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const remotes = (await jj.listRemotes(cwd, input.signal ?? deps.signal)).filter((remote) => remote.github);
 	let remote = input.remote;
 	if (!remote) {
+		const jj = deps.jj ?? createJjAdapter(deps.run);
+		const remotes = (await jj.listRemotes(cwd, signal)).filter((candidate) => candidate.github);
 		if (remotes.length === 1) remote = remotes[0].name;
 		else if (remotes.length === 0) {
 			return { status: "blocked", blockers: [{ code: "missing-remote", message: "No GitHub remote exists." }] };
@@ -351,7 +367,7 @@ export async function requestPublicationFromInput(
 			if (!remote) return { status: "declined" };
 		}
 	}
-	return publishStack({ cwd, top, remote, trunk: input.trunkRevset }, { ...deps, signal: input.signal ?? deps.signal });
+	return publishStack({ cwd, top, remote, trunk: input.trunkRevset }, requestDeps);
 }
 
 async function applyPublication(
@@ -614,7 +630,6 @@ async function snapshotPublication(
 			repository: remote.github,
 			remote,
 			defaultBranch,
-			commits: model.stack,
 			slices: derived.slices,
 			localBookmarks,
 			remoteBookmarks,
@@ -711,10 +726,12 @@ function mutationFailure(
 	signal: AbortSignal | undefined,
 	operationId: string,
 	label: string,
-): Extract<SyncOutcome, { status: "indeterminate" | "failed" }> {
+	mutationCompleted: boolean,
+): Extract<SyncOutcome, { status: "partial" | "indeterminate" | "failed" }> {
 	if (isIndeterminate(error) || signal?.aborted) {
 		return { status: "indeterminate", operationId, inFlight: `${label}: ${errorMessage(error)}` };
 	}
+	if (mutationCompleted) return { status: "partial", operationId, blockers: [], error: errorMessage(error) };
 	return { status: "failed", error: errorMessage(error), operationId };
 }
 

@@ -14,29 +14,7 @@ import {
 	redactUrl,
 } from "./github.ts";
 import { buildPublicationPlan, displayPlanId, planIdsMatch } from "./publication.ts";
-import {
-	KSTACK_COMMENT_MARKER,
-	type NavigationEntry,
-	type OpenPullRequest,
-	type StackCommit,
-	type StackSlice,
-} from "./types.ts";
-
-function commit(changeId: string, bookmark?: string): StackCommit {
-	return {
-		changeId,
-		commitId: `${changeId}-commit`,
-		subject: `feat: ${changeId}`,
-		bookmarks: bookmark ? [bookmark] : [],
-		remoteBookmarks: [],
-		parentCommitIds: ["trunk"],
-		empty: false,
-		conflict: false,
-		divergent: false,
-		merge: false,
-		workingCopy: false,
-	};
-}
+import { KSTACK_COMMENT_MARKER, type NavigationEntry, type OpenPullRequest, type StackSlice } from "./types.ts";
 
 function slice(bookmark: string, base: string | null, changeIds: string[], subject: string): StackSlice {
 	return { bookmark, baseBookmark: base, changeIds, subject };
@@ -52,7 +30,6 @@ function snapshot(overrides: Partial<Parameters<typeof buildPublicationPlan>[0]>
 			github: { owner: "o", repo: "r" },
 		},
 		defaultBranch: "main",
-		commits: [commit("aaa", "feat1")],
 		slices: [slice("feat1", null, ["aaa"], "feat: aaa")],
 		localBookmarks: [{ name: "feat1", commitId: "aaa-commit" }],
 		remoteBookmarks: [] as { name: string; commitId: string }[],
@@ -85,6 +62,7 @@ describe("open PR matching", () => {
 			baseRefName: "main",
 			title: "right repo",
 			isDraft: true,
+			headCommitId: "aaa-commit",
 			url: "https://github.com/Owner/Repo/pull/1",
 			headRepository: { nameWithOwner: "Owner/Repo" },
 			headRepositoryOwner: { login: "Owner" },
@@ -113,6 +91,7 @@ describe("open PR matching", () => {
 			{
 				number: 1,
 				headRef: "feat1",
+				headCommitId: "aaa-commit",
 				baseRef: "main",
 				title: "one",
 				draft: true,
@@ -122,6 +101,7 @@ describe("open PR matching", () => {
 			{
 				number: 2,
 				headRef: "feat1",
+				headCommitId: "bbb-commit",
 				baseRef: "release",
 				title: "two",
 				draft: true,
@@ -204,6 +184,7 @@ describe("publication planning", () => {
 					{
 						number: 1,
 						headRef: "feat1",
+						headCommitId: "aaa-commit",
 						baseRef: "main",
 						title: "one",
 						draft: true,
@@ -213,6 +194,7 @@ describe("publication planning", () => {
 					{
 						number: 2,
 						headRef: "feat1",
+						headCommitId: "bbb-commit",
 						baseRef: "release",
 						title: "two",
 						draft: true,
@@ -229,6 +211,7 @@ describe("publication planning", () => {
 		const existing: OpenPullRequest = {
 			number: 11,
 			headRef: "feat1",
+			headCommitId: "aaa-commit",
 			baseRef: "old-base",
 			title: "Keep this title",
 			draft: true,
@@ -267,19 +250,20 @@ describe("publication planning", () => {
 			}),
 		);
 		assert.notEqual(plan.planId, undrafted.planId);
+		const movedHead = buildPublicationPlan(
+			snapshot({
+				localBookmarks: [{ name: "feat1", commitId: "aaa-commit" }],
+				remoteBookmarks: [{ name: "feat1", commitId: "aaa-commit" }],
+				openPrs: [{ ...existing, headCommitId: "different-commit" }],
+			}),
+		);
+		assert.notEqual(plan.planId, movedHead.planId);
 	});
 
 	it("does not change plan identity when rendering shortens ids", () => {
 		const longId = "abcdefghijklmnopqrstuvwxyz0123456789";
 		const plan = buildPublicationPlan(
 			snapshot({
-				commits: [
-					{
-						...commit("aaa", "feat1"),
-						changeId: longId,
-						commitId: `${longId}commit`,
-					},
-				],
 				slices: [slice("feat1", null, [longId], "feat: aaa")],
 				localBookmarks: [{ name: "feat1", commitId: `${longId}commit` }],
 			}),
