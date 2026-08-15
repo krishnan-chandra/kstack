@@ -20,6 +20,7 @@ function scriptedExec(steps: Step[]): ExecFn {
 }
 
 const HEAD = "1".repeat(40);
+const MERGED_HEAD = "2".repeat(40);
 
 describe("GitBackend commitPaths", () => {
 	it("adds the given paths and then commits", async () => {
@@ -152,14 +153,16 @@ describe("GitBackend mergeBaseIntoHead", () => {
 		});
 	});
 
-	it("returns already-current when the merge reports no work", async () => {
+	it("returns already-current when a localized no-op merge leaves HEAD unchanged", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["fetch", "origin", "main"] },
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
 			{
 				command: "git",
 				args: ["merge", "--no-edit", "origin/main"],
-				result: { stdout: "Already up to date.\n" },
+				result: { stdout: "Déjà à jour.\n" },
 			},
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
 		]);
 		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), { kind: "already-current" });
 	});
@@ -167,22 +170,36 @@ describe("GitBackend mergeBaseIntoHead", () => {
 	it("returns clean with the new HEAD after a successful merge", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["fetch", "origin", "main"] },
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
 			{
 				command: "git",
 				args: ["merge", "--no-edit", "origin/main"],
 				result: { stdout: "Merge made by the recursive strategy.\n" },
 			},
-			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${MERGED_HEAD}\n` } },
 		]);
 		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), {
 			kind: "clean",
-			headSha: HEAD,
+			headSha: MERGED_HEAD,
 		});
+	});
+
+	it("does not merge when the pre-merge HEAD cannot be read", async () => {
+		const steps: Step[] = [
+			{ command: "git", args: ["fetch", "origin", "main"] },
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { code: 1, stderr: "bad HEAD\n" } },
+		];
+		assert.deepEqual(await new GitBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main"), {
+			kind: "failed",
+			error: "Could not read HEAD before merging origin/main: Could not resolve the current HEAD: bad HEAD",
+		});
+		assert.equal(steps.length, 0);
 	});
 
 	it("aborts and returns needs-human with the unmerged files", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["fetch", "origin", "main"] },
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
 			{
 				command: "git",
 				args: ["merge", "--no-edit", "origin/main"],
@@ -205,6 +222,7 @@ describe("GitBackend mergeBaseIntoHead", () => {
 	it("aborts and returns failed when a merge fails with no unmerged files", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["fetch", "origin", "main"] },
+			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
 			{
 				command: "git",
 				args: ["merge", "--no-edit", "origin/main"],
