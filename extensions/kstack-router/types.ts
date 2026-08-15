@@ -13,6 +13,8 @@ export type RouteId =
 	| "skill-authoring"
 	| "session-pickup"
 	| "review"
+	| "pr-autopilot"
+	| "land"
 	| "unsupported";
 
 export const ALL_ROUTES: readonly RouteId[] = [
@@ -24,6 +26,8 @@ export const ALL_ROUTES: readonly RouteId[] = [
 	"skill-authoring",
 	"session-pickup",
 	"review",
+	"pr-autopilot",
+	"land",
 	"unsupported",
 ] as const;
 
@@ -77,11 +81,19 @@ export interface RouteMetadata {
 	playbookFile?: string;
 }
 
+export type AutopilotModeFlag = "check" | "threads" | "drive" | "watch" | "cleanup";
+export type LandReadinessFlag = "check" | "watch";
+export type LandMethodFlag = "squash" | "rebase";
+
 export interface RouterArgs {
 	route?: RouteId;
 	delivery?: DeliveryRecommendation;
 	worktree?: boolean;
 	changeKind?: ChangeKind;
+	autopilotMode?: AutopilotModeFlag;
+	prNumber?: number;
+	landMethod?: LandMethodFlag;
+	readiness?: LandReadinessFlag;
 	task: string;
 }
 

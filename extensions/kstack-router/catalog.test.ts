@@ -22,6 +22,8 @@ describe("kstack-router catalog", () => {
 			"change",
 			"fast-change",
 			"investigate",
+			"land",
+			"pr-autopilot",
 			"review",
 			"session-pickup",
 			"skill-authoring",
@@ -49,6 +51,20 @@ describe("kstack-router catalog", () => {
 	it("review requires panel-review", () => {
 		const deps = getRouteMetadata("review")?.requires ?? [];
 		assert.ok(deps.includes("panel-review"));
+	});
+
+	it("pr-autopilot requires the pr-autopilot extension", () => {
+		const deps = getRouteMetadata("pr-autopilot")?.requires ?? [];
+		assert.deepEqual(deps, ["pr-autopilot"]);
+		assert.ok(checkDependencies("pr-autopilot", [], []).some((m) => m.includes("pr-autopilot")));
+		assert.deepEqual(checkDependencies("pr-autopilot", ["pr-autopilot"], []), []);
+	});
+
+	it("land requires the land extension", () => {
+		const deps = getRouteMetadata("land")?.requires ?? [];
+		assert.deepEqual(deps, ["land"]);
+		assert.ok(checkDependencies("land", [], []).some((m) => m.includes("land")));
+		assert.deepEqual(checkDependencies("land", ["land"], []), []);
 	});
 
 	it("arena requires skill:arena", () => {

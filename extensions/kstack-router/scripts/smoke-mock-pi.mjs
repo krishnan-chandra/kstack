@@ -56,13 +56,23 @@ function findPiPackageDir() {
 const piPackageDir = findPiPackageDir();
 const sandbox = mkdtempSync(join(tmpdir(), "kstack-smoke-"));
 symlinkSync(join(piPackageDir, "node_modules"), join(sandbox, "node_modules"), "dir");
-for (const name of ["kstack-router", "plan-implement", "fast-implement", "panel-review", "shared"]) {
+for (const name of [
+	"kstack-router",
+	"plan-implement",
+	"fast-implement",
+	"panel-review",
+	"pr-autopilot",
+	"land",
+	"shared",
+]) {
 	symlinkSync(join(EXTENSIONS_ROOT, name), join(sandbox, name), "dir");
 }
 
 const { default: kstackRouter } = await import(join(sandbox, "kstack-router", "index.ts"));
 const { PLAN_IMPLEMENT_REQUEST_EVENT } = await import(join(sandbox, "plan-implement", "api.ts"));
 const { FAST_IMPLEMENT_REQUEST_EVENT } = await import(join(sandbox, "fast-implement", "api.ts"));
+const { PRAUTOPILOT_REQUEST_EVENT } = await import(join(sandbox, "pr-autopilot", "api.ts"));
+const { LAND_REQUEST_EVENT } = await import(join(sandbox, "land", "api.ts"));
 
 // ---------------------------------------------------------------- mock Pi ---
 
@@ -105,6 +115,8 @@ function makePi({ activeTools, sessionName } = {}) {
 				{ name: "plan-implement", source: "extension" },
 				{ name: "panel-review", source: "extension" },
 				{ name: "fast-implement", source: "extension" },
+				{ name: "pr-autopilot", source: "extension" },
+				{ name: "land", source: "extension" },
 			];
 		},
 		getActiveTools() {
@@ -150,10 +162,16 @@ function makePi({ activeTools, sessionName } = {}) {
 				state.statuses.push([key, text]);
 			},
 			async editor() {
+				state.timeline.push("editor");
 				return undefined;
 			},
-			async select(_title, choices) {
+			async select(title, choices) {
+				state.timeline.push(`select:${title}`);
 				return choices[0];
+			},
+			async input(title) {
+				state.timeline.push(`input:${title}`);
+				return undefined;
 			},
 			async confirm() {
 				return true;
@@ -274,7 +292,11 @@ await scenario("change route delegates the exact task, mode, and change kind to 
 	const seen = [];
 	env.state.busListeners.set(PLAN_IMPLEMENT_REQUEST_EVENT, [
 		(request) => {
-			seen.push({ task: request.task, mode: request.mode, changeKind: request.changeKind });
+			seen.push({
+				task: request.payload.task,
+				mode: request.payload.mode,
+				changeKind: request.payload.changeKind,
+			});
 			request.claimed = true;
 			request.completion = Promise.resolve();
 		},
@@ -291,7 +313,11 @@ await scenario("fast-change delegates exact task, location, and change kind to f
 	const seen = [];
 	env.state.busListeners.set(FAST_IMPLEMENT_REQUEST_EVENT, [
 		(request) => {
-			seen.push({ task: request.task, workLocation: request.workLocation, changeKind: request.changeKind });
+			seen.push({
+				task: request.payload.task,
+				workLocation: request.payload.workLocation,
+				changeKind: request.payload.changeKind,
+			});
 			request.claimed = true;
 			request.completion = Promise.resolve();
 		},
@@ -319,7 +345,7 @@ await scenario("review route passes the exact intent through the typed event API
 	const seen = [];
 	env.state.busListeners.set("kstack:panel-review:request", [
 		(request) => {
-			seen.push(request.options);
+			seen.push(request.payload.options);
 			request.claimed = true;
 			request.completion = Promise.resolve();
 		},
@@ -327,6 +353,82 @@ await scenario("review route passes the exact intent through the typed event API
 	const handler = env.state.commands.get("kstack").handler;
 	await handler('--route review "Look at \\"quoted\\" \\ paths"', env.ctx);
 	assert.deepEqual(seen, [{ intent: 'Look at "quoted" \\ paths' }]);
+});
+
+await scenario("explicit pr-autopilot with complete flags skips editor, classifier, and prompts", async () => {
+	const env = setup();
+	const seen = [];
+	env.state.busListeners.set(PRAUTOPILOT_REQUEST_EVENT, [
+		(request) => {
+			seen.push({
+				mode: request.payload.mode,
+				prNumber: request.payload.prNumber,
+				cwd: request.payload.cwd,
+			});
+			request.claimed = true;
+			request.completion = Promise.resolve({ status: "blocked" });
+		},
+	]);
+	await env.state.commands.get("kstack").handler("--route pr-autopilot --mode drive --pr 42", env.ctx);
+	assert.equal(env.state.sessionName, "pr-autopilot-42");
+	assert.deepEqual(seen, [{ mode: "drive", prNumber: 42, cwd: "/repo" }]);
+	assert.equal(
+		env.state.timeline.some(
+			(entry) => entry === "editor" || String(entry).startsWith("select:") || String(entry).startsWith("input:"),
+		),
+		false,
+	);
+});
+
+await scenario("explicit land with complete flags skips extra UI and keeps method optional", async () => {
+	const env = setup();
+	const seen = [];
+	env.state.busListeners.set(LAND_REQUEST_EVENT, [
+		(request) => {
+			seen.push(request.payload.options);
+			request.claimed = true;
+			request.completion = Promise.resolve({ status: "declined" });
+		},
+	]);
+	await env.state.commands.get("kstack").handler("--route land --pr 9 --readiness watch --method squash", env.ctx);
+	assert.equal(env.state.sessionName, "land-9");
+	assert.deepEqual(seen, [
+		{
+			target: { kind: "single", prNumber: 9 },
+			readiness: "watch",
+			method: "squash",
+			cwd: "/repo",
+		},
+	]);
+});
+
+await scenario("cancelled post-PR prompt emits no downstream request", async () => {
+	const env = setup();
+	const seen = [];
+	env.state.busListeners.set(PRAUTOPILOT_REQUEST_EVENT, [
+		(request) => {
+			seen.push(request);
+			request.claimed = true;
+			request.completion = Promise.resolve({ status: "blocked" });
+		},
+	]);
+	env.ctx.ui.select = async () => undefined;
+	await env.state.commands.get("kstack").handler("--route pr-autopilot", env.ctx);
+	assert.deepEqual(seen, []);
+	assert.equal(env.state.messages.length, 0);
+});
+
+await scenario("missing post-PR extension reports catalog guidance", async () => {
+	const env = setup();
+	env.pi.getCommands = () => [
+		{ name: "plan-implement", source: "extension" },
+		{ name: "panel-review", source: "extension" },
+		{ name: "fast-implement", source: "extension" },
+	];
+	await env.state.commands.get("kstack").handler("--route land --pr 3 --readiness check", env.ctx);
+	assert.ok(
+		env.state.notifications.some((n) => n.level === "error" && /requires: extension command "land"/.test(n.message)),
+	);
 });
 
 console.log(`\n${passed} smoke scenarios passed`);

@@ -2,11 +2,14 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { requestFastImplement } from "../fast-implement/api.ts";
+import { requestLand } from "../land/api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPlanImplement } from "../plan-implement/api.ts";
+import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import type { ChangeKind } from "../shared/change-kind.ts";
 import { getRoutePlaybook } from "./catalog.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
+import type { PostPrRequest } from "./post-pr-options.ts";
 import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 
 type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
@@ -14,10 +17,11 @@ type DispatchResult = { status: "dispatched" } | { status: "failed"; error: stri
 /**
  * Dispatch the task to the appropriate handler based on the selected route.
  *
- * For `change` and `review`, this uses in-process event APIs to avoid
- * synthesizing slash-command strings. For other routes, the caller handles
- * active-session lifecycle (tool restriction, playbook attachment, etc.)
- * before calling this function; those routes return here immediately.
+ * For `change`, `review`, `pr-autopilot`, and `land`, this uses in-process
+ * event APIs to avoid synthesizing slash-command strings. For other routes,
+ * the caller handles active-session lifecycle (tool restriction, playbook
+ * attachment, etc.) before calling this function; those routes return here
+ * immediately.
  */
 export async function dispatchRoute(
 	route: RouteId,
@@ -29,6 +33,7 @@ export async function dispatchRoute(
 	lifecycle: RouterLifecycle,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
+	postPr?: PostPrRequest,
 ): Promise<DispatchResult> {
 	if (!lifecycle.isCurrentDispatch(dispatchToken)) {
 		return { status: "aborted" };
@@ -86,6 +91,53 @@ export async function dispatchRoute(
 			}
 		}
 
+		case "pr-autopilot": {
+			if (postPr?.route !== "pr-autopilot") {
+				return { status: "failed", error: "Internal error: pr-autopilot dispatch is missing a typed request." };
+			}
+			try {
+				const result = await requestPrAutopilot(pi, postPr.mode, postPr.prNumber, ctx, ctx.cwd);
+				return result.handled
+					? { status: "dispatched" }
+					: {
+							status: "failed",
+							error:
+								"pr-autopilot extension is not loaded or did not accept the request. " +
+								"Make sure it is installed: pi list | grep pr-autopilot",
+						};
+			} catch (err) {
+				return { status: "failed", error: `pr-autopilot dispatch failed: ${(err as Error).message}` };
+			}
+		}
+
+		case "land": {
+			if (postPr?.route !== "land") {
+				return { status: "failed", error: "Internal error: land dispatch is missing a typed request." };
+			}
+			try {
+				const result = await requestLand(
+					pi,
+					{
+						target: { kind: "single", prNumber: postPr.prNumber },
+						readiness: postPr.readiness,
+						method: postPr.method,
+						cwd: ctx.cwd,
+					},
+					ctx,
+				);
+				return result.handled
+					? { status: "dispatched" }
+					: {
+							status: "failed",
+							error:
+								"land extension is not loaded or did not accept the request. " +
+								"Make sure it is installed: pi list | grep land",
+						};
+			} catch (err) {
+				return { status: "failed", error: `land dispatch failed: ${(err as Error).message}` };
+			}
+		}
+
 		case "investigate":
 		case "arena":
 		case "swarm":
@@ -108,7 +160,8 @@ export async function dispatchRoute(
 					"investigate (read-only research), change (plan → implement → review), fast-change (one-shot bounded implementation), " +
 					"arena (parallel candidate comparison), swarm (parallel independent slices), " +
 					"skill-authoring (create/test skills), session-pickup (recover context), " +
-					"review (read-only panel review). Use --route to pick one explicitly.",
+					"review (read-only panel review), pr-autopilot (drive an existing PR to merge-ready), " +
+					"land (confirm and merge one PR). Use --route to pick one explicitly.",
 			};
 
 		default: {

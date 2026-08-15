@@ -11,6 +11,7 @@ import { runClassifier } from "./classifier-runner.ts";
 import { loadConfig, resolveClassifierModel } from "./config.ts";
 import { dispatchRoute, getPlaybookForRoute, getRestrictedTools } from "./dispatch.ts";
 import { type DispatchToken, RouterLifecycle } from "./lifecycle.ts";
+import { resolvePostPrOptions } from "./post-pr-options.ts";
 import { type RouteCardDetails, registerRouteCardRenderer } from "./route-card.ts";
 import { resolveRoute } from "./route-resolution.ts";
 import { allowedReadToolsForRoute, isActiveSessionRoute, type RouteId, type RouterConfig } from "./types.ts";
@@ -110,7 +111,8 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("kstack", {
 		description:
-			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>. " +
+			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] " +
+			"[--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>. " +
 			"Prompts for classification when no --route is given.",
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
@@ -140,9 +142,11 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Collect task via editor if empty.
+			// Explicit post-PR routes can run without a task. Every other path
+			// still needs one for classification, session naming, or dispatch.
+			const explicitPostPr = parsed.args.route === "pr-autopilot" || parsed.args.route === "land";
 			let task = parsed.args.task;
-			if (!task.trim()) {
+			if (!task.trim() && !explicitPostPr) {
 				await ctx.waitForIdle();
 				if (!lifecycle.isSessionCurrent(sessionToken)) return;
 				const edited = await ctx.ui.editor("Kstack Router task:", "");
@@ -155,7 +159,7 @@ export default function (pi: ExtensionAPI): void {
 				}
 			}
 
-			nameSessionIfUnnamed(pi, task);
+			if (task.trim()) nameSessionIfUnnamed(pi, task);
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(sessionToken)) return;
 
@@ -198,6 +202,30 @@ export default function (pi: ExtensionAPI): void {
 			}
 			const { route, delivery, changeKind, overrode, modelSource, confidence } = resolution.resolved;
 			const worktree = parsed.args.worktree ?? false;
+
+			const postPrResolution = await resolvePostPrOptions(route, parsed.args, {
+				select: (title, options) => ctx.ui.select(title, options, {}),
+				input: (title, placeholder) => ctx.ui.input(title, placeholder ?? ""),
+				isSessionCurrent: () => lifecycle.isSessionCurrent(sessionToken),
+			});
+			if ("cancelled" in postPrResolution) return;
+			if ("failed" in postPrResolution) {
+				notify(postPrResolution.failed, "warning");
+				return;
+			}
+			const postPr = postPrResolution.request;
+
+			if (!task.trim()) {
+				const fallbackName =
+					postPr?.route === "pr-autopilot"
+						? postPr.prNumber
+							? `pr-autopilot-${postPr.prNumber}`
+							: "pr-autopilot"
+						: postPr?.route === "land"
+							? `land-${postPr.prNumber}`
+							: route;
+				nameSessionIfUnnamed(pi, fallbackName);
+			}
 
 			const availableCommands = pi
 				.getCommands()
@@ -309,6 +337,7 @@ export default function (pi: ExtensionAPI): void {
 					lifecycle,
 					pi,
 					ctx,
+					postPr,
 				);
 				routeCard.dispatchStatus = result.status;
 				pi.sendMessage({
@@ -329,6 +358,10 @@ export default function (pi: ExtensionAPI): void {
 					notify("Delegated to fast-implement. Use Ctrl+Shift+A to abort the implementation child.", "info");
 				} else if (route === "review") {
 					notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
+				} else if (route === "pr-autopilot") {
+					notify("Delegated to pr-autopilot. Use Ctrl+Shift+B to abort the run.", "info");
+				} else if (route === "land") {
+					notify("Delegated to land. Confirmation and exact-head checks still belong to /land.", "info");
 				}
 			} finally {
 				lifecycle.endDispatch(dispatchToken);

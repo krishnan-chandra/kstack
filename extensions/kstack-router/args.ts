@@ -1,15 +1,34 @@
 /** Pure argument parser for the /kstack command. */
 
 import {
+	type AutopilotModeFlag,
 	type ChangeKind,
 	DEFAULTS,
 	type DeliveryRecommendation,
 	isChangeKind,
 	isRouteId,
+	type LandMethodFlag,
+	type LandReadinessFlag,
 	type RouterArgs,
 } from "./types.ts";
 
 export type ArgsParse = { ok: true; args: RouterArgs } | { ok: false; error: string };
+
+function isAutopilotMode(value: string): value is AutopilotModeFlag {
+	return value === "check" || value === "threads" || value === "drive" || value === "watch" || value === "cleanup";
+}
+
+function isLandMethod(value: string): value is LandMethodFlag {
+	return value === "squash" || value === "rebase";
+}
+
+function isReadiness(value: string): value is LandReadinessFlag {
+	return value === "check" || value === "watch";
+}
+const VALID_ROUTES =
+	"investigate, change, fast-change, arena, swarm, skill-authoring, session-pickup, review, pr-autopilot, land";
+const SUPPORTED_FLAGS =
+	"--route <id>, --single, --stack, --worktree, --change-kind <kind>, --mode <mode>, --pr <n>, --method <method>, --readiness <mode>";
 
 /**
  * Parse /kstack leading options. Supports:
@@ -17,6 +36,8 @@ export type ArgsParse = { ok: true; args: RouterArgs } | { ok: false; error: str
  *   /kstack --single Refactor the widget
  *   /kstack --route change --stack Implement CI pipeline
  *   /kstack --route change --change-kind feature "Add feature X"
+ *   /kstack --route pr-autopilot --mode drive --pr 42
+ *   /kstack --route land --pr 42 --readiness watch --method squash
  *   /kstack --route change --single -- "Add feature X"
  *   /kstack investigate (flag-less task with no leading --)
  *
@@ -33,14 +54,16 @@ export function parseArgs(input: string): ArgsParse {
 	let delivery: DeliveryRecommendation;
 	let worktree = false;
 	let changeKind: ChangeKind | undefined;
-	let postDash = false;
+	let autopilotMode: AutopilotModeFlag | undefined;
+	let prNumber: number | undefined;
+	let landMethod: LandMethodFlag | undefined;
+	let readiness: LandReadinessFlag | undefined;
 	let i = 0;
 
 	// Parse leading flags until we hit a non-flag or `--`.
 	for (; i < tokens.length; i++) {
 		const token = tokens[i];
 		if (token === "--") {
-			postDash = true;
 			i++;
 			break;
 		}
@@ -82,10 +105,53 @@ export function parseArgs(input: string): ArgsParse {
 			continue;
 		}
 
-		return {
-			ok: false,
-			error: `Unknown flag: ${token}. Supported: --route <id>, --single, --stack, --worktree, --change-kind <kind>.`,
-		};
+		if (token === "--mode") {
+			if (autopilotMode !== undefined) return { ok: false, error: "Duplicate --mode flag." };
+			i++;
+			const value = tokens[i];
+			if (!value || value.startsWith("--") || !isAutopilotMode(value)) {
+				return { ok: false, error: "--mode requires one of: check, threads, drive, watch, cleanup." };
+			}
+			autopilotMode = value;
+			continue;
+		}
+
+		if (token === "--pr") {
+			if (prNumber !== undefined) return { ok: false, error: "Duplicate --pr flag." };
+			i++;
+			const value = tokens[i];
+			if (!value || value.startsWith("--")) return { ok: false, error: "--pr requires a positive integer." };
+			const parsed = Number(value);
+			if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+				return { ok: false, error: "--pr requires a positive integer." };
+			}
+			prNumber = parsed;
+			continue;
+		}
+
+		if (token === "--method") {
+			if (landMethod !== undefined) return { ok: false, error: "Duplicate --method flag." };
+			i++;
+			const value = tokens[i];
+			if (!value || value.startsWith("--") || !isLandMethod(value)) {
+				return { ok: false, error: "--method requires one of: squash, rebase." };
+			}
+			landMethod = value;
+			continue;
+		}
+
+		if (token === "--readiness") {
+			if (readiness !== undefined) return { ok: false, error: "Duplicate --readiness flag." };
+			i++;
+			const value = tokens[i];
+			if (!value || value.startsWith("--") || !isReadiness(value)) {
+				return { ok: false, error: "--readiness requires one of: check, watch." };
+			}
+			readiness = value;
+			continue;
+		}
+
+		return { ok: false, error: `Unknown flag: ${token}. Supported: ${SUPPORTED_FLAGS}.` };
 	}
 
 	if (delivery === "stack" && worktree) {
@@ -95,15 +161,11 @@ export function parseArgs(input: string): ArgsParse {
 
 	// Validate route if provided.
 	if (route !== undefined && !isRouteId(route)) {
-		return {
-			ok: false,
-			error: `Unknown route "${route}". Valid routes: investigate, change, arena, swarm, skill-authoring, session-pickup, review.`,
-		};
+		return { ok: false, error: `Unknown route "${route}". Valid routes: ${VALID_ROUTES}.` };
 	}
 
 	// Remaining tokens form the task.
-	const taskTokens = tokens.slice(i);
-	const task = postDash ? taskTokens.join(" ") : taskTokens.join(" ");
+	const task = tokens.slice(i).join(" ");
 
 	const taskBytes = Buffer.byteLength(task, "utf8");
 	if (taskBytes > DEFAULTS.maxTaskBytes) {
@@ -120,6 +182,10 @@ export function parseArgs(input: string): ArgsParse {
 			delivery,
 			worktree,
 			changeKind,
+			autopilotMode,
+			prNumber,
+			landMethod,
+			readiness,
 			task: task.trim(),
 		},
 	};

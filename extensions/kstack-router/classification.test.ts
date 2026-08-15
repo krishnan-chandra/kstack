@@ -226,6 +226,27 @@ describe("parseClassifierOutput", () => {
 		}
 	});
 
+	it("parses post-PR routes without extra option fields", () => {
+		for (const route of ["pr-autopilot", "land"] as const) {
+			const result = parseClassifierOutput(
+				buildEnvelope(
+					JSON.stringify({
+						schemaVersion: 1,
+						route,
+						confidence: "high",
+						rationale: "A GitHub PR already exists.",
+					}),
+				),
+			);
+			assert.ok(result.ok);
+			if (result.ok) {
+				assert.equal(result.envelope.route, route);
+				assert.equal(result.envelope.delivery, undefined);
+				assert.equal(result.envelope.changeKind, undefined);
+			}
+		}
+	});
+
 	it("handles text before/after sentinels", () => {
 		const output = `some text before\n${CLASSIFIER_SENTINEL_START}\n${JSON.stringify({ schemaVersion: 1, route: "review", confidence: "medium", rationale: "Review task." })}\n${CLASSIFIER_SENTINEL_END}\nsome text after`;
 		const result = parseClassifierOutput(output);
@@ -273,6 +294,8 @@ describe("buildRouteAlternatives", () => {
 		assert.ok(!ids.includes("unsupported"));
 		assert.ok(ids.includes("investigate"));
 		assert.ok(ids.includes("review"));
+		assert.ok(ids.includes("pr-autopilot"));
+		assert.ok(ids.includes("land"));
 	});
 
 	it("returns all alt routes when no current route", () => {

@@ -58,6 +58,19 @@ const CATALOG: Record<RouteId, RouteMetadata> = {
 		description: "Review existing working-tree or branch changes. Runs read-only panel review.",
 		requires: ["panel-review"],
 	},
+	"pr-autopilot": {
+		id: "pr-autopilot",
+		label: "PR autopilot",
+		description: "A GitHub PR already exists; check, triage, fix, or watch it until merge-ready. Does not merge.",
+		requires: ["pr-autopilot"],
+	},
+	land: {
+		id: "land",
+		label: "Land",
+		description:
+			"Merge or enqueue one exact merge-ready PR after downstream readiness checks and explicit confirmation.",
+		requires: ["land"],
+	},
 	unsupported: {
 		id: "unsupported",
 		label: "Unsupported",
