@@ -29,9 +29,11 @@ describe("jj adapters", () => {
 		});
 		await adapter.rebaseStack(".", "feat|all()", "abc");
 		await adapter.abandonRange(".", "abc", "feat|all()");
+		await adapter.isAncestor(".", "deadbeef", "cafebabe");
 		assert.deepEqual(calls, [
 			["jj", "rebase", "-b", 'bookmarks(exact:"feat|all()")', "-o", "abc"],
 			["jj", "abandon", '(abc)..bookmarks(exact:"feat|all()")'],
+			["jj", "log", "-r", "deadbeef & ::cafebabe", "--no-graph", "--no-pager", "-T", 'commit_id ++ "\\n"'],
 		]);
 	});
 

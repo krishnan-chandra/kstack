@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import { isLandConfirmation } from "./confirmation.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
 export const LAND_REQUEST_EVENT = "kstack:land:request";
@@ -24,11 +25,7 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 			return false;
 		if ("cwd" in options && options.cwd !== undefined && (typeof options.cwd !== "string" || options.cwd.length === 0))
 			return false;
-		if (
-			"confirmedByCaller" in options &&
-			options.confirmedByCaller !== undefined &&
-			typeof options.confirmedByCaller !== "boolean"
-		)
+		if ("confirmation" in options && options.confirmation !== undefined && !isLandConfirmation(options.confirmation))
 			return false;
 		if (
 			!("readiness" in options) ||

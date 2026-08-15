@@ -86,7 +86,12 @@ performs GitHub authentication.
 - No `--ignore-immutable` without explicit, scoped approval.
 - No publication without either command confirmation or an explicit user request
   that authorizes `jj_stack_publish`. Both paths require a fresh plan-ID match.
+- No stack landing without either command confirmation or an explicit user
+  request that authorizes `jj_stack_land`. Land still revalidates each PR and
+  pins `--match-head-commit`.
 - No `jj abandon` while stack inspection reports a blocker.
+- No advance past a `partially-landed` frontier.
 - No direct `git rebase` / `git reset` / force-push in colocated repos.
 - No installing of `gh`, and no GitHub authentication on the user's behalf.
-- No cross-process lock. Two Pi processes can still publish the same stack.
+- No `--admin`, `--auto`, or merge commits.
+- No cross-process lock. Two Pi processes can still publish or land the same stack.

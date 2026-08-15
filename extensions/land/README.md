@@ -76,10 +76,11 @@ The `kstack:land:request` event accepts typed `LandOptions` with a positive PR
 number and returns a structured `LandResult`. The request is claimed
 synchronously, and callers await its completion.
 
-Trusted in-process callers such as `/jj-stack land` may set
-`confirmedByCaller: true` after they have already obtained consent for that
-exact PR. That flag skips only Land's interactive merge confirmation. Land
-still revalidates the PR, pins the exact head, and passes `--match-head-commit`.
+Trusted in-process callers such as `/jj-stack land` may pass a capability from
+`issueLandConfirmation()` after they have already obtained consent for that
+exact PR. Only that minted object skips Land's interactive merge confirmation.
+A boolean or reconstructed payload is ignored. Land still revalidates the PR,
+pins the exact head, and passes `--match-head-commit`.
 
 ## Limits
 
@@ -90,8 +91,10 @@ still revalidates the PR, pins the exact head, and passes `--match-head-commit`.
 - Retained diagnostic output: 8 KiB
 - Concurrent Land runs per session: 1
 
-Land currently supports one PR at a time. jj stack advancement is not part of
-the public command or API.
+`/land` remains a single-PR command. To land a published jj stack, use
+`/jj-stack land` or `jj_stack_land`. That loop calls this extension once per
+frontier with a minted confirmation and keeps Land's revalidation, head pin, and
+`--match-head-commit` checks.
 
 ## Development
 

@@ -34,6 +34,45 @@ describe("parseJjStackArgs", () => {
 		});
 	});
 
+	it("parses land with watch default and optional method", () => {
+		assert.deepEqual(parseJjStackArgs("land --top feat2 --remote origin"), {
+			ok: true,
+			command: {
+				action: "land",
+				top: "feat2",
+				remote: "origin",
+				trunk: "trunk()",
+				maxStack: 50,
+				method: undefined,
+				readiness: "watch",
+			},
+		});
+		assert.deepEqual(parseJjStackArgs("land --top feat2 --remote origin --method squash --readiness check"), {
+			ok: true,
+			command: {
+				action: "land",
+				top: "feat2",
+				remote: "origin",
+				trunk: "trunk()",
+				maxStack: 50,
+				method: "squash",
+				readiness: "check",
+			},
+		});
+		assert.equal(parseJjStackArgs("land --top feat2 --remote origin --method merge").ok, false);
+	});
+
+	it("parses publish --ready as a boolean flag", () => {
+		assert.deepEqual(parseJjStackArgs("publish --top feat2 --remote origin --ready"), {
+			ok: true,
+			command: { action: "publish", top: "feat2", remote: "origin", trunk: "trunk()", maxStack: 50, ready: true },
+		});
+		assert.deepEqual(parseJjStackArgs("publish --top feat2 --remote origin"), {
+			ok: true,
+			command: { action: "publish", top: "feat2", remote: "origin", trunk: "trunk()", maxStack: 50, ready: false },
+		});
+	});
+
 	it("rejects unknown actions, unknown flags, and duplicates", () => {
 		assert.equal(parseJjStackArgs("explode").ok, false);
 		assert.equal(parseJjStackArgs("inspect --repo /tmp").ok, false);
@@ -47,5 +86,8 @@ describe("completeJjStackArgs", () => {
 		assert.ok(completeJjStackArgs("").some((item) => item.value === "inspect"));
 		assert.ok(completeJjStackArgs("pub").some((item) => item.value === "publish"));
 		assert.ok(completeJjStackArgs("plan --").some((item) => item.value === "--top"));
+		assert.ok(completeJjStackArgs("").some((item) => item.value === "land"));
+		assert.ok(completeJjStackArgs("land --").some((item) => item.value === "--method"));
+		assert.ok(completeJjStackArgs("publish --").some((item) => item.value === "--ready"));
 	});
 });

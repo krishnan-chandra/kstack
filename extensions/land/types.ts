@@ -1,4 +1,5 @@
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import type { LandConfirmation } from "./confirmation.ts";
 
 export type MergeMethod = "squash" | "rebase";
 export type ReadinessMode = "check" | "watch";
@@ -12,12 +13,11 @@ export interface LandOptions {
 	method?: MergeMethod;
 	cwd?: string;
 	/**
-	 * Set by trusted in-process callers (for example `/jj-stack land`) that
-	 * already obtained the user's consent for this exact PR. Skips only Land's
-	 * interactive merge confirmation; every revalidation, head pin, and
-	 * `--match-head-commit` check still runs.
+	 * Capability minted by `issueLandConfirmation()`. A boolean or reconstructed
+	 * object is not accepted. Skips only Land's interactive merge confirmation;
+	 * every revalidation, head pin, and `--match-head-commit` check still runs.
 	 */
-	confirmedByCaller?: boolean;
+	confirmation?: LandConfirmation;
 }
 export interface FrontierResult {
 	prNumber: number;

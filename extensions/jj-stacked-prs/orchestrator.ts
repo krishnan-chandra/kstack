@@ -1,6 +1,7 @@
 /** Inspect, plan, publish, sync, and advance state machines. */
 
 import { realpathSync } from "node:fs";
+import type { LandResult } from "../land/types.ts";
 import {
 	buildNavigationComment,
 	createGitHubAdapter,
@@ -29,8 +30,10 @@ import {
 	SCHEMA_VERSION,
 	type StackBlocker,
 	type StackCommit,
+	type StackMergeMethod,
 	type StackPublicationOutcome,
 	type StackPublicationRequestInput,
+	type StackReadinessMode,
 	type SyncOutcome,
 } from "./types.ts";
 
@@ -42,13 +45,19 @@ export interface StackUi {
 	setStatus(status: string | undefined): void;
 }
 
-interface OrchestratorDeps {
+export interface OrchestratorDeps {
 	jj?: JjAdapter;
 	github?: GitHubAdapter;
 	run: ProcessRunner;
 	ui: StackUi;
 	signal?: AbortSignal;
 	realpath?: (path: string) => string;
+	landPr?: (input: {
+		prNumber: number;
+		readiness: StackReadinessMode;
+		method: StackMergeMethod;
+	}) => Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
+	configuredMethodFor?: (nameWithOwner: string) => StackMergeMethod | undefined;
 }
 
 interface InspectOptions {
@@ -62,7 +71,9 @@ interface PlanOptions extends InspectOptions {
 	remote: string;
 }
 
-interface PublishOptions extends PlanOptions {}
+interface PublishOptions extends PlanOptions {
+	ready?: boolean;
+}
 
 interface SyncOptions {
 	cwd: string;
@@ -334,23 +345,41 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 	);
 	if (deps.signal?.aborted) return { status: "cancelled", operationId };
 	if (!confirmed) return { status: "declined" };
+	return applyAdvance(options, deps, {
+		jj,
+		operationId,
+		trunkCommitId: model.trunk.commitId,
+		trunkRevset,
+	});
+}
+
+export async function applyAdvance(
+	options: AdvanceOptions,
+	deps: OrchestratorDeps,
+	input: { jj: JjAdapter; operationId: string; trunkCommitId: string; trunkRevset: string },
+): Promise<AdvanceOutcome> {
 	let mutationCompleted = false;
 	try {
-		await jj.abandonRange(options.cwd, model.trunk.commitId, options.merged, deps.signal);
+		await input.jj.abandonRange(options.cwd, input.trunkCommitId, options.merged, deps.signal);
 		mutationCompleted = true;
-		await jj.fetchRemote(options.cwd, options.remote, deps.signal);
+		await input.jj.fetchRemote(options.cwd, options.remote, deps.signal);
 		if (options.merged === options.top) {
-			return { status: "completed", operationId, blockers: [] };
+			return { status: "completed", operationId: input.operationId, blockers: [] };
 		}
-		const trunk = await jj.resolveRevset(options.cwd, trunkRevset, deps.signal);
-		await jj.rebaseStack(options.cwd, options.top, trunk, deps.signal);
+		const trunk = await input.jj.resolveRevset(options.cwd, input.trunkRevset, deps.signal);
+		await input.jj.rebaseStack(options.cwd, options.top, trunk, deps.signal);
 		const after = await inspectStack({ ...options, top: options.top }, deps);
 		const remaining = after.blockers.filter((blocker) => ["conflict", "divergence", "merge"].includes(blocker.code));
 		return remaining.length > 0
-			? { status: "partial", operationId, blockers: remaining, error: "Rebase recorded conflicts or other blockers." }
-			: { status: "completed", operationId, remainingTop: options.top, blockers: after.blockers };
+			? {
+					status: "partial",
+					operationId: input.operationId,
+					blockers: remaining,
+					error: "Rebase recorded conflicts or other blockers.",
+				}
+			: { status: "completed", operationId: input.operationId, remainingTop: options.top, blockers: after.blockers };
 	} catch (error) {
-		return mutationFailure(error, deps.signal, operationId, "advance", mutationCompleted);
+		return mutationFailure(error, deps.signal, input.operationId, "advance", mutationCompleted);
 	}
 }
 
@@ -453,6 +482,42 @@ async function applyPublication(
 				}
 			} catch (error) {
 				const failed = toFailedAction(action.kind, error, slice.bookmark);
+				if (isIndeterminate(error) || deps.signal?.aborted) {
+					return {
+						status: "indeterminate",
+						planId: plan.planId,
+						inFlight: failed,
+						completedActions: completed,
+						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
+					};
+				}
+				const comments = await reconcileComments(plan, published, options, deps, github);
+				return {
+					status: "partial",
+					planId: plan.planId,
+					completedActions: [...completed, ...comments.completed],
+					failedAction: failed,
+					commentErrors: comments.errors,
+				};
+			}
+		}
+	}
+
+	if (options.ready) {
+		for (const slice of published) {
+			if (slice.prNumber === undefined || !slice.draft) continue;
+			if (deps.signal?.aborted) return { status: "cancelled", completedActions: completed };
+			try {
+				await github.markPrReady(plan.repository, slice.prNumber, options.cwd, deps.signal);
+				slice.draft = false;
+				completed.push({ kind: "mark-pr-ready", bookmark: slice.bookmark, prNumber: slice.prNumber });
+			} catch (error) {
+				const failed = {
+					kind: "mark-pr-ready" as const,
+					bookmark: slice.bookmark,
+					prNumber: slice.prNumber,
+					error: errorMessage(error),
+				};
 				if (isIndeterminate(error) || deps.signal?.aborted) {
 					return {
 						status: "indeterminate",
