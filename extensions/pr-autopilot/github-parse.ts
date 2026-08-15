@@ -8,7 +8,6 @@ import type { CheckRun, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
 
 const AUTOPILOT_REPLY_MARKER = "<!-- pr-autopilot -->";
-const LEGACY_REPLY_MARKER = "<!-- pr-babysit -->";
 
 function autopilotReplyBody(body: string): string {
 	if (body.includes(AUTOPILOT_REPLY_MARKER)) return body;
@@ -16,7 +15,7 @@ function autopilotReplyBody(body: string): string {
 }
 
 function isAutopilotReply(body: string): boolean {
-	return body.includes(AUTOPILOT_REPLY_MARKER) || body.includes(LEGACY_REPLY_MARKER);
+	return body.includes(AUTOPILOT_REPLY_MARKER);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

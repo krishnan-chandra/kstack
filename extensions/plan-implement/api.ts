@@ -10,8 +10,7 @@ export const PLAN_IMPLEMENT_REQUEST_EVENT = "kstack:plan-implement:request";
 interface PlanImplementPayload {
 	task: string;
 	mode: DeliveryMode;
-	/** Omitted by pre-worktree callers; omission means the current working tree. */
-	workLocation?: WorkLocation;
+	workLocation: WorkLocation;
 	changeKind: ChangeKind;
 	ctx: ExtensionCommandContext;
 }
@@ -36,8 +35,9 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 		value.ctx !== null &&
 		"mode" in value &&
 		(value.mode === "single" || value.mode === "stack") &&
-		(!("workLocation" in value) || value.workLocation === undefined || isWorkLocation(value.workLocation)) &&
-		!(value.mode === "stack" && "workLocation" in value && value.workLocation === "worktree") &&
+		"workLocation" in value &&
+		isWorkLocation(value.workLocation) &&
+		!(value.mode === "stack" && value.workLocation === "worktree") &&
 		"changeKind" in value &&
 		typeof value.changeKind === "string" &&
 		isChangeKind(value.changeKind),
@@ -59,27 +59,10 @@ export function claimPlanImplementRequest(
 	) => Promise<void>,
 ): boolean {
 	return channel.claim(value, (payload) =>
-		run(payload.task, payload.mode, payload.workLocation ?? "current", payload.changeKind, payload.ctx),
+		run(payload.task, payload.mode, payload.workLocation, payload.changeKind, payload.ctx),
 	);
 }
 
-/** Backward-compatible signature used before managed worktree support. */
-export function requestPlanImplement(
-	pi: ExtensionAPI,
-	task: string,
-	mode: DeliveryMode,
-	changeKind: ChangeKind,
-	ctx: ExtensionCommandContext,
-): Promise<{ handled: true } | { handled: false }>;
-/** Signature with an explicit execution location. */
-export function requestPlanImplement(
-	pi: ExtensionAPI,
-	task: string,
-	mode: DeliveryMode,
-	workLocation: WorkLocation,
-	changeKind: ChangeKind,
-	ctx: ExtensionCommandContext,
-): Promise<{ handled: true } | { handled: false }>;
 /**
  * Invoke the loaded plan-implement extension directly through Pi's event bus.
  * The mutable request is claimed synchronously; completion resolves when the
@@ -89,16 +72,10 @@ export async function requestPlanImplement(
 	pi: ExtensionAPI,
 	task: string,
 	mode: DeliveryMode,
-	workLocationOrChangeKind: WorkLocation | ChangeKind,
-	changeKindOrCtx: ChangeKind | ExtensionCommandContext,
-	maybeCtx?: ExtensionCommandContext,
+	workLocation: WorkLocation,
+	changeKind: ChangeKind,
+	ctx: ExtensionCommandContext,
 ): Promise<{ handled: true } | { handled: false }> {
-	const modern = isWorkLocation(workLocationOrChangeKind);
-	const workLocation: WorkLocation = modern ? workLocationOrChangeKind : "current";
-	const changeKind = modern ? changeKindOrCtx : workLocationOrChangeKind;
-	const ctx = modern ? maybeCtx : changeKindOrCtx;
-	if (typeof changeKind !== "string" || !isChangeKind(changeKind) || typeof ctx !== "object" || ctx === null)
-		return { handled: false };
 	const result = await channel.request(pi, { task, mode, workLocation, changeKind, ctx });
 	return result.handled ? { handled: true } : { handled: false };
 }

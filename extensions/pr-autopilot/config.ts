@@ -165,17 +165,11 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	let section = loadKstackSection("pr-autopilot", env);
-	let legacy = false;
-	if (section.status === "missing") {
-		section = loadKstackSection("pr-babysit", env);
-		legacy = section.status === "found";
-	}
+	const section = loadKstackSection("pr-autopilot", env);
 	if (section.status !== "found") return section;
 	const result = validateConfig(section.value);
 	if (!result.ok) return { status: "invalid", path: section.path, error: result.error };
-	const warnings = legacy ? ['kstack.json still has "pr-babysit"; rename that section to "pr-autopilot".'] : [];
-	return { status: "loaded", config: { ...result.config, source: "config", warnings }, path: section.path };
+	return { status: "loaded", config: { ...result.config, source: "config", warnings: [] }, path: section.path };
 }
 
 export interface ResolveDeps {

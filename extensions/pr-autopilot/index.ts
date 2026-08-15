@@ -21,9 +21,9 @@ import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
-import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./autopilot.ts";
 import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
+import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./driver.ts";
 import { AutopilotLifecycle } from "./lifecycle.ts";
 import type { AutopilotMode } from "./types.ts";
 

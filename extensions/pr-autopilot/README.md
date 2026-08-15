@@ -36,8 +36,7 @@ The autopilot is tiny-model-only by construction:
 - The default model set is GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek V4 Flash.
 
 If no `pr-autopilot` section exists in `kstack.json`, the built-in defaults are
-used, filtered to what is available in the Pi model registry. A leftover
-`"pr-babysit"` section is still read, with a warning to rename it.
+used, filtered to what is available in the Pi model registry.
 
 ## Configuration
 
