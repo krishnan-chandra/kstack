@@ -59,21 +59,19 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 			: 'This is a single-PR delivery. Begin the plan with a line reading exactly "Delivery: single-pr".';
 		target = `Read the user task at ${options.taskFile}, inspect the repository, and produce the plan. ${delivery}`;
 	} else if (options.role === "implementer") {
-		const stackNote = stackMode
-			? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and follow its local-stack policy."
-			: "";
+		const stackNote = stackMode ? " This is a stacked-PR delivery; follow the appended local jj stack policy." : "";
 		const ledgerNote = options.ledgerFile
 			? ` Read and update the execution ledger at ${options.ledgerFile}; its final contents and the complete ledger in your response must close every plan item.`
 			: " Include the complete execution ledger in your response, even if no ledger file was supplied.";
 		target = `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.${ledgerNote}${stackNote}${worktreeNote}`;
 	} else if (options.role === "fixer") {
 		const stackNote = stackMode
-			? " This is a stacked-PR delivery; consult the jj-stacked-prs skill and amend the local stack instead of creating new commits."
+			? " This is a stacked-PR delivery; follow the appended local jj stack policy and amend the local stack instead of creating new commits."
 			: "";
 		target = `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then address the actionable findings and verify your fixes.${stackNote}${worktreeNote}`;
 	} else {
 		const stackNote = stackMode
-			? " This is a stacked-PR delivery; consult the jj-stacked-prs skill for publishing the local stack."
+			? " This is a stacked-PR delivery; the parent already published the stack structure. Edit only titles and bodies for PR numbers in the trusted map and recommend reviewers. Do not push, create PRs, repair bases, or update navigation comments."
 			: "";
 		target = `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then publish the change as a draft pull request and recommend reviewers. Consult the write-pr and find-reviewers skills.${stackNote}${worktreeNote}`;
 	}

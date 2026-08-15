@@ -120,7 +120,7 @@ describe("plan-implement child runner", () => {
 	});
 
 	it("stack mode disables skill discovery and re-adds every provided skill except arena", () => {
-		const skillPaths = ["/skills/create-skill", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
+		const skillPaths = ["/skills/create-skill", "/skills/find-reviewers", "/skills/write-pr"];
 		const planner = buildChildArgs({
 			role: "planner",
 			model: "a/p",
@@ -182,7 +182,7 @@ describe("plan-implement child runner", () => {
 	});
 
 	it("fixer and publisher get stack-mode notes and re-added skills in stack mode", () => {
-		const skillPaths = ["/skills/write-pr", "/skills/find-reviewers", "/skills/jj-stacked-prs"];
+		const skillPaths = ["/skills/write-pr", "/skills/find-reviewers"];
 		const fixer = buildChildArgs({
 			role: "fixer",
 			model: "a/i",
@@ -205,7 +205,7 @@ describe("plan-implement child runner", () => {
 			mode: "stack",
 			skillPaths,
 		});
-		assert.match(publisher.at(-1) ?? "", /jj-stacked-prs skill for publishing the local stack/);
+		assert.match(publisher.at(-1) ?? "", /parent already published the stack structure/);
 	});
 
 	it("parses JSON lines across chunks and ignores malformed lines", () => {

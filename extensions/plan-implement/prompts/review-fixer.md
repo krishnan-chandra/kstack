@@ -20,7 +20,7 @@ Read the user task and the panel-review verdict from the paths named in your tas
 ## Delivery mode
 
 - Single-PR delivery: remain on the existing workstream branch or bookmark and record each independent, verified fix batch with a clear message. Include only workstream files. Finish with a clean Git tree or an empty jj working-copy change, as required by the selected backend.
-- Stacked-PR delivery: consult the `jj-stacked-prs` skill and amend the slice each finding belongs to (fixup/absorb into the correct change), keeping bookmarks and slice boundaries intact. Never push or publish.
+- Stacked-PR delivery: follow the appended local jj stack policy and amend the slice each finding belongs to (fixup/absorb into the correct change), keeping bookmarks and slice boundaries intact. Never push or publish.
 
 If the selected backend's identity, hook, or signing requirement blocks recording a change, stop and report the blocker. Do not bypass configuration.
 

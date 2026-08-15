@@ -149,25 +149,25 @@ call:
 - the workspace is colocated with a Git worktree;
 - the `trunk()` revset resolves to exactly one 40-hex Git-backed commit (used as
   the immutable panel-review base);
-- the session's discovered skills include `jj-stacked-prs`.
+- the `jj-stacked-prs` extension is loaded (probed before any model call).
 
 Arena is **deterministically disabled** for both children: skill discovery is
 turned off with `--no-skills` and every other discovered skill is re-added with
-repeated `--skill` (including `jj-stacked-prs`). This prevents parallel
-candidates from corrupting a shared jj operation log while preserving
-task-specific skills. The planner produces a `Delivery: stacked-prs` plan with
-ordered PR slices; the implementer consults `jj-stacked-prs`, starts a new
-stack from `trunk()`, describes coherent `jj` changes incrementally, and places
-bookmarks at PR boundaries. Those described changes are the stacked equivalent
-of a Git task branch and incremental commits. The implementer never runs
-publish commands (`publish_stack.py apply`), `jj git push`, or `gh pr create`. After a
-successful implementation, panel review runs once against the immutable
-`trunk()` base. The review fixer amends findings into the correct slices of
-the local stack (per `jj-stacked-prs`), and the publisher — after its own
-confirmation — submits the stack as draft PRs via the `jj-stacked-prs`
-publishing workflow (the bundled `publish_stack.py`), prepares `write-pr`
-titles and bodies from each slice's exact diff before publication, applies them
-to every PR, and recommends reviewers across the full stack range.
+repeated `--skill`. This prevents parallel candidates from corrupting a shared
+jj operation log while preserving task-specific skills. The planner produces a
+`Delivery: stacked-prs` plan with ordered PR slices; the implementer follows the
+local jj stack prompt, starts a new stack from `trunk()`, describes coherent
+`jj` changes incrementally, and places bookmarks at PR boundaries. Those
+described changes are the stacked equivalent of a Git task branch and
+incremental commits. The implementer never runs `/jj-stack publish`, `jj git
+push`, or `gh pr create`. After a successful implementation, panel review runs
+once against the immutable `trunk()` base. The review fixer amends findings into
+the correct slices of the local stack. Structural publication is owned by the
+loaded `jj-stacked-prs` extension: it derives or selects top/remote, confirms
+the exact plan, stale-checks, and applies. Only a completed publication writes a
+trusted PR map and offers a metadata/reviewer child. That child may edit titles
+and bodies for listed PRs and recommend reviewers; it does not push, create PRs,
+repair bases, or update navigation comments.
 
 The Planner, Implementer, Review fixer, and Publisher cards identify the
 model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
@@ -282,8 +282,8 @@ Publication stops when workstream changes have not been recorded.
   panel-review extension, missing `write-pr`/`find-reviewers` skills, and bad
   task input stop before model calls.
 - Stack-mode preflight failures (no jj, not a workspace, no colocated git, no
-  single `trunk()` commit, missing `jj-stacked-prs` skill, Arena not excludable)
-  stop before model calls.
+  single `trunk()` commit, unloaded `jj-stacked-prs` extension, Arena not
+  excludable) stop before model calls.
 - Worktree-mode base/path failures stop before model calls. Creation happens
   only after plan approval; a creation failure stops before the implementer and
   reports any directory or branch that may need inspection.
