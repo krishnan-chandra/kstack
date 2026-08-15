@@ -24,8 +24,8 @@ test("preserves quotes and contractions in the raw task suffix", () => {
 test("validates the bounded fast-implement implementer set", () => {
 	assert.deepEqual(ALLOWED_IMPLEMENTERS, [
 		{ model: "openai/gpt-5.6-sol", thinking: "low" },
-		{ model: "openrouter/x-ai/grok-4.6", thinking: "high" },
-		{ model: "anthropic/claude-opus-5", thinking: "medium" },
+		{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
+		{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 	]);
 	assert.deepEqual(DEFAULT_IMPLEMENTERS, ALLOWED_IMPLEMENTERS);
 	for (const spec of ALLOWED_IMPLEMENTERS) {
@@ -35,16 +35,31 @@ test("validates the bounded fast-implement implementer set", () => {
 	}
 	assert.equal(validateConfig({ implementer: { model: "openai/gpt-5.6-terra", thinking: "medium" } }).ok, false);
 	assert.equal(validateConfig({ implementer: { model: "openai/gpt-5.6-sol", thinking: "high" } }).ok, false);
+	assert.equal(
+		validateConfig({ implementer: { model: "openrouter/deepseek/deepseek-v4-flash", thinking: "medium" } }).ok,
+		false,
+	);
+	assert.equal(validateConfig({ implementer: { model: "openrouter/x-ai/grok-4.6", thinking: "high" } }).ok, false);
+	assert.equal(validateConfig({ implementer: { model: "anthropic/claude-opus-5", thinking: "medium" } }).ok, false);
+	assert.equal(validateConfig({ implementer: { model: "openrouter/moonshotai/kimi-k3", thinking: "high" } }).ok, false);
 	assert.equal(validateConfig({ implementer: { model: "bad" } }).ok, false);
 });
 test("resolves only authenticated bounded implementers", () => {
 	const openaiOnly = resolveRole(null, (provider) => provider === "openai");
 	assert.equal(openaiOnly.ok, true);
 	if (openaiOnly.ok) assert.deepEqual(openaiOnly.role.implementer, ALLOWED_IMPLEMENTERS[0]);
-	const anthropicOnly = resolveRole(null, (provider) => provider === "anthropic");
-	assert.equal(anthropicOnly.ok, true);
-	if (anthropicOnly.ok)
-		assert.deepEqual(anthropicOnly.role.implementer, { model: "anthropic/claude-opus-5", thinking: "medium" });
+	assert.equal(resolveRole(null, (provider) => provider === "anthropic").ok, false);
+	const openrouterOnly = resolveRole(null, (provider) => provider === "openrouter");
+	assert.equal(openrouterOnly.ok, true);
+	if (openrouterOnly.ok)
+		assert.deepEqual(openrouterOnly.role.implementer, {
+			model: "openrouter/deepseek/deepseek-v4-flash",
+			thinking: "high",
+		});
+	const kimiOnly = resolveRole(null, (_provider, model) => model === "moonshotai/kimi-k3");
+	assert.equal(kimiOnly.ok, true);
+	if (kimiOnly.ok)
+		assert.deepEqual(kimiOnly.role.implementer, { model: "openrouter/moonshotai/kimi-k3", thinking: "medium" });
 	assert.equal(resolveRole(null, () => false).ok, false);
 });
 test("child keeps skills and context but disables recursive runtime features", () => {

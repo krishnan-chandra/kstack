@@ -44,7 +44,7 @@ test("configured synthesis resolution failure is fatal", () => {
 });
 
 test("missing config falls back from unavailable synthesis to first reviewer", () => {
-	const available = new Set(["anthropic/claude-opus-4-6", "openrouter/deepseek/deepseek-v4-pro"]);
+	const available = new Set(["anthropic/claude-sonnet-5", "openrouter/deepseek/deepseek-v4-pro"]);
 	const result = resolvePanel(
 		{ status: "missing", path: "/agent/kstack.json" },
 		{
@@ -54,8 +54,8 @@ test("missing config falls back from unavailable synthesis to first reviewer", (
 	);
 	assert.equal(result.ok, true);
 	if (result.ok) {
-		assert.equal(result.resolution.synthesis.model, "anthropic/claude-opus-4-6");
-		assert.equal(result.resolution.synthesis.cliId, "anthropic/claude-opus-4-6");
+		assert.equal(result.resolution.synthesis.model, "anthropic/claude-sonnet-5");
+		assert.equal(result.resolution.synthesis.cliId, "anthropic/claude-sonnet-5");
 		assert.ok(result.resolution.warnings.some((warning) => warning.includes("Using the first reviewer model instead")));
 	}
 });

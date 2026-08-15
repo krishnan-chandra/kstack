@@ -102,7 +102,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | --- | --- | --- |
 | `vcs` | `backend` | Use exactly `"git"` or `"jj"`; jj requires a colocated workspace and jj 0.44 or newer. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. |
-| `fast-implement` | `implementer`, `timeoutMinutes` | The implementer must be one of the bounded pairs `openai/gpt-5.6-sol:low`, `openrouter/x-ai/grok-4.6:high`, or `anthropic/claude-opus-5:medium`; timeout is 1–60 minutes. This low-assurance single-PR workflow is independent of the plan-implement roles. |
+| `fast-implement` | `implementer`, `timeoutMinutes` | The implementer must be one of the bounded pairs `openai/gpt-5.6-sol:low`, `openrouter/deepseek/deepseek-v4-flash:high`, or `openrouter/moonshotai/kimi-k3:medium`; timeout is 1–60 minutes. This low-assurance single-PR workflow is independent of the plan-implement roles. |
 | `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
 | `kstack-router` | `classifier`, `timeoutSeconds` | `timeoutSeconds` is 1–600. |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
