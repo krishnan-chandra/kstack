@@ -1,16 +1,17 @@
 ---
 name: setup-kstack
-description: Configure the models and thinking levels that K-Stack workflows use. Use for /setup-kstack, "set up kstack", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited model assignments. Discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git or jj", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
-compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent).
+compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); jj 0.44+ when selecting the jj backend.
 ---
 
 # Set up K-Stack
 
-Configure K-Stack's per-role model assignments in the user-level
-`$PI_CODING_AGENT_DIR/kstack.json` file. Default to `~/.pi/agent/kstack.json`.
-This skill changes runtime configuration, not repository defaults. It preserves
-unknown top-level sections so that future K-Stack extensions keep their settings.
+Configure K-Stack's VCS backend and per-role model assignments in the
+user-level `$PI_CODING_AGENT_DIR/kstack.json` file. Default to
+`~/.pi/agent/kstack.json`. This skill changes runtime configuration, not
+repository defaults. It preserves unknown top-level sections so that future
+K-Stack extensions keep their settings.
 
 A configuration is useful only when it can run. Discover Pi's catalog, confirm
 credentials for every selected provider, validate the complete proposed JSON,
@@ -64,7 +65,29 @@ warning in the preview that local catalog metadata (including thinking support
 and context limits) is unavailable. Never invent an absent ID or silently choose
 one: this exception requires an exact user-supplied identifier.
 
-## 3. Choose the roles
+## 3. Choose the VCS backend
+
+Read the existing `vcs.backend` value. If it is missing, the runtime default is
+`git`. Suggest a backend from the current repository, but let the user choose:
+
+1. Run `git rev-parse --show-toplevel`. If it fails, explain that K-Stack's
+   mutation workflows require a Git repository, including for a colocated jj
+   workspace.
+2. Run `jj workspace root`. A successful result that resolves to the same real
+   path as the Git root indicates a colocated jj workspace. Suggest `jj` in that
+   case and `git` otherwise.
+3. If the user selects `jj`, run `jj --version` and require version 0.44 or
+   newer. Do not initialize or migrate a repository.
+4. Store exactly `{ "backend": "git" }` or `{ "backend": "jj" }` in the
+   top-level `vcs` section.
+
+Explain the exclusivity rule before approval: K-Stack sends every repository
+mutation through the selected backend. Git mode refuses a jj-managed workspace,
+and jj mode requires a colocated workspace. Stack delivery requires jj. Managed
+Git worktrees are unavailable in jj mode. PR-autopilot uses the selected backend
+for commits, merges, restores, and pushes; `gh` remains the forge client.
+
+## 4. Choose the roles
 
 Start from the existing user configuration. For a missing section, start from
 that section in `kstack.example.json`. Ask whether to keep every assignment or
@@ -77,6 +100,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 
 | Workflow | Roles to configure | Constraints |
 | --- | --- | --- |
+| `vcs` | `backend` | Use exactly `"git"` or `"jj"`; jj requires a colocated workspace and jj 0.44 or newer. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. |
 | `fast-implement` | `implementer`, `timeoutMinutes` | The implementer must be one of the bounded pairs `openai/gpt-5.6-sol:low`, `openrouter/x-ai/grok-4.6:high`, or `anthropic/claude-opus-5:medium`; timeout is 1–60 minutes. This low-assurance single-PR workflow is independent of the plan-implement roles. |
 | `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
@@ -107,10 +131,13 @@ When the user requests a different investigator, explain that `how`, `why`,
 `recall`, and `decision-trail` enforce this shared allowlist. Keep the existing
 list or select from the list above.
 
-## 4. Validate the proposed document
+## 5. Validate the proposed document
 
 Before showing the preview, check all of these conditions:
 
+- `vcs.backend` is exactly `"git"` or `"jj"`. If it is `"jj"`, jj 0.44 or
+  newer is available. Warn when the selected backend does not match the current
+  repository shape; the runtime preflight will refuse mutation there.
 - Every selected `provider/model` either appears in `pi --list-models` or is an
   exact user-requested provider ID that passed the catalog-lag exception above.
   Every selected provider passed `pi auth check`.
@@ -131,7 +158,7 @@ Use the existing extension validators as the source of truth when they are
 available. A validation error is a reason to revise the preview, not to delete
 an entire section and start over.
 
-## 5. Preview, then write atomically
+## 6. Preview, then write atomically
 
 Render a unified diff from the current JSON to the complete proposed JSON. State
 all warnings, including duplicate reviewer/synthesis models, any model whose
@@ -156,7 +183,7 @@ file as part of this workflow. If the user wants to change repository defaults,
 show a separate diff after the user-level update succeeds and wait for a second
 explicit approval.
 
-## 6. Verify and hand off
+## 7. Verify and hand off
 
 Run `pi --list-models` once more only if the user changed authentication while
 configuring. Otherwise the successful credential checks and final JSON parse are
@@ -166,5 +193,6 @@ Tell the user that new child runs use the configuration immediately. An already
 running child process keeps the model it started with. If they changed installed
 skills or extensions too, remind them to run `/reload` or restart Pi.
 
-**Reply:** the target path, changed role groups, selected model IDs with
-thinking levels, validation warnings, and whether the write occurred.
+**Reply:** the target path, selected VCS backend, changed role groups, selected
+model IDs with thinking levels, validation warnings, and whether the write
+occurred.
