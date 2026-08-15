@@ -6,9 +6,9 @@ verdict.
 
 ```
 /panel-review
-/panel-review --base main
-/panel-review --intent "Add safe bulk session archival without moving the live session"
-/panel-review --base origin/main --intent "Implement handoff and panel review extensions"
+/panel-review Add safe bulk session archival without moving the live session
+/panel-review --base main Implement handoff
+/panel-review --base origin/main "Implement handoff and panel review extensions"
 ```
 
 Every run applies the strict
@@ -39,7 +39,7 @@ ignores the outcome.
    files (`--untracked-files=all`, so new directories are expanded into their
    files; symlinks, binaries, and path escapes skipped), and commit subjects.
    The diff is never passed on a command line.
-3. Asks for the review intent (from `--intent` or an editor prefilled with
+3. Asks for the review intent (from positional arguments or an editor prefilled with
    commit subjects) and confirms once before spending anything.
 4. Spawns 2–5 reviewers concurrently. Each is an ephemeral child process:
 
@@ -217,7 +217,7 @@ node --test extensions/panel-review/*.test.ts
 
 Manual smoke test: in a fixture repository with committed, staged, unstaged,
 untracked, and binary changes, run
-`/panel-review --base HEAD --intent "fixture review"` and verify parallel
+`/panel-review --base HEAD "fixture review"` and verify parallel
 progress, child argv (`--no-session`, discovery flags, read-only tools), the
 confirmation names the thermo-nuclear lens, a single verdict message, no child
 session files, and an unchanged repository.
