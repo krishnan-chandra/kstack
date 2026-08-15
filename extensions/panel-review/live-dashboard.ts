@@ -27,12 +27,10 @@ export interface TerminalText {
 }
 
 /** strip-ansi–style pattern: CSI sequences and other ESC-initiated two-byte forms. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal control sequences is the point
 const ANSI_PATTERN =
 	/[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
 /** OSC/DCS/APC/PM/SOS payloads: ESC ] P X ^ _ or C1 0x90/0x98/0x9d-0x9f … BEL, ST (ESC \\), or C1 ST. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal control sequences is the point
 const OSC_PATTERN = /(?:\u001B[\]PX^_]|[\u0090\u0098\u009d-\u009f]).*?(?:\u0007|\u001B\\|\u009c|$)/gs;
 
 /** Strip ANSI/OSC/APC/DCS sequences. Exported for tests; production uses pi-tui's stripTerminalSequences. */

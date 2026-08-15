@@ -33,12 +33,7 @@ describe("porcelain and forbidden paths", () => {
 		assert.ok(result.ok);
 
 		// Must use the correct Git invocation
-		assert.deepEqual(capturedArgs, [
-			"status",
-			"--porcelain=v1",
-			"-z",
-			"--untracked-files=all",
-		]);
+		assert.deepEqual(capturedArgs, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
 
 		assert.deepEqual(result.paths, [
 			"src/a.ts",
@@ -62,29 +57,20 @@ describe("porcelain and forbidden paths", () => {
 		}));
 		const result = await backend.changedPaths("/not-a-repo");
 		assert.ok(!result.ok);
-		assert.equal(
-			result.error,
-			"Could not inspect working-copy changes: fatal: not a git repository",
-		);
+		assert.equal(result.error, "Could not inspect working-copy changes: fatal: not a git repository");
 	});
 
 	it("forbidden-path bridge: isForbiddenStagingPath blocks exact paths from changedPaths", () => {
 		// The parser returns exact full paths; the autopilot predicate must
 		// block the same strings that changedPaths() now returns losslessly.
 		assert.equal(isForbiddenStagingPath(".github/workflows/ci.yml"), true);
-		assert.equal(
-			isForbiddenStagingPath("secrets/credentials.json"),
-			true,
-		);
+		assert.equal(isForbiddenStagingPath("secrets/credentials.json"), true);
 		assert.equal(isForbiddenStagingPath(".env.local"), true);
 		assert.equal(isForbiddenStagingPath(".env"), true);
 		assert.equal(isForbiddenStagingPath("apps/web/.env.local"), true);
 		// Safe paths are not blocked
 		assert.equal(isForbiddenStagingPath("src/a.ts"), false);
 		assert.equal(isForbiddenStagingPath("new.ts"), false);
-		assert.equal(
-			isForbiddenStagingPath("utils/untracked/nested.ts"),
-			false,
-		);
+		assert.equal(isForbiddenStagingPath("utils/untracked/nested.ts"), false);
 	});
 });
