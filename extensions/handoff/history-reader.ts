@@ -15,6 +15,7 @@ import { getAgentDir } from "../shared/kstack-config.ts";
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 50 * 1024;
 const BODY_CHUNK_BYTES = MAX_OUTPUT_BYTES - 8192;
+const DEFAULT_READ_LIMIT = 20;
 
 export interface HandoffSource {
 	version: 1;
@@ -276,7 +277,7 @@ export function readHandoffHistory(
 	env: NodeJS.ProcessEnv = process.env,
 	fsImpl: HandoffHistoryFs = defaultFs,
 ): string {
-	const limit = boundedInteger(options.limit, 50, 1, 200);
+	const limit = boundedInteger(options.limit, DEFAULT_READ_LIMIT, 1, 200);
 	const chunk = boundedInteger(options.chunk, 0, 0, 1_000_000);
 	const active = readActiveSession(source, env, fsImpl);
 	if (active) {

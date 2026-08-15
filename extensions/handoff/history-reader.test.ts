@@ -158,6 +158,20 @@ describe("readHandoffHistory", () => {
 		assert.ok(!output.includes('"command":"ls"'));
 	});
 
+	it("defaults to the latest 20 entries", () => {
+		const { source, env } = fixture();
+		const entries = Array.from({ length: 25 }, (_, index) =>
+			messageEntry(`u${index}`, index === 0 ? null : `u${index - 1}`, userMessage(`entry-${index + 1}`)),
+		);
+		writeFileSync(source.sessionFile, sessionJsonl(entries));
+
+		const output = readHandoffHistory(source, {}, env);
+
+		assert.ok(output.includes("entries 6–25 of 25"));
+		assert.ok(!output.includes("entry-5\n"));
+		assert.ok(output.includes("entry-6"));
+	});
+
 	it("supports paging from the start", () => {
 		const { source, env } = fixture();
 		const output = readHandoffHistory(source, { from: "start", limit: 1 }, env);

@@ -42,7 +42,7 @@ export default async function (pi: ExtensionAPI) {
 		label: "Read Handoff History",
 		description:
 			"Read normalized entries from the previous session linked by /handoff. Resolves the active JSONL first " +
-			"and transparently falls back to the read-only archive by exact session ID. Defaults to the latest 50 " +
+			"and transparently falls back to the read-only archive by exact session ID. Defaults to the latest 20 " +
 			"entries. Output is paginated and chunked. Read-only; accepts no filesystem path.",
 		promptSnippet: "Read relevant entries from the previous session linked by /handoff",
 		promptGuidelines: [
@@ -52,7 +52,7 @@ export default async function (pi: ExtensionAPI) {
 			offset: Type.Optional(
 				Type.Integer({ minimum: 0, maximum: 2_147_483_647, description: "Entry offset; overrides from" }),
 			),
-			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: "Entries per page (default 50)" })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: "Entries per page (default 20)" })),
 			chunk: Type.Optional(
 				Type.Integer({ minimum: 0, maximum: 1_000_000, description: "Chunk within this page (default 0)" }),
 			),
