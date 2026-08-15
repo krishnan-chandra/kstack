@@ -235,7 +235,7 @@ export type AdvanceOutcome =
 export interface JjStackCapabilities {
 	schemaVersion: typeof SCHEMA_VERSION;
 	commands: readonly ["inspect", "plan", "publish", "sync", "advance"];
-	tools: readonly ["jj_stack_inspect", "jj_stack_plan"];
+	tools: readonly ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish"];
 	publication: true;
 }
 

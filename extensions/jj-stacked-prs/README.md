@@ -2,7 +2,8 @@
 
 Inspect, plan, publish, sync, and advance a **linear** Jujutsu bookmark stack
 as GitHub draft pull requests. Local history stays in `jj`. Bookmarks are PR
-boundaries. Publication is a confirmed command, not a model-callable mutation.
+boundaries. Publication is available through a confirmed command. A
+model-callable tool treats the user's explicit publish request as authorization.
 
 ```text
 /jj-stack inspect [--top <bookmark>] [--trunk <revset>] [--max-stack <1..50>]
@@ -12,15 +13,19 @@ boundaries. Publication is a confirmed command, not a model-callable mutation.
 /jj-stack advance --merged <bookmark> --top <bookmark> --remote <name> [--trunk <revset>]
 ```
 
-Read-only model tools:
+Model tools:
 
 ```text
 jj_stack_inspect({ top?, trunk?, maxStack? })
 jj_stack_plan({ top, remote, trunk?, maxStack? })
+jj_stack_publish({ top, remote, trunk?, maxStack? })
 ```
 
-There is no publish, sync, advance, or generic jj mutation tool. A plan ID
-proves freshness, not authorization.
+`jj_stack_publish` pushes bookmarks, creates draft PRs, repairs PR bases, and
+reconciles navigation comments without a UI confirmation. Pi calls it only
+after the user explicitly asks to publish the current stack. There is no sync,
+advance, or generic jj mutation tool. A plan ID proves freshness, not
+authorization.
 
 ## What it does
 
@@ -29,8 +34,9 @@ proves freshness, not authorization.
   bookmark. An empty working-copy child above the top is allowed.
 - Plans pushes, draft-PR creation, and base repairs from local/remote bookmark
   targets and open PRs in the same GitHub repository.
-- Publishes only after standard `ctx.ui.confirm` and a fresh post-confirmation
-  plan-ID match.
+- Publishes from `/jj-stack publish` after standard `ctx.ui.confirm`, or from
+  `jj_stack_publish` after an explicit user request. Both paths recompute the
+  plan and refuse a stale plan ID before mutation.
 - Syncs only the selected stack: `jj git fetch --remote <remote>` then
   `jj rebase -b <top> -o <trunk>`.
 - Advances only when inspection has no blockers, the merged PR's head commit
@@ -61,7 +67,8 @@ create PRs, repair bases, or update navigation comments.
 
 - `requestJjStackCapabilities(pi)` — cheap loaded-schema probe.
 - `requestStackPublication(pi, input, ctx)` — discovery, planning, confirmation,
-  stale checking, and apply. The extension owns confirmation.
+  stale checking, and apply for trusted in-process workflow callers. The
+  extension owns that confirmation.
 
 Completed outcomes return a base-to-top PR map. Other outcomes are
 `declined`, `busy`, `blocked`, `stale`, `partial`, `cancelled`,

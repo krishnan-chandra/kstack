@@ -149,25 +149,47 @@ export async function planStack(
 }
 
 export async function publishStack(options: PublishOptions, deps: OrchestratorDeps): Promise<StackPublicationOutcome> {
-	if (!deps.ui.hasUI)
+	return publishStackWithAuthorization(options, deps, "interactive-confirmation");
+}
+
+/** Publish after an explicit model tool call, without a second UI confirmation. */
+export async function publishStackFromTool(
+	options: PublishOptions,
+	deps: OrchestratorDeps,
+): Promise<StackPublicationOutcome> {
+	return publishStackWithAuthorization(options, deps, "model-tool");
+}
+
+async function publishStackWithAuthorization(
+	options: PublishOptions,
+	deps: OrchestratorDeps,
+	authorization: "interactive-confirmation" | "model-tool",
+): Promise<StackPublicationOutcome> {
+	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
 		return {
 			status: "blocked",
 			blockers: [{ code: "missing-remote", message: "Publication requires interactive TUI/RPC mode." }],
 		};
+	}
 	if (deps.signal?.aborted) return { status: "cancelled" };
 	const planned = await planStack(options, deps);
 	if (planned.status === "blocked") return { status: "blocked", blockers: planned.blockers };
-	const confirmation = renderConfirmation(planned.plan);
-	if (!confirmation.ok) return { status: "blocked", blockers: [{ code: "truncated", message: confirmation.reason }] };
-	deps.ui.setStatus("jj-stack: confirm publication");
-	const confirmed = await deps.ui.confirm("Publish this stacked PR plan?", confirmation.body);
-	if (deps.signal?.aborted) return { status: "cancelled" };
-	if (!confirmed) return { status: "declined", planId: planned.plan.planId };
+	if (authorization === "interactive-confirmation") {
+		const confirmation = renderConfirmation(planned.plan);
+		if (!confirmation.ok) {
+			return { status: "blocked", blockers: [{ code: "truncated", message: confirmation.reason }] };
+		}
+		deps.ui.setStatus("jj-stack: confirm publication");
+		const confirmed = await deps.ui.confirm("Publish this stacked PR plan?", confirmation.body);
+		if (deps.signal?.aborted) return { status: "cancelled" };
+		if (!confirmed) return { status: "declined", planId: planned.plan.planId };
+	}
 	const fresh = await planStack(options, deps);
 	if (fresh.status === "blocked") return { status: "blocked", blockers: fresh.blockers, planId: planned.plan.planId };
 	if (fresh.plan.planId !== planned.plan.planId) {
 		return { status: "stale", providedPlanId: planned.plan.planId, recomputedPlanId: fresh.plan.planId };
 	}
+	deps.ui.setStatus("jj-stack: publishing");
 	return applyPublication(fresh.plan, options, deps);
 }
 

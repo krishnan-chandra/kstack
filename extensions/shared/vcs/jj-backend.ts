@@ -32,6 +32,11 @@ function diagnostic(result: ExecFnResult): string {
 	return result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`;
 }
 
+/** Quote a literal cwd-relative path as an exact jj fileset expression. */
+export function filesetPath(path: string): string {
+	return `cwd:"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
 export class JjBackend implements JjVcsBackend {
 	readonly id = "jj" as const;
 	private readonly exec: ExecFn;
@@ -180,12 +185,12 @@ export class JjBackend implements JjVcsBackend {
 	}
 
 	async commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
-		const result = await this.jj(cwd, ["commit", ...paths, "-m", message], 30_000);
+		const result = await this.jj(cwd, ["commit", ...paths.map(filesetPath), "-m", message], 30_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj commit failed: ${diagnostic(result)}` };
 	}
 
 	async restorePaths(cwd: string, paths: string[]): Promise<VcsResult> {
-		const result = await this.jj(cwd, ["restore", ...paths]);
+		const result = await this.jj(cwd, ["restore", ...paths.map(filesetPath)]);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj restore failed: ${diagnostic(result)}` };
 	}
 
@@ -212,7 +217,7 @@ export class JjBackend implements JjVcsBackend {
 		if (moved.code !== 0) {
 			return { ok: false, error: `Could not move jj bookmark ${ref} to the current change: ${diagnostic(moved)}` };
 		}
-		const result = await this.jj(cwd, ["git", "push", "--bookmark", ref], 60_000);
+		const result = await this.jj(cwd, ["git", "push", "--remote", "origin", "--bookmark", ref], 60_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj git push failed: ${diagnostic(result)}` };
 	}
 

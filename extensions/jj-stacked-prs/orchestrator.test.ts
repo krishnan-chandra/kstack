@@ -8,6 +8,7 @@ import {
 	inspectStack,
 	planStack,
 	publishStack,
+	publishStackFromTool,
 	requestPublicationFromInput,
 	syncStack,
 } from "./orchestrator.ts";
@@ -164,6 +165,47 @@ describe("publishStack", () => {
 		);
 		assert.deepEqual(jj.calls, []);
 		assert.equal(github.comments.length, 0);
+	});
+
+	it("publishes from the model tool without prompting", async () => {
+		const jj = fakeJj();
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: {
+					...ui({ hasUI: false }),
+					confirm: async () => {
+						throw new Error("the model tool must not prompt");
+					},
+				},
+				jj,
+				github: fakeGithub(),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(jj.calls, ["push:feat1", "push:feat2"]);
+	});
+
+	it("replans and refuses a stale model-tool publication", async () => {
+		let remoteReads = 0;
+		const jj = fakeJj({
+			listRemoteBookmarks: async () => {
+				remoteReads++;
+				return remoteReads === 1 ? [] : [{ name: "feat2", commitId: "changed" }];
+			},
+		});
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj,
+				github: fakeGithub(),
+			},
+		);
+		assert.equal(result.status, "stale");
+		assert.deepEqual(jj.calls, []);
 	});
 
 	it("creates draft PRs and comments that include every returned number", async () => {

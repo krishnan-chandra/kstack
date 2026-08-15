@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { createVcsBackend } from "./factory.ts";
 import { vcsChildGuidance } from "./guidance.ts";
-import { JjBackend } from "./jj-backend.ts";
+import { filesetPath, JjBackend } from "./jj-backend.ts";
 
 interface Step {
 	command: string;
@@ -142,14 +142,27 @@ describe("JjBackend references and workstreams", () => {
 });
 
 describe("JjBackend mutations", () => {
-	it("uses jj-native path-scoped commit and restore commands", async () => {
+	it("quotes literal cwd-relative paths as jj filesets", () => {
+		assert.deepEqual(["plain.ts", "a b.txt", "tilde~x", 'qu"ote', "back\\slash", "-rf"].map(filesetPath), [
+			'cwd:"plain.ts"',
+			'cwd:"a b.txt"',
+			'cwd:"tilde~x"',
+			'cwd:"qu\\"ote"',
+			'cwd:"back\\\\slash"',
+			'cwd:"-rf"',
+		]);
+	});
+
+	it("uses escaped jj filesets for path-scoped commit and restore commands", async () => {
 		const exec = scriptedExec([
-			{ command: "jj", args: noPager(["commit", "a.ts", "b.ts", "-m", "Apply fixes"]) },
-			{ command: "jj", args: noPager(["restore", "forbidden.txt"]) },
+			{ command: "jj", args: noPager(["commit", 'cwd:"a.ts"', 'cwd:"b.ts"', "-m", "Apply fixes"]) },
+			{ command: "jj", args: noPager(["restore", 'cwd:"forbidden.txt"']) },
+			{ command: "jj", args: noPager(["commit", 'cwd:"tilde~x"', "-m", "Apply hostile path"]) },
 		]);
 		const backend = new JjBackend(exec);
 		assert.deepEqual(await backend.commitPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
 		assert.deepEqual(await backend.restorePaths("/repo", ["forbidden.txt"]), { ok: true });
+		assert.deepEqual(await backend.commitPaths("/repo", ["tilde~x"], "Apply hostile path"), { ok: true });
 	});
 
 	it("moves the task bookmark to the current checkpoint before pushing", async () => {
@@ -165,7 +178,7 @@ describe("JjBackend mutations", () => {
 			},
 			{ command: "jj", args: noPager(["describe", "-m", "Automation checkpoint for feature"]) },
 			{ command: "jj", args: noPager(["bookmark", "set", "feature", "-r", "@"]) },
-			{ command: "jj", args: noPager(["git", "push", "--bookmark", "feature"]) },
+			{ command: "jj", args: noPager(["git", "push", "--remote", "origin", "--bookmark", "feature"]) },
 		]);
 		assert.deepEqual(await new JjBackend(exec).push("/repo", "feature"), { ok: true });
 	});

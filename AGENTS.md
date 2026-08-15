@@ -49,7 +49,9 @@ before changing anything under `extensions/`.
 ## Git
 
 Name branches `kstack/<task-slug>` and use imperative commit subjects. Never
-push, publish, or open a pull request without explicit confirmation.
+push, publish, or open a pull request unless the user explicitly asks. An
+explicit request to publish a jj stack authorizes `jj_stack_publish`; do not ask
+the user for a redundant confirmation.
 
 Write commit messages and PR descriptions to temp files (`local/` is
 gitignored and suitable) and use `git commit -F` / `gh pr create --body-file`
