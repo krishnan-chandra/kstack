@@ -1,5 +1,5 @@
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
-import { slugifyWorktreeTask } from "./worktree.ts";
+import { extractSlug } from "./slug.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
 
@@ -39,7 +39,7 @@ export async function createCurrentWorkstreamBranch(cwd: string, task: string, e
 		return { ok: false, error: `Could not resolve the current HEAD: ${base.stderr.trim() || base.stdout.trim()}` };
 	}
 
-	const slug = slugifyWorktreeTask(task);
+	const slug = extractSlug(task);
 	for (let attempt = 1; attempt <= MAX_COLLISION_ATTEMPTS; attempt++) {
 		const branch = `kstack/${slug}${attempt === 1 ? "" : `-${attempt}`}`;
 		const exists = await git(exec, cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);

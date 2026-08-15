@@ -20,8 +20,8 @@ import {
 	statSync,
 	unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { getAgentDir } from "../shared/kstack-config.ts";
 import { sha256Hex } from "./session-jsonl.ts";
 
 export class ArchiveFileError extends Error {
@@ -29,16 +29,6 @@ export class ArchiveFileError extends Error {
 		super(message);
 		this.name = "ArchiveFileError";
 	}
-}
-
-/** Pi's agent config directory: $PI_CODING_AGENT_DIR or ~/.pi/agent. */
-export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-	const fromEnv = env.PI_CODING_AGENT_DIR;
-	if (fromEnv && fromEnv.trim().length > 0) {
-		const expanded = fromEnv.startsWith("~/") ? join(homedir(), fromEnv.slice(2)) : fromEnv;
-		return resolve(expanded);
-	}
-	return join(homedir(), ".pi", "agent");
 }
 
 export function getArchiveRoot(env?: NodeJS.ProcessEnv): string {

@@ -2,7 +2,6 @@
 import {
 	type ChildRunnerDeps,
 	childIsolationArgs,
-	getPiInvocation,
 	runChildAgent,
 	type SpawnedProcess,
 	type SpawnImpl,
@@ -10,7 +9,6 @@ import {
 import { type AutopilotAgentRole, type AutopilotModelSpec, LIMITS, type UsageSummary } from "./types.ts";
 
 export type { SpawnedProcess, SpawnImpl };
-export { getPiInvocation };
 export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
 	timeoutMs?: number;
 }

@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { getKstackPath } from "../shared/kstack-config.ts";
 import {
 	DEFAULT_PANEL,
 	DEFAULT_SYNTHESIS,
-	getKstackPath,
 	loadConfig,
 	modelCliId,
 	resolveReviewers,

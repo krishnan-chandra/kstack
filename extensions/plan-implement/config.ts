@@ -1,12 +1,11 @@
 /** Unified kstack.json configuration and role-model resolution. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
-export { getAgentDir, getKstackPath };
 
 const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
 

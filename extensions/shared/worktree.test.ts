@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
-import { createManagedWorktree, planManagedWorktree, slugifyWorktreeTask } from "./worktree.ts";
+import { createManagedWorktree, planManagedWorktree } from "./worktree.ts";
 
 const BASE_SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -30,12 +30,6 @@ function fakeGit(options: { occupiedBranches?: Set<string>; addResult?: ExecFnRe
 }
 
 describe("managed Git worktrees", () => {
-	it("builds bounded slugs", () => {
-		assert.equal(slugifyWorktreeTask(" Add Archive Search! "), "add-archive-search");
-		assert.equal(slugifyWorktreeTask("日本語"), "change");
-		assert.ok(slugifyWorktreeTask("x".repeat(100)).length <= 48);
-	});
-
 	it("plans beneath the managed root using a repo identity hash and pinned base", async () => {
 		const { exec } = fakeGit();
 		const planned = await planManagedWorktree("/start", "Add archive search", exec, {

@@ -3,19 +3,10 @@ import { describe, it } from "node:test";
 import { deriveSessionName, nameSessionIfUnnamed } from "./session-name.ts";
 
 describe("workflow session naming", () => {
-	it("turns the first content line into a short slug", () => {
+	it("derives the shared short slug from the task", () => {
 		assert.equal(deriveSessionName("\n## Fix archive selection\nMore detail"), "fix-archive-selection");
-		assert.equal(deriveSessionName("- Investigate the timeout"), "investigate-the-timeout");
-		assert.equal(deriveSessionName("Crème brûlée: 日本語"), "creme-brulee-日本語");
-		assert.equal(deriveSessionName("日本語のアーカイブを修正"), "日本語のアーカイブを修正");
-	});
-
-	it("bounds long slugs without leaving a trailing separator", () => {
-		const name = deriveSessionName(
-			"Implement deterministic session naming for every delegated development workflow without replacing explicit names",
-		);
-		assert.ok(name.length <= 48);
-		assert.doesNotMatch(name, /-$/);
+		assert.equal(deriveSessionName("- Investigate the timeout"), "investigate-timeout");
+		assert.equal(deriveSessionName("日本語のアーカイブを修正"), "development-task");
 	});
 
 	it("sets a derived name only when the session is unnamed", () => {
@@ -26,8 +17,8 @@ describe("workflow session naming", () => {
 				current = name;
 			},
 		};
-		assert.equal(nameSessionIfUnnamed(api, "Fix the archive picker"), "fix-the-archive-picker");
+		assert.equal(nameSessionIfUnnamed(api, "Fix the archive picker"), "fix-archive-picker");
 		assert.equal(nameSessionIfUnnamed(api, "Do not replace the name"), undefined);
-		assert.equal(current, "fix-the-archive-picker");
+		assert.equal(current, "fix-archive-picker");
 	});
 });

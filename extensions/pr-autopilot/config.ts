@@ -24,12 +24,11 @@
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
-export { getAgentDir, getKstackPath };
 
 const TINY_THINKING = ["off", "minimal", "low"] as const;
 

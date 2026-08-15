@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { summarizeToolCall } from "../shared/child-agent-runner.ts";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
-import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl, summarizeToolCall } from "./reviewer-runner.ts";
+import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl } from "./reviewer-runner.ts";
 
 describe("JsonLineParser", () => {
 	it("handles events split across chunks and skips malformed lines", () => {
@@ -521,7 +522,7 @@ describe("runReviewer live text preview", () => {
 	});
 
 	it("bounds the preview within the live-preview budget and stays UTF-8 safe", async () => {
-		const { truncateTailUtf8 } = await import("./reviewer-runner.ts");
+		const { truncateTailUtf8 } = await import("../shared/child-agent-runner.ts");
 		// 3-byte characters straddling the tail boundary must not split.
 		const text = `x${"語".repeat(200)}`; // 1 + 600 bytes
 		const tail = truncateTailUtf8(text, 100);

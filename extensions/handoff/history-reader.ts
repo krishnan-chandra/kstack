@@ -1,12 +1,6 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-	getAgentDir,
-	getArchiveDbPath,
-	getArchiveRoot,
-	isPathInside,
-	validateSessionId,
-} from "../session-archive/archive-files.ts";
+import { getArchiveDbPath, getArchiveRoot, isPathInside, validateSessionId } from "../session-archive/archive-files.ts";
 import {
 	countEntries,
 	getSessionRow,
@@ -16,6 +10,7 @@ import {
 } from "../session-archive/archive-store.ts";
 import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/session-jsonl.ts";
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
+import { getAgentDir } from "../shared/kstack-config.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 50 * 1024;

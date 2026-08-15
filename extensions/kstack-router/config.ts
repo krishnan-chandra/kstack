@@ -1,11 +1,9 @@
 /** Router configuration from kstack.json. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
-
-export { getAgentDir, getKstackPath };
 
 export type ConfigLoad =
 	| { status: "loaded"; config: RouterConfig; path: string }

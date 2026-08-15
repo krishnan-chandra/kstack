@@ -31,12 +31,11 @@
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { getAgentDir, getKstackPath, loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { MODEL_LABEL_RE, splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
-export { getAgentDir, getKstackPath, THINKING_LEVELS };
 
 const MIN_REVIEWERS = 2;
 const MAX_REVIEWERS = 5;

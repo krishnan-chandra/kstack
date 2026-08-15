@@ -5,9 +5,9 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
+import { extractSlug, MAX_SLUG_LENGTH, normalizePathSegment } from "./slug.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
-const MAX_SLUG_LENGTH = 48;
 
 export interface ManagedWorktreePlan {
 	sourceRepoRoot: string;
@@ -47,17 +47,6 @@ function oneLine(result: ExecFnResult): string | undefined {
 	if (result.code !== 0) return undefined;
 	const value = result.stdout.trim();
 	return value || undefined;
-}
-
-export function slugifyWorktreeTask(task: string): string {
-	const slug = task
-		.normalize("NFKD")
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, MAX_SLUG_LENGTH)
-		.replace(/-+$/g, "");
-	return slug || "change";
 }
 
 function managedWorktreeRoot(): string {
@@ -144,10 +133,10 @@ export async function planManagedWorktree(
 	}
 
 	const managedRoot = resolve(deps.managedRoot ?? managedWorktreeRoot());
-	const repositoryName = slugifyWorktreeTask(basename(sourceRepoRoot));
+	const repositoryName = normalizePathSegment(basename(sourceRepoRoot));
 	const repositoryHash = createHash("sha256").update(commonGitDir).digest("hex").slice(0, 8);
 	const repositoryId = `${repositoryName}-${repositoryHash}`;
-	const baseSlug = slugifyWorktreeTask(task);
+	const baseSlug = extractSlug(task);
 	const exists = deps.exists ?? existsSync;
 
 	for (let attempt = 1; attempt <= MAX_COLLISION_ATTEMPTS; attempt++) {
