@@ -14,7 +14,9 @@ Important contracts:
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import html
 import json
 import re
 from typing import Any, NamedTuple
@@ -67,6 +69,15 @@ class SliceAction(NamedTuple):
     update_base: bool
     current_base: str | None
     target_base: str
+
+
+class NavigationEntry(NamedTuple):
+    """One durable row in a stack-navigation comment."""
+
+    pr_number: int | None
+    bookmark: str
+    base: str
+    status: str
 
 
 class StackPlan(NamedTuple):
@@ -265,35 +276,188 @@ def find_pr_for_bookmark(
 # Navigation comments
 # ---------------------------------------------------------------------------
 
+DATA_MARKER_PATTERN = re.compile(r"<!-- kstack-stack-data-v1: ([A-Za-z0-9_-]+) -->")
+VALID_NAVIGATION_STATUSES = {"open", "draft", "merged", "closed", "unknown"}
+MAX_NAVIGATION_ENTRIES = 100
+MAX_NAVIGATION_COMMENT_BYTES = 60_000
+
+
+def _normalize_navigation_status(value: str) -> str:
+    status = value.casefold()
+    return status if status in VALID_NAVIGATION_STATUSES else "unknown"
+
+
+def _encode_navigation_entries(entries: list[NavigationEntry]) -> str:
+    payload = json.dumps(
+        [entry._asdict() for entry in entries],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _parse_navigation_item(item: object) -> NavigationEntry | None:
+    if not isinstance(item, dict):
+        return None
+    pr_number = item.get("pr_number")
+    if pr_number is not None and (type(pr_number) is not int or pr_number <= 0):
+        return None
+    bookmark = item.get("bookmark")
+    base = item.get("base")
+    status = item.get("status")
+    if not all(isinstance(value, str) for value in (bookmark, base, status)):
+        return None
+    return NavigationEntry(
+        pr_number,
+        bookmark,
+        base,
+        _normalize_navigation_status(status),
+    )
+
+
+def _markdown_code(value: str) -> str:
+    escaped = html.escape(value, quote=False).replace("|", "&#124;")
+    return f"<code>{escaped}</code>"
+
+
 def build_navigation_comment(
-    stack_slices: list[SliceAction],
-    repo_info: GitHubRepo,
+    entries: list[NavigationEntry],
     default_branch: str,
 ) -> str:
-    """Build a stack-navigation comment body.
-
-    Uses a versioned kstack-owned hidden marker for identification. The body
-    is intentionally simple Markdown with PR-number references.
-    """
+    """Build a stack-navigation comment with durable, encoded row data."""
+    if len(entries) > MAX_NAVIGATION_ENTRIES:
+        raise StackError(
+            f"Navigation comment has {len(entries)} entries; maximum is "
+            f"{MAX_NAVIGATION_ENTRIES}.",
+            1,
+        )
+    data_payload = _encode_navigation_entries(entries)
     lines = [
         KSTACK_COMMENT_MARKER,
         f"<!-- kstack-stack-schema-v{KSTACK_COMMENT_SCHEMA_VERSION} -->",
+        f"<!-- kstack-stack-data-v1: {data_payload} -->",
         "",
         "## Stack navigation (kstack)",
         "",
-        "| PR | Bookmark | Base |",
-        "|---|---|---|",
+        "| PR | Bookmark | Base | Status |",
+        "|---|---|---|---|",
     ]
-    for slc in stack_slices:
-        pr_ref = f"#{slc.pr_number}" if slc.pr_number else "—"
-        base_ref = slc.target_base if slc.target_base != default_branch else default_branch
-        lines.append(f"| {pr_ref} | `{slc.bookmark}` | `{base_ref}` |")
+    for entry in entries:
+        pr_ref = f"#{entry.pr_number}" if entry.pr_number else "—"
+        bookmark = _markdown_code(entry.bookmark) if entry.bookmark else "—"
+        base = _markdown_code(entry.base or default_branch)
+        lines.append(
+            f"| {pr_ref} | {bookmark} | {base} | {entry.status.capitalize()} |"
+        )
 
     lines.extend([
         "",
         "_Navigated by kstack. Update with `publish_stack.py apply`._",
     ])
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    if len(body.encode("utf-8")) > MAX_NAVIGATION_COMMENT_BYTES:
+        raise StackError(
+            f"Navigation comment exceeds {MAX_NAVIGATION_COMMENT_BYTES} bytes.",
+            1,
+        )
+    return body
+
+
+def _decode_code_cell(value: str) -> str:
+    cell = value.strip()
+    if len(cell) >= 2 and cell.startswith("`") and cell.endswith("`"):
+        cell = cell[1:-1]
+    elif cell.startswith("<code>") and cell.endswith("</code>"):
+        cell = cell[6:-7]
+    return html.unescape(cell)
+
+
+def parse_navigation_comment_entries(body: str) -> list[NavigationEntry]:
+    """Extract encoded entries, falling back to legacy Markdown tables."""
+    if KSTACK_COMMENT_MARKER not in body:
+        return []
+
+    data_match = DATA_MARKER_PATTERN.search(body)
+    if data_match:
+        encoded = data_match.group(1)
+        try:
+            padding = "=" * (-len(encoded) % 4)
+            parsed = json.loads(base64.urlsafe_b64decode(encoded + padding))
+        except (ValueError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, list) and len(parsed) <= MAX_NAVIGATION_ENTRIES:
+            entries = [_parse_navigation_item(item) for item in parsed]
+            if all(entry is not None for entry in entries):
+                return [entry for entry in entries if entry is not None]
+
+    entries: list[NavigationEntry] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) not in (3, 4) or cells[0].casefold() == "pr":
+            continue
+        if all(set(cell) <= {"-", ":"} for cell in cells):
+            continue
+        pr_match = re.search(r"#(\d+)", cells[0])
+        pr_number = int(pr_match.group(1)) if pr_match else None
+        status = _normalize_navigation_status(cells[3] if len(cells) == 4 else "open")
+        entries.append(NavigationEntry(
+            pr_number,
+            _decode_code_cell(cells[1]),
+            _decode_code_cell(cells[2]),
+            status,
+        ))
+        if len(entries) >= MAX_NAVIGATION_ENTRIES:
+            break
+    return entries
+
+
+def find_navigation_ancestors(
+    published_slices: list[SliceAction],
+    prior_entries: list[NavigationEntry],
+) -> list[NavigationEntry]:
+    """Return only prior entries below the earliest active slice."""
+    for index, prior in enumerate(prior_entries):
+        if any(
+            (slc.pr_number is not None and slc.pr_number == prior.pr_number)
+            or slc.bookmark == prior.bookmark
+            for slc in published_slices
+        ):
+            return prior_entries[:index]
+    return []
+
+
+def reconcile_stack_entries(
+    published_slices: list[SliceAction],
+    prior_entries: list[NavigationEntry],
+    status_by_pr: dict[int, str],
+    default_branch: str,
+) -> list[NavigationEntry]:
+    """Prepend prior ancestors to the currently published stack."""
+    ancestors = []
+    for entry in find_navigation_ancestors(published_slices, prior_entries):
+        if entry.pr_number is None:
+            status = "unknown"
+        else:
+            status = status_by_pr.get(entry.pr_number, entry.status)
+        ancestors.append(entry._replace(status=_normalize_navigation_status(status)))
+
+    active_entries = [
+        NavigationEntry(
+            slc.pr_number,
+            slc.bookmark,
+            slc.target_base.replace("refs/heads/", "") or default_branch,
+            _normalize_navigation_status(
+                status_by_pr.get(
+                    slc.pr_number,
+                    "draft" if slc.create_pr else "open",
+                ) if slc.pr_number is not None else "unknown"
+            ),
+        )
+        for slc in published_slices
+    ]
+    return ancestors + active_entries
 
 
 def get_gh_user(cwd: str, timeout: int = GH_API_TIMEOUT) -> str:
@@ -649,6 +813,43 @@ def create_or_update_comment(
         return {"id": existing_comment_id or 0, "body_preview": body[:100]}
 
 
+def get_pr_status(
+    gh_repo: GitHubRepo,
+    pr_number: int,
+    cwd: str,
+    timeout: int = GH_API_TIMEOUT,
+) -> str:
+    """Return ``open``, ``merged``, or ``closed`` for one pull request."""
+    result = run_gh(
+        [
+            "api",
+            f"/repos/{gh_repo.owner}/{gh_repo.repo}/pulls/{pr_number}",
+            "--jq", "{state, merged}",
+        ],
+        cwd=cwd,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise StackError(
+            f"Could not read status for PR #{pr_number}: "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+            1,
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise StackError(f"Could not parse status for PR #{pr_number}: {exc}", 1) from exc
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("merged"), bool)
+        or payload.get("state") not in ("open", "closed")
+    ):
+        raise StackError(f"Could not parse status for PR #{pr_number}: invalid response.", 1)
+    if payload["merged"]:
+        return "merged"
+    return payload["state"]
+
+
 def get_pr_comments(
     gh_repo: GitHubRepo,
     pr_number: int,
@@ -667,22 +868,34 @@ def get_pr_comments(
         timeout=timeout,
     )
     if result.returncode != 0:
+        raise StackError(
+            f"Could not read comments for PR #{pr_number}: "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+            1,
+        )
+
+    text = result.stdout.strip()
+    if not text:
         return []
+    decoder = json.JSONDecoder()
     comments: list[dict[str, Any]] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            comments.append(json.loads(line))
-        except json.JSONDecodeError:
-            # Some lines may not be individual JSON objects with --paginate
-            pass
-    if not comments and result.stdout.strip().startswith("["):
-        try:
-            comments = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            pass
+    offset = 0
+    try:
+        while offset < len(text):
+            while offset < len(text) and text[offset].isspace():
+                offset += 1
+            if offset >= len(text):
+                break
+            parsed, offset = decoder.raw_decode(text, offset)
+            values = parsed if isinstance(parsed, list) else [parsed]
+            if not all(isinstance(value, dict) for value in values):
+                raise StackError(
+                    f"Could not parse comments for PR #{pr_number}: expected JSON objects.",
+                    1,
+                )
+            comments.extend(values)
+    except json.JSONDecodeError as exc:
+        raise StackError(f"Could not parse comments for PR #{pr_number}: {exc}", 1) from exc
     return comments
 
 

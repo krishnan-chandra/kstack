@@ -165,8 +165,9 @@ successful implementation, panel review runs once against the immutable
 `trunk()` base. The review fixer amends findings into the correct slices of
 the local stack (per `jj-stacked-prs`), and the publisher — after its own
 confirmation — submits the stack as draft PRs via the `jj-stacked-prs`
-publishing workflow (the bundled `publish_stack.py`), applies `write-pr` title/body discipline
-to each slice, and recommends reviewers across the full stack range.
+publishing workflow (the bundled `publish_stack.py`), prepares `write-pr`
+titles and bodies from each slice's exact diff before publication, applies them
+to every PR, and recommends reviewers across the full stack range.
 
 The Planner, Implementer, Review fixer, and Publisher cards identify the
 model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At

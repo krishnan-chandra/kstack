@@ -17,7 +17,23 @@ Consult the `write-pr` skill and follow it exactly:
 
 ### Stacked-PR delivery
 
-When the user task or repository state shows a local `jj` stack instead of a single branch, consult the `jj-stacked-prs` skill for its publishing workflow (the bundled `publish_stack.py`) instead of the single-branch flow above. The publisher creates PRs as drafts by default, applies the `write-pr` title/body discipline to each slice, and reports the full base-to-top table of PR URLs. Never merge, ready, or force-push any PR in the stack.
+When the task has a local `jj` stack, use this workflow instead of the single-PR branch flow above. Consult both `jj-stacked-prs` and `write-pr`.
+
+1. **Preview the stack publication.** Run:
+   `python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --remote <remote>`
+2. **Prepare metadata for every slice before mutation.** For each planned slice, base to top:
+   - Read the PR's `target_base` from the plan. For the local jj comparison, use `trunk()` below the bottom slice and the preceding bookmark below every later slice.
+   - Inspect the exact slice with `jj diff -r '<local-slice-base>..<slice-bookmark>'` and `jj log -r '<local-slice-base>..<slice-bookmark>'`. If you use Git, compare the plan's `target_base` with the slice bookmark.
+   - Follow `write-pr` to draft an imperative title, a `## Summary`, and a thematic `## Review guide` from that diff.
+   - Save each body in `local/` or a temporary directory, keyed by bookmark. Do not use jj change descriptions as PR bodies.
+3. **Publish the stack structure.** Apply the unchanged plan:
+   `python3 <skill-dir>/scripts/publish_stack.py apply --repo <path> --top <top> --remote <remote> --plan-id <plan_id>`
+   This pushes bookmarks, creates missing draft PRs, repairs target bases, and updates navigation comments. The publisher retains predecessors recorded in a remaining comment owned by the authenticated user.
+4. **Apply every prepared title and body.** Use the PR numbers returned by `apply` or the plan:
+   `gh pr edit <slice-pr-number> --title '<title>' --body-file <body-file>`
+   Stop and report an incomplete publication if any metadata update fails.
+5. **Recommend reviewers across the full stack.** Consult `find-reviewers` with the range `trunk()..<top>`.
+6. **Report the stack.** Return a base-to-top table of final titles and PR URLs, followed by the reviewer recommendations. Never merge, mark ready, or force-push a PR.
 
 ## 2. Reviewer recommendations
 

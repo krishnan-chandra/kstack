@@ -25,6 +25,28 @@ import os
 import sys
 from typing import Any
 
+from github_stack import (
+    NavigationEntry,
+    build_apply_result_json,
+    build_navigation_comment,
+    build_plan,
+    build_plan_json,
+    create_or_update_comment,
+    create_pr,
+    find_kstack_comment,
+    find_navigation_ancestors,
+    get_default_branch,
+    get_gh_user,
+    get_pr_comments,
+    get_pr_status,
+    get_remote_info,
+    list_open_prs,
+    parse_navigation_comment_entries,
+    push_bookmark,
+    reconcile_stack_entries,
+    redact_url,
+    update_pr_base,
+)
 from stack_model import (
     DEFAULT_MAX_STACK,
     DEFAULT_TIMEOUT,
@@ -33,23 +55,6 @@ from stack_model import (
     derive_slices,
     list_bookmarks,
     list_remote_bookmarks,
-)
-from github_stack import (
-    build_navigation_comment,
-    build_plan,
-    build_apply_result_json,
-    build_plan_json,
-    create_or_update_comment,
-    create_pr,
-    find_kstack_comment,
-    get_default_branch,
-    get_gh_user,
-    get_pr_comments,
-    get_remote_info,
-    list_open_prs,
-    push_bookmark,
-    redact_url,
-    update_pr_base,
 )
 
 
@@ -280,7 +285,9 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
                 title = slc.subject or action.bookmark
                 # Target base: use the short form (without refs/heads/)
                 target_base = action.target_base.replace("refs/heads/", "")
-                new_pr = create_pr(gh_repo, action.bookmark, target_base, title, cwd, args.timeout)
+                new_pr = create_pr(
+                    gh_repo, action.bookmark, target_base, title, cwd, args.timeout
+                )
                 pr_number = new_pr.number
                 published_slices[i] = action._replace(pr_number=pr_number)
                 # Update the matching comment action entry so it is not skipped
@@ -330,20 +337,71 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
             "Navigation comments skipped: could not determine the authenticated GitHub user."
         )
     eligible_comment_actions = comment_actions if gh_user else []
-    for slc_action in eligible_comment_actions:
-        pr_num = slc_action.get("pr_number")
-        if pr_num is None:
+
+    # Read every current comment before writing any of them. The longest owned
+    # navigation table is the best available history after a partial prior run.
+    existing_comments_by_pr: dict[int, list[dict[str, Any]]] = {}
+    failed_comment_fetches: set[int] = set()
+    prior_entries: list[NavigationEntry] = []
+    if gh_user:
+        for slc_action in eligible_comment_actions:
+            pr_num = slc_action.get("pr_number")
+            if pr_num is None:
+                continue
+            try:
+                comments = get_pr_comments(gh_repo, pr_num, cwd, args.timeout)
+                existing_comments_by_pr[pr_num] = comments
+                existing = find_kstack_comment(comments, gh_user=gh_user)
+                entries = parse_navigation_comment_entries(existing.get("body", "")) if existing else []
+                if len(entries) > len(prior_entries):
+                    prior_entries = entries
+            except StackError as exc:
+                failed_comment_fetches.add(pr_num)
+                comment_errors.append(f"PR #{pr_num}: {exc}")
+
+    status_by_pr = {
+        pr.number: "draft" if pr.is_draft else "open"
+        for pr in open_prs
+    }
+    for action in published_slices:
+        if action.pr_number is not None and action.pr_number not in status_by_pr:
+            status_by_pr[action.pr_number] = "draft" if action.create_pr else "open"
+    for entry in find_navigation_ancestors(published_slices, prior_entries):
+        if entry.pr_number is None or entry.pr_number in status_by_pr:
+            continue
+        if entry.status == "merged":
+            # A merged PR cannot reopen, so a previously verified value is durable.
+            status_by_pr[entry.pr_number] = "merged"
             continue
         try:
-            # Build the navigation comment body
+            status_by_pr[entry.pr_number] = get_pr_status(
+                gh_repo, entry.pr_number, cwd, args.timeout
+            )
+        except StackError as exc:
+            status_by_pr[entry.pr_number] = "unknown"
+            comment_errors.append(str(exc))
+
+    reconciled_entries = reconcile_stack_entries(
+        published_slices,
+        prior_entries,
+        status_by_pr,
+        default_branch,
+    )
+
+    for slc_action in eligible_comment_actions:
+        pr_num = slc_action.get("pr_number")
+        if pr_num is None or pr_num in failed_comment_fetches:
+            continue
+        try:
             comment_body = build_navigation_comment(
-                published_slices,
-                gh_repo,
+                reconciled_entries,
                 default_branch,
             )
 
             # Check for existing kstack comment (only owned by gh_user)
-            existing_comments = get_pr_comments(gh_repo, pr_num, cwd, args.timeout)
+            existing_comments = existing_comments_by_pr.get(pr_num)
+            if existing_comments is None:
+                existing_comments = get_pr_comments(gh_repo, pr_num, cwd, args.timeout)
             existing = find_kstack_comment(existing_comments, gh_user=gh_user)
             existing_id = existing.get("id") if existing else None
 

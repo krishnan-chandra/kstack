@@ -5,18 +5,27 @@ network access. They use a fake ``jj`` shell script that returns controlled
 output.
 """
 
-import json
 import os
 import stat
 import sys
 import tempfile
 import unittest
-from typing import Any
 
 # Ensure the scripts directory is on the path for imports
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
+
+from stack_model import (  # noqa: E402 - imports require the scripts path above
+    StackError,
+    derive_slices,
+    detect_blockers,
+    detect_top_bookmark,
+    enforce_output_cap,
+    parse_concatenated_json,
+    parse_jj_version,
+    run_cmd,
+)
 
 
 def _fake_jj_path(script: str) -> str:
@@ -43,45 +52,36 @@ class StackModelUnitTest(unittest.TestCase):
         os.chdir(self._orig_cwd)
 
     def test_parse_jj_version_standard(self) -> None:
-        from stack_model import parse_jj_version
         self.assertEqual(parse_jj_version("jj 0.44.0\n"), (0, 44))
         self.assertEqual(parse_jj_version("jj 0.45.1\n"), (0, 45))
         self.assertEqual(parse_jj_version("jj 1.0.0\n"), (1, 0))
 
     def test_parse_jj_version_prefix(self) -> None:
-        from stack_model import parse_jj_version
         self.assertEqual(parse_jj_version("jujutsu 0.44.0 (rev abc)\n"), (0, 44))
 
     def test_parse_jj_version_none(self) -> None:
-        from stack_model import parse_jj_version
         self.assertIsNone(parse_jj_version("not a version string\n"))
 
     def test_parse_jj_version_empty(self) -> None:
-        from stack_model import parse_jj_version
         self.assertIsNone(parse_jj_version(""))
 
     def test_parse_concatenated_json_empty(self) -> None:
-        from stack_model import parse_concatenated_json
         self.assertEqual(parse_concatenated_json(""), [])
 
     def test_parse_concatenated_json_single(self) -> None:
-        from stack_model import parse_concatenated_json
         result = parse_concatenated_json('{"a": 1}')
         self.assertEqual(result, [{"a": 1}])
 
     def test_parse_concatenated_json_multiple(self) -> None:
-        from stack_model import parse_concatenated_json
         result = parse_concatenated_json('{"a": 1}{"b": 2}')
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0], {"a": 1})
         self.assertEqual(result[1], {"b": 2})
 
     def test_detect_top_bookmark_empty(self) -> None:
-        from stack_model import detect_top_bookmark
         self.assertIsNone(detect_top_bookmark([]))
 
     def test_detect_top_bookmark_skips_trunk_names(self) -> None:
-        from stack_model import detect_top_bookmark
         commits = [
             {"bookmarks": ["main"], "change_id": "aaa"},
             {"bookmarks": ["feature"], "change_id": "bbb"},
@@ -89,7 +89,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertEqual(detect_top_bookmark(commits), "feature")
 
     def test_detect_top_bookmark_falls_back(self) -> None:
-        from stack_model import detect_top_bookmark
         commits = [
             {"bookmarks": ["main"], "change_id": "aaa"},
             {"bookmarks": ["master"], "change_id": "bbb"},
@@ -97,7 +96,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertEqual(detect_top_bookmark(commits), "master")
 
     def test_detect_top_bookmark_no_bookmarks(self) -> None:
-        from stack_model import detect_top_bookmark
         commits = [
             {"bookmarks": [], "change_id": "aaa"},
             {"bookmarks": [], "change_id": "bbb"},
@@ -105,7 +103,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertIsNone(detect_top_bookmark(commits))
 
     def test_derive_slices_single(self) -> None:
-        from stack_model import derive_slices
         stack = [
             {"change_id": "aaa", "bookmarks": ["feat1"], "subject": "feat: add feature 1"},
         ]
@@ -116,7 +113,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertEqual(slices[0].change_ids, ["aaa"])
 
     def test_derive_slices_multi(self) -> None:
-        from stack_model import derive_slices
         stack = [
             {"change_id": "aaa", "bookmarks": ["feat1"], "subject": "feat: add feature 1"},
             {"change_id": "bbb", "bookmarks": [], "subject": "wip"},
@@ -136,7 +132,6 @@ class StackModelUnitTest(unittest.TestCase):
         The top bookmark defines the final PR boundary; working-copy changes above
         it remain outside the stack's PR slices.
         """
-        from stack_model import derive_slices
         stack = [
             {"change_id": "aaa", "bookmarks": [], "subject": "wip"},
             {"change_id": "bbb", "bookmarks": ["feat1"], "subject": "feat: first"},
@@ -149,7 +144,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertEqual(slices[0].change_ids, ["aaa", "bbb"])
 
     def test_detect_blockers_conflict(self) -> None:
-        from stack_model import detect_blockers
         commits = [
             {"change_id": "aaa", "commit_id": "aaa123", "subject": "feat: x", "conflict": True,
              "divergent": False, "merge": False, "empty": False,
@@ -159,7 +153,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertTrue(any("merge conflict" in b for b in blockers))
 
     def test_detect_blockers_empty_bookmarked(self) -> None:
-        from stack_model import detect_blockers
         commits = [
             {"change_id": "aaa", "commit_id": "aaa123", "subject": "feat: x", "conflict": False,
              "divergent": False, "merge": False, "empty": True,
@@ -169,7 +162,6 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertTrue(any("empty" in b.lower() for b in blockers))
 
     def test_detect_blockers_no_root(self) -> None:
-        from stack_model import detect_blockers
         commits = [
             {"change_id": "aaa", "commit_id": "aaa123", "subject": "feat: x", "conflict": False,
              "divergent": False, "merge": False, "empty": False,
@@ -179,17 +171,14 @@ class StackModelUnitTest(unittest.TestCase):
         self.assertTrue(any("not rooted" in b for b in blockers))
 
     def test_detect_blockers_empty_commits(self) -> None:
-        from stack_model import detect_blockers
         blockers = detect_blockers([], "trunk_hash", "feat1", None)
         self.assertTrue(any("No commits" in b for b in blockers))
 
     def test_detect_blockers_no_top(self) -> None:
-        from stack_model import detect_blockers
         blockers = detect_blockers([], "trunk_hash", None, None)
         self.assertTrue(any("No top bookmark" in b for b in blockers))
 
     def test_run_cmd_rejects_output_over_cap(self) -> None:
-        from stack_model import StackError, run_cmd
         with self.assertRaisesRegex(StackError, "output exceeded"):
             run_cmd(
                 [sys.executable, "-c", "print('x' * 1000)"],
@@ -198,13 +187,11 @@ class StackModelUnitTest(unittest.TestCase):
             )
 
     def test_enforce_output_cap_under_limit(self) -> None:
-        from stack_model import enforce_output_cap
         model = {"stack": [{"a": 1}], "stack_size": 1}
         result = enforce_output_cap(model, cap_bytes=1024 * 1024)
         self.assertFalse(result.get("output_truncated", False))
 
     def test_enforce_output_cap_over_limit(self) -> None:
-        from stack_model import enforce_output_cap
         model = {"stack": [{"x": "y" * 5000}], "stack_size": 1, "blockers": []}
         result = enforce_output_cap(model, cap_bytes=100)
         self.assertTrue(result.get("output_truncated", True))

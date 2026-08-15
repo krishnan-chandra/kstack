@@ -39,7 +39,7 @@ routes do not create workstreams.
 | [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with the bundled `publish_stack.py`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
 | [`git-worktrees`](skills/git-worktrees/) | Creates, inspects, repairs, and safely cleans up Git linked worktrees managed beneath `~/.pi/kstack/worktrees`, with dirty-state and ownership checks before removal. |
 | [`fix-merge-conflicts`](skills/fix-merge-conflicts/) | Resolves merge, rebase, or jj conflicts non-interactively, then validates the build and tests before finalizing. |
-| [`write-pr`](skills/write-pr/) | Writes a crisp pull-request title and description from the branch diff, updating the open PR or creating a draft. |
+| [`write-pr`](skills/write-pr/) | Writes a crisp pull-request title and description from a standalone branch or exact stacked-PR slice, updating the open PR or creating a draft. |
 | [`simplify`](skills/simplify/) | Runs parallel read-only review lenses on scoped code changes, then applies targeted cleanup to reduce complexity while preserving behavior. |
 | [`unslop`](skills/unslop/) | Removes generic AI tells from prose while preserving the intended voice, facts, and audience. |
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |

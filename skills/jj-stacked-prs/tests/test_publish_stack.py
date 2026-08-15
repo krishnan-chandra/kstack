@@ -18,6 +18,17 @@ _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from github_stack import (  # noqa: E402 - imports require the scripts path above
+    KSTACK_COMMENT_MARKER,
+    GitHubRepo,
+    PRInfo,
+    RemoteInfo,
+    SliceAction,
+    StackPlan,
+)
+from publish_stack import cmd_apply, cmd_plan  # noqa: E402
+from stack_model import Slice  # noqa: E402
+
 PUBLISH_SCRIPT = os.path.join(
     os.path.dirname(__file__), "..", "scripts", "publish_stack.py"
 )
@@ -40,8 +51,6 @@ def _make_fake_bin(commands: dict[str, str]) -> str:
 
 class PublishStackApplyUnitTest(unittest.TestCase):
     def test_plan_and_apply_block_truncated_stack(self) -> None:
-        from publish_stack import cmd_apply, cmd_plan
-
         args = SimpleNamespace(
             repo=".", trunk="trunk()", top="feat1", max_stack=50,
             timeout=20, remote="origin", plan_id="plan123",
@@ -56,9 +65,6 @@ class PublishStackApplyUnitTest(unittest.TestCase):
             self.assertTrue(any("truncated" in blocker for blocker in result["blockers"]))
 
     def test_plan_and_apply_require_top_as_final_boundary(self) -> None:
-        from publish_stack import cmd_apply, cmd_plan
-        from stack_model import Slice
-
         args = SimpleNamespace(
             repo=".", trunk="trunk()", top="feat2", max_stack=50,
             timeout=20, remote="origin", plan_id="plan123",
@@ -76,10 +82,6 @@ class PublishStackApplyUnitTest(unittest.TestCase):
             self.assertTrue(any("final PR boundary" in blocker for blocker in result["blockers"]))
 
     def test_comment_reconciliation_skips_when_authenticated_user_is_unknown(self) -> None:
-        from github_stack import GitHubRepo, RemoteInfo, SliceAction, StackPlan
-        from publish_stack import cmd_apply
-        from stack_model import Slice
-
         slices = [Slice("feat1", None, ["change1"], "First")]
         plan = StackPlan(
             "plan123", {"owner": "owner", "repo": "repo", "default_branch": "main"},
@@ -114,10 +116,6 @@ class PublishStackApplyUnitTest(unittest.TestCase):
         write_comment.assert_not_called()
 
     def test_first_publish_comments_include_all_created_pr_numbers(self) -> None:
-        from github_stack import GitHubRepo, PRInfo, RemoteInfo, SliceAction, StackPlan
-        from publish_stack import cmd_apply
-        from stack_model import Slice
-
         slices = [
             Slice("feat1", None, ["change1"], "First"),
             Slice("feat2", "feat1", ["change2"], "Second"),
@@ -172,6 +170,72 @@ class PublishStackApplyUnitTest(unittest.TestCase):
             body = comment_call.args[2]
             self.assertIn("#11", body)
             self.assertIn("#12", body)
+
+    def test_apply_preserves_merged_ancestors_in_nav_comments(self) -> None:
+        # Stack was feat1 (PR 10, merged) -> feat2 (PR 11, active)
+        # Local stack only has feat2 rebased onto main
+        slices = [Slice("feat2", None, ["change2"], "Second")]
+        actions = [
+            SliceAction("feat2", 11, True, False, False, "main", "main"),
+        ]
+        plan = StackPlan(
+            "plan123",
+            {"owner": "owner", "repo": "repo", "default_branch": "main"},
+            "origin",
+            "main",
+            actions,
+            [
+                {"pr_number": 11, "action": "create_or_update", "body_template": "navigation", "bookmark": "feat2"},
+            ],
+            [],
+        )
+        existing_comments = [{
+            "id": 99,
+            "user": "publisher",
+            "body": (
+                f"{KSTACK_COMMENT_MARKER}\n"
+                "<!-- kstack-stack-schema-v1 -->\n"
+                "| PR | Bookmark | Base |\n"
+                "|---|---|---|\n"
+                "| #10 | `feat1` | `main` |\n"
+                "| #11 | `feat2` | `feat1` |\n"
+            ),
+        }]
+        open_prs = [
+            PRInfo(11, "feat2", "main", "Second", True, "https://example/11", "owner"),
+        ]
+        args = SimpleNamespace(
+            repo=".", trunk="trunk()", top="feat2", max_stack=50,
+            timeout=20, remote="origin", plan_id="plan123",
+        )
+        model = {"blockers": [], "truncated": False, "top": "feat2", "stack": []}
+
+        with (
+            patch("publish_stack.build_inspect_model", return_value=model),
+            patch("publish_stack.derive_slices", return_value=slices),
+            patch("publish_stack.get_remote_info", return_value=RemoteInfo("origin", "https://github.com/owner/repo", GitHubRepo("owner", "repo"))),
+            patch("publish_stack.get_default_branch", return_value="main"),
+            patch("publish_stack.list_open_prs", return_value=open_prs),
+            patch("publish_stack.list_bookmarks", return_value=[]),
+            patch("publish_stack.list_remote_bookmarks", return_value=[]),
+            patch("publish_stack.build_plan", return_value=plan),
+            patch("publish_stack.push_bookmark"),
+            patch("publish_stack.get_gh_user", return_value="publisher"),
+            patch("publish_stack.get_pr_comments", return_value=existing_comments),
+            patch("publish_stack.get_pr_status", return_value="merged") as get_status,
+            patch("publish_stack.create_or_update_comment", return_value={}) as write_comment,
+        ):
+            result = cmd_apply(args)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(write_comment.call_count, 1)
+        get_status.assert_called_once_with(GitHubRepo("owner", "repo"), 10, ".", 20)
+        body = write_comment.call_args_list[0].args[2]
+        self.assertIn("#10", body)
+        self.assertIn("feat1", body)
+        self.assertIn("Merged", body)
+        self.assertIn("#11", body)
+        self.assertIn("feat2", body)
 
 
 class PublishStackPlanTest(unittest.TestCase):

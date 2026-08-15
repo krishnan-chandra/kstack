@@ -1,17 +1,35 @@
 ---
 name: write-pr
-description: Write and apply a crisp pull-request title and description from the branch diff. Use whenever the user asks to create, open, prepare, write, rewrite, refresh, or update a PR or its title/body. Update the open PR for the current branch; if none exists, push the branch as needed and create a draft PR. Organize the description by feature or behavior and give reviewers a thematic review guide rather than a file-by-file inventory.
+description: Write and apply a crisp pull-request title and description from a standalone branch diff or one exact stacked-PR slice. Use whenever the user asks to create, open, prepare, write, rewrite, refresh, or update a PR or its title/body. Update the selected open PR; if a standalone branch has none, push it as needed and create a draft PR. Organize the description by feature or behavior and give reviewers a thematic review guide rather than a file-by-file inventory.
 license: MIT
 compatibility: A git repository hosted on GitHub. Requires git and the authenticated GitHub CLI (`gh`).
 ---
 
 # Write a pull request
 
-Set the title and body of the current branch's open pull request. If the branch has no open PR, create a draft PR.
+Set the title and body of a standalone pull request or each explicit slice in a stacked pull request. Create a draft PR only when the selected workflow has no open PR.
 
 ## Establish the PR and diff
 
-1. Confirm that the current directory is a git repository, `gh auth status` succeeds, and the branch is neither detached nor the base branch. Stop on authentication, repository, or network errors rather than treating them as “no PR.”
+Choose the standalone or stacked workflow before inspecting the diff.
+
+### Stacked PR slices
+
+For a stacked PR, use this section instead of the current-branch steps below. The stack publisher owns bookmark pushes, PR creation, and target-base repair.
+
+1. Confirm that the directory is a Git repository and that `gh auth status` succeeds. Stop on authentication, repository, or network errors.
+2. Use the stack publication plan to identify each slice's bookmark, PR number, and GitHub `target_base`. Do not infer every slice from the current Git branch.
+3. Inspect only the slice's committed change:
+   - With jj, use `trunk()` below the bottom slice and the preceding bookmark below each later slice. Run `jj diff -r '<local-slice-base>..<slice-bookmark>'` and `jj log -r '<local-slice-base>..<slice-bookmark>'`.
+   - With Git refs, run `git diff <target-base>...<slice-bookmark>` and `git log --oneline <target-base>..<slice-bookmark>`.
+4. Write the title, summary, and review guide only from that slice. Exclude predecessor slices and working-copy changes above the bookmark.
+5. After the stack publisher creates or updates the PR, apply the metadata with `gh pr edit <number> --title '<title>' --body-file <body-file>`.
+
+If any slice has an empty diff or cannot be inspected, stop instead of publishing misleading metadata.
+
+### Standalone PR
+
+1. Confirm that the current directory is a Git repository, `gh auth status` succeeds, and the branch is neither detached nor the base branch. Stop on authentication, repository, or network errors rather than treating them as “no PR.”
 2. Record uncommitted changes with `git status --short`. They are not part of the PR diff; mention them at the end instead of describing or committing them.
 3. Find an open PR for the current branch with `gh pr view --json number,url,title,body,baseRefName,headRefName,isDraft`. If the command reports that no PR exists, prepare a new one. Do not replace a closed or merged PR.
 4. For an existing PR, use its `baseRefName`. For a new PR, use `branch.<current>.gh-merge-base` when configured; otherwise query the repository's default branch with `gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name'`.
@@ -82,13 +100,15 @@ Before applying the body, compare every claim with the diff. In particular, chec
 
 Write the body to a temporary file so shell quoting cannot corrupt Markdown.
 
-For an existing PR:
+For a stacked slice, let the stack publisher create or locate the PR. Then use `gh pr edit` with the explicit PR number. Skip the standalone push and creation steps below.
+
+For an existing standalone PR:
 
 ```bash
 gh pr edit <number> --title '<title>' --body-file <body-file>
 ```
 
-For a new PR:
+For a new standalone PR:
 
 1. If signing was requested or required and the outgoing history changed, re-run the signing check immediately before publication. Then push the current branch with `git push -u origin HEAD` if the commits are not on the remote. Creating the PR grants permission for this necessary push, but not for committing uncommitted work or force-pushing.
 2. Create the PR explicitly as a draft:
