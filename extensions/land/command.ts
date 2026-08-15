@@ -5,7 +5,7 @@ interface LandArgs {
 	method?: MergeMethod;
 	readiness: ReadinessMode;
 }
-const METHODS: ReadonlySet<string> = new Set(["merge", "squash", "rebase"]);
+const METHODS: ReadonlySet<string> = new Set(["squash", "rebase"]);
 const READINESS: ReadonlySet<string> = new Set(["check", "watch"]);
 export function parseLandArgs(text: string): { ok: true; args: LandArgs } | { ok: false; error: string } {
 	const tokens = text.trim() ? text.trim().split(/\s+/) : [];
@@ -22,8 +22,9 @@ export function parseLandArgs(text: string): { ok: true; args: LandArgs } | { ok
 			if (!Number.isSafeInteger(number) || number <= 0) return { ok: false, error: "--pr must be a positive integer." };
 			args.pr = number;
 		} else if (flag === "--method") {
-			if (!METHODS.has(value)) return { ok: false, error: "--method must be merge, squash, or rebase." };
-			if (value === "merge" || value === "squash" || value === "rebase") args.method = value;
+			if (!METHODS.has(value))
+				return { ok: false, error: "--method must be squash or rebase; merge commits are not supported by kstack." };
+			if (value === "squash" || value === "rebase") args.method = value;
 		} else if (flag === "--readiness") {
 			if (!READINESS.has(value)) return { ok: false, error: "--readiness must be check or watch." };
 			if (value === "check" || value === "watch") args.readiness = value;

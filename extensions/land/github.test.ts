@@ -10,7 +10,6 @@ test("parses repository policy and a pinned PR snapshot", async () => {
 		JSON.stringify({
 			nameWithOwner: "o/r",
 			defaultBranchRef: { name: "main" },
-			mergeCommitAllowed: false,
 			squashMergeAllowed: true,
 			rebaseMergeAllowed: true,
 		}),
@@ -36,6 +35,24 @@ test("parses repository policy and a pinned PR snapshot", async () => {
 		allowedMethods: ["squash", "rebase"],
 	});
 	assert.equal((await getPullRequest(exec, "/repo", 3)).headOid, SHA);
+});
+
+test("builds allowedMethods from squash and rebase only, ignoring merge commit capability", async () => {
+	const exec: ExecFn = async () => ({
+		code: 0,
+		stdout: JSON.stringify({
+			nameWithOwner: "o/r",
+			defaultBranchRef: { name: "main" },
+			squashMergeAllowed: true,
+			rebaseMergeAllowed: false,
+		}),
+		stderr: "",
+	});
+	assert.deepEqual(await getRepository(exec, "/repo"), {
+		nameWithOwner: "o/r",
+		defaultBranch: "main",
+		allowedMethods: ["squash"],
+	});
 });
 
 test("resolves exactly one open PR for the current branch", async () => {

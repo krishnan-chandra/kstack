@@ -29,7 +29,29 @@ confirmed fixes and wait for CI. If autopilot pushes a new head, Land pins that
 newly verified SHA before confirmation.
 
 If you omit `--method`, Land asks you to select one of the repository's enabled
-merge methods.
+merge methods (squash or rebase only — merge commits are never allowed by
+kstack policy).
+
+### Per-repository merge method config
+
+Add a `"land"` section to `~/.pi/agent/kstack.json` to set a default method per
+repository and skip both the method-selection and confirmation prompts:
+
+```json
+{
+  "land": {
+    "repos": {
+      "owner/frontend": "squash",
+      "owner/backend": "rebase"
+    }
+  }
+}
+```
+
+Precedence: `--method` CLI flag > per-repo config > interactive prompt. When the
+method comes from config (not CLI), the confirmation prompt is also skipped.
+Only `"squash"` and `"rebase"` are valid; unknown or invalid values are silently
+ignored.
 
 ## Safety and partial results
 

@@ -38,12 +38,7 @@ function diagnostic(text: string): string {
 export async function getRepository(exec: ExecFn, cwd: string, signal?: AbortSignal): Promise<RepositorySnapshot> {
 	const out = await exec(
 		"gh",
-		[
-			"repo",
-			"view",
-			"--json",
-			"nameWithOwner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
-		],
+		["repo", "view", "--json", "nameWithOwner,defaultBranchRef,squashMergeAllowed,rebaseMergeAllowed"],
 		{ cwd, timeout: LIMITS.queryMs, signal },
 	);
 	if (out.code !== 0) throw new Error(`Could not resolve authenticated GitHub repository: ${diagnostic(out.stderr)}`);
@@ -52,7 +47,7 @@ export async function getRepository(exec: ExecFn, cwd: string, signal?: AbortSig
 	if (typeof v?.nameWithOwner !== "string" || typeof branch?.name !== "string")
 		throw new Error("GitHub repository response is missing identity/default branch.");
 	const allowedMethods: MergeMethod[] = [];
-	if (v.mergeCommitAllowed === true) allowedMethods.push("merge");
+	// Kstack policy: merge commits are never allowed
 	if (v.squashMergeAllowed === true) allowedMethods.push("squash");
 	if (v.rebaseMergeAllowed === true) allowedMethods.push("rebase");
 	return { nameWithOwner: v.nameWithOwner, defaultBranch: branch.name, allowedMethods };

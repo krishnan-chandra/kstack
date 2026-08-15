@@ -7,6 +7,7 @@ import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
+import { getRepoMethod, loadLandConfig } from "./config.ts";
 import { findOpenPullRequestByHead } from "./github.ts";
 import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
@@ -14,7 +15,7 @@ import { abortableSleep } from "./sleep.ts";
 import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 
 function selectedMethod(value: string | undefined): MergeMethod | undefined {
-	return value === "merge" || value === "squash" || value === "rebase" ? value : undefined;
+	return value === "squash" || value === "rebase" ? value : undefined;
 }
 
 function blocked(reason: string): LandResult {
@@ -75,6 +76,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		const token = lifecycle.begin();
 		if (!token) return blocked("Another landing run is active.");
 		ctx.ui.setStatus("land", "land: resolving target");
+		const landConfig = loadLandConfig();
 		try {
 			const result = await runLand(options, {
 				exec: makeExec(pi),
@@ -83,6 +85,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 				runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd),
 				selectMethod: async (allowed) => selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
 				confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),
+				configuredMethodFor: (nameWithOwner) => getRepoMethod(landConfig, nameWithOwner),
 				now: Date.now,
 				sleep: abortableSleep,
 			});
@@ -101,9 +104,9 @@ export default function landExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, execute));
 	pi.registerCommand("land", {
-		description: "Land a merge-ready PR: /land [--pr N] [--method merge|squash|rebase] [--readiness check|watch]",
+		description: "Land a merge-ready PR: /land [--pr N] [--method squash|rebase] [--readiness check|watch]",
 		getArgumentCompletions: (prefix) =>
-			["--method merge", "--method squash", "--method rebase", "--readiness check", "--readiness watch"]
+			["--method squash", "--method rebase", "--readiness check", "--readiness watch"]
 				.filter((value) => value.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (text, ctx) => {
