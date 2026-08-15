@@ -4,6 +4,7 @@
  * These helpers never run `gh` or `git`. Execution wrappers live in `github.ts`.
  */
 
+import { KSTACK_COMMENT_MARKER } from "../jj-stacked-prs/types.ts";
 import type { CheckRun, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
 
@@ -14,8 +15,8 @@ function autopilotReplyBody(body: string): string {
 	return `${AUTOPILOT_REPLY_MARKER}\n${body}`;
 }
 
-function isAutopilotReply(body: string): boolean {
-	return body.includes(AUTOPILOT_REPLY_MARKER);
+function isAutomationComment(body: string): boolean {
+	return body.includes(AUTOPILOT_REPLY_MARKER) || body.includes(KSTACK_COMMENT_MARKER);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -230,7 +231,7 @@ export function parseIssueComments(stdout: string): RawIssueComment[] {
 		if (id === undefined || !Number.isInteger(id) || id < 1) continue;
 		const user = isRecord(item.user) ? asString(item.user.login) : asString(item.commenter);
 		const body = typeof item.body === "string" ? item.body : "";
-		if (isAutopilotReply(body)) continue;
+		if (isAutomationComment(body)) continue;
 		comments.push({
 			id,
 			commenter: user ?? "unknown",
