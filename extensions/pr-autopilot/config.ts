@@ -39,8 +39,9 @@ export type ConfigLoad =
 
 /**
  * Built-in tiny model set, used when no pr-autopilot config section exists.
- * These are the only models the autopilot is ever allowed to spawn children
- * with — they are small, fast, and cheap enough for repeated triage loops.
+ * These are the only models the autopilot may spawn children with. Each run
+ * picks one at random. They are small, fast, and cheap enough for repeated
+ * triage loops.
  */
 export const DEFAULT_TINY_MODELS: readonly AutopilotModelSpec[] = [
 	{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
@@ -97,7 +98,10 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 		return { ok: false, error: '"models" must be an array of {label, model, thinking?}.' };
 	}
 	if (obj.models.length < 2) {
-		return { ok: false, error: '"models" must contain at least 2 tiny model entries for independent triage.' };
+		return {
+			ok: false,
+			error: '"models" must contain at least 2 tiny model entries so each run can pick one at random.',
+		};
 	}
 	if (obj.models.length > 6) {
 		return { ok: false, error: '"models" may contain at most 6 entries.' };

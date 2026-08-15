@@ -73,7 +73,7 @@ export function renderLandConfirmation(input: {
 		`Land ${input.slices.length} stacked PR(s) bottom-up.`,
 		`Method: ${input.method}`,
 		`Readiness: ${input.readiness}`,
-		"Later frontiers are re-pinned at their own land time because restacks rewrite their heads.",
+		"Later pull requests are re-pinned when they land, because restacks rewrite their heads.",
 		"",
 		"Order:",
 	];

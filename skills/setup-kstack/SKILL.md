@@ -108,7 +108,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
 | `swarm` | `worker`, `maxConcurrency` | Use a fast worker for broad coverage work. |
-| `pr-autopilot` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Prefer cheap, fast models from distinct families. |
+| `pr-autopilot` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Each run picks one model at random from this pool. Prefer cheap, fast models from distinct families. |
 
 Keep the current timeouts and concurrency values unless the user asks to change
 them. Keep at least two distinct model families in a panel when available. Warn,

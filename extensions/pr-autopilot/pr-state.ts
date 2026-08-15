@@ -232,13 +232,16 @@ The selected workspace is already on the PR's ${backend === "jj" ? "bookmark" : 
 `;
 }
 
-/** Pick a tiny model from the config, rotating for independence across cycles. */
+/** Pick one tiny model from the configured pool. */
 export function pickModel(
 	models: readonly AutopilotModelSpec[],
-	turn: number,
+	random: () => number = Math.random,
 ): { model: string; label: string; thinking?: string } {
-	const index = turn % models.length;
-	return { model: models[index].model, label: models[index].label, thinking: models[index].thinking };
+	const sample = random();
+	const unit = Number.isFinite(sample) ? Math.min(Math.max(sample, 0), 0.999999999999) : 0;
+	const index = Math.min(models.length - 1, Math.floor(unit * models.length));
+	const spec = models[index];
+	return { model: spec.model, label: spec.label, thinking: spec.thinking };
 }
 
 export async function resolveTargetPR(
