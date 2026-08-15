@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { FAST_IMPLEMENT_REQUEST_EVENT } from "../fast-implement/api.ts";
 import { LAND_REQUEST_EVENT } from "../land/api.ts";
 import { PRAUTOPILOT_REQUEST_EVENT } from "../pr-autopilot/api.ts";
 import { dispatchRoute, getRestrictedTools } from "./dispatch.ts";
@@ -74,6 +75,55 @@ describe("dispatchRoute", () => {
 		lifecycle.endDispatch(token);
 		const result = await dispatchRoute("review", "task", undefined, false, "generic", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "aborted");
+	});
+
+	it("marks current fast-change dispatch as a takeover so the router stops using stale contexts", async () => {
+		const { lifecycle, token } = setup();
+		const bus: ExtensionAPI = {
+			events: {
+				emit(name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
+					assert.equal(name, FAST_IMPLEMENT_REQUEST_EVENT);
+					value.claimed = true;
+					value.completion = Promise.resolve();
+				},
+			},
+		} as never;
+		assert.deepEqual(
+			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
+			{ status: "takeover" },
+		);
+	});
+
+	it("fails closed without stale parent access when current takeover dispatch throws", async () => {
+		const { lifecycle, token } = setup();
+		const bus: ExtensionAPI = {
+			events: {
+				emit(_name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
+					value.claimed = true;
+					value.completion = Promise.reject(new Error("replacement send failed"));
+				},
+			},
+		} as never;
+		assert.deepEqual(
+			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
+			{ status: "takeover" },
+		);
+	});
+
+	it("keeps worktree fast-change dispatch in the parent session", async () => {
+		const { lifecycle, token } = setup();
+		const bus: ExtensionAPI = {
+			events: {
+				emit(_name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
+					value.claimed = true;
+					value.completion = Promise.resolve();
+				},
+			},
+		} as never;
+		assert.deepEqual(
+			await dispatchRoute("fast-change", "task", undefined, true, "generic", token, lifecycle, bus, ctx),
+			{ status: "dispatched" },
+		);
 	});
 
 	it("dispatches pr-autopilot through the typed request channel", async () => {

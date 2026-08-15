@@ -12,7 +12,11 @@ import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import type { PostPrRequest } from "./post-pr-options.ts";
 import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 
-type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
+type DispatchResult =
+	| { status: "dispatched" }
+	| { status: "takeover" }
+	| { status: "failed"; error: string }
+	| { status: "aborted" };
 
 /**
  * Dispatch the task to the appropriate handler based on the selected route.
@@ -66,11 +70,17 @@ export async function dispatchRoute(
 				};
 			try {
 				const result = await requestFastImplement(pi, task, worktree ? "worktree" : "current", changeKind, ctx);
-				return result.handled
-					? { status: "dispatched" }
-					: { status: "failed", error: "fast-implement extension is not loaded or did not accept the request." };
+				if (!result.handled) {
+					return { status: "failed", error: "fast-implement extension is not loaded or did not accept the request." };
+				}
+				return { status: worktree ? "dispatched" : "takeover" };
 			} catch (err) {
-				return { status: "failed", error: `fast-implement dispatch failed: ${(err as Error).message}` };
+				// A current-checkout handler may throw only after newSession has
+				// invalidated the router's parent-session handles. Returning takeover
+				// keeps the caller from touching stale pi/ctx objects.
+				return worktree
+					? { status: "failed", error: `fast-implement dispatch failed: ${(err as Error).message}` }
+					: { status: "takeover" };
 			}
 		}
 

@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { ChangeKind } from "../shared/change-kind.ts";
 
 export const LIMITS = {
@@ -13,7 +14,7 @@ export const LIMITS = {
 
 export interface RoleSpec {
 	model: string;
-	thinking?: string;
+	thinking?: ThinkingLevel;
 }
 export interface FastImplementConfig {
 	implementer: RoleSpec;
