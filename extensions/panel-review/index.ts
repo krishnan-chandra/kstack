@@ -3,6 +3,7 @@
 import { rmSync } from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
@@ -15,6 +16,7 @@ import { PanelTranscriptStore } from "./transcript-store.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
 export default function (pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "panel-review");
 	const lifecycle = new PanelLifecycle();
 	let activeInspector: OpenInspectorResult | undefined;
 	let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscriptStore } | undefined;

@@ -15,6 +15,7 @@ import {
 	changeKindPlaybookFile,
 	isChangeKind,
 } from "../shared/change-kind.ts";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
@@ -74,6 +75,7 @@ function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[]
 	return (ctx.getSystemPromptOptions().skills ?? []).map((skill) => ({ name: skill.name, baseDir: skill.baseDir }));
 }
 export default function planImplementExtension(pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "plan-implement");
 	const lifecycle = new WorkflowLifecycle();
 	let activeInspector: OpenInspectorResult | undefined;
 	let activeStores: { dashboard: PlanImplementDashboardStore; transcripts: PlanImplementTranscriptStore } | undefined;

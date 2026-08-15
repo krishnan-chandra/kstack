@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { requestLand } from "../land/api.ts";
 import { getRepoMethod, loadLandConfig } from "../land/config.ts";
 import { issueLandConfirmation } from "../land/confirmation.ts";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
 	claimJjStackCapabilities,
@@ -57,6 +58,7 @@ class StackLifecycle extends SessionRunLifecycle {
 }
 
 export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "jj-stack");
 	const lifecycle = new StackLifecycle();
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());

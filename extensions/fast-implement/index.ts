@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
@@ -13,6 +14,7 @@ import { runFastImplement } from "./runner.ts";
 import type { FastImplementRequest } from "./types.ts";
 
 export default function fastImplementExtension(pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "fast-implement");
 	const lifecycle = new SessionRunLifecycle();
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());

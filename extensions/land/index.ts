@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Box, Text } from "@earendil-works/pi-tui";
 import { requestStackLanding } from "../jj-stacked-prs/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
@@ -32,6 +33,7 @@ function blocked(reason: string): LandResult {
 }
 
 export default function landExtension(pi: ExtensionAPI): void {
+	guardCommandFallthrough(pi, "land");
 	const lifecycle = new LandLifecycle();
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());

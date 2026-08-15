@@ -25,10 +25,12 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { createHandoffHandler, requireHandoffSource } from "./command.ts";
 import { readHandoffHistory, searchHandoffHistory } from "./history-reader.ts";
 
 export default async function (pi: ExtensionAPI) {
+	guardCommandFallthrough(pi, "handoff");
 	const { Type, StringEnum } = await import("@earendil-works/pi-ai");
 
 	pi.registerCommand("handoff", {
