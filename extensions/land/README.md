@@ -10,6 +10,7 @@ and merge method before it asks GitHub to merge or enqueue the PR.
 /land --pr 42 --method squash
 /land --pr 42 --readiness watch
 /land
+/kstack --route land --pr 42 --readiness watch --method squash
 ```
 
 If you omit `--pr`, Land resolves the one open PR whose head matches the current
@@ -30,7 +31,8 @@ newly verified SHA before confirmation.
 
 If you omit `--method`, Land asks you to select one of the repository's enabled
 merge methods (squash or rebase only — merge commits are never allowed by
-kstack policy).
+kstack policy). `/kstack --route land` uses the same rule: omit `--method` to
+keep that chooser.
 
 ### Per-repository merge method config
 

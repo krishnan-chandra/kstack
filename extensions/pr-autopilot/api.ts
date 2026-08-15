@@ -9,9 +9,17 @@ const MODES: ReadonlySet<string> = new Set(["check", "threads", "drive", "watch"
 
 interface PrAutopilotPayload {
 	mode: AutopilotMode;
-	prNumber: number;
+	prNumber?: number;
 	ctx: ExtensionCommandContext;
 	cwd: string;
+}
+
+function isPositivePr(value: unknown): value is number {
+	return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function isOptionalPr(value: unknown): value is number | undefined {
+	return value === undefined || isPositivePr(value);
 }
 
 /* exported: request-channel contract */
@@ -25,9 +33,7 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		value !== null &&
 		"mode" in value &&
 		MODES.has(typeof value.mode === "string" ? value.mode : "") &&
-		"prNumber" in value &&
-		Number.isSafeInteger(value.prNumber) &&
-		Number(value.prNumber) > 0 &&
+		(!("prNumber" in value) || isOptionalPr(value.prNumber)) &&
 		"ctx" in value &&
 		typeof value.ctx === "object" &&
 		value.ctx !== null &&
@@ -43,7 +49,12 @@ export function isPrAutopilotRequest(value: unknown): value is PrAutopilotReques
 
 export function claimPrAutopilotRequest(
 	value: unknown,
-	run: (mode: AutopilotMode, prNumber: number, ctx: ExtensionCommandContext, cwd: string) => Promise<AutopilotResult>,
+	run: (
+		mode: AutopilotMode,
+		prNumber: number | undefined,
+		ctx: ExtensionCommandContext,
+		cwd: string,
+	) => Promise<AutopilotResult>,
 ): boolean {
 	return channel.claim(value, (payload) => run(payload.mode, payload.prNumber, payload.ctx, payload.cwd));
 }
@@ -51,9 +62,10 @@ export function claimPrAutopilotRequest(
 export function requestPrAutopilot(
 	pi: ExtensionAPI,
 	mode: AutopilotMode,
-	prNumber: number,
+	prNumber: number | undefined,
 	ctx: ExtensionCommandContext,
 	cwd: string,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
+	if (prNumber !== undefined && !isPositivePr(prNumber)) return Promise.resolve({ handled: false });
 	return channel.request(pi, { mode, prNumber, ctx, cwd });
 }

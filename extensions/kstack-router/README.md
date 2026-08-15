@@ -7,7 +7,7 @@ before waiting, classification, or dispatch. It never overwrites an explicit
 session name.
 
 ```
-/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--] <task>
+/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>
 ```
 
 ## Route table
@@ -21,7 +21,9 @@ session name.
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
 | `session-pickup` | Continue archived work, read-only | Active session, read-only tools |
-| `review` | Review working tree changes | panel-review |
+| `review` | Review working-tree or branch changes | panel-review |
+| `pr-autopilot` | Drive an existing GitHub PR to merge-ready | pr-autopilot |
+| `land` | Confirm and merge one exact PR head | land |
 | `unsupported` | No safe dispatch available | Nothing |
 
 ## Examples
@@ -34,10 +36,39 @@ session name.
 /kstack --route fast-change --worktree --change-kind bug-fix Fix a narrow parser bug
 /kstack --route change --stack --change-kind feature Split feature into three PRs
 /kstack --route review Review the latest changes
+/kstack --route pr-autopilot --mode drive --pr 42
+/kstack --route land --pr 42 --readiness watch --method squash
+/kstack Get PR 42 merge-ready
+/kstack Land PR 42
 /kstack --route arena -- "Generate three alternative designs"
 /kstack --route skill-authoring -- "Create a linter skill"
 /kstack --route session-pickup -- "What was I working on?"
 ```
+
+## Post-PR flags
+
+`--mode`, `--pr`, `--method`, and `--readiness` apply only after the final
+route is `pr-autopilot` or `land`. They are parsed lexically on every
+invocation, then rejected when they do not apply.
+
+| Flag | Values | Applies to | When omitted |
+|---|---|---|---|
+| `--mode` | `check`, `threads`, `drive`, `watch`, `cleanup` | `pr-autopilot` | Prompt for a mode |
+| `--pr` | positive integer | `pr-autopilot`, `land` | Autopilot prompts and treats a blank answer as lowest-unmerged auto-detection; land prompts and requires a number |
+| `--readiness` | `check`, `watch` | `land` | Prompt for readiness |
+| `--method` | `squash`, `rebase` | `land` | Leave undefined so land uses its repository-allowed chooser |
+
+An explicit `--route pr-autopilot` or `--route land` does not need a task.
+With every required flag present, the router skips the task editor, the
+classifier, and extra parameter dialogs. A natural-language task that the
+classifier maps to a post-PR route still collects missing parameters through
+those same prompts. The classifier never invents a PR number, mode, readiness,
+or merge method.
+
+Downstream confirmation stays with the owning extension. Dispatching `land`
+does not mean the PR merged; land still revalidates the exact head and asks
+before it merges.
+
 
 ## Change-kind playbooks
 
@@ -117,6 +148,8 @@ All fields are optional. Without configuration:
 - After dispatch, use the downstream cancellation mechanism:
   - `Ctrl+Shift+I`: abort plan/implement.
   - `Ctrl+Shift+X`: abort panel review.
+  - `Ctrl+Shift+B`: abort pr-autopilot.
+  - `Ctrl+Shift+L`: abort land.
   - `Esc` (normal agent cancellation) for active-session routes.
 - The active-session read-only gate is lifted automatically when the routed
   turn settles — including after cancellation — and on session shutdown, so

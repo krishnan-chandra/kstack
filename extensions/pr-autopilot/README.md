@@ -159,9 +159,12 @@ agent. The autopilot cleans up the child process and reports the abort.
 ## Integration
 
 The autopilot is designed to be invoked after `plan-implement` publishes a
-draft PR. It can also be triggered from the kstack-router if a `pr-autopilot`
-route is added:
+draft PR. `/kstack` can also dispatch it:
 
 ```text
 /kstack --route pr-autopilot --mode drive
+/kstack --route pr-autopilot --mode check --pr 42
 ```
+
+Omit `--pr` to keep the existing lowest-unmerged auto-detection. The router
+collects a missing mode or PR through deterministic prompts; it does not merge.
