@@ -1,7 +1,15 @@
 {
 	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
 	"files": {
-		"includes": ["extensions/**", "install.mjs", "install.test.mjs", "!**/node_modules"]
+		"includes": [
+			"extensions/**",
+			"install.mjs",
+			"install.test.mjs",
+			"check-exports.mjs",
+			"check-exports.test.mjs",
+			"skills/**/*.mjs",
+			"!**/node_modules"
+		]
 	},
 	"formatter": {
 		"enabled": true,

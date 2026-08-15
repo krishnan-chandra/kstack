@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const skillDir = dirname(fileURLToPath(import.meta.url));
 const EXTRACT = resolve(skillDir, "scripts/extract_sessions.py");
@@ -54,32 +54,91 @@ async function makeFixture() {
 		join(pi, "2026-08-01T00-00-00-000Z_019ff000-0000-7000-8000-000000000001.jsonl"),
 		[
 			JSON.stringify({ type: "session", version: 3, id: "pi-1", timestamp: "2026-08-01T00:00:00Z", cwd: "/x" }),
-			JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: "2026-08-01T00:00:01Z", message: { role: "user", content: [{ type: "text", text: "never commit without asking" }], timestamp: 0 } }),
-			JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-08-01T00:00:02Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "hidden" }, { type: "text", text: "understood" }] } }),
-			JSON.stringify({ type: "message", id: "t1", parentId: "a1", timestamp: "2026-08-01T00:00:03Z", message: { role: "toolResult", toolCallId: "c1", toolName: "bash", content: [{ type: "text", text: "noise" }], isError: false } }),
+			JSON.stringify({
+				type: "message",
+				id: "u1",
+				parentId: null,
+				timestamp: "2026-08-01T00:00:01Z",
+				message: { role: "user", content: [{ type: "text", text: "never commit without asking" }], timestamp: 0 },
+			}),
+			JSON.stringify({
+				type: "message",
+				id: "a1",
+				parentId: "u1",
+				timestamp: "2026-08-01T00:00:02Z",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "hidden" },
+						{ type: "text", text: "understood" },
+					],
+				},
+			}),
+			JSON.stringify({
+				type: "message",
+				id: "t1",
+				parentId: "a1",
+				timestamp: "2026-08-01T00:00:03Z",
+				message: {
+					role: "toolResult",
+					toolCallId: "c1",
+					toolName: "bash",
+					content: [{ type: "text", text: "noise" }],
+					isError: false,
+				},
+			}),
 		].join("\n") + "\n",
 	);
 
 	await mkdir(join(claude, "session-1", "subagents"), { recursive: true });
 	await writeFile(
 		join(claude, "session-1", "subagents", "agent-x.jsonl"),
-		JSON.stringify({ type: "user", sessionId: "agent-x", timestamp: "2026-08-02T00:00:03Z", message: { role: "user", content: "delegation prompt written by the agent" } }) + "\n",
+		JSON.stringify({
+			type: "user",
+			sessionId: "agent-x",
+			timestamp: "2026-08-02T00:00:03Z",
+			message: { role: "user", content: "delegation prompt written by the agent" },
+		}) + "\n",
 	);
 
 	await writeFile(
 		join(claude, "session-1.jsonl"),
 		[
 			JSON.stringify({ type: "mode", mode: "normal", sessionId: "claude-1" }),
-			JSON.stringify({ type: "user", sessionId: "claude-1", timestamp: "2026-08-02T00:00:01Z", message: { role: "user", content: "always run tests before committing" } }),
-			JSON.stringify({ type: "assistant", sessionId: "claude-1", timestamp: "2026-08-02T00:00:02Z", message: { role: "assistant", content: [{ type: "text", text: "will do" }, { type: "tool_use", name: "bash", input: {} }] } }),
+			JSON.stringify({
+				type: "user",
+				sessionId: "claude-1",
+				timestamp: "2026-08-02T00:00:01Z",
+				message: { role: "user", content: "always run tests before committing" },
+			}),
+			JSON.stringify({
+				type: "assistant",
+				sessionId: "claude-1",
+				timestamp: "2026-08-02T00:00:02Z",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "text", text: "will do" },
+						{ type: "tool_use", name: "bash", input: {} },
+					],
+				},
+			}),
 		].join("\n") + "\n",
 	);
 
 	await writeFile(
 		join(codex, "rollout-2026-08-03T00-00-00-abc.jsonl"),
 		[
-			JSON.stringify({ timestamp: "2026-08-03T00:00:01Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "we use jj in this repo" }] } }),
-			JSON.stringify({ timestamp: "2026-08-03T00:00:02Z", type: "event_msg", payload: { type: "agent_message", message: "noted" } }),
+			JSON.stringify({
+				timestamp: "2026-08-03T00:00:01Z",
+				type: "response_item",
+				payload: { type: "message", role: "user", content: [{ type: "input_text", text: "we use jj in this repo" }] },
+			}),
+			JSON.stringify({
+				timestamp: "2026-08-03T00:00:02Z",
+				type: "event_msg",
+				payload: { type: "agent_message", message: "noted" },
+			}),
 		].join("\n") + "\n",
 	);
 
@@ -96,7 +155,15 @@ async function makeFixture() {
 		`import sqlite3; c = sqlite3.connect(${JSON.stringify(cursorDb)}); c.execute('CREATE TABLE "evil""name" (value TEXT)'); c.execute('INSERT INTO "evil""name" VALUES (?)', (${JSON.stringify(bait)},)); c.commit(); c.close()`,
 	]);
 
-	return { dir, env: { PERSONALIZE_PI_HOME: pi, PERSONALIZE_CLAUDE_HOME: claude, PERSONALIZE_CODEX_HOME: codex, PERSONALIZE_CURSOR_HOME: cursor } };
+	return {
+		dir,
+		env: {
+			PERSONALIZE_PI_HOME: pi,
+			PERSONALIZE_CLAUDE_HOME: claude,
+			PERSONALIZE_CODEX_HOME: codex,
+			PERSONALIZE_CURSOR_HOME: cursor,
+		},
+	};
 }
 
 function runExtract(env, ...args) {
@@ -104,7 +171,12 @@ function runExtract(env, ...args) {
 		encoding: "utf8",
 		env: { ...process.env, ...env },
 	});
-	return out.trim() ? out.trim().split("\n").map((line) => JSON.parse(line)) : [];
+	return out.trim()
+		? out
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line))
+		: [];
 }
 
 test("extractor normalizes user turns from all four agents", async () => {
@@ -130,7 +202,10 @@ test("extractor excludes Claude subagent transcripts and Cursor unknown roles by
 	const { dir, env } = await makeFixture();
 	try {
 		const records = runExtract(env, "--source", "all", "--roles", "user");
-		assert.ok(records.every((r) => r.role === "user"), "no unknown-role Cursor records in a user-only run");
+		assert.ok(
+			records.every((r) => r.role === "user"),
+			"no unknown-role Cursor records in a user-only run",
+		);
 		assert.ok(
 			records.some((r) => r.source === "cursor" && r.text.includes("prefer small diffs")),
 			"aiService.prompts rows count as user turns in a default run",
@@ -138,7 +213,10 @@ test("extractor excludes Claude subagent transcripts and Cursor unknown roles by
 		assert.ok(!records.some((r) => r.text.includes("delegation prompt")), "subagent transcripts excluded");
 
 		const withSubagents = runExtract(env, "--source", "claude", "--include-subagents");
-		assert.ok(withSubagents.some((r) => r.text.includes("delegation prompt")), "explicit opt-in includes subagents");
+		assert.ok(
+			withSubagents.some((r) => r.text.includes("delegation prompt")),
+			"explicit opt-in includes subagents",
+		);
 
 		const withUnknown = runExtract(env, "--source", "cursor", "--roles", "unknown");
 		assert.ok(withUnknown.length > 0, "unknown role is an explicit opt-in");
@@ -151,7 +229,10 @@ test("extractor quotes hostile SQLite identifiers instead of injecting", async (
 	const { dir, env } = await makeFixture();
 	try {
 		const records = runExtract(env, "--source", "cursor", "--roles", "unknown");
-		assert.ok(records.some((r) => r.text.includes("bait value from hostile table")), "hostile table is read safely, not executed");
+		assert.ok(
+			records.some((r) => r.text.includes("bait value from hostile table")),
+			"hostile table is read safely, not executed",
+		);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -188,7 +269,10 @@ test("extractor honors --since, --limit, and --list-sources", async () => {
 	const { dir, env } = await makeFixture();
 	try {
 		const recent = runExtract(env, "--source", "pi,claude", "--since", "2026-08-02");
-		assert.deepEqual(recent.map((r) => r.source), ["claude"]);
+		assert.deepEqual(
+			recent.map((r) => r.source),
+			["claude"],
+		);
 
 		// The cap is per source, newest first: one message per source survives.
 		const limited = runExtract(env, "--source", "all", "--roles", "user", "--limit", "1");
@@ -216,7 +300,8 @@ test("extractor tolerates malformed lines and missing directories", async () => 
 
 		const empty = runExtract(
 			{ PERSONALIZE_PI_HOME: join(dir, "nope"), PERSONALIZE_CURSOR_HOME: join(dir, "nope") },
-			"--source", "pi,cursor",
+			"--source",
+			"pi,cursor",
 		);
 		assert.deepEqual(empty, []);
 	} finally {

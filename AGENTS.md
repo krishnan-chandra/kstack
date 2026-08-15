@@ -15,10 +15,21 @@ Run the full test suite and typecheck from the repository root:
 npm test
 npm run typecheck
 npm run lint
+npm run check:exports
 ```
 
 Use a colocated test glob for a focused iteration, such as
-`node --test extensions/handoff/*.test.ts`.
+`node --test extensions/handoff/*.test.ts` or
+`node --test check-exports.test.mjs`.
+
+Python 3 is required for the `git-worktrees` skill scripts. Run that hermetic
+suite and compile the bundled scripts without writing bytecode into the
+checkout:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/tests -p 'test_*.py'
+PYTHONPYCACHEPREFIX=/tmp/kstack-pycache python3 -m py_compile skills/git-worktrees/scripts/*.py
+```
 
 ## Conventions
 

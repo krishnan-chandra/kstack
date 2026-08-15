@@ -351,7 +351,80 @@ describe("pr-autopilot state machine", () => {
 		});
 	});
 
+	describe("forbidden path restoration", () => {
+		const sha = makePr().headSha;
+		const identity = { kind: "git" as const, ref: "kstack/fix-thing", headSha: sha };
+
+		function gitResponses(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {
+			const calls: string[] = [];
+			const exec: ExecFn = async (_command, args) => {
+				const key = args.join(" ");
+				calls.push(key);
+				const response = responses[key] ?? {};
+				return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
+			};
+			return { exec, calls };
+		}
+
+		function identityResponses(overrides: Record<string, { code?: number; stdout?: string; stderr?: string }> = {}) {
+			return {
+				"branch --show-current": { stdout: "kstack/fix-thing\n" },
+				"rev-parse HEAD": { stdout: `${sha}\n` },
+				"status --porcelain=v1 -z --untracked-files=all": { stdout: "?? .env.local\0" },
+				...overrides,
+			};
+		}
+
+		it("restores a forbidden path and does not commit or push", async () => {
+			const { exec, calls } = gitResponses(
+				identityResponses({
+					"restore --staged --worktree -- .env.local": {},
+				}),
+			);
+			const result = await doCommitAndPush(new GitBackend(exec), "/repo", identity, 42, "VERIFY_OK");
+			assert.deepEqual(result, {
+				kind: "failed",
+				error: "Fixer touched forbidden paths: .env.local. Those changes were restored.",
+			});
+			assert.ok(calls.includes("restore --staged --worktree -- .env.local"));
+			assert.equal(
+				calls.some((call) => call.startsWith("add ") || call.startsWith("commit ") || call.startsWith("push ")),
+				false,
+			);
+		});
+
+		it("includes the restoration error and does not commit or push", async () => {
+			const { exec, calls } = gitResponses(
+				identityResponses({
+					"restore --staged --worktree -- .env.local": { code: 1, stderr: "restore denied\n" },
+					"clean -f -- .env.local": { code: 1, stderr: "clean denied\n" },
+				}),
+			);
+			const result = await doCommitAndPush(new GitBackend(exec), "/repo", identity, 42, "VERIFY_OK");
+			assert.equal(result.kind, "failed");
+			if (result.kind === "failed") {
+				assert.match(result.error, /Fixer touched forbidden paths: \.env\.local/);
+				assert.match(result.error, /Automatic restoration failed: \.env\.local: restore denied/);
+			}
+			assert.equal(
+				calls.some((call) => call.startsWith("add ") || call.startsWith("commit ") || call.startsWith("push ")),
+				false,
+			);
+		});
+	});
+
 	describe("cleanup semantics", () => {
+		function gitResponses(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {
+			const calls: string[] = [];
+			const exec: ExecFn = async (_command, args) => {
+				const key = args.join(" ");
+				calls.push(key);
+				const response = responses[key] ?? {};
+				return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
+			};
+			return { exec, calls };
+		}
+
 		it("is an explicit no-op for jj without asking to remove a Git worktree", async () => {
 			let confirmed = false;
 			const notices: string[] = [];
@@ -370,6 +443,94 @@ describe("pr-autopilot state machine", () => {
 			assert.equal(cleaned, true);
 			assert.equal(confirmed, false);
 			assert.match(notices.join("\n"), /no-op with the jj backend/);
+		});
+
+		it("does not confirm or remove a non-kstack Git branch", async () => {
+			let confirmed = false;
+			const notices: Array<{ message: string; level: string }> = [];
+			const { exec, calls } = gitResponses({
+				"branch --show-current": { stdout: "main\n" },
+			});
+			const cleaned = await runCleanup(
+				new GitBackend(exec),
+				"/repo",
+				async () => {
+					confirmed = true;
+					return true;
+				},
+				(message, level) => notices.push({ message, level }),
+			);
+			assert.equal(cleaned, true);
+			assert.equal(confirmed, false);
+			assert.equal(
+				calls.some((call) => call.includes("worktree remove") || call.startsWith("branch -d")),
+				false,
+			);
+			assert.match(notices.map((notice) => notice.message).join("\n"), /not a managed kstack worktree/);
+		});
+
+		it("returns false and does not remove when confirmation is declined", async () => {
+			const { exec, calls } = gitResponses({
+				"branch --show-current": { stdout: "kstack/fix-thing\n" },
+			});
+			const cleaned = await runCleanup(
+				new GitBackend(exec),
+				"/repo",
+				async () => false,
+				() => {},
+			);
+			assert.equal(cleaned, false);
+			assert.equal(
+				calls.some((call) => call.includes("worktree remove") || call.startsWith("branch -d")),
+				false,
+			);
+		});
+
+		it("returns false and emits an error when worktree removal fails", async () => {
+			const notices: Array<{ message: string; level: string }> = [];
+			const { exec, calls } = gitResponses({
+				"branch --show-current": { stdout: "kstack/fix-thing\n" },
+				"rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
+				"worktree remove /repo --force": { code: 1, stderr: "worktree locked\n" },
+			});
+			const cleaned = await runCleanup(
+				new GitBackend(exec),
+				"/repo",
+				async () => true,
+				(message, level) => notices.push({ message, level }),
+			);
+			assert.equal(cleaned, false);
+			assert.equal(
+				calls.some((call) => call.startsWith("branch -d")),
+				false,
+			);
+			assert.deepEqual(notices, [
+				{ message: "Worktree removal failed: worktree locked. You may need to remove it manually.", level: "error" },
+			]);
+		});
+
+		it("returns true and emits warning plus completion after a branch-deletion warning", async () => {
+			const notices: Array<{ message: string; level: string }> = [];
+			const { exec } = gitResponses({
+				"branch --show-current": { stdout: "kstack/fix-thing\n" },
+				"rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
+				"worktree remove /repo --force": {},
+				"branch -d kstack/fix-thing": { code: 1, stderr: "not fully merged\n" },
+			});
+			const cleaned = await runCleanup(
+				new GitBackend(exec),
+				"/repo",
+				async () => true,
+				(message, level) => notices.push({ message, level }),
+			);
+			assert.equal(cleaned, true);
+			assert.deepEqual(notices, [
+				{ message: "Branch deletion warning: not fully merged", level: "warning" },
+				{
+					message: "Managed worktree and branch removed. To archive the linked Pi session, run: /session-archive",
+					level: "info",
+				},
+			]);
 		});
 	});
 

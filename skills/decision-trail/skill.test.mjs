@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const skillDir = dirname(fileURLToPath(import.meta.url));
 const LOG_SH = resolve(skillDir, "scripts/log.sh");

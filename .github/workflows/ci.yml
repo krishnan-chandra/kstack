@@ -13,7 +13,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: npm ci
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/tests -p 'test_*.py'
+      - run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/kstack-pycache" python3 -m py_compile skills/git-worktrees/scripts/*.py
       - run: npm run typecheck
       - run: npx biome ci .
       - run: npm test

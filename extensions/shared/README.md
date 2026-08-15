@@ -8,8 +8,8 @@
 | `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, and parses their JSONL event streams. |
 | `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
-| `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec`. |
-| `git-policy.ts` | Enforces current-workstream branch and committed-worktree postconditions. |
+| `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec` for VCS modules. |
+| `inspector-overlay.ts` | Renders the read-only child-transcript inspector overlay used by live dashboards. |
 | `kstack-config.ts` | Locates `kstack.json`, loads sections, and defines common model and thinking predicates. |
 | `model-availability.ts` | Checks whether a child process can reproduce an authenticated model. |
 | `model-spec.ts` | Validates, splits, and formats configured model references. |
@@ -18,7 +18,9 @@
 | `request-channel.ts` | Implements synchronous claim-once invocation between loaded extensions. |
 | `session-lifecycle.ts` | Provides generation-counted session and abortable-run lifecycle guards. |
 | `session-name.ts` | Derives and assigns workflow session names. |
-| `worktree.ts` | Plans and creates managed Git worktrees. |
+| `slug.ts` | Extracts the short keyword slug used for session names, branches, and worktree paths. |
+| `transcript-store.ts` | Stores bounded ephemeral child transcripts for live dashboards and inspectors. |
+| `vcs/` | Owns the Git and jj mutation contract. See [`vcs/README.md`](vcs/README.md) for backend contracts, config/factory, Git and jj implementations, preflight, and child guidance. |
 | `playbooks/` | Stores shared engineering principles and change-kind proof obligations. |
 
 `handoff` deliberately imports `session-archive` reader modules (`archive-files`, `session-jsonl`, `tool-output`, and `archive-store`). Handoff is a reader of the archive by design. This one-directional dependency is accepted; do not move the archive engine here.

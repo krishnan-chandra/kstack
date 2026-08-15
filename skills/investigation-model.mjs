@@ -2,8 +2,8 @@
 /** Resolve an allowlisted small/fast investigation model from kstack.json. */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const INVESTIGATION_THINKING_LEVELS = new Set(["medium", "high", "xhigh", "max"]);
@@ -24,7 +24,12 @@ function agentDir(env = process.env) {
 }
 
 export function validateInvestigationConfig(raw) {
-	if (raw === undefined) return { ok: true, config: { allowedModels: FAST_MODELS, defaultModel: FAST_MODELS[0].model }, source: "built-in defaults" };
+	if (raw === undefined)
+		return {
+			ok: true,
+			config: { allowedModels: FAST_MODELS, defaultModel: FAST_MODELS[0].model },
+			source: "built-in defaults",
+		};
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: '"investigation" must be an object.' };
 	}
@@ -35,16 +40,29 @@ export function validateInvestigationConfig(raw) {
 	const models = [];
 	const seen = new Set();
 	for (const entry of allowedModels) {
-		if (typeof entry !== "object" || entry === null || Array.isArray(entry) || typeof entry.model !== "string" || !MODEL_ID_RE.test(entry.model)) {
-			return { ok: false, error: 'Each "investigation.allowedModels" entry must be {"model":"provider/model", "thinking"?}.' };
+		if (
+			typeof entry !== "object" ||
+			entry === null ||
+			Array.isArray(entry) ||
+			typeof entry.model !== "string" ||
+			!MODEL_ID_RE.test(entry.model)
+		) {
+			return {
+				ok: false,
+				error: 'Each "investigation.allowedModels" entry must be {"model":"provider/model", "thinking"?}.',
+			};
 		}
 		if (!FAST_MODEL_IDS.has(entry.model)) {
-			return { ok: false, error: `"investigation.allowedModels" can contain only kstack's fast investigation models; ${entry.model} is unsupported.` };
+			return {
+				ok: false,
+				error: `"investigation.allowedModels" can contain only kstack's fast investigation models; ${entry.model} is unsupported.`,
+			};
 		}
 		if (typeof entry.thinking !== "string" || !INVESTIGATION_THINKING_LEVELS.has(entry.thinking)) {
 			return { ok: false, error: '"investigation.allowedModels[].thinking" must be medium, high, xhigh, or max.' };
 		}
-		if (seen.has(entry.model)) return { ok: false, error: `"investigation.allowedModels" contains ${entry.model} more than once.` };
+		if (seen.has(entry.model))
+			return { ok: false, error: `"investigation.allowedModels" contains ${entry.model} more than once.` };
 		seen.add(entry.model);
 		models.push({ model: entry.model, ...(entry.thinking === undefined ? {} : { thinking: entry.thinking }) });
 	}
@@ -60,7 +78,8 @@ export function loadInvestigationConfig(env = process.env) {
 	if (!existsSync(path)) return validateInvestigationConfig(undefined);
 	try {
 		const root = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof root !== "object" || root === null || Array.isArray(root)) return { ok: false, error: "kstack.json must be a JSON object." };
+		if (typeof root !== "object" || root === null || Array.isArray(root))
+			return { ok: false, error: "kstack.json must be a JSON object." };
 		return validateInvestigationConfig(root.investigation);
 	} catch (error) {
 		return { ok: false, error: `Cannot read ${path}: ${error.message}` };
@@ -73,9 +92,18 @@ export function resolveInvestigationModel(requested, env = process.env) {
 	const model = requested ?? loaded.config.defaultModel;
 	const allowed = loaded.config.allowedModels.find((entry) => entry.model === model);
 	if (!allowed) {
-		return { ok: false, error: `${model} is not in investigation.allowedModels. These skills only run allowlisted fast models.` };
+		return {
+			ok: false,
+			error: `${model} is not in investigation.allowedModels. These skills only run allowlisted fast models.`,
+		};
 	}
-	return { ok: true, model, thinking: allowed.thinking, spec: allowed.thinking ? `${model}:${allowed.thinking}` : model, source: loaded.source };
+	return {
+		ok: true,
+		model,
+		thinking: allowed.thinking,
+		spec: allowed.thinking ? `${model}:${allowed.thinking}` : model,
+		source: loaded.source,
+	};
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

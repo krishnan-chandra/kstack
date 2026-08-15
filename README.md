@@ -141,6 +141,7 @@ rows stay unnamed.
 
 - Pi 0.84.1 or newer
 - Node.js 22 or newer
+- Python 3.12 or newer for the `git-worktrees` skill scripts and their tests
 - A local filesystem for Pi's agent directory
 
 The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
@@ -308,6 +309,7 @@ For focused runs, use the individual test commands:
 
 ```bash
 node --test install.test.mjs
+node --test check-exports.test.mjs
 node --test extensions/steering-swap/*.test.ts
 node --test extensions/session-archive/*.test.ts
 node --test extensions/handoff/*.test.ts
@@ -326,6 +328,15 @@ node --test skills/recall/*.test.mjs
 node --test skills/setup-kstack/*.test.mjs
 node --test skills/personalize/skill.test.mjs
 node --test skills/investigation-model.test.mjs
+```
+
+Python 3 is required to develop the `git-worktrees` skill. Run its hermetic
+suite and compile the bundled scripts without writing bytecode into the
+checkout:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/tests -p 'test_*.py'
+PYTHONPYCACHEPREFIX=/tmp/kstack-pycache python3 -m py_compile skills/git-worktrees/scripts/*.py
 ```
 
 The router also has a headless smoke test that registers the real extension

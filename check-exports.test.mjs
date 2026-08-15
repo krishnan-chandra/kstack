@@ -30,7 +30,11 @@ test("accepts a test-referenced export", () => {
 
 test("accepts a marker-comment export", () => {
 	const root = tempRoot();
-	write(root, "marked.ts", "/* exported: request-channel contract */\nexport interface Payload {\n\tvalue: string;\n}\n");
+	write(
+		root,
+		"marked.ts",
+		"/* exported: request-channel contract */\nexport interface Payload {\n\tvalue: string;\n}\n",
+	);
 	assert.deepEqual(findUnusedExports({ root }), []);
 });
 
