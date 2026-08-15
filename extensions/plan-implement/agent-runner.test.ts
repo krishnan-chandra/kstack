@@ -288,10 +288,10 @@ describe("plan-implement child runner", () => {
 		process.stdout.emit(
 			"data",
 			Buffer.from(
-				JSON.stringify({
+				`${JSON.stringify({
 					type: "message_end",
 					message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
-				}) + "\n",
+				})}\n`,
 			),
 		);
 		process.close(0);
@@ -305,7 +305,7 @@ describe("plan-implement child runner", () => {
 		process.stdout.emit(
 			"data",
 			Buffer.from(
-				JSON.stringify({
+				`${JSON.stringify({
 					type: "message_end",
 					message: {
 						role: "assistant",
@@ -313,7 +313,7 @@ describe("plan-implement child runner", () => {
 						content: [{ type: "text", text: "final plan" }],
 						usage: { input: 3, output: 4, cost: { total: 0.1 } },
 					},
-				}) + "\n",
+				})}\n`,
 			),
 		);
 		process.close(0);
@@ -340,10 +340,10 @@ describe("plan-implement child runner", () => {
 		provider.stdout.emit(
 			"data",
 			Buffer.from(
-				JSON.stringify({
+				`${JSON.stringify({
 					type: "message_end",
 					message: { role: "assistant", stopReason: "error", errorMessage: "quota exceeded", content: [] },
-				}) + "\n",
+				})}\n`,
 			),
 		);
 		provider.close(0);

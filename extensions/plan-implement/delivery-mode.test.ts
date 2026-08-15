@@ -20,7 +20,7 @@ function fakes(
 		trunk?: ExecFnResult;
 	} = {},
 ): { jj: ExecFn; git: ExecFn } {
-	const jj: ExecFn = async (command, args) => {
+	const jj: ExecFn = async (_command, args) => {
 		if (args[0] === "--version") {
 			if (opts.jjVersion instanceof Error) throw opts.jjVersion;
 			return opts.jjVersion ?? ok("jj 0.44.0\n");

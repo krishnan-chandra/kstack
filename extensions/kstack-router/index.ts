@@ -2,7 +2,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ChangeKind } from "../shared/change-kind.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
@@ -14,13 +13,7 @@ import { dispatchRoute, getPlaybookForRoute, getRestrictedTools } from "./dispat
 import { type DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import { type RouteCardDetails, registerRouteCardRenderer } from "./route-card.ts";
 import { resolveRoute } from "./route-resolution.ts";
-import {
-	allowedReadToolsForRoute,
-	type DeliveryRecommendation,
-	isActiveSessionRoute,
-	type RouteId,
-	type RouterConfig,
-} from "./types.ts";
+import { allowedReadToolsForRoute, isActiveSessionRoute, type RouteId, type RouterConfig } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PLAYBOOKS_DIR = join(EXTENSION_DIR, "playbooks");

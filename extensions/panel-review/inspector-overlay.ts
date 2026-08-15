@@ -14,10 +14,8 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey } from "@earendil-works/pi-tui";
-import { type ChildUsage, formatDuration } from "../shared/child-agent-runner.ts";
+import { formatDuration } from "../shared/child-agent-runner.ts";
 import {
-	type DashboardRow,
-	type DashboardStatus,
 	type DashboardTheme,
 	type PanelDashboardStore,
 	rowElapsedSeconds,
@@ -26,7 +24,7 @@ import {
 	stripTerminalSequencesFallback,
 	type TerminalText,
 } from "./live-dashboard.ts";
-import { EVICTION_NOTICE, type PanelTranscriptStore, type TranscriptEntry } from "./transcript-store.ts";
+import { EVICTION_NOTICE, type PanelTranscriptStore } from "./transcript-store.ts";
 
 export interface InspectorState {
 	selectedIndex: number;

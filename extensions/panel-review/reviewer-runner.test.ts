@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl, summarizeToolCall } from "./reviewer-runner.ts";
-import type { ReviewerResult } from "./types.ts";
 
 describe("JsonLineParser", () => {
 	it("handles events split across chunks and skips malformed lines", () => {
@@ -89,7 +88,7 @@ function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImp
 					},
 				};
 				for (const e of [...(spec.events ?? []), assistant]) {
-					for (const cb of listeners.stdout) cb(Buffer.from(JSON.stringify(e) + "\n"));
+					for (const cb of listeners.stdout) cb(Buffer.from(`${JSON.stringify(e)}\n`));
 				}
 				if (spec.stderr) for (const cb of listeners.stderr) cb(Buffer.from(spec.stderr));
 				handlers.close?.forEach((cb) => (cb as (c: number) => void)(spec.exitCode ?? 0));
@@ -298,7 +297,7 @@ function timedSpawn(
 					type: "message_end",
 					message: { role: "assistant", content: [{ type: "text", text: spec.finalText ?? "done" }], usage: {} },
 				};
-				for (const cb of listeners.stdout) cb(Buffer.from(JSON.stringify(assistant) + "\n"));
+				for (const cb of listeners.stdout) cb(Buffer.from(`${JSON.stringify(assistant)}\n`));
 				handlers.close?.forEach((cb) => (cb as (c: number) => void)(0));
 			}, spec.closeAtMs).unref();
 		}
@@ -370,25 +369,23 @@ describe("runReviewer stall detection", () => {
 					chunks: [
 						{
 							atMs: 10,
-							text:
-								JSON.stringify({
-									type: "tool_execution_start",
-									toolCallId: "c1",
-									toolName: "read",
-									args: { path: "/repo/extensions/panel-review/types.ts" },
-								}) + "\n",
+							text: `${JSON.stringify({
+								type: "tool_execution_start",
+								toolCallId: "c1",
+								toolName: "read",
+								args: { path: "/repo/extensions/panel-review/types.ts" },
+							})}\n`,
 						},
 						{
 							atMs: 20,
-							text: JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "read" }) + "\n",
+							text: `${JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "read" })}\n`,
 						},
 						{
 							atMs: 30,
-							text:
-								JSON.stringify({
-									type: "message_end",
-									message: { role: "assistant", content: [{ type: "text", text: "partial" }], usage: { input: 10 } },
-								}) + "\n",
+							text: `${JSON.stringify({
+								type: "message_end",
+								message: { role: "assistant", content: [{ type: "text", text: "partial" }], usage: { input: 10 } },
+							})}\n`,
 						},
 					],
 					// never closes: the child stalls after one completed turn
@@ -468,13 +465,13 @@ describe("runReviewer live text preview", () => {
 				for (const line of lines) {
 					const half = Math.floor(line.length / 2);
 					for (const cb of listeners.stdout) cb(Buffer.from(line.slice(0, half)));
-					for (const cb of listeners.stdout) cb(Buffer.from(line.slice(half) + "\n"));
+					for (const cb of listeners.stdout) cb(Buffer.from(`${line.slice(half)}\n`));
 				}
 				const end = JSON.stringify({
 					type: "message_end",
 					message: { role: "assistant", content: [{ type: "text", text: "Hello world" }], usage: {} },
 				});
-				for (const cb of listeners.stdout) cb(Buffer.from(end + "\n"));
+				for (const cb of listeners.stdout) cb(Buffer.from(`${end}\n`));
 				handlers.close?.forEach((cb) => (cb as (c: number) => void)(0));
 			});
 			return proc;
@@ -518,7 +515,7 @@ describe("runReviewer live text preview", () => {
 		const previews = seen.map((s) => s.preview).filter((p): p is string => p !== undefined);
 		assert.ok(previews.some((p) => p.startsWith("first draft")));
 		// After the second message_start the preview restarts from scratch.
-		const idx = previews.findIndex((p) => p === "second draft");
+		const idx = previews.indexOf("second draft");
 		assert.ok(idx > 0, `previews: ${JSON.stringify(previews)}`);
 		assert.ok(!previews[idx].includes("first draft"));
 	});
@@ -537,7 +534,7 @@ describe("runReviewer live text preview", () => {
 		for (let i = 0; i < 20; i++) {
 			events.push({
 				type: "message_update",
-				assistantMessageEvent: { type: "text_delta", delta: `${i}:` + "語".repeat(30) },
+				assistantMessageEvent: { type: "text_delta", delta: `${i}:${"語".repeat(30)}` },
 			});
 		}
 		const r = await run(

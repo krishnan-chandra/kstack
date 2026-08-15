@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
+import { changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { createCurrentWorkstreamBranch, verifyCommittedWorkstream } from "../shared/git-policy.ts";

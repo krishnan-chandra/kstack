@@ -18,12 +18,8 @@
  *   cleanup  — remove the managed worktree and branch after confirmation.
  */
 
-import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { runAgent } from "./agent-runner.ts";
 import {
 	applyForceAsk,
 	applyThreadReplies,
@@ -39,26 +35,7 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import {
-	attachFailedLogs,
-	currentBranch,
-	currentHead,
-	findLowestUnmergedPR,
-	getCheckRuns,
-	getIssueComments,
-	getReviewThreads,
-	integrateRemoteHead,
-	isForbiddenStagingPath,
-	markPrReady,
-	mergeBaseIntoHead,
-	parsePorcelainPaths,
-	replyToIssueComment,
-	replyToReviewComment,
-	rerunFailedRun,
-	resolveReviewThread,
-	viewPR,
-	watchChecks,
-} from "./github.ts";
+import { markPrReady, mergeBaseIntoHead, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
 	buildFixerTask,
@@ -74,21 +51,13 @@ import {
 	resolveTargetPR,
 } from "./pr-state.ts";
 import {
-	type AutopilotAgentRole,
 	type AutopilotMode,
-	type AutopilotModelSpec,
-	type AutopilotPersistedState,
-	type CheckRun,
 	type ExecFn,
-	type FailureClass,
 	LIMITS,
 	type PRState,
 	type ResolvedAutopilotConfig,
-	type ReviewThread,
-	type ThreadDecision,
 	type UsageSummary,
 } from "./types.ts";
-import { shouldForceAsk, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 export type LifecyclePhase =
 	| "idle"
 	| "discovering"

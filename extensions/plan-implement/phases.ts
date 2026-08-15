@@ -15,7 +15,7 @@ import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
 import type { ExecFn } from "./delivery-mode.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
-import type { WorkflowPhase, WorkflowToken } from "./lifecycle.ts";
+import type { WorkflowPhase } from "./lifecycle.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 

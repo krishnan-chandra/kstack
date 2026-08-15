@@ -165,7 +165,7 @@ describe("moveToArchive", () => {
 		const dest = archiveDestination(tree.archiveRoot, TEST_SESSION_ID, "2026-08-11T08:48:02.226Z");
 		mkdirSync(dirname(dest), { recursive: true });
 		writeFileSync(dest, original);
-		writeFileSync(source, original + "changed after staging\n");
+		writeFileSync(source, `${original}changed after staging\n`);
 		assert.throws(
 			() => moveToArchive(source, dest, sha256Hex(original), original.length),
 			/changed after it was staged/,
@@ -235,7 +235,7 @@ describe("isArchiveWriteTarget", () => {
 		mkdirSync(tree.archiveRoot, { recursive: true });
 		assert.ok(!isArchiveWriteTarget(join(tree.sessionDir, "active.jsonl"), tree.sessionDir, tree.archiveRoot));
 		// Prefix trap: archive sibling whose name starts with the same string
-		assert.ok(!isArchiveWriteTarget(tree.archiveRoot + "-backup/x.jsonl", "/tmp", tree.archiveRoot));
+		assert.ok(!isArchiveWriteTarget(`${tree.archiveRoot}-backup/x.jsonl`, "/tmp", tree.archiveRoot));
 	});
 });
 

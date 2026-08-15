@@ -141,7 +141,7 @@ describe("reconcileArchive", () => {
 		const { source, dest } = setupPending(tree, content);
 		mkdirSync(dirname(dest), { recursive: true });
 		writeFileSync(dest, content);
-		writeFileSync(source, content + "extra line\n");
+		writeFileSync(source, `${content}extra line\n`);
 
 		const report = reconcileArchive({ dbPath: tree.dbPath });
 		assert.equal(report.errors.length, 1);

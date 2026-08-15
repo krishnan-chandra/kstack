@@ -190,7 +190,7 @@ describe("pr-autopilot state machine", () => {
 			const exec: ExecFn = async (command, args) => {
 				if (command === "git" && args[0] === "branch") return { code: 0, stdout: "kstack/other\n", stderr: "" };
 				if (command === "git" && args[0] === "rev-parse")
-					return { code: 0, stdout: makePr().headSha + "\n", stderr: "" };
+					return { code: 0, stdout: `${makePr().headSha}\n`, stderr: "" };
 				return { code: 0, stdout: "", stderr: "" };
 			};
 			const state = buildPRState(makePr(), [], [], null);
@@ -202,8 +202,8 @@ describe("pr-autopilot state machine", () => {
 		it("rejects a dirty selected checkout before running a fixer", async () => {
 			const pr = makePr();
 			const exec: ExecFn = async (_command, args) => {
-				if (args[0] === "branch") return { code: 0, stdout: pr.headRefName + "\n", stderr: "" };
-				if (args[0] === "rev-parse") return { code: 0, stdout: pr.headSha + "\n", stderr: "" };
+				if (args[0] === "branch") return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
+				if (args[0] === "rev-parse") return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
 				if (args[0] === "status") return { code: 0, stdout: " M user-work.ts\n", stderr: "" };
 				return { code: 0, stdout: "", stderr: "" };
 			};
@@ -303,7 +303,7 @@ describe("pr-autopilot state machine", () => {
 		});
 
 		it("extracts one fenced JSON block despite a conversational prefix", () => {
-			const fenced = "Here is the result:\n```json\n" + JSON.stringify(sampleTriage) + "\n```\nDone.";
+			const fenced = `Here is the result:\n\`\`\`json\n${JSON.stringify(sampleTriage)}\n\`\`\`\nDone.`;
 			const result = parseTriage(fenced);
 			assert.equal("error" in result ? result.error : undefined, undefined);
 			if (!("error" in result)) assert.equal(result.checks.length, 2);
