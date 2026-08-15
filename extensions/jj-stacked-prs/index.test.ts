@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import jjStackedPrsExtension from "./index.ts";
+import { combinePublicationSignals } from "./signals.ts";
 
 describe("jj-stacked-prs registration", () => {
 	it("registers commands, tools, events, and a shortcut without launching a subprocess", () => {
@@ -31,5 +32,15 @@ describe("jj-stacked-prs registration", () => {
 		assert.ok(events.includes("session_shutdown"));
 		assert.ok(shortcuts.includes("ctrl+shift+j"));
 		for (const handler of sessionHandlers) handler();
+	});
+
+	it("aborts publication when the plan-implement command context is cancelled", () => {
+		const session = new AbortController();
+		const ctx = new AbortController();
+		const input = new AbortController();
+		const combined = combinePublicationSignals(session.signal, ctx.signal, input.signal);
+		assert.equal(combined.aborted, false);
+		ctx.abort();
+		assert.equal(combined.aborted, true);
 	});
 });

@@ -59,8 +59,11 @@ fails partway:
   existing PRs rather than recreating them.
 - Do not manually force-push to finish it.
 - `partial` lists completed actions and the failed action.
+- `completed` can still include `commentErrors`. Core publication succeeded;
+  navigation comments did not. Re-run `/jj-stack publish` after fixing `gh`.
 - `indeterminate` means a mutator started and remote acceptance cannot be
-  disproved. Inspect GitHub and local bookmarks before retrying.
+  disproved. Inspect GitHub and local bookmarks before retrying. A created PR
+  whose number cannot be re-read is indeterminate, not a clean failure.
 
 ## Deleted remote bookmarks
 

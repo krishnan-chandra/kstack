@@ -97,6 +97,25 @@ describe("inferUniqueTop", () => {
 		if ("blocker" in result) assert.equal(result.blocker.code, "unbookmarked-tail");
 	});
 
+	it("rejects a non-empty unbookmarked change hidden by a later empty working copy", () => {
+		const result = inferUniqueTop([
+			commit({ changeId: "aaa", commitId: "1", bookmarks: ["feat1"] }),
+			commit({ changeId: "wip", commitId: "2", subject: "leftover work" }),
+			commit({
+				changeId: "wc",
+				commitId: "3",
+				subject: "",
+				empty: true,
+				workingCopy: true,
+			}),
+		]);
+		assert.equal("blocker" in result, true);
+		if ("blocker" in result) {
+			assert.equal(result.blocker.code, "unbookmarked-tail");
+			assert.match(result.blocker.message, /wip/);
+		}
+	});
+
 	it("reports missing-top when nothing can be inferred", () => {
 		const result = inferUniqueTop([commit({ changeId: "aaa", commitId: "1" })]);
 		assert.equal("blocker" in result, true);

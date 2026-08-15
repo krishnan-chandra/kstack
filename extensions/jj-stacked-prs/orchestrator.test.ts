@@ -63,8 +63,8 @@ function fakeJj(overrides: Partial<JjAdapter> = {}): JjAdapter & { calls: string
 		rebaseStack: async () => {
 			calls.push("rebase");
 		},
-		abandonRange: async (_cwd, merged) => {
-			calls.push(`abandon:${merged}`);
+		abandonRange: async (_cwd, trunk, merged) => {
+			calls.push(`abandon:${trunk}..${merged}`);
 		},
 		...overrides,
 	};
@@ -279,6 +279,30 @@ describe("publishStack", () => {
 		);
 		assert.equal(result.status, "completed");
 		assert.equal(wrote, false);
+		if (result.status === "completed") {
+			assert.ok(result.commentErrors?.some((error) => /authenticated GitHub user/.test(error)));
+		}
+	});
+
+	it("reports comment write failures on an otherwise completed publication", async () => {
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj(),
+				github: fakeGithub({
+					createOrUpdateComment: async () => {
+						throw new Error("comment API failed");
+					},
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		if (result.status === "completed") {
+			assert.ok(result.commentErrors?.some((error) => /comment API failed/.test(error)));
+			assert.equal(result.publication.pullRequests.length, 2);
+		}
 	});
 
 	it("stops later core actions after the first conclusive failure", async () => {
@@ -438,7 +462,76 @@ describe("sync and advance", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
-		assert.deepEqual(jj.calls, ["abandon:feat1", "fetch", "rebase"]);
+		assert.deepEqual(jj.calls, ["abandon:trunk()..feat1", "fetch", "rebase"]);
+	});
+
+	it("abandons through the selected trunk revset, not a hardcoded trunk()", async () => {
+		const jj = fakeJj();
+		const result = await advanceStack(
+			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin", trunk: "main@origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listOpenPrs: async () => [
+						{
+							number: 11,
+							headRef: "feat1",
+							baseRef: "main",
+							title: "x",
+							draft: false,
+							url: "u",
+							headOwner: "o",
+						},
+					],
+					getPrStatus: async () => "merged",
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.ok(jj.calls.includes("abandon:main@origin..feat1"));
+	});
+
+	it("does not abandon unmerged predecessors when a middle bookmark is merged", async () => {
+		const jj = fakeJj({
+			fetchStack: async () => [commit("aaa", "feat1"), commit("bbb", "feat2"), commit("ccc", "feat3")],
+			listLocalBookmarks: async () => [
+				{ name: "feat1", commitId: "aaa-commit" },
+				{ name: "feat2", commitId: "bbb-commit" },
+				{ name: "feat3", commitId: "ccc-commit" },
+			],
+		});
+		const result = await advanceStack(
+			{ cwd: "/repo", merged: "feat2", top: "feat3", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({
+					listPrsForHead: async (_repo, head) =>
+						head === "feat2"
+							? [
+									{
+										number: 12,
+										headRef: "feat2",
+										baseRef: "feat1",
+										title: "x",
+										draft: false,
+										url: "u",
+										headOwner: "o",
+									},
+								]
+							: [],
+					getPrStatus: async () => "merged",
+				}),
+			},
+		);
+		assert.equal(result.status, "blocked");
+		if (result.status === "blocked") {
+			assert.ok(result.blockers.some((blocker) => /unmerged predecessor|bottom|prefix/i.test(blocker.message)));
+		}
+		assert.deepEqual(jj.calls, []);
 	});
 
 	it("reports an empty remainder when the merged bookmark was the top", async () => {
@@ -469,7 +562,7 @@ describe("sync and advance", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
-		assert.deepEqual(jj.calls, ["abandon:feat1", "fetch"]);
+		assert.deepEqual(jj.calls, ["abandon:trunk()..feat1", "fetch"]);
 	});
 });
 

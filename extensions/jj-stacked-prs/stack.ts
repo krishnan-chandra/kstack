@@ -108,16 +108,16 @@ function uniqueTopCandidates(commits: readonly Pick<StackCommit, "bookmarks">[])
 
 function unbookmarkedTail(commits: readonly StackCommit[], top: string): StackCommit | undefined {
 	let seenTop = false;
-	let tail: StackCommit | undefined;
+	const tail: StackCommit[] = [];
 	for (const commit of commits) {
 		if (commit.bookmarks.includes(top)) {
 			seenTop = true;
-			tail = undefined;
+			tail.length = 0;
 			continue;
 		}
-		if (seenTop && commit.bookmarks.length === 0) tail = commit;
+		if (seenTop && commit.bookmarks.length === 0) tail.push(commit);
 	}
-	return tail;
+	return tail.find((commit) => !isAllowedEmptyWorkingCopy(commit)) ?? tail.at(-1);
 }
 
 function isAllowedEmptyWorkingCopy(commit: StackCommit): boolean {

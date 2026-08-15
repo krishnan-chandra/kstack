@@ -33,9 +33,10 @@ proves freshness, not authorization.
   plan-ID match.
 - Syncs only the selected stack: `jj git fetch --remote <remote>` then
   `jj rebase -b <top> -o <trunk>`.
-- Advances after GitHub reports the `--merged` bookmark's PR as `MERGED`. It
-  abandons `trunk()..<merged>` before fetch, then rebases any remainder. It
-  does not republish; run `/jj-stack publish` separately.
+- Advances after GitHub reports the `--merged` bookmark's PR as `MERGED` and
+  that bookmark is the bottom current slice. It abandons `<trunk>..<merged>`
+  before fetch, then rebases any remainder. It does not republish; run
+  `/jj-stack publish` separately.
 
 ## What it does not do
 

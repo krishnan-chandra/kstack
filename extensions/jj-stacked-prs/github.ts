@@ -310,6 +310,7 @@ export function createGitHubAdapter(run: ProcessRunner): GitHubAdapter {
 			}
 			throw new GitHubError(
 				`Created PR for bookmark ${JSON.stringify(input.bookmark)} at ${JSON.stringify(prUrl)}, but could not read its metadata. Run plan again to continue safely.`,
+				"indeterminate",
 			);
 		},
 		async updatePrBase(input) {

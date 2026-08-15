@@ -81,6 +81,9 @@ export function renderOutcome(outcome: StackPublicationOutcome): string {
 					...outcome.publication.pullRequests.map(
 						(pr) => `#${pr.prNumber} ${pr.bookmark} → ${pr.baseBookmark ?? "trunk"} ${pr.url}`,
 					),
+					...(outcome.commentErrors?.length
+						? ["", "Navigation comment errors:", ...outcome.commentErrors.map((error) => `- ${error}`)]
+						: []),
 				].join("\n"),
 			);
 		case "blocked":

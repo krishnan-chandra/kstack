@@ -183,6 +183,7 @@ export type StackPublicationOutcome =
 			planId: string;
 			publication: StackPublicationMap;
 			completedActions: readonly CompletedPublicationAction[];
+			commentErrors?: readonly string[];
 	  }
 	| {
 			status: "declined";

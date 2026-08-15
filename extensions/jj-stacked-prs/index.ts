@@ -22,6 +22,7 @@ import {
 } from "./orchestrator.ts";
 import { createProcessRunner } from "./process.ts";
 import { boundText, renderInspect, renderOutcome, renderPlan } from "./render.ts";
+import { combinePublicationSignals } from "./signals.ts";
 import { DEFAULT_MAX_STACK, MIN_MAX_STACK, type StackPublicationRequestInput } from "./types.ts";
 
 class StackLifecycle extends SessionRunLifecycle {
@@ -105,7 +106,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 					requestPublicationFromInput(input, {
 						run,
 						ui: uiFrom(ctx),
-						signal: mergeSignals(signal, input.signal),
+						signal: combinePublicationSignals(signal, ctx.signal, input.signal),
 					}),
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
 			);
@@ -302,19 +303,6 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			};
 		},
 	});
-}
-
-function mergeSignals(session: AbortSignal, extra?: AbortSignal): AbortSignal {
-	if (!extra) return session;
-	if (typeof AbortSignal.any === "function") return AbortSignal.any([session, extra]);
-	const merged = new AbortController();
-	const abort = () => merged.abort();
-	if (session.aborted || extra.aborted) merged.abort();
-	else {
-		session.addEventListener("abort", abort, { once: true });
-		extra.addEventListener("abort", abort, { once: true });
-	}
-	return merged.signal;
 }
 
 export type { StackPublicationRequestInput };

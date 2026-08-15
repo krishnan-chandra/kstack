@@ -272,20 +272,37 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 			],
 		};
 	}
+	const mergedIndex = model.slices.findIndex((slice) => slice.bookmark === options.merged);
+	if (mergedIndex !== 0) {
+		const predecessors = model.slices
+			.slice(0, mergedIndex)
+			.map((slice) => slice.bookmark)
+			.join(", ");
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "top-not-final-boundary",
+					message: `Merged bookmark ${JSON.stringify(options.merged)} is not the bottom of the stack; abandoning it would delete unmerged predecessor(s) ${predecessors}.`,
+				},
+			],
+		};
+	}
+	const trunkRevset = options.trunk ?? "trunk()";
 	const operationId = await jj.currentOperationId(options.cwd, deps.signal);
 	const confirmed = await deps.ui.confirm(
 		"Advance the stack past the merged bookmark?",
-		`Abandon trunk()..${options.merged} before fetch.\nThen: jj git fetch --remote ${options.remote}\nThen rebase remaining -b ${options.top} onto trunk() if anything remains.\nRecovery: jj op restore ${operationId}`,
+		`Abandon ${trunkRevset}..${options.merged} before fetch.\nThen: jj git fetch --remote ${options.remote}\nThen rebase remaining -b ${options.top} onto ${trunkRevset} if anything remains.\nRecovery: jj op restore ${operationId}`,
 	);
 	if (deps.signal?.aborted) return { status: "cancelled", operationId };
 	if (!confirmed) return { status: "declined" };
 	try {
-		await jj.abandonRange(options.cwd, options.merged, deps.signal);
+		await jj.abandonRange(options.cwd, trunkRevset, options.merged, deps.signal);
 		await jj.fetchRemote(options.cwd, options.remote, deps.signal);
 		if (options.merged === options.top) {
 			return { status: "completed", operationId, blockers: [] };
 		}
-		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
+		const trunk = await jj.resolveRevset(options.cwd, trunkRevset, deps.signal);
 		await jj.rebaseStack(options.cwd, options.top, trunk, deps.signal);
 		const after = await inspectStack({ ...options, top: options.top }, deps);
 		const remaining = after.blockers.filter((blocker) => ["conflict", "divergence", "merge"].includes(blocker.code));
@@ -449,6 +466,7 @@ async function applyPublication(
 			pullRequests,
 		},
 		completedActions: [...completed, ...comments.completed],
+		...(comments.errors.length > 0 ? { commentErrors: comments.errors } : {}),
 	};
 }
 
