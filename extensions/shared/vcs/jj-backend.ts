@@ -292,13 +292,43 @@ export class JjBackend implements JjVcsBackend {
 		other: string,
 		message: string,
 	): Promise<VcsResult | { ok: false; error: string; files: string[] }> {
+		const preMerge = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE]);
+		const preMergeIds = lines(preMerge.stdout);
+		if (preMerge.code !== 0 || preMergeIds.length !== 1) {
+			return { ok: false, error: `Could not capture the pre-merge jj change: ${diagnostic(preMerge)}` };
+		}
+
 		const result = await this.jj(cwd, ["new", "@", other, "-m", message], 30_000);
 		if (result.code !== 0) return { ok: false, error: `jj new merge failed: ${diagnostic(result)}` };
+		const merge = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE]);
+		const mergeIds = lines(merge.stdout);
+		if (merge.code !== 0 || mergeIds.length !== 1) {
+			return {
+				ok: false,
+				error: `Could not capture the jj merge change: ${diagnostic(merge)}. Run jj op log and jj op restore to recover.`,
+			};
+		}
+
 		const conflict = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", 'if(conflict, "true", "false")']);
 		if (conflict.code === 0 && output(conflict) === "false") return { ok: true };
 		const listed = await this.jj(cwd, ["resolve", "--list"]);
 		const files = lines(listed.stdout);
-		await this.jj(cwd, ["abandon", "@"]);
+		const edited = await this.jj(cwd, ["edit", preMergeIds[0]]);
+		if (edited.code !== 0) {
+			return {
+				ok: false,
+				files,
+				error: `Automatic jj merge recovery failed: ${diagnostic(edited)}. Run jj op log and jj op restore to recover.`,
+			};
+		}
+		const abandoned = await this.jj(cwd, ["abandon", mergeIds[0]]);
+		if (abandoned.code !== 0) {
+			return {
+				ok: false,
+				files,
+				error: `Automatic jj merge recovery failed: ${diagnostic(abandoned)}. Run jj op log and jj op restore to recover.`,
+			};
+		}
 		return {
 			ok: false,
 			files,

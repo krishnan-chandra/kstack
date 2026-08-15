@@ -170,6 +170,131 @@ describe("JjBackend mutations", () => {
 		assert.deepEqual(await new JjBackend(exec).push("/repo", "feature"), { ok: true });
 	});
 
+	it("restores the pre-merge change when a base merge conflicts", async () => {
+		const remote = "4".repeat(40);
+		const steps: Step[] = [
+			{ command: "jj", args: noPager(["git", "fetch", "--remote", "origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "main@origin", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${remote}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", `${remote} & ::@`, "--no-graph", "-T", commitTemplate]),
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "pre-merge-change\n" },
+			},
+			{ command: "jj", args: noPager(["new", "@", "main@origin", "-m", "Merge main@origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "merge-change\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(conflict, "true", "false")']),
+				result: { stdout: "true\n" },
+			},
+			{ command: "jj", args: noPager(["resolve", "--list"]), result: { stdout: "src/a.ts\n" } },
+			{ command: "jj", args: noPager(["edit", "pre-merge-change"]) },
+			{ command: "jj", args: noPager(["abandon", "merge-change"]) },
+		];
+		assert.deepEqual(await new JjBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main"), {
+			kind: "needs-human",
+			files: ["src/a.ts"],
+			error: "Merge conflicted in src/a.ts. Competing intents need a human.",
+		});
+		assert.equal(steps.length, 0);
+	});
+
+	it("reports manual recovery when restoring the pre-merge change fails", async () => {
+		const remote = "4".repeat(40);
+		const steps: Step[] = [
+			{ command: "jj", args: noPager(["git", "fetch", "--remote", "origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "main@origin", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${remote}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", `${remote} & ::@`, "--no-graph", "-T", commitTemplate]),
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "pre-merge-change\n" },
+			},
+			{ command: "jj", args: noPager(["new", "@", "main@origin", "-m", "Merge main@origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "merge-change\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(conflict, "true", "false")']),
+				result: { stdout: "true\n" },
+			},
+			{ command: "jj", args: noPager(["resolve", "--list"]), result: { stdout: "src/a.ts\n" } },
+			{
+				command: "jj",
+				args: noPager(["edit", "pre-merge-change"]),
+				result: { code: 1, stderr: "edit failed\n" },
+			},
+		];
+		const result = await new JjBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main");
+		assert.equal(result.kind, "needs-human");
+		assert.match(result.error, /jj op log and jj op restore/);
+		assert.equal(steps.length, 0);
+	});
+
+	it("does not start a base merge without a pre-merge recovery anchor", async () => {
+		const remote = "4".repeat(40);
+		const steps: Step[] = [
+			{ command: "jj", args: noPager(["git", "fetch", "--remote", "origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "main@origin", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${remote}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", `${remote} & ::@`, "--no-graph", "-T", commitTemplate]),
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { code: 1, stderr: "cannot read change\n" },
+			},
+		];
+		const result = await new JjBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main");
+		assert.deepEqual(result, {
+			kind: "failed",
+			error: "Could not capture the pre-merge jj change: cannot read change",
+		});
+		assert.equal(steps.length, 0);
+	});
+
 	it("fetches and reports the remote head without rewriting the current change", async () => {
 		const remote = "4".repeat(40);
 		const exec = scriptedExec([
