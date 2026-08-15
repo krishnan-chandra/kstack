@@ -63,6 +63,8 @@ Edit or cancel this prompt before any session replacement occurs. Saving it star
 - **`read_handoff_history`** pages through normalized entries from the linked previous session. It defaults to the latest 20 entries and supports `offset`, `limit`, `chunk`, and `from=start|tail`.
 - **`search_handoff_history`** searches only the linked previous session, with optional role and result limits.
 
+A history page can return roughly 42 KB. For a targeted lookup, search first and page only the region the match identifies.
+
 Both tools derive the source from structured metadata on the `handoff` custom message; they accept no filesystem path or session ID from the model. They validate the active file and exact header ID, omit thinking/image/tool-argument payloads, bound output to 50 KB, and transparently fall back to the archive database opened read-only with `query_only`.
 
 ## Behavior notes

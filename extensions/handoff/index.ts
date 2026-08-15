@@ -43,7 +43,8 @@ export default async function (pi: ExtensionAPI) {
 		description:
 			"Read normalized entries from the previous session linked by /handoff. Resolves the active JSONL first " +
 			"and transparently falls back to the read-only archive by exact session ID. Defaults to the latest 20 " +
-			"entries. Output is paginated and chunked. Read-only; accepts no filesystem path.",
+			"entries. A page can return roughly 42 KB; prefer search_handoff_history for targeted lookup, then page only " +
+			"the region it identifies. Output is paginated and chunked. Read-only; accepts no filesystem path.",
 		promptSnippet: "Read relevant entries from the previous session linked by /handoff",
 		promptGuidelines: [
 			"Use read_handoff_history before continuing work in a session created by /handoff; inspect the prior decisions and resume point without rereading unrelated history.",
