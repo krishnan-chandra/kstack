@@ -382,13 +382,15 @@ export class GitBackend implements GitVcsBackend {
 	async mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {
 		const fetched = await this.fetch(cwd, baseRef);
 		if (!fetched.ok) return { kind: "failed", error: fetched.error };
+		const before = await this.headSha(cwd);
+		if (!before.ok) {
+			return { kind: "failed", error: `Could not read HEAD before merging origin/${baseRef}: ${before.error}` };
+		}
 		const merge = await this.git(cwd, ["merge", "--no-edit", `origin/${baseRef}`], 30_000);
 		if (merge.code === 0) {
-			if (/Already up to date/i.test(merge.stdout)) return { kind: "already-current" };
-			const head = await this.headSha(cwd);
-			return head.ok
-				? { kind: "clean", headSha: head.sha }
-				: { kind: "failed", error: "merge succeeded but HEAD SHA could not be read." };
+			const after = await this.headSha(cwd);
+			if (!after.ok) return { kind: "failed", error: "merge succeeded but HEAD SHA could not be read." };
+			return after.sha === before.sha ? { kind: "already-current" } : { kind: "clean", headSha: after.sha };
 		}
 		const unmerged = await this.git(cwd, ["diff", "--name-only", "--diff-filter=U"], 5_000);
 		const files = unmerged.stdout
