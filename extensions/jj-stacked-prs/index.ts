@@ -1,7 +1,7 @@
-/** Thin Pi adapter for stacked-PR inspection, planning, and confirmed mutation. */
+/** Thin Pi adapter for stacked-PR inspection, planning, and bounded mutation. */
 
 import { Type } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
 	claimJjStackCapabilities,
@@ -16,6 +16,7 @@ import {
 	inspectStack,
 	planStack,
 	publishStack,
+	publishStackFromTool,
 	requestPublicationFromInput,
 	type StackUi,
 	syncStack,
@@ -64,7 +65,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 
 	const run = createProcessRunner();
 
-	function uiFrom(ctx: ExtensionCommandContext): StackUi {
+	function uiFrom(ctx: ExtensionContext): StackUi {
 		return {
 			hasUI: ctx.hasUI,
 			confirm: (title, body) => ctx.ui.confirm(title, body),
@@ -75,7 +76,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 	}
 
 	async function withRun<T>(
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		work: (signal: AbortSignal) => Promise<T>,
 		idle: () => T,
 	): Promise<T> {
@@ -230,7 +231,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			"Use jj_stack_inspect before and after stack history changes.",
 			"Refer to changes by stable change ID, not commit ID.",
 			"Use jj, not mutating Git commands.",
-			"Perform publication only through the confirmed /jj-stack publish command.",
+			"Use jj_stack_publish only after the user explicitly asks to publish the current stack.",
 		],
 		parameters: Type.Object({
 			top: Type.Optional(Type.String({ description: "Top bookmark; inferred when omitted" })),
@@ -300,6 +301,45 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			return {
 				content: [{ type: "text" as const, text: boundText(renderPlan(planned.plan)) }],
 				details: planned,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "jj_stack_publish",
+		label: "Publish stacked PRs",
+		description:
+			"Publish a linear jj bookmark stack by pushing bookmarks, creating draft PRs, repairing PR bases, and reconciling navigation comments. Mutates the remote immediately without UI confirmation.",
+		promptSnippet: "Publish the current jj stack without a redundant confirmation after an explicit user request.",
+		promptGuidelines: [
+			"Call jj_stack_publish only when the user explicitly asks to publish the current stack; the tool mutates remotes without confirmation.",
+			"Do not call jj_stack_publish merely because implementation or review finished.",
+		],
+		parameters: Type.Object({
+			top: Type.String({ description: "Top bookmark" }),
+			remote: Type.String({ description: "Git remote name" }),
+			trunk: Type.Optional(Type.String({ description: "Trunk revset (default trunk())" })),
+			maxStack: Type.Optional(Type.Integer({ minimum: MIN_MAX_STACK, maximum: DEFAULT_MAX_STACK })),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const outcome = await withRun(
+				ctx,
+				(runSignal) =>
+					publishStackFromTool(
+						{
+							cwd: ctx.cwd,
+							top: params.top,
+							remote: params.remote,
+							trunk: params.trunk,
+							maxStack: params.maxStack,
+						},
+						{ run, ui: uiFrom(ctx), signal: combinePublicationSignals(runSignal, signal) },
+					),
+				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
+			);
+			return {
+				content: [{ type: "text" as const, text: boundText(renderOutcome(outcome)) }],
+				details: outcome,
 			};
 		},
 	});

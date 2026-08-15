@@ -27,7 +27,7 @@ describe("jj-stacked-prs registration", () => {
 			events: { on: (name: string) => events.push(name) },
 		} as never);
 		assert.deepEqual(commands, ["jj-stack"]);
-		assert.deepEqual(tools, ["jj_stack_inspect", "jj_stack_plan"]);
+		assert.deepEqual(tools, ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish"]);
 		assert.ok(events.includes("session_start"));
 		assert.ok(events.includes("session_shutdown"));
 		assert.ok(shortcuts.includes("ctrl+shift+j"));

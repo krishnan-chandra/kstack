@@ -19,12 +19,14 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation child for an explicit, bounded change on a local Git branch, jj bookmark, or managed Git worktree. It preserves inspection, verification, and recorded checkpoints, but deliberately skips independent planning and review; it supports single-PR local workstreams only and never publishes. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
-| [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, and advances linear GitHub PR stacks on a colocated jj workspace. Read-only tools; mutations require standard confirmation and a fresh post-confirmation plan. |
+| [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, and advances linear GitHub PR stacks on a colocated jj workspace. Pi can publish through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
 
 Writable workstreams use a dedicated `kstack/<task-slug>` Git branch or jj
 bookmark and record coherent increments with the configured backend. Git
 current-checkout runs stop on a dirty tree; jj runs use automatic snapshots.
-Neither backend pushes or publishes without a later confirmation. Read-only
+Neither backend pushes or publishes without user authorization. An explicit
+request to publish the current jj stack is sufficient authorization for
+`jj_stack_publish`; command workflows retain their confirmation. Read-only
 routes do not create workstreams.
 
 ## Skills

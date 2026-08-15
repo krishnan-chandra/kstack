@@ -84,7 +84,8 @@ performs GitHub authentication.
 ## What never happens automatically
 
 - No `--ignore-immutable` without explicit, scoped approval.
-- No publication without confirmation and a fresh plan-ID match.
+- No publication without either command confirmation or an explicit user request
+  that authorizes `jj_stack_publish`. Both paths require a fresh plan-ID match.
 - No `jj abandon` while stack inspection reports a blocker.
 - No direct `git rebase` / `git reset` / force-push in colocated repos.
 - No installing of `gh`, and no GitHub authentication on the user's behalf.

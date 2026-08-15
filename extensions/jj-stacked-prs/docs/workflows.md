@@ -13,12 +13,14 @@ Inspect before and after any history-changing step:
 
 Or, from a model: `jj_stack_inspect({ top })`.
 
-Publishing is a confirmed command. `plan` is read-only; `publish` recomputes
-the plan after confirmation and refuses a stale identity:
+The command path asks for confirmation. The model tool treats an explicit user
+request to publish as authorization and does not ask again. Both paths recompute
+the plan and refuse a stale identity before mutation:
 
 ```text
 /jj-stack plan --top <top> --remote <remote>
 /jj-stack publish --top <top> --remote <remote>
+jj_stack_publish({ top: "<top>", remote: "<remote>" })
 ```
 
 ## 1. Start a stack
