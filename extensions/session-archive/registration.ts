@@ -230,7 +230,7 @@ export function createArchiveTools(deps: {
 			const text = hits
 				.map(
 					(h) =>
-						`session ${h.session_id} entry ${h.entry_id} [${h.role ?? h.entry_type}] ${h.timestamp}\n` +
+						`session ${h.session_id} entry #${h.ordinal} ${h.entry_id} [${h.role ?? h.entry_type}] ${h.timestamp}\n` +
 						`  session: ${h.session_name ?? "(unnamed)"} — ${h.cwd} (archived ${h.archived_at ?? "pending"})\n` +
 						`  ${h.snippet}`,
 				)

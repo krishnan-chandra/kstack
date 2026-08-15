@@ -118,8 +118,8 @@ export default async function (pi: ExtensionAPI) {
 		label: "Search Session Archive",
 		description:
 			"Full-text search over archived Pi sessions. Returns matching entries with highlighted snippets, " +
-			"session id, entry id, role, and timestamp. Read-only: the archive cannot be modified by tools. " +
-			"Use read_session_archive with a session id to page through full entries.",
+			"session id, entry id, numeric offset, role, and timestamp. Read-only: tools cannot modify the archive. " +
+			"Use the session id and offset with read_session_archive to page through full entries.",
 		parameters: Type.Object({
 			query: Type.String({
 				description: 'FTS5 query: plain words, "quoted phrases", AND/OR/NOT, prefix* terms',

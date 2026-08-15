@@ -214,12 +214,16 @@ describe("searchHandoffHistory", () => {
 		assert.ok(!output.includes("initial architecture discussion"));
 	});
 
-	it("falls back to scoped archive search", () => {
+	it("reports archived match offsets that can be passed to the history reader", () => {
 		const { tree, content, source, env } = fixture();
 		archiveAndRemoveActive(tree, content, source);
-		const output = searchHandoffHistory(source, { query: '"history reader"' }, env);
-		assert.ok(output.includes("archived previous session"));
-		assert.ok(output.includes("history reader"));
+
+		const searchOutput = searchHandoffHistory(source, { query: '"history reader"' }, env);
+		assert.ok(searchOutput.includes("archived previous session"));
+		assert.match(searchOutput, /^#2 \[user\]/m);
+
+		const readOutput = readHandoffHistory(source, { offset: 2, limit: 1, from: "start" }, env);
+		assert.ok(readOutput.includes("history reader"));
 	});
 
 	it("rejects an empty query", () => {

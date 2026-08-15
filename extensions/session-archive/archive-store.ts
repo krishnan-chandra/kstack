@@ -334,6 +334,7 @@ export function listSessionRows(db: DatabaseSync, opts: { state?: string; limit?
 interface SearchHit {
 	session_id: string;
 	entry_id: string;
+	ordinal: number;
 	entry_type: string;
 	role: string | null;
 	timestamp: string;
@@ -363,7 +364,7 @@ export function searchArchive(
 ): SearchHit[] {
 	const limit = boundedInteger(opts.limit, 20, 1, 100);
 	const statement = db.prepare(
-		`SELECT e.session_id, e.entry_id, e.entry_type, e.role, e.timestamp,
+		`SELECT e.session_id, e.entry_id, e.ordinal, e.entry_type, e.role, e.timestamp,
 		        s.cwd, s.name AS session_name, s.archived_at,
 		        snippet(archive_entries_fts, 0, '[', ']', '…', 32) AS snippet
 		   FROM archive_entries_fts
