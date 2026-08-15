@@ -152,7 +152,7 @@ const { default: register } = await import("../index.ts");
 register(pi as never);
 assert.ok(handler, "command registered");
 
-await handler("--base HEAD --intent verify-dashboard", ctx);
+await handler("--base HEAD verify-dashboard", ctx);
 
 // ── Assertions ───────────────────────────────────────────────────────────
 assert.ok(renders > 5, `expected repeated re-renders, got ${renders}`);

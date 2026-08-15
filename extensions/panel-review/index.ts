@@ -210,7 +210,7 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("panel-review", {
 		description:
-			"Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] [--intent <text>]",
+			"Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] <intent>",
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) return ctx.ui.notify(parsed.error, "error");

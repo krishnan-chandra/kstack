@@ -3,9 +3,12 @@
  *
  * Supported:
  *   /panel-review
- *   /panel-review --base main
- *   /panel-review --intent "Add safe bulk session archival"
- *   /panel-review --base origin/main --intent "Implement handoff"
+ *   /panel-review Add safe bulk session archival
+ *   /panel-review --base main Implement handoff
+ *   /panel-review --base origin/main "Implement handoff"
+ *
+ * Everything after the known flags is collected as the free-form intent.
+ * When no positional intent is provided, the caller opens an editor for one.
  */
 
 import type { PanelArgs } from "./types.ts";
@@ -56,33 +59,41 @@ export function parseArgs(input: string): ArgsParse {
 	if (!Array.isArray(tokens)) return { ok: false, error: tokens.error };
 
 	const args: PanelArgs = {};
-	for (let i = 0; i < tokens.length; i++) {
+	let i = 0;
+
+	// Parse known flags; unknown flags are rejected before positional intent.
+	while (i < tokens.length) {
 		const token = tokens[i];
+		if (!token.startsWith("--")) break; // positional intent starts here
+
 		let flag = token;
 		let value: string | undefined;
 		const eq = token.indexOf("=");
-		if (token.startsWith("--") && eq !== -1) {
+		if (eq !== -1) {
 			flag = token.slice(0, eq);
 			value = token.slice(eq + 1);
 		}
-		switch (flag) {
-			case "--base":
-			case "--intent": {
-				if (value === undefined) {
-					value = tokens[++i];
-					if (value === undefined) return { ok: false, error: `${flag} requires a value.` };
-				}
-				if (value.length === 0) return { ok: false, error: `${flag} requires a non-empty value.` };
-				if (flag === "--base") args.base = value;
-				else args.intent = value;
-				break;
+
+		if (flag === "--base") {
+			if (value === undefined) {
+				value = tokens[++i];
+				if (value === undefined) return { ok: false, error: `${flag} requires a value.` };
 			}
-			default:
-				return {
-					ok: false,
-					error: `Unknown argument "${token}". Usage: /panel-review [--base <ref>] [--intent <text>]`,
-				};
+			if (value.length === 0) return { ok: false, error: `${flag} requires a non-empty value.` };
+			args.base = value;
+			i++;
+		} else {
+			return {
+				ok: false,
+				error: `Unknown argument "${token}". Usage: /panel-review [--base <ref>] <intent>`,
+			};
 		}
 	}
+
+	// Remaining tokens are the positional intent.
+	if (i < tokens.length) {
+		args.intent = tokens.slice(i).join(" ");
+	}
+
 	return { ok: true, args };
 }
