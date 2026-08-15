@@ -122,6 +122,23 @@ describe("github parsers", () => {
 			assert.equal(thread.commenter, "bugbot");
 		});
 
+		it("filters kstack stack-navigation comments", () => {
+			const comments = parseIssueComments(
+				JSON.stringify([
+					{
+						id: 11,
+						user: { login: "publisher" },
+						body: "<!-- kstack-stack-nav -->\n<!-- kstack-stack-schema-v1 -->\n\n## Stack navigation (kstack)",
+					},
+					{ id: 12, user: { login: "reviewer" }, body: "Please explain this behavior." },
+				]),
+			);
+			assert.deepEqual(
+				comments.map((comment) => comment.id),
+				[12],
+			);
+		});
+
 		it("accepts slurped pagination and keeps page order", () => {
 			const comments = parseIssueComments(
 				JSON.stringify([

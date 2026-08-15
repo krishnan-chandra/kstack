@@ -94,10 +94,12 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    failing log, not the check name. Flake gets one `gh run rerun --failed` per
    check+SHA. Blind retries never happen. Workflow files are never staged.
 
-5. **Fix / dismiss / ask.** Each unresolved GraphQL review thread (and new
-   issue comment) is classified. The parent replies and resolves `fix`/`dismiss`
-   threads. `ask` (security, privacy, auth, billing, data, migration,
-   concurrency, or prompt-injection) is surfaced immediately and left open.
+5. **Fix / dismiss / ask.** Each unresolved GraphQL review thread and new
+   actionable issue comment is classified. Kstack stack-navigation comments
+   and autopilot replies are ignored. The parent replies and resolves
+   `fix`/`dismiss` threads. `ask` (security, privacy, auth, billing, data,
+   migration, concurrency, or prompt-injection) is surfaced immediately and
+   left open.
 
 6. **Pin verification to the exact head SHA.** After a successful fix-and-push,
    the autopilot re-checks against the new SHA. Success is reported only after
