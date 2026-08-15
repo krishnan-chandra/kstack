@@ -3,6 +3,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { StackPublicationOutcome } from "../jj-stacked-prs/types.ts";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
@@ -36,6 +37,9 @@ export interface PhaseEffects {
 		prNumber: number,
 		cwd: string,
 	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
+	requestStackPublication?(
+		cwd: string,
+	): Promise<{ handled: false } | { handled: true; outcome: StackPublicationOutcome }>;
 	dashboard?: PlanPipelineDashboard;
 }
 
@@ -50,6 +54,8 @@ export interface ApprovedWorkflowOptions {
 	timeoutMinutes: number;
 	skillPaths: string[];
 	changePrompts: string[];
+	/** Appended only to stack implementer and review-fixer children. */
+	mutationPrompts?: string[];
 	trunkSha?: string;
 	worktreePlan?: IsolationPlan;
 }
@@ -58,6 +64,33 @@ export function phaseErrorText(result: AgentRunResult): string {
 	if (result.status === "failed") return result.error;
 	if (result.status === "aborted") return `${result.role} was aborted.`;
 	return result.output;
+}
+
+function describeStackPublication(outcome: StackPublicationOutcome): string {
+	switch (outcome.status) {
+		case "completed":
+			return `Published ${outcome.publication.pullRequests.length} stacked PR(s).`;
+		case "declined":
+			return "Stacked publication declined; the metadata publisher was not launched.";
+		case "busy":
+			return outcome.message;
+		case "blocked":
+			return `Stacked publication blocked: ${outcome.blockers.map((blocker) => blocker.message).join("; ")}`;
+		case "stale":
+			return "Stacked publication plan went stale after confirmation; no mutation ran.";
+		case "partial":
+			return `Stacked publication was partial: ${outcome.failedAction.error}`;
+		case "cancelled":
+			return "Stacked publication was cancelled; the metadata publisher was not launched.";
+		case "indeterminate":
+			return `Stacked publication is indeterminate: ${outcome.inFlight.error}`;
+		case "failed":
+			return `Stacked publication failed: ${outcome.error}`;
+		default: {
+			const _exhaustive: never = outcome;
+			return _exhaustive;
+		}
+	}
 }
 
 function removePrivateDir(dir: string | undefined, label: string, fx: PhaseEffects): void {
@@ -77,7 +110,17 @@ export async function runPostReviewPhases(
 	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
 	fx: PhaseEffects,
 ): Promise<void> {
-	const { task, mode, workLocation, promptsDir, implementerModel, timeoutMinutes, skillPaths, changePrompts } = options;
+	const {
+		task,
+		mode,
+		workLocation,
+		promptsDir,
+		implementerModel,
+		timeoutMinutes,
+		skillPaths,
+		changePrompts,
+		mutationPrompts,
+	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
 	const executeAgent = fx.runAgent ?? runAgent;
 	let reviewDir: string | undefined;
@@ -130,7 +173,7 @@ export async function runPostReviewPhases(
 						mode,
 						workLocation,
 						skillPaths,
-						supplementalPrompts: changePrompts,
+						supplementalPrompts: [...changePrompts, ...(mutationPrompts ?? [])],
 					});
 					if (fx.isCurrent()) {
 						fx.dashboard?.complete("fixer", {
@@ -169,18 +212,56 @@ export async function runPostReviewPhases(
 		}
 
 		if (!fx.isCurrent()) return;
-		const publishConfirmed = await fx.confirm(
-			mode === "stack" ? "Publish the stack as draft PRs and find reviewers?" : "Create a draft PR and find reviewers?",
-			`Publisher: ${implementerModel}\nTimeout: ${timeoutMinutes} min\n\n` +
-				(mode === "stack"
-					? "The publisher consults jj-stacked-prs to submit the local stack as draft PRs (publish_stack.py) and write-pr for each slice's title/body, then find-reviewers for 2–5 reviewer recommendations over the full stack. "
-					: "The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's title/body), then find-reviewers for 2–5 reviewer recommendations. ") +
-				(mode === "single"
-					? "After publishing, you will be offered PR-autopilot (watch CI, address threads, push fixes) and then landing. "
-					: "") +
-				"It never marks PRs ready, merges, or force-pushes; creating a PR grants the necessary push. Reviewer recommendations are printed to the session as the run's final output.",
-		);
-		if (!fx.isCurrent() || !publishConfirmed) return;
+		let trustedMapFile: string | undefined;
+		if (mode === "stack") {
+			if (!fx.requestStackPublication) {
+				fx.notify("Stacked publication is unavailable; the jj-stacked-prs extension may not be loaded.", "error");
+				return;
+			}
+			const published = await fx.requestStackPublication(state.workflowCwd);
+			if (!fx.isCurrent()) return;
+			if (!published.handled) {
+				fx.notify("Stacked publication is unavailable; the jj-stacked-prs extension may not be loaded.", "error");
+				return;
+			}
+			const outcome = published.outcome;
+			if (outcome.status !== "completed") {
+				fx.notify(
+					describeStackPublication(outcome),
+					outcome.status === "declined" || outcome.status === "cancelled" ? "info" : "warning",
+				);
+				return;
+			}
+			trustedMapFile = join(reviewDir, "stack-prs.json");
+			writeFileSync(trustedMapFile, `${JSON.stringify(outcome.publication, null, 2)}\n`, {
+				encoding: "utf8",
+				mode: 0o600,
+			});
+			writeFileSync(taskFile, `${readFileSync(taskFile, "utf8")}\nTrusted published PR map: ${trustedMapFile}\n`, {
+				encoding: "utf8",
+				mode: 0o600,
+			});
+			const metadataConfirmed = await fx.confirm(
+				"Update titles/bodies for the published stack and recommend reviewers?",
+				`Publisher: ${implementerModel}\nTimeout: ${timeoutMinutes} min\n\n` +
+					`The stack structure is already published as draft PRs. The publisher may edit titles and bodies only for the PR numbers in ${trustedMapFile}, then recommend reviewers across the full stack. Declining leaves the published draft PRs unchanged.`,
+			);
+			if (!fx.isCurrent() || !metadataConfirmed) {
+				if (fx.isCurrent() && !metadataConfirmed) {
+					fx.notify("Metadata update declined; the published draft PRs were left unchanged.", "info");
+				}
+				return;
+			}
+		} else {
+			const publishConfirmed = await fx.confirm(
+				"Create a draft PR and find reviewers?",
+				`Publisher: ${implementerModel}\nTimeout: ${timeoutMinutes} min\n\n` +
+					"The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's title/body), then find-reviewers for 2–5 reviewer recommendations. " +
+					"After publishing, you will be offered PR-autopilot (watch CI, address threads, push fixes) and then landing. " +
+					"It never marks PRs ready, merges, or force-pushes; creating a PR grants the necessary push. Reviewer recommendations are printed to the session as the run's final output.",
+			);
+			if (!fx.isCurrent() || !publishConfirmed) return;
+		}
 		const controller = fx.beginChild("publishing");
 		if (!controller) return;
 		let publisher: AgentRunResult | undefined;
@@ -523,7 +604,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							mode,
 							workLocation,
 							skillPaths,
-							supplementalPrompts: changePrompts,
+							supplementalPrompts: [...changePrompts, ...(options.mutationPrompts ?? [])],
 						});
 						if (fx.isCurrent()) {
 							fx.dashboard?.complete("implementer", {

@@ -1,0 +1,153 @@
+# Workflows
+
+Exact `jj 0.44` procedures. Every command is the full canonical form — no
+personal aliases. Replace `<remote>` with the GitHub remote (usually
+`origin`); `<top>` with the topmost bookmark; `<trunk>` with `trunk()` unless
+the repo needs otherwise.
+
+Inspect before and after any history-changing step:
+
+```text
+/jj-stack inspect --top <top>
+```
+
+Or, from a model: `jj_stack_inspect({ top })`.
+
+Publishing is a confirmed command. `plan` is read-only; `publish` recomputes
+the plan after confirmation and refuses a stale identity:
+
+```text
+/jj-stack plan --top <top> --remote <remote>
+/jj-stack publish --top <top> --remote <remote>
+```
+
+## 1. Start a stack
+
+From a clean working copy on top of trunk:
+
+```bash
+jj new trunk() -m "feat: add auth"
+jj bookmark create auth --revision @
+# ... work ...
+jj new -m "feat: add profile page"
+jj bookmark create profile --revision @
+# ... work ...
+jj new -m "feat: add profile editing"
+jj bookmark create profile-edit --revision @
+```
+
+Leave an empty working-copy change above the top bookmark when practical:
+
+```bash
+jj new
+```
+
+Validate: `/jj-stack inspect --top profile-edit` shows a linear base → top
+with one bookmark per PR boundary and no blockers.
+
+### Defer bookmark placement
+
+You don't have to decide PR boundaries up front. Do the work as a chain of
+changes first, then place bookmarks at the natural seams:
+
+```bash
+jj new trunk() -m "wip: explore auth"
+# later:
+jj bookmark create auth --revision <change-at-the-auth-seam>
+jj bookmark create profile --revision <change-at-the-profile-seam>
+jj bookmark create profile-edit --revision @
+```
+
+Use `jj split --interactive` to break a too-large change before placing its
+bookmark.
+
+## 2. Reshape: split or reorder
+
+```bash
+jj new -B @ -m "prep: extract helper"
+jj split --interactive
+jj rebase -s <change-id> -o <dest-change-or-bookmark>
+jj bookmark move <name> --revision <change-or-bookmark> --allow-backwards
+```
+
+## 3. Edit a change in the middle
+
+Use the change ID (stable across rebases), not the commit ID:
+
+```bash
+jj edit <change-id>
+jj status
+jj edit <top-bookmark>
+```
+
+## 4. Absorb a cross-stack fix
+
+```bash
+jj absorb --into 'trunk()..<top>'
+```
+
+If `jj absorb` is ambiguous, the hunk stays in `@`; finish it with `jj split`
+or by editing the intended change.
+
+## 5. Synchronize only the selected stack
+
+```text
+/jj-stack sync --top <top> --remote <remote>
+```
+
+That fetches the selected remote and rebases only `-b <top>` onto refreshed
+`trunk()`. Conflicts are recorded inside commits — do not assume a clean tree.
+Reinspect afterward.
+
+## 6. Publish or update the stack
+
+```text
+/jj-stack publish --top <top> --remote <remote>
+```
+
+The command shows the exact plan, confirms it, recomputes state, and mutates
+only when the full plan ID still matches. Missing PRs are created as drafts.
+Existing title, body, and draft state are preserved. Navigation comments carry
+verified merged, closed, open, and draft ancestors.
+
+After structural publication, author titles and bodies with `write-pr` from
+each slice's exact diff (`trunk()` below the bottom slice, the preceding
+bookmark below later slices), then:
+
+```bash
+gh pr edit <pr-number> --title '<title>' --body-file <body-file>
+```
+
+If a metadata update fails, report a partial publication. Do not claim every
+PR has a completed description.
+
+## 7. Process review feedback on a middle PR
+
+```bash
+jj edit <change-id>
+jj absorb --into 'trunk()..<top>'
+```
+
+Then `/jj-stack inspect --top <top>` and `/jj-stack publish --top <top> --remote <remote>`.
+
+## 8. Advance after the bottom PR merges
+
+Only after GitHub reports the PR as merged:
+
+```text
+/jj-stack advance --merged <merged-bookmark> --top <top> --remote <remote>
+```
+
+This verifies the remote MERGED state, abandons `trunk()..<merged>` **before**
+fetch (because fetch may forget a deleted remote bookmark), fetches, and
+rebases only the remaining selected stack. It does not republish. Inspect and
+run `/jj-stack publish` separately to repair remaining PR bases and comments.
+
+Never derive the abandon boundary from the next bookmark's parent. One PR
+slice may contain several unbookmarked changes.
+
+## Choosing the remote
+
+If there is exactly one GitHub remote, use it. If there are several, ask;
+don't guess. Confirm with `git remote -v`. The extension rejects a
+non-GitHub remote.

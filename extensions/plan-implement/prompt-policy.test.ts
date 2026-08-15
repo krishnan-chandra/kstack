@@ -62,14 +62,14 @@ describe("plan-implement prompt policy", () => {
 	});
 
 	it("authors every stacked PR from its exact slice diff", () => {
-		assert.match(publisher, /Prepare metadata for every slice before mutation/);
-		assert.match(publisher, /use `trunk\(\)` below the bottom slice/);
-		assert.match(publisher, /Do not use jj change descriptions as PR bodies/);
-		assert.match(publisher, /gh pr edit <slice-pr-number>/);
-		assert.ok(
-			publisher.indexOf("Prepare metadata for every slice before mutation") <
-				publisher.indexOf("publish_stack.py apply"),
-		);
+		const stacked = publisher.slice(publisher.indexOf("### Stacked-PR delivery"));
+		assert.match(stacked, /Inspect each exact slice/);
+		assert.match(stacked, /use `trunk\(\)` below the bottom slice/);
+		assert.match(stacked, /Do not use jj change descriptions as PR bodies/);
+		assert.match(stacked, /gh pr edit <slice-pr-number>/);
+		assert.doesNotMatch(stacked, /publish_stack\.py/);
+		assert.doesNotMatch(stacked, /jj git push/);
+		assert.doesNotMatch(stacked, /gh pr create/);
 	});
 
 	it("does not tell implementer or fixer roles to skip local changes", () => {
@@ -84,5 +84,11 @@ describe("plan-implement prompt policy", () => {
 		assert.match(implementer, /stacked equivalent of a task branch and incremental commits/);
 		assert.match(implementer, /do not also create a Git task branch/);
 		assert.match(fixer, /amend the slice each finding belongs to/);
+	});
+
+	it("does not send implementer or fixer to a deleted stacked-prs skill", () => {
+		assert.doesNotMatch(implementer, /jj-stacked-prs skill/);
+		assert.doesNotMatch(fixer, /jj-stacked-prs skill/);
+		assert.match(implementer, /appended local jj stack policy/);
 	});
 });

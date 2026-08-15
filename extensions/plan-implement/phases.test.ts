@@ -185,8 +185,63 @@ describe("plan-implement phases", () => {
 				return { status: "completed", role: input.role, model: input.model, output: "", usage };
 			},
 		});
-		await runPostReviewPhases("nothing", options(), { workflowCwd: "/repo" }, fx);
+		await runPostReviewPhases("nothing", { ...options(), mode: "single" }, { workflowCwd: "/repo" }, fx);
 		assert.equal(agentRan, false);
+	});
+
+	it("does not launch the stack publisher child when structural publication is not completed", async () => {
+		let publisherRan = false;
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				if (input.role === "publisher") publisherRan = true;
+				return { status: "completed", role: input.role, model: input.model, output: "fixed", usage };
+			},
+			requestStackPublication: async () => ({ handled: true, outcome: { status: "declined" } }),
+		});
+		await runPostReviewPhases("nothing", options(), { workflowCwd: "/repo" }, fx);
+		assert.equal(publisherRan, false);
+		assert.match(notifications.join("\n"), /declined/);
+	});
+
+	it("writes the trusted PR map and can decline metadata after completed publication", async () => {
+		let publisherRan = false;
+		let confirms = 0;
+		const { fx, notifications } = effects({
+			confirm: async () => {
+				confirms++;
+				return confirms === 1;
+			},
+			runAgent: async (input) => {
+				if (input.role === "publisher") publisherRan = true;
+				return { status: "completed", role: input.role, model: input.model, output: "fixed", usage };
+			},
+			requestStackPublication: async () => ({
+				handled: true,
+				outcome: {
+					status: "completed",
+					planId: "abc",
+					completedActions: [],
+					publication: {
+						repository: { owner: "o", repo: "r" },
+						remote: "origin",
+						topBookmark: "feat2",
+						pullRequests: [
+							{
+								bookmark: "feat2",
+								baseBookmark: null,
+								changeIds: ["aaa"],
+								prNumber: 12,
+								url: "https://example/12",
+								draft: true,
+							},
+						],
+					},
+				},
+			}),
+		});
+		await runPostReviewPhases("nothing", options(), { workflowCwd: "/repo" }, fx);
+		assert.equal(publisherRan, false);
+		assert.match(notifications.join("\n"), /left unchanged/);
 	});
 
 	describe("offerLandContinuation", () => {

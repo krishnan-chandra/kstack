@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
 import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { requestJjStackCapabilities, requestStackPublication } from "../jj-stacked-prs/api.ts";
 import { requestLand } from "../land/api.ts";
 import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
@@ -247,8 +248,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const implementerModel = modelCliId(roles.implementer);
 		let trunkSha: string | undefined;
 		let skillPaths: string[] = [];
+		let mutationPrompts: string[] = [];
 		let worktreePlan: IsolationPlan | undefined;
 		if (mode === "stack") {
+			const capabilities = await requestJjStackCapabilities(pi);
+			if (!lifecycle.isSessionCurrent(commandSession)) return;
+			if (!capabilities.handled) {
+				notify("Stack mode requires the jj-stacked-prs extension to be loaded before any model call.", "error");
+				return;
+			}
 			const preflight = await preflightStack(ctx.cwd, exec);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!preflight.ok) {
@@ -262,6 +270,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			skillPaths = policy.skills.map((skill) => skill.baseDir);
+			mutationPrompts = [readFileSync(join(PROMPTS_DIR, "jj-stack-local.md"), "utf8")];
 		} else if (workLocation === "worktree") {
 			if (backend.id !== "git") {
 				notify("--worktree requires the git backend.", "error");
@@ -282,7 +291,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					? "Run plan → implement in managed worktree → panel review → fix → publish?"
 					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
-				? `Planner (read-only): ${plannerModel}\nImplementer (creates local jj changes + bookmarks): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nStack mode disables skill discovery in children and re-adds every discovered skill except arena, so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs skill is required. The implementer builds a LOCAL stack only — it does not push or create PRs. You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. After the verdict you approve addressing its findings, then publishing the stack as draft PRs with reviewer recommendations.`
+				? `Planner (read-only): ${plannerModel}\nImplementer (creates local jj changes + bookmarks): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nStack mode disables skill discovery in children and re-adds every discovered skill except arena, so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs extension is required. The implementer builds a LOCAL stack only — it does not push or create PRs. You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. After the verdict the loaded extension confirms structural publication, then you may approve a metadata/reviewer child.`
 				: `Planner (read-only): ${plannerModel}\nImplementer (${backend.id === "jj" ? "creates a dedicated jj change and task bookmark" : "creates a dedicated branch and incremental Git commits"}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : backend.id === "jj" ? "Location: current jj workspace\n" : "Location: current Git working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : backend.id === "jj" ? "The parent creates a trunk()-based jj change and task bookmark after plan approval. jj snapshots the current workspace state, so Git dirty-tree rules do not apply. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
@@ -305,6 +314,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					timeoutMinutes: roles.timeoutMinutes,
 					skillPaths,
 					changePrompts,
+					mutationPrompts,
 					trunkSha,
 					worktreePlan,
 				},
@@ -340,6 +350,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					requestLand: (prNumber, cwd) =>
 						requestLand(pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
 					requestAutopilot: (prNumber, cwd) => requestPrAutopilot(pi, "drive", prNumber, ctx, cwd),
+					requestStackPublication: (cwd) => requestStackPublication(pi, { repositoryPath: cwd }, ctx),
 					dashboard,
 				},
 			);

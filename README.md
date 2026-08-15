@@ -19,6 +19,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation child for an explicit, bounded change on a local Git branch, jj bookmark, or managed Git worktree. It preserves inspection, verification, and recorded checkpoints, but deliberately skips independent planning and review; it supports single-PR local workstreams only and never publishes. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of an exact, merge-ready GitHub PR head. Reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
+| [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, and advances linear GitHub PR stacks on a colocated jj workspace. Read-only tools; mutations require standard confirmation and a fresh post-confirmation plan. |
 
 Writable workstreams use a dedicated `kstack/<task-slug>` Git branch or jj
 bookmark and record coherent increments with the configured backend. Git
@@ -36,7 +37,6 @@ routes do not create workstreams.
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
-| [`jj-stacked-prs`](skills/jj-stacked-prs/) | Manages linear stacks of GitHub pull requests on top of a Jujutsu working copy — create, edit, absorb, sync with trunk, publish with the bundled `publish_stack.py`, and advance after a merge. Read-only inspection helper, confirmed mutations, no silent publication. |
 | [`git-worktrees`](skills/git-worktrees/) | Creates, inspects, repairs, and safely cleans up Git linked worktrees managed beneath `~/.pi/kstack/worktrees`, with dirty-state and ownership checks before removal. |
 | [`fix-merge-conflicts`](skills/fix-merge-conflicts/) | Resolves merge, rebase, or jj conflicts non-interactively, then validates the build and tests before finalizing. |
 | [`write-pr`](skills/write-pr/) | Writes a crisp pull-request title and description from a standalone branch or exact stacked-PR slice, updating the open PR or creating a draft. |
@@ -213,7 +213,6 @@ Skills can then be invoked explicitly, for example:
 /skill:arena
 /skill:architect
 /skill:swarm
-/skill:jj-stacked-prs
 /skill:simplify
 /skill:unslop
 /skill:technical-writing
@@ -230,8 +229,9 @@ The two-model implementation workflow also has a stacked-PR delivery mode:
 
 In stack mode the planner and implementer build a **local** jj stack of
 bookmarks (one per PR) and deterministically exclude the `arena` skill; no PRs
-are created. Publishing the stack with the bundled `publish_stack.py` is a separate, confirmed
-step guided by the [`jj-stacked-prs`](skills/jj-stacked-prs/) skill.
+are created. Confirmed structural publication uses the loaded
+[`jj-stacked-prs`](extensions/jj-stacked-prs/) extension (`/jj-stack publish`);
+a child updates titles/bodies and recommends reviewers only after that succeeds.
 
 After a draft PR is published, hand it to the bounded PR autopilot to drive
 the review/fix/CI loop with only tiny models:
@@ -316,6 +316,7 @@ node --test extensions/plan-implement/*.test.ts
 node --test extensions/kstack-router/*.test.ts
 node --test extensions/pr-autopilot/*.test.ts
 node --test extensions/land/*.test.ts
+node --test extensions/jj-stacked-prs/*.test.ts
 node --test extensions/fast-implement/*.test.ts
 node --test extensions/shared/*.test.ts
 node --test skills/reflect/*.test.mjs
@@ -338,21 +339,6 @@ node extensions/kstack-router/scripts/smoke-mock-pi.mjs
 The package also includes the skills listed in the table above. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
-
-### Skill tests
-
-The `jj-stacked-prs` skill includes Python tests for its bundled publisher and inspector:
-
-```bash
-python3 -m unittest discover -s skills/jj-stacked-prs/tests -p 'test_*.py'
-node --test skills/jj-stacked-prs/skill.test.mjs
-```
-
-Validate all Python scripts compile:
-
-```bash
-python3 -m py_compile skills/jj-stacked-prs/scripts/*.py
-```
 
 ### Session archive smoke test
 

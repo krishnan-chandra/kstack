@@ -109,7 +109,7 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 7. **Stop at merge-ready.** The autopilot declares a PR looks merge-ready and
    stops. It never merges, never arms merge-when-ready, and never touches
    branch protection. Drafts that are code-ready ask once to `gh pr ready`.
-   Use `jj-stacked-prs` or your normal merge flow to land.
+   Use `/jj-stack advance` or your normal merge flow to land.
 
 8. **One autopilot per stack.** If a run is already active, a second
    `/pr-autopilot` is rejected.
