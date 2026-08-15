@@ -14,15 +14,9 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey } from "@earendil-works/pi-tui";
-import {
-	type DashboardStatus,
-	type DashboardTheme,
-	STATUS_ICON,
-	sanitizeDisplayText,
-	stripTerminalSequencesFallback,
-	type TerminalText,
-} from "../panel-review/live-dashboard.ts";
 import { formatDuration } from "./child-agent-runner.ts";
+import { type DashboardStatus, type DashboardTheme, STATUS_ICON } from "./live-dashboard.ts";
+import { sanitizeDisplayText, stripTerminalSequencesFallback, type TerminalText } from "./terminal-text.ts";
 import { EVICTION_NOTICE, type TranscriptEntry } from "./transcript-store.ts";
 
 interface InspectorRow {

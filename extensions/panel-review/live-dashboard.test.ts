@@ -141,6 +141,15 @@ describe("renderDashboard", () => {
 		assert.match(leadLine, /\(synth-model\)/);
 	});
 
+	it("uses dim reviewer models and an accent lead model", () => {
+		const { store } = makeStore();
+		store.addReviewer("a", "A", "review-model");
+		store.addLead("lead", "Lead", "lead-model");
+		const lines = renderDashboard(store, 100, taggedTheme).join("\n");
+		assert.match(lines, /<dim> \(review-model\)<\/>/);
+		assert.match(lines, /<accent> \(lead-model\)<\/>/);
+	});
+
 	it("never emits a line wider than the terminal, wide chars included", () => {
 		const { store } = makeStore();
 		store.addReviewer("a", "wide-語句-label", "model-with-a-rather-long-identifier/x:y");
