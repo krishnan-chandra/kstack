@@ -1,5 +1,6 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import { isLandConfirmation } from "./confirmation.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
 export const LAND_REQUEST_EVENT = "kstack:land:request";
@@ -8,7 +9,7 @@ const MERGE_METHODS = new Set<unknown>(["squash", "rebase"]);
 
 interface LandPayload {
 	options: LandOptions;
-	ctx: ExtensionCommandContext;
+	ctx: ExtensionContext;
 }
 
 /* exported: request-channel contract */
@@ -23,6 +24,8 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 		if (typeof value.ctx !== "object" || value.ctx === null || typeof options !== "object" || options === null)
 			return false;
 		if ("cwd" in options && options.cwd !== undefined && (typeof options.cwd !== "string" || options.cwd.length === 0))
+			return false;
+		if ("confirmation" in options && options.confirmation !== undefined && !isLandConfirmation(options.confirmation))
 			return false;
 		if (
 			!("readiness" in options) ||
@@ -50,7 +53,7 @@ export function isLandRequest(value: unknown): value is LandRequest {
 
 export function claimLandRequest(
 	value: unknown,
-	run: (options: LandOptions, ctx: ExtensionCommandContext) => Promise<LandResult>,
+	run: (options: LandOptions, ctx: ExtensionContext) => Promise<LandResult>,
 ): boolean {
 	return channel.claim(value, ({ options, ctx }) => run(options, ctx));
 }
@@ -58,7 +61,7 @@ export function claimLandRequest(
 export function requestLand(
 	pi: ExtensionAPI,
 	options: LandOptions,
-	ctx: ExtensionCommandContext,
+	ctx: ExtensionContext,
 ): Promise<{ handled: false } | { handled: true; outcome: LandResult }> {
 	return channel.request(pi, { options, ctx });
 }

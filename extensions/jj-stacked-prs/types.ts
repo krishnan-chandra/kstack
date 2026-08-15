@@ -61,7 +61,11 @@ export type StackBlocker =
 				| "ambiguous-local-bookmark"
 				| "remote-bookmark-conflict"
 				| "ambiguous-pr"
-				| "ambiguous-top";
+				| "ambiguous-top"
+				| "base-chain-mismatch"
+				| "head-mismatch"
+				| "out-of-order-merge"
+				| "land-unavailable";
 			message: string;
 			bookmark?: string;
 	  }
@@ -169,10 +173,11 @@ export type CompletedPublicationAction =
 	| { kind: "create-draft-pr"; bookmark: string; prNumber: number; url: string }
 	| { kind: "repair-pr-base"; bookmark: string; prNumber: number; targetBase: string }
 	| { kind: "create-nav-comment"; prNumber: number }
-	| { kind: "update-nav-comment"; prNumber: number };
+	| { kind: "update-nav-comment"; prNumber: number }
+	| { kind: "mark-pr-ready"; bookmark: string; prNumber: number };
 
 export type FailedPublicationAction = {
-	kind: CorePublicationAction["kind"] | "nav-comment";
+	kind: CorePublicationAction["kind"] | "nav-comment" | "mark-pr-ready";
 	bookmark?: string;
 	prNumber?: number;
 	error: string;
@@ -232,10 +237,50 @@ export type AdvanceOutcome =
 	| { status: "indeterminate"; operationId?: string; inFlight: string }
 	| { status: "failed"; error: string; operationId?: string };
 
+export type StackMergeMethod = "squash" | "rebase";
+export type StackReadinessMode = "check" | "watch";
+
+export interface StackLandFrontier {
+	bookmark: string;
+	prNumber: number;
+	url: string;
+	expectedHeadSha: string;
+	method: StackMergeMethod;
+	state: "landed" | "queued" | "blocked" | "not-attempted" | "already-merged";
+}
+
+interface StackLandProgress {
+	frontiers: readonly StackLandFrontier[];
+	remainingBookmarks: readonly string[];
+	completedMutations: readonly string[];
+	recoveryOperationIds: readonly string[];
+}
+
+export type StackLandOutcome =
+	| ({ status: "completed" } & StackLandProgress)
+	| ({ status: "partial"; error: string } & StackLandProgress)
+	| { status: "blocked"; blockers: readonly StackBlocker[] }
+	| { status: "declined" }
+	| { status: "busy"; message: string }
+	| {
+			status: "cancelled";
+			frontiers?: readonly StackLandFrontier[];
+			completedMutations?: readonly string[];
+			recoveryOperationIds?: readonly string[];
+	  }
+	| ({ status: "indeterminate"; inFlight: string; recovery?: string } & StackLandProgress)
+	| {
+			status: "failed";
+			error: string;
+			frontiers?: readonly StackLandFrontier[];
+			completedMutations?: readonly string[];
+			recoveryOperationIds?: readonly string[];
+	  };
+
 export interface JjStackCapabilities {
 	schemaVersion: typeof SCHEMA_VERSION;
-	commands: readonly ["inspect", "plan", "publish", "sync", "advance"];
-	tools: readonly ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish"];
+	commands: readonly ["inspect", "plan", "publish", "sync", "advance", "land"];
+	tools: readonly ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish", "jj_stack_land"];
 	publication: true;
 }
 

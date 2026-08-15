@@ -45,6 +45,7 @@ export interface JjAdapter {
 	fetchRemote(cwd: string, remote: string, signal?: AbortSignal): Promise<void>;
 	rebaseStack(cwd: string, top: string, trunk: string, signal?: AbortSignal): Promise<void>;
 	abandonRange(cwd: string, trunk: string, mergedBookmark: string, signal?: AbortSignal): Promise<void>;
+	isAncestor(cwd: string, ancestor: string, descendant: string, signal?: AbortSignal): Promise<boolean>;
 }
 
 export function bookmarkRevset(bookmark: string): string {
@@ -162,6 +163,16 @@ export function createJjAdapter(run: ProcessRunner): JjAdapter {
 		async abandonRange(cwd, trunk, mergedBookmark, signal) {
 			assertBoundedName(trunk, "revset", MAX_REVSET_CHARS);
 			await runJj(run, ["abandon", `(${trunk})..${bookmarkRevset(mergedBookmark)}`], { cwd, signal });
+		},
+		async isAncestor(cwd, ancestor, descendant, signal) {
+			assertBoundedName(ancestor, "revset", MAX_REVSET_CHARS);
+			assertBoundedName(descendant, "revset", MAX_REVSET_CHARS);
+			const result = await runJj(
+				run,
+				["log", "-r", `${ancestor} & ::${descendant}`, "--no-graph", "--no-pager", "-T", COMMIT_ID_TEMPLATE],
+				{ cwd, signal },
+			);
+			return nonemptyLines(result.stdout).length > 0;
 		},
 	};
 }

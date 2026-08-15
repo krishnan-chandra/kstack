@@ -1,16 +1,17 @@
 # jj-stacked-prs
 
-Inspect, plan, publish, sync, and advance a **linear** Jujutsu bookmark stack
-as GitHub draft pull requests. Local history stays in `jj`. Bookmarks are PR
-boundaries. Publication is available through a confirmed command. A
-model-callable tool treats the user's explicit publish request as authorization.
+Inspect, plan, publish, sync, advance, and land a **linear** Jujutsu bookmark
+stack as GitHub pull requests. Local history stays in `jj`. Bookmarks are PR
+boundaries. Publication and landing are available through confirmed commands.
+Model-callable tools treat the user's explicit request as authorization.
 
 ```text
 /jj-stack inspect [--top <bookmark>] [--trunk <revset>] [--max-stack <1..50>]
 /jj-stack plan --top <bookmark> --remote <name> [--trunk <revset>] [--max-stack <1..50>]
-/jj-stack publish --top <bookmark> --remote <name> [--trunk <revset>] [--max-stack <1..50>]
+/jj-stack publish --top <bookmark> --remote <name> [--trunk <revset>] [--max-stack <1..50>] [--ready]
 /jj-stack sync --top <bookmark> --remote <name> [--trunk <revset>]
 /jj-stack advance --merged <bookmark> --top <bookmark> --remote <name> [--trunk <revset>]
+/jj-stack land --top <bookmark> --remote <name> [--trunk <revset>] [--method squash|rebase] [--readiness check|watch] [--max-stack <1..50>]
 ```
 
 Model tools:
@@ -18,14 +19,15 @@ Model tools:
 ```text
 jj_stack_inspect({ top?, trunk?, maxStack? })
 jj_stack_plan({ top, remote, trunk?, maxStack? })
-jj_stack_publish({ top, remote, trunk?, maxStack? })
+jj_stack_publish({ top, remote, trunk?, maxStack?, ready? })
+jj_stack_land({ top, remote, trunk?, method?, readiness?, maxStack? })
 ```
 
 `jj_stack_publish` pushes bookmarks, creates draft PRs, repairs PR bases, and
-reconciles navigation comments without a UI confirmation. Pi calls it only
-after the user explicitly asks to publish the current stack. There is no sync,
-advance, or generic jj mutation tool. A plan ID proves freshness, not
-authorization.
+reconciles navigation comments without a UI confirmation. `jj_stack_land` lands
+the stack the same way. Pi calls either tool only after the user explicitly
+asks. There is no sync, advance, or generic jj mutation tool. A plan ID proves
+freshness, not authorization.
 
 ## What it does
 
@@ -36,22 +38,28 @@ authorization.
   targets and open PRs in the same GitHub repository.
 - Publishes from `/jj-stack publish` after standard `ctx.ui.confirm`, or from
   `jj_stack_publish` after an explicit user request. Both paths recompute the
-  plan and refuse a stale plan ID before mutation.
+  plan and refuse a stale plan ID before mutation. Pass `--ready` to mark the
+  published drafts ready after the structural work.
 - Syncs only the selected stack: `jj git fetch --remote <remote>` then
   `jj rebase -b <top> -o <trunk>`.
 - Advances only when inspection has no blockers, the merged PR's head commit
   matches the local bottom bookmark, and GitHub reports that PR as `MERGED`.
   It abandons `<trunk>..<merged>` before fetch, then rebases any remainder. It
   does not republish; run `/jj-stack publish` separately.
+- Lands the stack bottom-up through the `land` extension. One confirmation
+  covers the whole plan. Each frontier is marked ready if needed, merged with
+  a minted Land confirmation, advanced locally, verified onto trunk, republished, and
+  has its remote branch deleted only after those checks. `--readiness` defaults
+  to `watch`. `/land` remains the single-PR command.
 
 ## What it does not do
 
 - Non-linear, merge-commit, multi-base, or parallel stacks.
 - Install or authenticate `jj` or `gh`.
-- Merge PRs, mark them ready, assign reviewers, delete remote branches, or
-  force-push with raw Git.
+- Assign reviewers, enable auto-merge, pass `--admin`, or force-push with raw Git.
 - One-line wrappers for `jj new`, `jj edit`, `jj split`, or `jj absorb`.
 - A custom TUI dashboard or a cross-process publication lock.
+- Landing without the `land` and `pr-autopilot` extensions.
 
 See [docs/workflows.md](docs/workflows.md) for manual local jj operations and
 [docs/safety-and-recovery.md](docs/safety-and-recovery.md) for recovery.
@@ -85,6 +93,8 @@ Completed outcomes return a base-to-top PR map. Other outcomes are
 | Tool content | 50 KiB / 2,000 lines |
 | Navigation comment | 100 entries / 60 KiB |
 | Concurrent mutation runs | 1 per session |
+| Ready + branch-delete `gh` calls | 30s each |
+| Per-frontier merge verification | land's existing 30 min |
 
 Press **Ctrl+Shift+J** to abort an active mutation. Session shutdown aborts the
 active controller. Cancellation after a mutator starts is `indeterminate` when

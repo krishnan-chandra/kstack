@@ -20,7 +20,9 @@ the plan and refuse a stale identity before mutation:
 ```text
 /jj-stack plan --top <top> --remote <remote>
 /jj-stack publish --top <top> --remote <remote>
+/jj-stack publish --top <top> --remote <remote> --ready
 jj_stack_publish({ top: "<top>", remote: "<remote>" })
+jj_stack_publish({ top: "<top>", remote: "<remote>", ready: true })
 ```
 
 ## 1. Start a stack
@@ -152,6 +154,27 @@ comments.
 Never advance a middle bookmark while an earlier slice is still in the local
 stack. Never derive the abandon boundary from the next bookmark's parent. One
 PR slice may contain several unbookmarked changes.
+
+## 9. Land the entire stack
+
+After the stack is published and you want it merged bottom-up:
+
+```text
+/jj-stack land --top <top> --remote <remote>
+jj_stack_land({ top: "<top>", remote: "<remote>" })
+```
+
+The command confirms the ordered plan once. The model tool treats an explicit
+land request as authorization. Both paths preflight the base chain and head
+SHAs, then for each frontier: mark the PR ready if it is still a draft, land it
+through `/land` with a minted confirmation, advance locally, verify the merge
+commit is an ancestor of the refreshed trunk, republish the remainder, and
+delete the merged remote branch when it still points at the landed head.
+`--readiness` defaults to `watch` because each restack restarts CI. Re-run the
+command after a partial stop; an already-merged bottom PR is advanced and the
+loop continues.
+
+Do not land a child PR before its base. Do not call `gh pr merge` directly.
 
 ## Choosing the remote
 

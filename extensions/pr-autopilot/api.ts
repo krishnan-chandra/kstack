@@ -1,5 +1,5 @@
 /** Typed in-process contract for invoking PR autopilot from another extension. */
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import type { AutopilotResult } from "./driver.ts";
 import type { AutopilotMode } from "./types.ts";
@@ -10,7 +10,7 @@ const MODES: ReadonlySet<string> = new Set(["check", "threads", "drive", "watch"
 interface PrAutopilotPayload {
 	mode: AutopilotMode;
 	prNumber?: number;
-	ctx: ExtensionCommandContext;
+	ctx: ExtensionContext;
 	cwd: string;
 }
 
@@ -52,7 +52,7 @@ export function claimPrAutopilotRequest(
 	run: (
 		mode: AutopilotMode,
 		prNumber: number | undefined,
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		cwd: string,
 	) => Promise<AutopilotResult>,
 ): boolean {
@@ -63,7 +63,7 @@ export function requestPrAutopilot(
 	pi: ExtensionAPI,
 	mode: AutopilotMode,
 	prNumber: number | undefined,
-	ctx: ExtensionCommandContext,
+	ctx: ExtensionContext,
 	cwd: string,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
 	if (prNumber !== undefined && !isPositivePr(prNumber)) return Promise.resolve({ handled: false });
