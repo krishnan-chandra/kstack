@@ -48,6 +48,7 @@ function effects(overrides: Partial<PhaseEffects> = {}): { fx: PhaseEffects; not
 		requestPanelReview: async () => ({ handled: false }),
 		resolvePublishedPr: async () => ({ ok: false, error: "not resolved (test default)" }),
 		requestLand: async () => ({ handled: false }),
+		requestAutopilot: async () => ({ handled: false }),
 		...overrides,
 	};
 	return { fx, notifications };
@@ -132,8 +133,9 @@ describe("plan-implement phases", () => {
 		assert.match(notifications.join("\n"), /postcondition failed/);
 	});
 
-	it("offers landing only after a completed single-mode publisher", async () => {
+	it("offers autopilot and landing after a completed single-mode publisher", async () => {
 		let resolved = 0;
+		let autopilotRan = false;
 		const { fx } = effects({
 			runAgent: async (input) => ({
 				status: "completed",
@@ -144,24 +146,33 @@ describe("plan-implement phases", () => {
 			}),
 			resolvePublishedPr: async () => {
 				resolved++;
-				return { ok: false, error: "none" };
+				return { ok: true, prNumber: 42 };
+			},
+			requestAutopilot: async () => {
+				autopilotRan = true;
+				return {
+					handled: true,
+					outcome: { status: "merge-ready", mergeReady: true, cyclesCompleted: 1, blockedReasons: [], usage },
+				};
 			},
 		});
 		await runPostReviewPhases("nothing", { ...options(), mode: "single" }, { workflowCwd: "/repo" }, fx);
-		assert.equal(resolved, 1);
+		assert.equal(resolved, 2); // autopilot phase, landing phase
+		assert.equal(autopilotRan, true);
 
+		let resolvedFailed = 0;
 		const { fx: failedFx } = effects({
 			runAgent: async (input) =>
 				input.role === "publisher"
 					? { status: "failed", role: input.role, model: input.model, error: "failed" }
 					: { status: "completed", role: input.role, model: input.model, output: "fixed", usage },
 			resolvePublishedPr: async () => {
-				resolved++;
+				resolvedFailed++;
 				return { ok: false, error: "none" };
 			},
 		});
 		await runPostReviewPhases("nothing", { ...options(), mode: "single" }, { workflowCwd: "/repo" }, failedFx);
-		assert.equal(resolved, 1);
+		assert.equal(resolvedFailed, 0);
 	});
 
 	it("skips the publisher cleanly when confirmation is declined", async () => {

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
+import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 import {
 	createCurrentWorkstreamBranch,
 	verifyCommittedWorkstream,
@@ -35,6 +36,10 @@ export interface PhaseEffects {
 	requestPanelReview(options: PanelArgs): Promise<{ handled: false } | { handled: true; outcome: PanelReviewOutcome }>;
 	resolvePublishedPr(cwd: string): Promise<{ ok: true; prNumber: number } | { ok: false; error: string }>;
 	requestLand(prNumber: number, cwd: string): Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
+	requestAutopilot(
+		prNumber: number,
+		cwd: string,
+	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
 }
 
 export interface ApprovedWorkflowOptions {
@@ -148,6 +153,9 @@ export async function runPostReviewPhases(
 				(mode === "stack"
 					? "The publisher consults jj-stacked-prs to submit the local stack as draft PRs (publish_stack.py) and write-pr for each slice's title/body, then find-reviewers for 2–5 reviewer recommendations over the full stack. "
 					: "The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's title/body), then find-reviewers for 2–5 reviewer recommendations. ") +
+				(mode === "single"
+					? "After publishing, you will be offered PR-autopilot (watch CI, address threads, push fixes) and then landing. "
+					: "") +
 				"It never marks PRs ready, merges, or force-pushes; creating a PR grants the necessary push. Reviewer recommendations are printed to the session as the run's final output.",
 		);
 		if (!fx.isCurrent() || !publishConfirmed) return;
@@ -185,10 +193,46 @@ export async function runPostReviewPhases(
 			if (fx.isCurrent()) fx.setStatus(undefined);
 		}
 		if (mode === "single" && publisher?.status === "completed" && fx.isCurrent()) {
+			await offerAutopilotPhase(options, state, fx);
 			await offerLandContinuation(options, state, fx);
 		}
 	} finally {
 		removePrivateDir(reviewDir, "review-phase", fx);
+	}
+}
+
+async function offerAutopilotPhase(
+	options: Pick<ApprovedWorkflowOptions, "mode">,
+	state: { workflowCwd: string },
+	fx: PhaseEffects,
+): Promise<void> {
+	if (options.mode !== "single" || !fx.isCurrent()) return;
+	const resolved = await fx.resolvePublishedPr(state.workflowCwd);
+	if (!fx.isCurrent()) return;
+	if (!resolved.ok) {
+		fx.notify(`Autopilot not offered: ${resolved.error}`, "warning");
+		return;
+	}
+	const confirmed = await fx.confirm(
+		`Run PR-autopilot on PR #${resolved.prNumber}?`,
+		"PR-autopilot watches CI, addresses review threads, and pushes fixes until merge-ready. " +
+			"Uses tiny models only. You can also run this later with /pr-autopilot.",
+	);
+	if (!confirmed || !fx.isCurrent()) return;
+	const result = await fx.requestAutopilot(resolved.prNumber, state.workflowCwd);
+	if (!fx.isCurrent()) return;
+	if (!result.handled) {
+		fx.notify("PR-autopilot is not available; the pr-autopilot extension may not be loaded.", "warning");
+		return;
+	}
+	const outcome = result.outcome;
+	if (outcome.status === "merge-ready") {
+		fx.notify(`PR-autopilot: merge-ready after ${outcome.cyclesCompleted} cycle(s).`, "info");
+	} else if (outcome.status === "aborted" || outcome.status === "declined") {
+		fx.notify(`PR-autopilot: ${outcome.status}.`, "info");
+	} else {
+		const reasons = outcome.blockedReasons.length > 0 ? ` — ${outcome.blockedReasons.join("; ")}` : "";
+		fx.notify(`PR-autopilot: ${outcome.status}${reasons}`, "warning");
 	}
 }
 
