@@ -61,6 +61,17 @@ describe("plan-implement prompt policy", () => {
 		assert.match(publisher, /never record additional changes/);
 	});
 
+	it("authors every stacked PR from its exact slice diff", () => {
+		assert.match(publisher, /Prepare metadata for every slice before mutation/);
+		assert.match(publisher, /use `trunk\(\)` below the bottom slice/);
+		assert.match(publisher, /Do not use jj change descriptions as PR bodies/);
+		assert.match(publisher, /gh pr edit <slice-pr-number>/);
+		assert.ok(
+			publisher.indexOf("Prepare metadata for every slice before mutation") <
+				publisher.indexOf("publish_stack.py apply"),
+		);
+	});
+
 	it("does not tell implementer or fixer roles to skip local changes", () => {
 		assert.doesNotMatch(implementer, /Do not commit, push, publish/);
 		assert.doesNotMatch(fixer, /Do not commit, push, publish/);

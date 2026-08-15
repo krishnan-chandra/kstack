@@ -151,13 +151,26 @@ Show the user the plan and get explicit approval, then apply using the plan ID f
 python3 <skill-dir>/scripts/publish_stack.py apply --repo <path> --top <top> --remote <remote> --plan-id <plan_id>
 ```
 
-The publisher uses each change's first description line as the provisional PR title. If a title is wrong, fix the description first:
+The publisher creates missing PRs as drafts. When a remaining PR has a kstack navigation comment owned by the authenticated user, the publisher carries its verified predecessors into the updated comments.
 
-```bash
-jj describe -r <change-id> -m "feat: correct title"
-```
+### Author PR descriptions with the `write-pr` skill
 
-then re-plan and re-apply. The publisher updates existing PRs (including their base) rather than recreating them and creates missing PRs as drafts.
+Prepare each slice's metadata before applying the publication plan:
+
+1. Read each slice's `target_base` and bookmark from the plan.
+2. Inspect only that slice's committed diff. For jj, use `trunk()` below the bottom slice and the preceding bookmark below later slices:
+   ```bash
+   jj diff -r '<local-slice-base>..<slice-bookmark>'
+   # or, when both Git refs are available:
+   git diff <target-base>...<slice-bookmark>
+   ```
+3. Use `write-pr` to compose the title, `## Summary`, and `## Review guide`. Save the body in `local/` or a temporary directory. Do not use the jj change description as the PR body.
+4. Apply the publication plan. Then update each PR with its returned PR number:
+   ```bash
+   gh pr edit <pr-number> --title '<title>' --body-file <body-file>
+   ```
+
+If a metadata update fails, report the stack as partially published. Do not claim that every PR has a completed description.
 
 ## 7. Process review feedback on a middle PR
 
@@ -209,6 +222,8 @@ jj rebase -b <top> -o 'trunk()'
 inspect_stack.py --top <top>
 python3 <skill-dir>/scripts/publish_stack.py plan --repo <path> --top <top> --remote <remote>   # repairs PR bases; preview, then confirm and apply
 ```
+
+`publish_stack.py apply` reads the longest owned kstack navigation table on the remaining PRs. It verifies predecessor PR states with GitHub, retains merged and closed predecessors, and marks a status as `Unknown` if verification fails.
 
 If the remote branch was deleted on merge, the local bookmark is forgotten after fetch; that's expected.
 
