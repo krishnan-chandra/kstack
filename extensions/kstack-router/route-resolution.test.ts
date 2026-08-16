@@ -49,7 +49,7 @@ function effects(
 	return { fx, calls };
 }
 
-const classifierResolution = { modelId: "test/classifier", source: "config" as const, thinking: "low" };
+const classifierResolution = { modelId: "test/classifier", source: "config" as const, thinking: "low" as const };
 
 async function resolve(args: RouterArgs, fx: RouteResolutionEffects, resolution = classifierResolution) {
 	return resolveRoute({ parsedArgs: args, task: "do work", routerConfig: null, classifierResolution: resolution }, fx);

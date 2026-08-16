@@ -236,7 +236,7 @@ The selected workspace is already on the PR's ${backend === "jj" ? "bookmark" : 
 export function pickModel(
 	models: readonly AutopilotModelSpec[],
 	random: () => number = Math.random,
-): { model: string; label: string; thinking?: string } {
+): Pick<AutopilotModelSpec, "model" | "label" | "thinking"> {
 	const sample = random();
 	const unit = Number.isFinite(sample) ? Math.min(Math.max(sample, 0), 0.999999999999) : 0;
 	const index = Math.min(models.length - 1, Math.floor(unit * models.length));

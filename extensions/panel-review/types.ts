@@ -2,13 +2,11 @@
  * Shared types for the panel-review extension.
  */
 
-export interface ReviewerSpec {
+import type { ModelSpec } from "../shared/model-spec.ts";
+
+export interface ReviewerSpec extends ModelSpec {
 	/** Run label ("A", "B", ...). Identifies runs only; not a persona. */
 	label: string;
-	/** Pi model id in "provider/model" form. */
-	model: string;
-	/** Optional thinking level suffix (e.g. "high"). */
-	thinking?: string;
 }
 
 export interface PanelConfig {
@@ -23,7 +21,7 @@ export interface PanelConfig {
 	 * bounded reviewer reports, so a small, fast model is usually the right
 	 * choice.
 	 */
-	synthesis: { model: string; thinking?: string };
+	synthesis: Pick<ModelSpec, "model" | "thinking">;
 }
 
 export interface UsageSummary {

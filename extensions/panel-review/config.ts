@@ -31,8 +31,13 @@
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
-import { MODEL_LABEL_RE, splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
+import {
+	loadValidatedSection,
+	type ModelThinkingLevel,
+	type ConfigLoad as SharedConfigLoad,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
+import { MODEL_LABEL_RE, type ModelSpec, splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
@@ -150,7 +155,7 @@ function validateTimeouts(
 
 function validateSynthesis(
 	obj: Record<string, unknown>,
-): { ok: true; spec: { model: string; thinking?: string } } | { ok: false; error: string } {
+): { ok: true; spec: Pick<ModelSpec, "model" | "thinking"> } | { ok: false; error: string } {
 	if (typeof obj.synthesis !== "object" || obj.synthesis === null || Array.isArray(obj.synthesis)) {
 		return {
 			ok: false,
@@ -190,7 +195,7 @@ export interface ResolveDeps {
 	/** Resolve "provider/model" against the registry; return undefined when unavailable. */
 	find: (provider: string, modelId: string) => ModelLike | undefined;
 	/** Scoped models for the session (may be empty = unscoped). */
-	scopedModels: readonly { model: ModelLike; thinkingLevel?: string }[];
+	scopedModels: readonly { model: ModelLike; thinkingLevel?: ModelThinkingLevel }[];
 	/** Currently active model. */
 	activeModel?: ModelLike;
 }
@@ -200,7 +205,13 @@ type ReviewerResolution =
 	| { ok: false; error: string };
 
 type SynthesisResolution =
-	| { ok: true; model: string; thinking?: string; source: "config" | "default" | "active"; warnings: string[] }
+	| {
+			ok: true;
+			model: string;
+			thinking?: ModelThinkingLevel;
+			source: "config" | "default" | "active";
+			warnings: string[];
+	  }
 	| { ok: false; error: string };
 
 /**
@@ -300,7 +311,7 @@ export function resolveReviewers(
 	// Default panel unavailable: pick up to five distinct scoped models,
 	// preferring provider diversity.
 	const seen = new Set<string>();
-	const distinct: { model: ModelLike; thinkingLevel?: string }[] = [];
+	const distinct: { model: ModelLike; thinkingLevel?: ModelThinkingLevel }[] = [];
 	for (const entry of deps.scopedModels) {
 		const key = `${entry.model.provider}/${entry.model.id}`;
 		if (seen.has(key)) continue;
@@ -308,13 +319,13 @@ export function resolveReviewers(
 		distinct.push(entry);
 	}
 	// Round-robin across providers so one provider cannot fill the panel.
-	const byProvider = new Map<string, { model: ModelLike; thinkingLevel?: string }[]>();
+	const byProvider = new Map<string, { model: ModelLike; thinkingLevel?: ModelThinkingLevel }[]>();
 	for (const entry of distinct) {
 		const list = byProvider.get(entry.model.provider) ?? [];
 		list.push(entry);
 		byProvider.set(entry.model.provider, list);
 	}
-	const picked: { model: ModelLike; thinkingLevel?: string }[] = [];
+	const picked: { model: ModelLike; thinkingLevel?: ModelThinkingLevel }[] = [];
 	while (picked.length < Math.min(MAX_REVIEWERS, distinct.length)) {
 		let progressed = false;
 		for (const list of byProvider.values()) {

@@ -1,6 +1,7 @@
 /** Canonical route catalog IDs and shared types for the kstack-router. */
 
 import type { ChangeKind } from "../shared/change-kind.ts";
+import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
 export { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 
@@ -58,7 +59,7 @@ export interface RouterConfig {
 	/** Classifier model configuration. */
 	classifier?: {
 		model: string;
-		thinking?: string;
+		thinking?: ModelThinkingLevel;
 	};
 	/** Classifier wall-clock timeout in seconds. */
 	timeoutSeconds?: number;

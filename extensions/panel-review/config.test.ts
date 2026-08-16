@@ -285,7 +285,7 @@ describe("resolveSynthesisModel", () => {
 				{ label: "B", model: "openai/y" },
 			],
 			maxConcurrency: 4,
-			synthesis: { model: "google-vertex/gemini-3.7-flash", thinking: "low" },
+			synthesis: { model: "google-vertex/gemini-3.7-flash", thinking: "low" as const },
 		};
 		const r = resolveSynthesisModel(config, { find: find(["google-vertex/gemini-3.7-flash"]), scopedModels: [] });
 		assert.ok(r.ok);

@@ -10,6 +10,8 @@
  */
 
 import type { ExecFn, ExecFnOptions, ExecFnResult } from "../shared/git-exec.ts";
+import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
+import type { ModelSpec } from "../shared/model-spec.ts";
 
 /** Autopilot modes — the explicit user-facing entry points. */
 export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
@@ -17,14 +19,14 @@ export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
 /** Tiny-model child roles inside the autopilot loop. */
 export type AutopilotAgentRole = "triager" | "fixer";
 
+export type TinyThinkingLevel = Extract<ModelThinkingLevel, "off" | "minimal" | "low">;
+
 /** A model entry in the pr-autopilot config, with a short run label. */
-export interface AutopilotModelSpec {
+export interface AutopilotModelSpec extends Omit<ModelSpec, "thinking"> {
 	/** Short run label (e.g. "luna", "flash"). */
 	label: string;
-	/** Pi model id in "provider/model" form. */
-	model: string;
 	/** Thinking level for the child; default "low" for tiny models. */
-	thinking?: string;
+	thinking?: TinyThinkingLevel;
 }
 
 export interface UsageSummary {
@@ -174,5 +176,3 @@ export const LIMITS = {
 	/** Timeout for `gh pr checks --watch`. */
 	watchTimeoutMinutes: 20,
 } as const;
-
-export type ThinkingLevel = "off" | "minimal" | "low";

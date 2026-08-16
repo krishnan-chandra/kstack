@@ -60,8 +60,12 @@ describe("shared kstack config", () => {
 		assert.deepEqual(result, { status: "invalid", path, error: "kstack.json must be a JSON object." });
 	});
 	it("shares thinking and model predicates", () => {
-		assert.equal(isThinkingLevel("xhigh"), true);
-		assert.equal(isThinkingLevel("huge"), false);
+		for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+			assert.equal(isThinkingLevel(level), true);
+		}
+		assert.equal(isThinkingLevel("medium-high"), false);
+		assert.equal(isThinkingLevel(""), false);
+		assert.equal(isThinkingLevel(42), false);
 		assert.equal(MODEL_ID_RE.test("openrouter/vendor/model"), true);
 	});
 });

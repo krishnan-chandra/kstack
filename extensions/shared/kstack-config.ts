@@ -4,15 +4,30 @@
  * only `~/`; this shared path helper also handles a bare `~` consistently.
  * Session-archive remains separate because it resolves filesystem roots.
  */
+
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export type { ModelThinkingLevel };
+export const THINKING_LEVELS = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+] as const satisfies readonly ModelThinkingLevel[];
+/** Compile-time completeness check for Pi's model-thinking vocabulary. */
+type MissingLevel = Exclude<ModelThinkingLevel, (typeof THINKING_LEVELS)[number]>;
+type ThinkingLevelsComplete = [MissingLevel] extends [never] ? true : never;
+const thinkingLevelsComplete: ThinkingLevelsComplete = true;
+void thinkingLevelsComplete;
 export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
-export function isThinkingLevel(value: unknown): value is ThinkingLevel {
+export function isThinkingLevel(value: unknown): value is ModelThinkingLevel {
 	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
 }
 
