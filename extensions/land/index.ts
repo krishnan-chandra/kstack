@@ -10,9 +10,10 @@ import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
-import { getRepoMethod, loadLandConfig } from "./config.ts";
+import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
 import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
+import { resolveImplicitPr } from "./pr-resolution.ts";
 import { routeLand } from "./routing.ts";
 import { abortableSleep } from "./sleep.ts";
 import { summarizeLandResult } from "./summary.ts";
@@ -96,7 +97,11 @@ export default function landExtension(pi: ExtensionAPI): void {
 				const token = lifecycle.begin();
 				if (!token) return blocked("Another landing run is active.");
 				ctx.ui.setStatus("land", "land: resolving target");
-				const landConfig = loadLandConfig();
+				const configLoad = loadLandConfig();
+				if (configLoad.status === "invalid") {
+					ctx.ui.notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
+				}
+				const landConfig: LandConfig = configLoad.status === "loaded" ? configLoad.config : { repos: {} };
 				try {
 					return await runLand(options, {
 						exec,
@@ -147,31 +152,21 @@ export default function landExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			const backend = resolved.backend;
-			let prNumber = parsed.args.pr;
-			if (!prNumber) {
-				const current = await backend.currentRef(ctx.cwd);
-				if (!current.ok) {
-					ctx.ui.notify(current.error, "error");
-					return;
-				}
-				const ref = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
-				if (!ref) {
-					const detail =
-						current.ref.kind === "no-bookmark"
-							? `Current jj change ${current.ref.changeId.slice(0, 12)} has no bookmark. Create one with jj bookmark create <name> -r @, or pass --pr explicitly.`
-							: "The current VCS state has no branch or bookmark; pass --pr explicitly.";
-					ctx.ui.notify(detail, "error");
-					return;
-				}
-				try {
-					prNumber = await findOpenPullRequestByHead(makeExec(pi), ctx.cwd, ref);
-				} catch (error) {
-					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-					return;
-				}
+			const pr = await resolveImplicitPr({
+				explicitPr: parsed.args.pr,
+				currentRef: () => backend.currentRef(ctx.cwd),
+				findByHead: (ref) => findOpenPullRequestByHead(makeExec(pi), ctx.cwd, ref),
+			});
+			if (!pr.ok) {
+				ctx.ui.notify(pr.message, "error");
+				return;
 			}
 			await execute(
-				{ target: { kind: "single", prNumber }, readiness: parsed.args.readiness, method: parsed.args.method },
+				{
+					target: { kind: "single", prNumber: pr.prNumber },
+					readiness: parsed.args.readiness,
+					method: parsed.args.method,
+				},
 				ctx,
 				backend,
 			);
