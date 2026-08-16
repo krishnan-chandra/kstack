@@ -584,6 +584,7 @@ async function runLandLoop(
 			return { status: "partial", error, ...progress() };
 		}
 
+		let refreshedTrunkCommitId: string | undefined;
 		try {
 			const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
 			const onTrunk = await jj.isAncestor(options.cwd, mergeCommitOid, trunk, deps.signal);
@@ -596,6 +597,7 @@ async function runLandLoop(
 					...progress(),
 				};
 			}
+			refreshedTrunkCommitId = trunk;
 		} catch (error) {
 			frontiers.push(frontier);
 			if (isIndeterminate(error) || deps.signal?.aborted) {
@@ -674,7 +676,7 @@ async function runLandLoop(
 		frontiers.push(frontier);
 		remainingBookmarks = remainder;
 		if (remainder.length === 0) {
-			await settleWorkingCopyOnTrunk(options, deps, jj, settlement, completedMutations);
+			await settleWorkingCopyOnTrunk(options, deps, jj, settlement, refreshedTrunkCommitId, completedMutations);
 			return { status: "completed", ...progress() };
 		}
 	}
@@ -721,9 +723,10 @@ async function settleWorkingCopyOnTrunk(
 	deps: OrchestratorDeps,
 	jj: JjAdapter,
 	candidate: WorkingCopySettlement | undefined,
+	refreshedTrunkCommitId: string | undefined,
 	completedMutations: string[],
 ): Promise<void> {
-	if (!candidate) return;
+	if (!candidate || !refreshedTrunkCommitId) return;
 	try {
 		const [status, changeId] = await Promise.all([
 			jj.workingCopyStatus(options.cwd, deps.signal),
@@ -736,9 +739,8 @@ async function settleWorkingCopyOnTrunk(
 			status.parentCommitIds.length === 1 &&
 			status.parentCommitIds[0] === candidate.replacementParentCommitId;
 		if (!sameChange && !expectedReplacement) return;
-		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
-		if (await jj.isAncestor(options.cwd, trunk, status.commitId, deps.signal)) return;
-		await jj.rebaseWorkingCopy(options.cwd, trunk, deps.signal);
+		if (await jj.isAncestor(options.cwd, refreshedTrunkCommitId, status.commitId, deps.signal)) return;
+		await jj.rebaseWorkingCopy(options.cwd, refreshedTrunkCommitId, deps.signal);
 		completedMutations.push("Rebased the empty working copy onto the refreshed trunk");
 	} catch (error) {
 		completedMutations.push(`Left the working copy in place: ${errorMessage(error)}`);
