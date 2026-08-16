@@ -135,6 +135,20 @@ describe("archive-store", () => {
 		}
 	});
 
+	it("rejects corrupted session states on read", () => {
+		const db = openArchiveDb(":memory:");
+		try {
+			importSessionPending(db, importFromContent(richSessionJsonl()));
+			assert.equal(getSessionRow(db, TEST_SESSION_ID)?.archived_at, null);
+			db.exec("PRAGMA ignore_check_constraints=ON");
+			db.prepare("UPDATE archive_sessions SET state = 'bogus' WHERE session_id = ?").run(TEST_SESSION_ID);
+			assert.throws(() => getSessionRow(db, TEST_SESSION_ID), /archive_sessions returned invalid state/);
+			assert.throws(() => listSessionRows(db), /archive_sessions returned invalid state/);
+		} finally {
+			db.close();
+		}
+	});
+
 	it("preserves an explicit session-name clear instead of resurrecting an older name", () => {
 		const db = openArchiveDb(":memory:");
 		try {
