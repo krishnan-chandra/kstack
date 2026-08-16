@@ -911,6 +911,36 @@ describe("landStack", () => {
 		}
 	});
 
+	it("rebases an empty automation checkpoint bookmarked as the selected top", async () => {
+		const stack = [commit("aaa", "feat1")];
+		let statusReads = 0;
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : "aaa-commit"),
+			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+			workingCopyChangeId: async () => "checkpoint-change",
+			workingCopyStatus: async () => {
+				statusReads++;
+				return statusReads === 1
+					? { commitId: "aaa-commit", empty: true, bookmarked: true, parentCommitIds: ["parent-commit"] }
+					: { commitId: "rewritten-checkpoint", empty: true, bookmarked: false, parentCommitIds: ["old-trunk"] };
+			},
+			isAncestor: async (_cwd, ancestor) => ancestor.startsWith("merge-"),
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.ok(jj.calls.includes("rebase-wc:trunk"));
+	});
+
 	it("reports a pre-land working-copy inspection failure without blocking landing", async () => {
 		const stack = [commit("aaa", "feat1")];
 		const jj = fakeJj({

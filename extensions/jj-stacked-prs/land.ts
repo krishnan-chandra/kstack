@@ -698,10 +698,11 @@ async function identifyWorkingCopyToSettle(
 			jj.workingCopyStatus(options.cwd, deps.signal),
 			jj.workingCopyChangeId(options.cwd, deps.signal),
 		]);
-		if (!status?.empty || status.bookmarked || !changeId) return undefined;
-		return status.parentCommitIds.length === 1 && status.parentCommitIds[0] === model.topCommitId
-			? { changeId }
-			: undefined;
+		if (!status?.empty || !changeId) return undefined;
+		const isSelectedCheckpoint = status.bookmarked && status.commitId === model.topCommitId;
+		const isUnbookmarkedChild =
+			!status.bookmarked && status.parentCommitIds.length === 1 && status.parentCommitIds[0] === model.topCommitId;
+		return isSelectedCheckpoint || isUnbookmarkedChild ? { changeId } : undefined;
 	} catch (error) {
 		completedMutations.push(`Could not inspect the working copy before landing: ${errorMessage(error)}`);
 		return undefined;
