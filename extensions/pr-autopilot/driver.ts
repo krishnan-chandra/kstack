@@ -60,6 +60,7 @@ import {
 import {
 	type AutopilotMode,
 	type AutopilotModelSpec,
+	type AutopilotResult,
 	type ExecFn,
 	LIMITS,
 	type PRState,
@@ -79,16 +80,6 @@ export type LifecyclePhase =
 	| "rechecking"
 	| "settling"
 	| "cleaning";
-
-/** Outcome of a full autopilot run. */
-export interface AutopilotResult {
-	status: "merge-ready" | "blocked" | "declined" | "incomplete" | "cleaned" | "aborted" | "failed";
-	prState?: PRState;
-	mergeReady: boolean;
-	cyclesCompleted: number;
-	blockedReasons: string[];
-	usage: UsageSummary;
-}
 
 export interface DriverOps {
 	runChildRole: typeof runChildRole;

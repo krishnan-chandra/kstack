@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { StackPublicationOutcome } from "../jj-stacked-prs/types.ts";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
-import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
 import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";

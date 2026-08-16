@@ -28,10 +28,10 @@ import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
-import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./driver.ts";
+import { type LifecyclePhase, runAutopilot } from "./driver.ts";
 import { AutopilotLifecycle } from "./lifecycle.ts";
 import { pickModel } from "./pr-state.ts";
-import type { AutopilotMode } from "./types.ts";
+import type { AutopilotMode, AutopilotResult } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");

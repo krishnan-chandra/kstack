@@ -1,5 +1,6 @@
 /** Pure argument parser for the /kstack command. */
 
+import { isMergeMethod } from "../shared/github.ts";
 import {
 	type AutopilotModeFlag,
 	type ChangeKind,
@@ -19,7 +20,7 @@ function isAutopilotMode(value: string): value is AutopilotModeFlag {
 }
 
 function isLandMethod(value: string): value is LandMethodFlag {
-	return value === "squash" || value === "rebase";
+	return isMergeMethod(value);
 }
 
 function isReadiness(value: string): value is LandReadinessFlag {

@@ -1,8 +1,8 @@
-import type { AutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
-import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import type { AutopilotConfirmation, AutopilotResult } from "../pr-autopilot/types.ts";
+import type { MergeMethod } from "../shared/github.ts";
 import type { LandConfirmation } from "./confirmation.ts";
 
-export type MergeMethod = "squash" | "rebase";
+export type { MergeMethod } from "../shared/github.ts";
 export type ReadinessMode = "check" | "watch";
 interface LandTarget {
 	kind: "single";

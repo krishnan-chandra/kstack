@@ -1,6 +1,7 @@
 /** Capability probe and typed publication request channels. */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isMergeMethod } from "../shared/github.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import {
 	type JjStackCapabilities,
@@ -142,7 +143,7 @@ function isLandingInput(value: unknown): value is StackLandingRequestInput {
 	if (!Number.isSafeInteger(input.prNumber) || Number(input.prNumber) <= 0) return false;
 	if (!optionalName(input.headBookmark, MAX_NAME_CHARS)) return false;
 	if (input.readiness !== "check" && input.readiness !== "watch") return false;
-	if (input.method !== undefined && input.method !== "squash" && input.method !== "rebase") return false;
+	if (input.method !== undefined && !isMergeMethod(input.method)) return false;
 	return true;
 }
 

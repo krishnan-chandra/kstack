@@ -1,12 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isAutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
+import { isAutopilotConfirmation } from "../pr-autopilot/api.ts";
+import { isMergeMethod } from "../shared/github.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import { isLandConfirmation } from "./confirmation.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
+// Public in-process access to Land's per-repository merge policy.
+export { getRepoMethod, loadLandConfig } from "./config.ts";
+
 export const LAND_REQUEST_EVENT = "kstack:land:request";
 const READINESS_MODES = new Set<unknown>(["check", "watch"]);
-const MERGE_METHODS = new Set<unknown>(["squash", "rebase"]);
 
 interface LandPayload {
 	options: LandOptions;
@@ -37,7 +40,7 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 		if (
 			!("readiness" in options) ||
 			!READINESS_MODES.has(options.readiness) ||
-			("method" in options && options.method !== undefined && !MERGE_METHODS.has(options.method))
+			("method" in options && options.method !== undefined && !isMergeMethod(options.method))
 		)
 			return false;
 		if (!("target" in options)) return false;

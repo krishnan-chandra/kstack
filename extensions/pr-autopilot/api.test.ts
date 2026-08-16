@@ -7,7 +7,7 @@ import {
 	requestPrAutopilot,
 } from "./api.ts";
 import { issueAutopilotConfirmation } from "./confirmation.ts";
-import type { AutopilotResult } from "./driver.ts";
+import type { AutopilotResult } from "./types.ts";
 
 const outcome: AutopilotResult = {
 	status: "blocked",

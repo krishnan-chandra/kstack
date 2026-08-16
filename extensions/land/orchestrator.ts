@@ -1,4 +1,4 @@
-import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { getPullRequest, getRepository, mergePullRequest, waitForMerge } from "../shared/github.ts";
 import { isLandConfirmation } from "./confirmation.ts";
 import type { ExecFn, FrontierResult, LandOptions, LandResult, MergeMethod } from "./types.ts";

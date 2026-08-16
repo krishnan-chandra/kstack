@@ -1,10 +1,20 @@
 import type { ExecFn } from "./git-exec.ts";
 import { asRecord } from "./narrow.ts";
 
+/** Merge methods Kstack permits anywhere; merge commits are never allowed. */
+export type MergeMethod = "squash" | "rebase";
+
+export function isMergeMethod(value: unknown): value is MergeMethod {
+	return value === "squash" || value === "rebase";
+}
+
+/** Marker identifying Kstack-owned PR navigation comments across extensions. */
+export const KSTACK_COMMENT_MARKER = "<!-- kstack-stack-nav -->";
+
 export interface RepositorySnapshot {
 	nameWithOwner: string;
 	defaultBranch: string;
-	allowedMethods: GithubMergeMethod[];
+	allowedMethods: MergeMethod[];
 }
 
 export interface PullRequestSnapshot {
@@ -29,8 +39,6 @@ interface GithubLimits {
 	landingMs: number;
 	diagnosticsBytes: number;
 }
-
-type GithubMergeMethod = "squash" | "rebase";
 
 const DEFAULT_LIMITS: GithubLimits = {
 	queryMs: 15_000,
@@ -77,7 +85,7 @@ export async function getRepository(
 	const branch = asRecord(value?.defaultBranchRef);
 	if (typeof value?.nameWithOwner !== "string" || typeof branch?.name !== "string")
 		throw new Error("GitHub repository response is missing identity/default branch.");
-	const allowedMethods: GithubMergeMethod[] = [];
+	const allowedMethods: MergeMethod[] = [];
 	// Kstack policy: merge commits are never allowed
 	if (value.squashMergeAllowed === true) allowedMethods.push("squash");
 	if (value.rebaseMergeAllowed === true) allowedMethods.push("rebase");
@@ -169,7 +177,7 @@ export async function mergePullRequest(
 	exec: ExecFn,
 	cwd: string,
 	number: number,
-	method: GithubMergeMethod,
+	method: MergeMethod,
 	sha: string,
 	signal?: AbortSignal,
 	limitOverrides: Partial<GithubLimits> = {},

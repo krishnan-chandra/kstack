@@ -1,6 +1,7 @@
 /** Canonical route catalog IDs and shared types for the kstack-router. */
 
 import type { ChangeKind } from "../shared/change-kind.ts";
+import type { MergeMethod } from "../shared/github.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
 export { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
@@ -84,7 +85,7 @@ export interface RouteMetadata {
 
 export type AutopilotModeFlag = "check" | "threads" | "drive" | "watch" | "cleanup";
 export type LandReadinessFlag = "check" | "watch";
-export type LandMethodFlag = "squash" | "rebase";
+export type LandMethodFlag = MergeMethod;
 
 export interface RouterArgs {
 	route?: RouteId;

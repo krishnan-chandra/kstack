@@ -1,5 +1,6 @@
 /** `/jj-stack` argument parser. */
 
+import { isMergeMethod } from "../shared/github.ts";
 import {
 	DEFAULT_MAX_STACK,
 	MAX_NAME_CHARS,
@@ -27,7 +28,6 @@ type JjStackCommand =
 
 const ACTIONS = new Set(["inspect", "plan", "publish", "sync", "advance", "land"]);
 const BOOLEAN_FLAGS = new Set(["--ready"]);
-const MERGE_METHODS: ReadonlySet<string> = new Set(["squash", "rebase"]);
 const READINESS_MODES: ReadonlySet<string> = new Set(["check", "watch"]);
 
 export function parseJjStackArgs(text: string): { ok: true; command: JjStackCommand } | { ok: false; error: string } {
@@ -143,10 +143,6 @@ function completionFlags(action: string): string[] {
 	if (action === "land") return ["--top ", "--remote ", "--trunk ", "--method ", "--readiness ", "--max-stack "];
 	if (action === "publish") return ["--top ", "--remote ", "--trunk ", "--max-stack ", "--ready"];
 	return ["--top ", "--remote ", "--trunk ", "--max-stack "];
-}
-
-function isMergeMethod(value: string): value is StackMergeMethod {
-	return MERGE_METHODS.has(value);
 }
 
 function isReadiness(value: string): value is StackReadinessMode {
