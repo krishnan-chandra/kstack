@@ -1,3 +1,4 @@
+import { asRecord } from "../shared/narrow.ts";
 import { type ExecFn, LIMITS, type MergeMethod } from "./types.ts";
 
 interface RepositorySnapshot {
@@ -20,11 +21,6 @@ interface PullRequestSnapshot {
 	mergeCommitOid: string | null;
 }
 const SHA = /^[0-9a-f]{40}$/i;
-function record(value: unknown): Record<string, unknown> | undefined {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
-}
 function parseJson(text: string): unknown {
 	try {
 		return JSON.parse(text);
@@ -42,8 +38,8 @@ export async function getRepository(exec: ExecFn, cwd: string, signal?: AbortSig
 		{ cwd, timeout: LIMITS.queryMs, signal },
 	);
 	if (out.code !== 0) throw new Error(`Could not resolve authenticated GitHub repository: ${diagnostic(out.stderr)}`);
-	const v = record(parseJson(out.stdout));
-	const branch = record(v?.defaultBranchRef);
+	const v = asRecord(parseJson(out.stdout));
+	const branch = asRecord(v?.defaultBranchRef);
 	if (typeof v?.nameWithOwner !== "string" || typeof branch?.name !== "string")
 		throw new Error("GitHub repository response is missing identity/default branch.");
 	const allowedMethods: MergeMethod[] = [];
@@ -70,8 +66,8 @@ export async function getPullRequest(
 		{ cwd, timeout: LIMITS.queryMs, signal },
 	);
 	if (out.code !== 0) throw new Error(`Could not read PR #${number}: ${diagnostic(out.stderr)}`);
-	const v = record(parseJson(out.stdout));
-	const commit = record(v?.mergeCommit);
+	const v = asRecord(parseJson(out.stdout));
+	const commit = asRecord(v?.mergeCommit);
 	if (
 		v?.number !== number ||
 		typeof v.url !== "string" ||
@@ -114,12 +110,12 @@ export async function findOpenPullRequestByHead(
 	const value = parseJson(out.stdout);
 	if (!Array.isArray(value)) throw new Error("GitHub PR list response failed validation.");
 	const matches = value.filter((entry) => {
-		const candidate = record(entry);
+		const candidate = asRecord(entry);
 		return candidate?.headRefName === headRef && Number.isSafeInteger(candidate.number) && Number(candidate.number) > 0;
 	});
 	if (matches.length !== 1)
 		throw new Error(`Expected exactly one open PR with head ${headRef}; found ${matches.length}.`);
-	const match = record(matches[0]);
+	const match = asRecord(matches[0]);
 	if (!match || typeof match.number !== "number") throw new Error("GitHub PR list response failed validation.");
 	return match.number;
 }

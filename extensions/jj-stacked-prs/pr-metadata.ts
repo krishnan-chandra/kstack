@@ -1,6 +1,7 @@
 /** Bounded slice evidence and strict write-pr metadata parsing. */
 
 import { type Api, type Model, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import { isRecord } from "../shared/narrow.ts";
 import { bookmarkRevset } from "./jj.ts";
 import type { ProcessRunner } from "./process.ts";
 import { DEFAULT_TIMEOUT_MS } from "./types.ts";
@@ -268,8 +269,4 @@ export function createModelMetadataGenerator(
 function wrapUntrusted(text: string): string {
 	const cleaned = text.replaceAll(BEGIN, "").replaceAll(END, "");
 	return `${BEGIN}\n${cleaned}\n${END}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
