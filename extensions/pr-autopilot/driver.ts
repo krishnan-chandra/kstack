@@ -26,6 +26,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { resolveRepoName } from "../shared/github.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import {
 	applyForceAsk,
@@ -42,7 +43,7 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import { markPrReady, rerunFailedRun, resolveRepoName, watchChecks } from "./github.ts";
+import { markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
 	buildFixerTask,
