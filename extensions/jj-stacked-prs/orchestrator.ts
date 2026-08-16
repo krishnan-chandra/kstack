@@ -19,6 +19,7 @@ import { renderPrDocument } from "./pr-document.ts";
 import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
 import type { ProcessRunner } from "./process.ts";
 import { buildPublicationPlan, type PublicationSnapshot, slicesForPublication } from "./publication.ts";
+import { acquirePublicationLock, type LockAttempt } from "./publication-lock.ts";
 import { renderConfirmation } from "./render.ts";
 import { detectBlockers, inferUniqueTop, truncateStack } from "./stack.ts";
 import {
@@ -68,6 +69,7 @@ export interface OrchestratorDeps {
 	}) => Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
 	configuredMethodFor?: (nameWithOwner: string) => StackMergeMethod | undefined;
 	generatePrMetadata?: PrMetadataGenerator;
+	acquirePublicationLock?: (repositoryPath: string) => LockAttempt;
 }
 
 interface InspectOptions {
@@ -205,13 +207,37 @@ async function publishStackWithAuthorization(
 		if (deps.signal?.aborted) return { status: "cancelled" };
 		if (!confirmed) return { status: "declined", planId: planned.plan.planId };
 	}
-	const fresh = await planStack(options, deps);
-	if (fresh.status === "blocked") return { status: "blocked", blockers: fresh.blockers, planId: planned.plan.planId };
-	if (fresh.plan.planId !== planned.plan.planId) {
-		return { status: "stale", providedPlanId: planned.plan.planId, recomputedPlanId: fresh.plan.planId };
+	const repoPath = canonicalize(options.cwd, deps.realpath);
+	const tryLock = deps.acquirePublicationLock ?? ((path: string) => acquirePublicationLock({ repositoryPath: path }));
+	let lockAttempt: LockAttempt;
+	try {
+		lockAttempt = tryLock(repoPath);
+	} catch (error) {
+		return { status: "failed", error: `Unable to acquire publication lock: ${errorMessage(error)}` };
 	}
-	deps.ui.setStatus("jj-stack: publishing");
-	return applyPublication(fresh.plan, options, deps);
+	if (!lockAttempt.ok) {
+		const detail = lockAttempt.holder ? ` (pid ${lockAttempt.holder.pid}, since ${lockAttempt.holder.startedAt})` : "";
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "publication-locked",
+					message: `Another kstack publication is in progress for this repository${detail}. Retry after it finishes.`,
+				},
+			],
+		};
+	}
+	try {
+		const fresh = await planStack(options, deps);
+		if (fresh.status === "blocked") return { status: "blocked", blockers: fresh.blockers, planId: planned.plan.planId };
+		if (fresh.plan.planId !== planned.plan.planId) {
+			return { status: "stale", providedPlanId: planned.plan.planId, recomputedPlanId: fresh.plan.planId };
+		}
+		deps.ui.setStatus("jj-stack: publishing");
+		return await applyPublication(fresh.plan, options, deps);
+	} finally {
+		lockAttempt.lock.release();
+	}
 }
 
 export async function syncStack(options: SyncOptions, deps: OrchestratorDeps): Promise<SyncOutcome> {

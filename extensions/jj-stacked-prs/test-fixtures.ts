@@ -1,6 +1,7 @@
 import type { LandResult } from "../land/types.ts";
 import type { GitHubAdapter } from "./github.ts";
 import type { JjAdapter } from "./jj.ts";
+import type { LockAttempt } from "./publication-lock.ts";
 import type { OpenPullRequest, RemoteInfo, StackCommit } from "./types.ts";
 
 export function commit(changeId: string, bookmark: string, parent = "trunk"): StackCommit {
@@ -141,6 +142,11 @@ export function openPrs(): OpenPullRequest[] {
 			headOwner: "o",
 		},
 	];
+}
+
+/** A no-op lock that always succeeds and never touches the filesystem. */
+export function permissiveLock(): (repositoryPath: string) => LockAttempt {
+	return () => ({ ok: true, lock: { release() {} } });
 }
 
 export function landed(prNumber: number, sha: string): LandResult {
