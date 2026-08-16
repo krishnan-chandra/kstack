@@ -29,14 +29,11 @@ Bun exclusions. `bun run check:test-split` verifies that the config and the
 Use a colocated test file for a focused iteration, such as
 `bun run test:handoff` or `bun test check-exports.test.mjs`.
 
-The `git-worktrees` planner is Node/TypeScript. Inspection is still Python until
-the inspector is replaced. Run both suites and compile the remaining Python
-without writing bytecode into the checkout:
+The `git-worktrees` planner and inspector are Node TypeScript CLIs. Run them
+with the rest of the skill suite:
 
 ```bash
 bun test skills/git-worktrees/
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/tests -p 'test_*.py'
-PYTHONPYCACHEPREFIX=/tmp/kstack-pycache python3 -m py_compile skills/git-worktrees/scripts/*.py
 ```
 
 ## Conventions

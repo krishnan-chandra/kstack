@@ -2,7 +2,7 @@
 name: git-worktrees
 description: Create, inspect, reuse, repair, and safely remove local Git linked worktrees managed under ~/.pi/kstack/worktrees. Use whenever the user asks to work in a worktree, isolate a change from the current checkout, list or clean up worktrees, prune stale worktree records, or mentions plan-implement/kstack with --worktree. This skill is for Git worktrees, not Jujutsu workspaces.
 license: MIT
-compatibility: Requires Git with `git worktree` support, Node 22+ for the bundled planner, and python3 for the bundled read-only inspection helper. Managed worktrees default to ~/.pi/kstack/worktrees. Mutations require confirmation in interactive use.
+compatibility: Requires Git with `git worktree` support and Node 22+ for the bundled read-only planner and inspector. Managed worktrees default to ~/.pi/kstack/worktrees. Mutations require confirmation in interactive use.
 ---
 
 # Managed Git worktrees
@@ -22,10 +22,10 @@ This workflow manages **Git worktrees only**. A Jujutsu workspace (`jj workspace
 Resolve this skill's directory and run the read-only helper before proposing creation, reuse, cleanup, or repair:
 
 ```bash
-python3 <skill-dir>/scripts/inspect_worktrees.py
+node <skill-dir>/scripts/inspect_worktrees.ts
 ```
 
-Use `--root <path>` only when the user explicitly chose another managed root. The helper emits bounded JSON with `managed_root`, `worktrees`, `orphans`, and `truncated`. Each worktree reports its owning common Git directory, branch, HEAD, dirty/untracked state, lock/prunable state, inferred base, and whether HEAD is reachable from that base.
+Use `--root <path>` only when the user explicitly chose another managed root. The helper emits bounded JSON with `managed_root`, `worktrees`, `orphans`, and `truncated`. Each worktree reports its owning common Git directory, branch, HEAD, dirty/untracked state, lock/prunable state, inferred base, and whether HEAD is reachable from that base. Inspect and plan share `resolveIsolationBase`, including the `HEAD` fallback.
 
 For one repository, also inspect Git's authoritative records without parsing human-oriented output:
 
