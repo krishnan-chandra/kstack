@@ -10,6 +10,12 @@
  *   → code CI (after comments, on the current SHA)
  *   → verify, push, recheck
  *
+ * The local workspace is validated lazily, immediately before a mutation
+ * (base merge or fixer edit). Readiness-only passes — merge-ready checks,
+ * CI watching, triage, and thread replies — never require the PR's
+ * worktree or jj checkpoint, so a stack lander can drive PRs whose
+ * bookmarks are not checked out.
+ *
  * Modes:
  *   check    — one status pass, report, stop.
  *   threads  — address review threads only, then push.
@@ -309,25 +315,24 @@ export async function runAutopilot(
 		const ready = await declareReady(state);
 		if (ready) return ready;
 
-		const checkout = await prepareMutationCheckout(backend, cwd, state);
-		if (!checkout.ok) {
-			notify(checkout.error, "error");
-			return {
-				status: "blocked",
-				prState: state,
-				mergeReady: false,
-				cyclesCompleted: cycle,
-				blockedReasons: [checkout.error],
-				usage,
-			};
-		}
-
 		if (
 			state.mergeable === "conflicting" ||
 			state.mergeStateStatus === "DIRTY" ||
 			state.mergeStateStatus === "BEHIND"
 		) {
 			setPhase("merging-base", cycle);
+			const checkout = await prepareMutationCheckout(backend, cwd, state);
+			if (!checkout.ok) {
+				notify(checkout.error, "error");
+				return {
+					status: "blocked",
+					prState: state,
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: [checkout.error],
+					usage,
+				};
+			}
 			const remoteBase = backend.id === "jj" ? `${state.baseRef}@origin` : `origin/${state.baseRef}`;
 			notify(
 				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging ${remoteBase} with ${backend.id} (no rebase).`,
@@ -496,6 +501,19 @@ export async function runAutopilot(
 		let pushedAFix = false;
 		if (fixThreads.length > 0 || (fixMode === "ci" && codeChecks.length > 0)) {
 			setPhase("fixing", cycle);
+			// The fixer edits the PR workspace, so validate the checkout only now.
+			const checkout = await prepareMutationCheckout(backend, cwd, state);
+			if (!checkout.ok) {
+				notify(checkout.error, "error");
+				return {
+					status: "blocked",
+					prState: state,
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: [checkout.error],
+					usage,
+				};
+			}
 			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
 			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode, backend.id), {
 				mode: 0o600,

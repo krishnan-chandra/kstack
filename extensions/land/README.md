@@ -93,6 +93,11 @@ exact PR. Only that minted object skips Land's interactive merge confirmation.
 A boolean or reconstructed payload is ignored. Land still revalidates the PR,
 pins the exact head, and passes `--match-head-commit`.
 
+Stack landing passes a separate pr-autopilot confirmation after its plan prompt,
+so each frontier's readiness pass runs without additional prompts. A plain
+`/land`, and any caller that provides only a Land confirmation, still confirms
+the autopilot run interactively.
+
 ## Limits
 
 - GitHub query timeout: 15 seconds

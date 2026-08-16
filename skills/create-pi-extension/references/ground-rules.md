@@ -53,6 +53,8 @@ This is a guide, not required boilerplate. Small extensions should remain one fi
 
 Prefer dependency injection for filesystem, Git, spawn, time, and model boundaries. Tests should exercise real deterministic behavior without loading Pi or making provider calls. Keep extension-specific modules independent until multiple callers demonstrate a meaningful shared invariant.
 
+Use `Symbol.for(...)` for capability markers shared across extensions. Pi can load each extension in an isolated module graph, so a marker created with `Symbol()` in one graph does not match the same module loaded in another. Add an isolated-module regression test for every shared marker.
+
 Prefer exhaustive `if` / `else if` / `switch` over nested ternaries. A one-level `a ? b : c` is fine; a chain of `? :` is not.
 
 ## Lifecycle invariants

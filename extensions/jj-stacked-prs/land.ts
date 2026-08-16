@@ -7,7 +7,7 @@ import {
 	GitHubError,
 	parseNavigationCommentEntries,
 } from "./github.ts";
-import { createJjAdapter, JjError } from "./jj.ts";
+import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
 import { applyAdvance, inspectStack, type OrchestratorDeps, publishStackFromTool } from "./orchestrator.ts";
 import { renderLandConfirmation } from "./render.ts";
 import type {
@@ -188,7 +188,7 @@ async function landStackWithAuthorization(
 		if (deps.signal?.aborted) return { status: "cancelled" };
 		if (!confirmed) return { status: "declined" };
 	}
-	return runLandLoop(options, deps, prepared.method);
+	return runLandLoop(options, deps, prepared.method, prepared.model);
 }
 
 async function remapLand(
@@ -426,6 +426,7 @@ async function runLandLoop(
 	options: LandStackOptions,
 	deps: OrchestratorDeps,
 	method: StackMergeMethod,
+	initialModel: InspectModel,
 ): Promise<StackLandOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createGitHubAdapter(deps.run);
@@ -440,6 +441,7 @@ async function runLandLoop(
 	const completedMutations: string[] = [];
 	const recoveryOperationIds: string[] = [];
 	let remainingBookmarks: string[] = [];
+	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, completedMutations);
 
 	const progress = (): {
 		frontiers: StackLandFrontier[];
@@ -671,7 +673,65 @@ async function runLandLoop(
 
 		frontiers.push(frontier);
 		remainingBookmarks = remainder;
-		if (remainder.length === 0) return { status: "completed", ...progress() };
+		if (remainder.length === 0) {
+			await settleWorkingCopyOnTrunk(options, deps, jj, settlement, completedMutations);
+			return { status: "completed", ...progress() };
+		}
+	}
+}
+
+interface WorkingCopySettlement {
+	changeId: string;
+}
+
+/** Identify the empty working-copy child of the selected stack before landing mutates history. */
+async function identifyWorkingCopyToSettle(
+	options: LandStackOptions,
+	deps: OrchestratorDeps,
+	jj: JjAdapter,
+	model: InspectModel,
+	completedMutations: string[],
+): Promise<WorkingCopySettlement | undefined> {
+	if (!model.topCommitId) return undefined;
+	try {
+		const [status, changeId] = await Promise.all([
+			jj.workingCopyStatus(options.cwd, deps.signal),
+			jj.workingCopyChangeId(options.cwd, deps.signal),
+		]);
+		if (!status?.empty || status.bookmarked || !changeId) return undefined;
+		return status.parentCommitIds.length === 1 && status.parentCommitIds[0] === model.topCommitId
+			? { changeId }
+			: undefined;
+	} catch (error) {
+		completedMutations.push(`Could not inspect the working copy before landing: ${errorMessage(error)}`);
+		return undefined;
+	}
+}
+
+/**
+ * After the last frontier lands, move the same empty working-copy child onto
+ * refreshed trunk. Best-effort: a failure never degrades a completed landing.
+ */
+async function settleWorkingCopyOnTrunk(
+	options: LandStackOptions,
+	deps: OrchestratorDeps,
+	jj: JjAdapter,
+	candidate: WorkingCopySettlement | undefined,
+	completedMutations: string[],
+): Promise<void> {
+	if (!candidate) return;
+	try {
+		const [status, changeId] = await Promise.all([
+			jj.workingCopyStatus(options.cwd, deps.signal),
+			jj.workingCopyChangeId(options.cwd, deps.signal),
+		]);
+		if (!status?.empty || status.bookmarked || changeId !== candidate.changeId) return;
+		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
+		if (await jj.isAncestor(options.cwd, trunk, status.commitId, deps.signal)) return;
+		await jj.rebaseWorkingCopy(options.cwd, trunk, deps.signal);
+		completedMutations.push("Rebased the empty working copy onto the refreshed trunk");
+	} catch (error) {
+		completedMutations.push(`Left the working copy in place: ${errorMessage(error)}`);
 	}
 }
 

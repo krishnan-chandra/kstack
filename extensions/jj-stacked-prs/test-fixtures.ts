@@ -35,6 +35,10 @@ export function fakeJj(overrides: Partial<JjAdapter> = {}): JjAdapter & { calls:
 		preflight: async () => ({ workspaceRoot: "/repo", jjVersion: "jj 0.44.0" }),
 		resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : `${revset}-id`),
 		workingCopyChangeId: async () => undefined,
+		workingCopyStatus: async () => undefined,
+		rebaseWorkingCopy: async (_cwd, revision) => {
+			calls.push(`rebase-wc:${revision}`);
+		},
 		listLocalBookmarks: async () => [
 			{ name: "feat1", commitId: "aaa-commit" },
 			{ name: "feat2", commitId: "bbb-commit" },

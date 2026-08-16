@@ -275,4 +275,94 @@ describe("addUsage and createModelMetadataGenerator", () => {
 		assert.deepEqual(progress, ["feature-two"]);
 		assert.equal(generator.usage()?.totalTokens, 100);
 	});
+
+	it("retries once with fenced, control-safe validation feedback and accepts a corrected response", async () => {
+		const usage = {
+			input: 10,
+			output: 10,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 20,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const prompts: string[][] = [];
+		const rejected = "\u001b]8;;https://evil.example\u0007click\u001b]8;;\u0007";
+		let call = 0;
+		const generator = createModelMetadataGenerator(
+			async () => ({ kind: "ok", code: 0, stdout: "diff --git\n", stderr: "" }),
+			{
+				model: { provider: "openai", id: "test-model" } as unknown as Model<Api>,
+				hasConfiguredAuth: () => true,
+				complete: async (_model, options) => {
+					prompts.push(options.messages.map((message) => message.content[0].text));
+					call++;
+					return {
+						stopReason: "stop",
+						usage,
+						content: [
+							{
+								type: "text",
+								text:
+									call === 1
+										? rejected
+										: JSON.stringify({
+												title: "Add feature",
+												body: "## Summary\n\n- Summary.\n\n## Review guide\n\n1. **Step** — Verify step.",
+											}),
+							},
+						],
+					};
+				},
+			},
+		);
+
+		const result = await generator.generate(request);
+		assert.equal(result.title, "Add feature");
+		assert.equal(call, 2);
+		assert.equal(prompts[1].length, 1, "the retry stays portable across providers that require alternating roles");
+		assert.match(prompts[1][0], /Write pull-request metadata/);
+		assert.match(prompts[1][0], /rejected by strict validation/);
+		assert.match(prompts[1][0], /did not return valid JSON/);
+		assert.equal(prompts[1][0].includes("\u001b"), false);
+		assert.equal(prompts[1][0].includes("\u0007"), false);
+		assert.match(prompts[1][0], /Rejected response began: \\u001b]8;;https:\/\/evil\.example\\u0007click/);
+		assert.equal((prompts[1][0].match(/BEGIN UNTRUSTED SLICE DATA/g) ?? []).length, 2);
+		assert.equal((prompts[1][0].match(/END UNTRUSTED SLICE DATA/g) ?? []).length, 2);
+		assert.equal(generator.usage()?.totalTokens, 40, "both attempts count toward usage");
+	});
+
+	it("reports a control-safe excerpt when both attempts fail validation", async () => {
+		const usage = {
+			input: 1,
+			output: 1,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 2,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const rejected = "still not JSON \u001b]8;;https://evil.example\u0007click\u001b]8;;\u0007";
+		const generator = createModelMetadataGenerator(
+			async () => ({ kind: "ok", code: 0, stdout: "diff --git\n", stderr: "" }),
+			{
+				model: { provider: "openai", id: "test-model" } as unknown as Model<Api>,
+				hasConfiguredAuth: () => true,
+				complete: async () => ({
+					stopReason: "stop",
+					usage,
+					content: [{ type: "text", text: rejected }],
+				}),
+			},
+		);
+
+		await assert.rejects(
+			() => generator.generate(request),
+			(error: Error) => {
+				assert.match(error.message, /did not return valid JSON/);
+				assert.match(error.message, /still not JSON \\u001b]8;;https:\/\/evil\.example\\u0007click/);
+				assert.equal(error.message.includes("\u001b"), false);
+				assert.equal(error.message.includes("\u0007"), false);
+				return true;
+			},
+		);
+	});
 });

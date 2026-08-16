@@ -53,6 +53,10 @@ export interface OrchestratorDeps {
 	ui: StackUi;
 	signal?: AbortSignal;
 	realpath?: (path: string) => string;
+	/**
+	 * Confirmation-bound Land request. The production `landDeps()` adapter is
+	 * the sole minting site for both Land and pr-autopilot capabilities.
+	 */
 	landPr?: (input: {
 		prNumber: number;
 		readiness: StackReadinessMode;

@@ -1,3 +1,4 @@
+import type { AutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
 import type { AutopilotResult } from "../pr-autopilot/driver.ts";
 import type { LandConfirmation } from "./confirmation.ts";
 
@@ -18,6 +19,8 @@ export interface LandOptions {
 	 * every revalidation, head pin, and `--match-head-commit` check still runs.
 	 */
 	confirmation?: LandConfirmation;
+	/** Separate authority for the readiness pass; Land forwards it unchanged to pr-autopilot. */
+	autopilotConfirmation?: AutopilotConfirmation;
 }
 export interface FrontierResult {
 	prNumber: number;

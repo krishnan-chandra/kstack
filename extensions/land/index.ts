@@ -102,7 +102,9 @@ export default function landExtension(pi: ExtensionAPI): void {
 						exec,
 						cwd,
 						signal: token.signal,
-						runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd),
+						// Stack landing supplies separate capabilities for the exact merge
+						// and for each frontier's autopilot pass.
+						runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd, options.autopilotConfirmation),
 						selectMethod: async (allowed) =>
 							selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
 						confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),

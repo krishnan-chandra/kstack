@@ -73,6 +73,11 @@ export function renderLandConfirmation(input: {
 		`Land ${input.slices.length} stacked PR(s) bottom-up.`,
 		`Method: ${input.method}`,
 		`Readiness: ${input.readiness}`,
+		...(input.readiness === "watch"
+			? [
+					"The readiness pass may merge remote bases, rerun failed CI jobs, edit code, push fixes, and update review threads without more prompts.",
+				]
+			: []),
 		"Later pull requests are re-pinned when they land, because restacks rewrite their heads.",
 		"",
 		"Order:",

@@ -38,7 +38,10 @@ freshness, not authorization.
   targets and open PRs in the same GitHub repository.
 - Generates each new draft's title and body from its exact slice diff with the
   active Pi model. Bodies follow the `write-pr` `## Summary` and thematic
-  `## Review guide` structure. Existing PR metadata remains unchanged.
+  `## Review guide` structure. A response that fails strict validation is
+  retried once with the validator's error before the publication aborts, and
+  validation failures quote a bounded excerpt of the rejected output.
+  Existing PR metadata remains unchanged.
 - Publishes from `/jj-stack publish` after standard `ctx.ui.confirm`, or from
   `jj_stack_publish` after an explicit user request. Both paths recompute the
   plan and refuse a stale plan ID before mutation. Metadata generation for all
@@ -51,11 +54,15 @@ freshness, not authorization.
   It abandons `<trunk>..<merged>` before fetch, then rebases any remainder. It
   does not republish; run `/jj-stack publish` separately.
 - Lands the stack bottom-up through the `land` extension. One confirmation
-  covers the whole plan. Each frontier is marked ready if needed, merged with
+  covers the whole plan, including each frontier's autopilot pass — no
+  per-PR prompts. Each frontier is marked ready if needed, merged with
   a minted Land confirmation, advanced locally, verified onto trunk, republished,
   and has its remote branch deleted only after those checks. `--readiness`
   defaults to `watch`. In jj mode, `/land --pr <number>` delegates here when the
-  selected PR closes a local stack with two or more slices.
+  selected PR closes a local stack with two or more slices. After the final
+  frontier lands, the same empty, bookmark-less working-copy child that began
+  directly above the selected stack is rebased onto refreshed trunk. Its change
+  ID is preserved, and unrelated working copies are left in place.
 
 ## What it does not do
 
