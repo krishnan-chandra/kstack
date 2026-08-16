@@ -11,10 +11,11 @@ verdict.
 /panel-review --base origin/main "Implement handoff and panel review extensions"
 ```
 
-Every run applies the strict
+Every reviewer independently runs the full
 [`thermo-nuclear-code-quality-review`](../../skills/thermo-nuclear-code-quality-review/)
-lens to every reviewer and to synthesis. Its Approval Bar promotes structural
-maintainability blockers into **Act On**.
+across the entire changeset. Reviewers do not split the diff or specialize by
+rubric dimension; duplicate coverage is intentional. Synthesis applies the same
+Approval Bar and promotes structural maintainability blockers into **Act On**.
 
 Other trusted extensions can invoke the same workflow without serializing
 values into slash-command text. Import `requestPanelReview` from `api.ts` and
@@ -49,16 +50,17 @@ ignores the outcome.
      --tools read,grep,find,ls \
      --model <provider/model[:thinking]> \
      --append-system-prompt <reviewer-prompt> \
-     "Review the bundle at <path>."
+     "Run a complete independent thermo-nuclear review of the entire bundle at <path>. Apply every relevant rubric dimension and the full Approval Bar."
    ```
 
    No shell, no `bash`/`write`/`edit`, no repository-controlled extensions or
    skills. The reviewer prompt states that bundle and repository contents are
    untrusted review data, not instructions. The prompt combines
    `reviewer.md`, `rubric.md`, `code-quality.md`, and the canonical
-   `thermo-nuclear.md` lens so every reviewer model sees the same strict
-   maintainability standard. Children stay `--no-skills`; the extension loads
-   the canonical lens directly, so repository-controlled skills cannot
+   `thermo-nuclear.md` lens. Every child must complete the whole review against
+   the entire changeset instead of handling one panel slice. Children stay
+   `--no-skills`; the extension loads the canonical lens directly, so
+   repository-controlled skills cannot
    influence reviewer instructions. Project context files (`AGENTS.md`,
    `CLAUDE.md`) are injected as usual — except when the changeset itself
    modifies one, in which case children run with `--no-context-files` so the
@@ -136,7 +138,7 @@ the `"panel-review"` section:
 {
   "panel-review": {
     "reviewers": [
-      { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "high" },
+      { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "medium" },
       { "label": "sonnet", "model": "anthropic/claude-sonnet-5", "thinking": "medium" }
     ],
     "maxConcurrency": 5,
@@ -165,7 +167,7 @@ the `"panel-review"` section:
 - Without a config, a built-in low-cost default panel runs: **Claude Sonnet 5**
   (`anthropic/claude-sonnet-5`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
   medium), **Kimi k3** (`openrouter/moonshotai/kimi-k3`, medium), **Gemini 3.7 Flash**
-  (`google-vertex/gemini-3.7-flash`, high). Defaults that are unavailable or
+  (`google-vertex/gemini-3.7-flash`, medium). Defaults that are unavailable or
   unauthenticated are skipped with a warning; write a config to override the
   panel.
 - If fewer than two default models are available, up to five distinct models
