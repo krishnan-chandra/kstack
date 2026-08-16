@@ -17,6 +17,7 @@ import {
 	readSync,
 	realpathSync,
 	rmSync,
+	type Stats,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -162,7 +163,7 @@ export function readUntracked(
 	cap: number = LIMITS.untrackedFileBytes,
 ): UntrackedContent | { skipped: string } {
 	if (!isPathInside(root, relPath)) return { skipped: "path escapes repository root" };
-	let stat;
+	let stat: Stats;
 	try {
 		stat = fsImpl.lstatSync(join(root, relPath));
 	} catch {

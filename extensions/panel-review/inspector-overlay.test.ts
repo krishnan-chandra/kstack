@@ -19,7 +19,12 @@ const fakeTheme: DashboardTheme = {
 };
 
 const fakeText: TerminalText = {
-	stripTerminalSequences: (t) => t.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ""),
+	stripTerminalSequences: (t) =>
+		t.replace(
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: test fixture strips terminal sequences
+			/\x1b\[[0-9;]*[a-zA-Z]/g,
+			"",
+		),
 	truncateToWidth: (t, w) => (t.length > w ? `${t.slice(0, Math.max(0, w - 1))}…` : t),
 };
 

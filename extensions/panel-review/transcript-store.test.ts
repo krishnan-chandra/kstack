@@ -153,8 +153,9 @@ describe("PanelTranscriptStore", () => {
 		// Second tool_end should be dropped
 		store.push("r1", { kind: "tool_end", durationMs: 300, at: 1300 });
 		assert.equal(store.getEntries("r1").length, 1);
-		if (store.getEntries("r1")[0].kind === "tool") {
-			assert.equal((store.getEntries("r1")[0] as any).durationMs, 200);
+		const [entry] = store.getEntries("r1");
+		if (entry?.kind === "tool") {
+			assert.equal(entry.durationMs, 200);
 		}
 	});
 

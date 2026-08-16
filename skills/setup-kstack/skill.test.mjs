@@ -38,7 +38,7 @@ test("setup-kstack covers every unified configuration section and its critical i
 	const skill = await read("SKILL.md");
 
 	for (const section of ["vcs", "plan-implement", "panel-review", "kstack-router", "investigation", "arena", "swarm"]) {
-		assert.match(skill, new RegExp("\\\\| `" + section + "`"));
+		assert.match(skill, new RegExp(`\\\\| \`${section}\``));
 	}
 	assert.match(skill, /planner and implementer use different model IDs/);
 	assert.match(skill, /jj workspace root/);

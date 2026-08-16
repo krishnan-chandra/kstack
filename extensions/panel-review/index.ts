@@ -115,7 +115,7 @@ export default function (pi: ExtensionAPI): void {
 			notify((error as Error).message, "error");
 			return { status: "failed", error: (error as Error).message };
 		}
-		let base;
+		let base: ReturnType<typeof resolveBase>;
 		try {
 			base = resolveBase(defaultGitExec, repoRoot, options.base);
 		} catch (error) {

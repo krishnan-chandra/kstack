@@ -26,7 +26,9 @@ class FakeProcess implements SpawnedProcess {
 	killed = false;
 	kills: string[] = [];
 	pid = 4242;
-	on(event: "close" | "error", cb: (...args: any[]) => void): void {
+	on(event: "close", cb: (code: number | null) => void): void;
+	on(event: "error", cb: (error: Error) => void): void;
+	on(event: "close" | "error", cb: ((code: number | null) => void) | ((error: Error) => void)): void {
 		this.events.on(event, cb);
 	}
 	kill(signal = "SIGTERM"): boolean {

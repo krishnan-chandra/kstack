@@ -52,7 +52,7 @@ async function makeFixture() {
 
 	await writeFile(
 		join(pi, "2026-08-01T00-00-00-000Z_019ff000-0000-7000-8000-000000000001.jsonl"),
-		[
+		`${[
 			JSON.stringify({ type: "session", version: 3, id: "pi-1", timestamp: "2026-08-01T00:00:00Z", cwd: "/x" }),
 			JSON.stringify({
 				type: "message",
@@ -87,23 +87,23 @@ async function makeFixture() {
 					isError: false,
 				},
 			}),
-		].join("\n") + "\n",
+		].join("\n")}\n`,
 	);
 
 	await mkdir(join(claude, "session-1", "subagents"), { recursive: true });
 	await writeFile(
 		join(claude, "session-1", "subagents", "agent-x.jsonl"),
-		JSON.stringify({
+		`${JSON.stringify({
 			type: "user",
 			sessionId: "agent-x",
 			timestamp: "2026-08-02T00:00:03Z",
 			message: { role: "user", content: "delegation prompt written by the agent" },
-		}) + "\n",
+		})}\n`,
 	);
 
 	await writeFile(
 		join(claude, "session-1.jsonl"),
-		[
+		`${[
 			JSON.stringify({ type: "mode", mode: "normal", sessionId: "claude-1" }),
 			JSON.stringify({
 				type: "user",
@@ -123,12 +123,12 @@ async function makeFixture() {
 					],
 				},
 			}),
-		].join("\n") + "\n",
+		].join("\n")}\n`,
 	);
 
 	await writeFile(
 		join(codex, "rollout-2026-08-03T00-00-00-abc.jsonl"),
-		[
+		`${[
 			JSON.stringify({
 				timestamp: "2026-08-03T00:00:01Z",
 				type: "response_item",
@@ -139,7 +139,7 @@ async function makeFixture() {
 				type: "event_msg",
 				payload: { type: "agent_message", message: "noted" },
 			}),
-		].join("\n") + "\n",
+		].join("\n")}\n`,
 	);
 
 	const cursorDb = join(cursor, "state_test.sqlite");
