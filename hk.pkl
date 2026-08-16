@@ -5,8 +5,8 @@ import "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Builtin
 local linters = new Mapping<String, Step> {
     ["biome"] {
         glob = "*.ts"
-        check = "npx biome check --no-errors-on-unmatched --diagnostic-level=error {{ files }}"
-        fix = "npx biome check --no-errors-on-unmatched --write --unsafe {{ files }}"
+        check = "bunx biome check --no-errors-on-unmatched --diagnostic-level=error {{ files }}"
+        fix = "bunx biome check --no-errors-on-unmatched --write --unsafe {{ files }}"
     }
 }
 

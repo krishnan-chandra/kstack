@@ -352,43 +352,41 @@ test("unconfigured repo falls through to selectMethod prompt", async () => {
 	assert.equal(confirmMergeCalled, true, "confirmMerge should be called without configured method");
 });
 
-test("blocks merge when the PR head changes after confirmation", async (t) => {
-	const CHANGED = "c".repeat(40);
-	const cases = [
-		{ name: "head SHA", view: pr(CHANGED) },
-		{ name: "head ref", view: pr(NEW, "OPEN", false, "other") },
-		{ name: "draft", view: pr(NEW, "OPEN", true) },
-		{ name: "state", view: pr(NEW, "CLOSED") },
-	];
-	for (const item of cases) {
-		await t.test(item.name, async () => {
-			const calls: string[][] = [];
-			let views = 0;
-			const exec: ExecFn = async (_command, args) => {
-				calls.push(args);
-				if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
-				if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
-				if (args[0] === "pr" && args[1] === "view") {
-					const current = views++;
-					return { code: 0, stdout: current < 2 ? pr(NEW) : item.view, stderr: "" };
-				}
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await runLand(
-				{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
-				deps(exec),
-			);
-			assert.equal(result.status, "blocked");
-			assert.deepEqual(result.blockers, ["PR changed after confirmation; merge was not attempted."]);
-			assert.equal(result.frontiers[0]?.state, "not-attempted");
-			assert.equal(result.frontiers[0]?.expectedHeadSha, NEW);
-			assert.equal(
-				calls.some((args) => args[0] === "pr" && args[1] === "merge"),
-				false,
-			);
-		});
-	}
-});
+const PR_CHANGE_CASES = [
+	{ name: "head SHA", view: pr("c".repeat(40)) },
+	{ name: "head ref", view: pr(NEW, "OPEN", false, "other") },
+	{ name: "draft", view: pr(NEW, "OPEN", true) },
+	{ name: "state", view: pr(NEW, "CLOSED") },
+];
+
+for (const item of PR_CHANGE_CASES) {
+	test(`blocks merge when the PR ${item.name} changes after confirmation`, async () => {
+		const calls: string[][] = [];
+		let views = 0;
+		const exec: ExecFn = async (_command, args) => {
+			calls.push(args);
+			if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+			if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+			if (args[0] === "pr" && args[1] === "view") {
+				const current = views++;
+				return { code: 0, stdout: current < 2 ? pr(NEW) : item.view, stderr: "" };
+			}
+			return { code: 0, stdout: "", stderr: "" };
+		};
+		const result = await runLand(
+			{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			deps(exec),
+		);
+		assert.equal(result.status, "blocked");
+		assert.deepEqual(result.blockers, ["PR changed after confirmation; merge was not attempted."]);
+		assert.equal(result.frontiers[0]?.state, "not-attempted");
+		assert.equal(result.frontiers[0]?.expectedHeadSha, NEW);
+		assert.equal(
+			calls.some((args) => args[0] === "pr" && args[1] === "merge"),
+			false,
+		);
+	});
+}
 
 test("blocks early when GitHub only allows merge commits (no squash or rebase)", async () => {
 	const mergeOnly = JSON.stringify({

@@ -142,7 +142,8 @@ rows stay unnamed.
 ## Requirements
 
 - Pi 0.84.1 or newer
-- Node.js 22 or newer
+- [Bun](https://bun.sh) 1.3.14 or newer for local tooling. Install it with `curl -fsSL https://bun.sh/install | bash`.
+- Node.js 22 or newer for Pi's runtime and the `node:sqlite` test carve-out
 - Python 3.12 or newer for the `git-worktrees` skill scripts and their tests
 - A local filesystem for Pi's agent directory
 
@@ -298,38 +299,50 @@ Agents should read [`AGENTS.md`](AGENTS.md) before making changes.
 Run the full JavaScript and TypeScript test suite from the repository root:
 
 ```bash
-npm test
+bun install
+bun run test
 ```
+
+The suite runs under [Bun](https://bun.sh), with one exception. The
+`session-archive` extension uses `node:sqlite` (Node 22+) because it runs
+inside Pi's Node runtime. Its tests and the handoff tests that transitively
+import it run under Node through `bun run test:sqlite`. `bunfig.toml` excludes
+those files from Bun, and `bun run test` automatically chains the Node step.
+`bun run check:test-split` verifies that the Bun exclusions and Node test
+scripts list the same SQLite tests.
+
+`skills/tdd/evals/` contains prompt fixtures for skill evaluations, not project
+tests. `bunfig.toml` excludes those fixtures from the test suite.
 
 Check TypeScript types before submitting changes:
 
 ```bash
-npm run typecheck
+bun run typecheck
 ```
 
 For focused runs, use the individual test commands:
 
 ```bash
-node --test install.test.mjs
-node --test check-exports.test.mjs
-node --test extensions/steering-swap/*.test.ts
-node --test extensions/session-archive/*.test.ts
-node --test extensions/handoff/*.test.ts
-node --test extensions/panel-review/*.test.ts
-node --test extensions/plan-implement/*.test.ts
-node --test extensions/kstack-router/*.test.ts
-node --test extensions/pr-autopilot/*.test.ts
-node --test extensions/land/*.test.ts
-node --test extensions/jj-stacked-prs/*.test.ts
-node --test extensions/fast-implement/*.test.ts
-node --test extensions/shared/*.test.ts
-node --test skills/reflect/*.test.mjs
-node --test skills/architect/*.test.mjs
-node --test skills/decision-trail/*.test.mjs
-node --test skills/recall/*.test.mjs
-node --test skills/setup-kstack/*.test.mjs
-node --test skills/personalize/skill.test.mjs
-node --test skills/investigation-model.test.mjs
+bun test install.test.mjs
+bun test check-exports.test.mjs
+bun run test:handoff
+bun run test:session-archive
+bun test extensions/panel-review/
+bun test extensions/plan-implement/
+bun test extensions/kstack-router/
+bun test extensions/land/
+bun test extensions/pr-autopilot/
+bun test extensions/jj-stacked-prs/
+bun test extensions/fast-implement/
+bun test extensions/shared/
+bun test skills/reflect/
+bun test skills/architect/
+bun test skills/decision-trail/
+bun test skills/recall/
+bun test skills/setup-kstack/
+bun test skills/personalize/skill.test.mjs
+bun test skills/investigation-model.test.mjs
+bun run test:sqlite
 ```
 
 Python 3 is required to develop the `git-worktrees` skill. Run its hermetic

@@ -111,8 +111,8 @@ head pin, revalidation, and `--match-head-commit` checks.
 ## Development
 
 ```bash
-node --test extensions/land/*.test.ts
-npm run typecheck
+bun test extensions/land/
+bun run typecheck
 ```
 
 The tests use injected command results. They do not mutate GitHub repositories.
