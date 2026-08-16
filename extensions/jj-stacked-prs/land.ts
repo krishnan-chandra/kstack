@@ -682,6 +682,8 @@ async function runLandLoop(
 
 interface WorkingCopySettlement {
 	changeId: string;
+	/** Expected parent when advancing abandons a selected bookmarked checkpoint. */
+	replacementParentCommitId?: string;
 }
 
 /** Identify the empty working-copy child of the selected stack before landing mutates history. */
@@ -702,7 +704,8 @@ async function identifyWorkingCopyToSettle(
 		const isSelectedCheckpoint = status.bookmarked && status.commitId === model.topCommitId;
 		const isUnbookmarkedChild =
 			!status.bookmarked && status.parentCommitIds.length === 1 && status.parentCommitIds[0] === model.topCommitId;
-		return isSelectedCheckpoint || isUnbookmarkedChild ? { changeId } : undefined;
+		if (isSelectedCheckpoint) return { changeId, replacementParentCommitId: model.trunk.commitId };
+		return isUnbookmarkedChild ? { changeId } : undefined;
 	} catch (error) {
 		completedMutations.push(`Could not inspect the working copy before landing: ${errorMessage(error)}`);
 		return undefined;
@@ -726,7 +729,13 @@ async function settleWorkingCopyOnTrunk(
 			jj.workingCopyStatus(options.cwd, deps.signal),
 			jj.workingCopyChangeId(options.cwd, deps.signal),
 		]);
-		if (!status?.empty || status.bookmarked || changeId !== candidate.changeId) return;
+		if (!status?.empty || status.bookmarked) return;
+		const sameChange = changeId === candidate.changeId;
+		const expectedReplacement =
+			candidate.replacementParentCommitId !== undefined &&
+			status.parentCommitIds.length === 1 &&
+			status.parentCommitIds[0] === candidate.replacementParentCommitId;
+		if (!sameChange && !expectedReplacement) return;
 		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
 		if (await jj.isAncestor(options.cwd, trunk, status.commitId, deps.signal)) return;
 		await jj.rebaseWorkingCopy(options.cwd, trunk, deps.signal);

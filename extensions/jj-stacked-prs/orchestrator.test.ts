@@ -914,16 +914,25 @@ describe("landStack", () => {
 	it("rebases an empty automation checkpoint bookmarked as the selected top", async () => {
 		const stack = [commit("aaa", "feat1")];
 		let statusReads = 0;
+		let changeIdReads = 0;
 		const jj = fakeJj({
 			fetchStack: async () => stack,
 			resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : "aaa-commit"),
 			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
-			workingCopyChangeId: async () => "checkpoint-change",
+			workingCopyChangeId: async () => {
+				changeIdReads++;
+				return changeIdReads <= 2 ? "checkpoint-change" : "replacement-change";
+			},
 			workingCopyStatus: async () => {
 				statusReads++;
 				return statusReads === 1
 					? { commitId: "aaa-commit", empty: true, bookmarked: true, parentCommitIds: ["parent-commit"] }
-					: { commitId: "rewritten-checkpoint", empty: true, bookmarked: false, parentCommitIds: ["old-trunk"] };
+					: {
+							commitId: "replacement-checkpoint",
+							empty: true,
+							bookmarked: false,
+							parentCommitIds: ["trunk"],
+						};
 			},
 			isAncestor: async (_cwd, ancestor) => ancestor.startsWith("merge-"),
 		});
