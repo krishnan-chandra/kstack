@@ -19,10 +19,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { constants, realpathSync } from "node:fs";
+import { lstat, mkdir, open, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { getAgentDir } from "../shared/kstack-config.ts";
 import type { VcsBackend, VcsResult, WorkstreamIdentity } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
@@ -58,44 +58,93 @@ export function repoPersistKey(cwd: string): string {
 }
 
 export function persistPath(repoKey: string, prNumber: number): string {
-	return join(tmpdir(), `pi-pr-autopilot-state-${repoKey}-${prNumber}.json`);
+	return join(getAgentDir(), "pr-autopilot", `state-${repoKey}-${prNumber}.json`);
 }
 
 function emptyPersistedState(repoKey: string, prNumber: number): AutopilotPersistedState {
 	return { repoKey, prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
 }
 
-export async function loadPersistedState(repoKey: string, prNumber: number): Promise<AutopilotPersistedState> {
+function parsePersistedState(raw: unknown, repoKey: string, prNumber: number): AutopilotPersistedState {
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		return emptyPersistedState(repoKey, prNumber);
+	}
+	const obj = raw as Record<string, unknown>;
+	const handled = Array.isArray(obj.handledThreadIds)
+		? obj.handledThreadIds.filter((id): id is string => typeof id === "string")
+		: [];
+	const replied = Array.isArray(obj.repliedThreadIds)
+		? obj.repliedThreadIds.filter((id): id is string => typeof id === "string")
+		: [];
+	const flake = Array.isArray(obj.flakeRetried)
+		? obj.flakeRetried.filter((id): id is string => typeof id === "string")
+		: [];
+	return {
+		repoKey,
+		prNumber,
+		headSha: typeof obj.headSha === "string" ? obj.headSha : "",
+		handledThreadIds: handled,
+		repliedThreadIds: replied,
+		flakeRetried: flake,
+	};
+}
+
+type StateDirCheck = "missing" | "directory" | "unsafe";
+
+/**
+ * Inspect the state directory without following a symlink. A symlink here is
+ * refused rather than traversed because `mkdir` would otherwise follow it and
+ * `O_NOFOLLOW` on the state file only guards its final path component.
+ */
+async function checkStateDir(dir: string): Promise<StateDirCheck> {
 	try {
-		const raw: unknown = JSON.parse(await readFile(persistPath(repoKey, prNumber), "utf8"));
-		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-			return emptyPersistedState(repoKey, prNumber);
+		const stat = await lstat(dir);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) return "unsafe";
+		return "directory";
+	} catch {
+		return "missing";
+	}
+}
+
+export async function loadPersistedState(repoKey: string, prNumber: number): Promise<AutopilotPersistedState> {
+	const path = persistPath(repoKey, prNumber);
+	if ((await checkStateDir(dirname(path))) !== "directory") {
+		return emptyPersistedState(repoKey, prNumber);
+	}
+	try {
+		const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		try {
+			const raw: unknown = JSON.parse(await handle.readFile("utf8"));
+			return parsePersistedState(raw, repoKey, prNumber);
+		} finally {
+			await handle.close();
 		}
-		const obj = raw as Record<string, unknown>;
-		const handled = Array.isArray(obj.handledThreadIds)
-			? obj.handledThreadIds.filter((id): id is string => typeof id === "string")
-			: [];
-		const replied = Array.isArray(obj.repliedThreadIds)
-			? obj.repliedThreadIds.filter((id): id is string => typeof id === "string")
-			: [];
-		const flake = Array.isArray(obj.flakeRetried)
-			? obj.flakeRetried.filter((id): id is string => typeof id === "string")
-			: [];
-		return {
-			repoKey,
-			prNumber,
-			headSha: typeof obj.headSha === "string" ? obj.headSha : "",
-			handledThreadIds: handled,
-			repliedThreadIds: replied,
-			flakeRetried: flake,
-		};
 	} catch {
 		return emptyPersistedState(repoKey, prNumber);
 	}
 }
 
 export async function savePersistedState(state: AutopilotPersistedState): Promise<void> {
-	await writeFile(persistPath(state.repoKey, state.prNumber), JSON.stringify(state), { mode: 0o600 });
+	const path = persistPath(state.repoKey, state.prNumber);
+	const dir = dirname(path);
+	await mkdir(dir, { recursive: true, mode: 0o700 });
+	if ((await checkStateDir(dir)) !== "directory") return;
+	try {
+		const handle = await open(
+			path,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+			0o600,
+		);
+		try {
+			await handle.writeFile(JSON.stringify(state), "utf8");
+		} finally {
+			await handle.close();
+		}
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ELOOP" || code === "ENOTDIR") return;
+		throw error;
+	}
 }
 
 function filterHandledThreads(threads: ReviewThread[], handled: string[]): ReviewThread[] {
@@ -109,12 +158,13 @@ export async function fetchPRState(
 	prNumber: number,
 	existingVerifiedSha: string | null,
 	opts: { concurrency: number; handledThreadIds: string[] },
+	repo?: string,
 ): Promise<PRState | string> {
 	const prResult = await viewPR(exec, cwd, prNumber);
 	if (!prResult.pr) return prResult.stderr || `Could not view PR #${prNumber}.`;
 
 	const [threadsResult, issueResult, checksResult] = await Promise.all([
-		getReviewThreads(exec, cwd, prNumber),
+		getReviewThreads(exec, cwd, prNumber, repo),
 		getIssueComments(exec, cwd, prNumber),
 		getCheckRuns(exec, cwd, prNumber),
 	]);

@@ -152,8 +152,13 @@ Each run picks one tiny model, then spawns two child agents with that model:
 Both children see the triager task or fixer task file (mode 0600, in a private
 temp directory) rather than serialized structured data on the command line.
 
-Handled thread ids and flake reruns persist under `/tmp/pi-pr-autopilot-state-<pr>.json`
-so a later `/pr-autopilot --mode drive` or `watch` does not re-handle the same item.
+Handled thread ids and flake reruns persist under the agent directory's
+`pr-autopilot/` subdirectory (`$PI_CODING_AGENT_DIR/pr-autopilot/`, default
+`~/.pi/agent/pr-autopilot/`) so a later `/pr-autopilot --mode drive` or `watch`
+does not re-handle the same item. The directory is created mode `0700`; saves
+refuse to follow a symlink in the state directory or at the state path. State
+from the previous `/tmp` location is deliberately not migrated — the first run
+after upgrading starts with an empty handled-item filter.
 
 ## Safety
 

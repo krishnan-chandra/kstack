@@ -3,9 +3,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
+import { applyThreadReplies, parseTriage } from "./autopilot-operations.ts";
 import { type DriverOps, runAutopilot } from "./driver.ts";
-import type { AutopilotPersistedState, ExecFn, ExecFnResult, ResolvedAutopilotConfig } from "./types.ts";
+import type {
+	AutopilotPersistedState,
+	ExecFn,
+	ExecFnResult,
+	PRState,
+	ResolvedAutopilotConfig,
+	ReviewThread,
+} from "./types.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const MERGED_SHA = "89abcdef0123456789abcdef0123456789abcdef";
@@ -348,6 +357,7 @@ test("drive mode stops at its configured cycle bound", async (t) => {
 	assert.equal(result.cyclesCompleted, 3);
 	assert.ok(result.blockedReasons.some((reason) => reason.includes("max cycles reached")));
 	assert.equal(harness.roles.filter((role) => role === "fixer").length, 3);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh repo view")).length, 1);
 });
 
 test("pending checks use the watch path without triage", async (t) => {
@@ -359,4 +369,224 @@ test("pending checks use the watch path without triage", async (t) => {
 	assert.ok(result.blockedReasons.includes("CI still pending after watch"));
 	assert.ok(harness.calls.some((call) => call.includes("gh pr checks 42 --watch")));
 	assert.deepEqual(harness.roles, []);
+});
+
+test("cleanup mode never resolves the repository", async (t) => {
+	const cwd = await mkdtemp(join(tmpdir(), "kstack-driver-cleanup-"));
+	t.after(() => rm(cwd, { recursive: true, force: true }));
+	const calls: string[] = [];
+	const exec: ExecFn = async (command, args) => {
+		calls.push(`${command} ${args.join(" ")}`);
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const backend = {
+		id: "jj",
+		preflight: async () => ({ ok: true, workspaceRoot: cwd }),
+	} as unknown as VcsBackend;
+	const result = await runAutopilot(
+		"cleanup",
+		{
+			config,
+			exec,
+			backend,
+			cwd,
+			explicitPR: 42,
+			promptDir: cwd,
+			triagerPromptFile: join(cwd, "triager.md"),
+			fixerPromptFile: join(cwd, "fixer.md"),
+		},
+		{ setPhase: () => {}, notify: () => {}, confirm: async () => true },
+		new AbortController().signal,
+	);
+	assert.equal(result.status, "cleaned");
+	assert.deepEqual(calls, []);
+});
+
+function makeThreadState(threads: ReviewThread[]): PRState {
+	return {
+		number: 42,
+		title: "Fix the thing",
+		state: "open",
+		isDraft: false,
+		headSha: SHA,
+		verifiedHeadSha: null,
+		baseRef: "main",
+		headRef: BRANCH,
+		mergeable: "mergeable",
+		mergeStateStatus: "CLEAN",
+		checks: [],
+		threads,
+		hasUnresolvedThreads: threads.length > 0,
+	};
+}
+
+function makeReplyExec(overrides: { replyCode?: number; resolveCode?: number; issueReplyCode?: number } = {}): {
+	exec: ExecFn;
+	calls: string[];
+} {
+	const calls: string[] = [];
+	const exec: ExecFn = async (command, args) => {
+		const key = `${command} ${args.join(" ")}`;
+		calls.push(key);
+		if (command === "gh" && args[0] === "api" && args[1] === "graphql" && args.some((a) => a.startsWith("id="))) {
+			const code = overrides.resolveCode ?? 0;
+			return { code, stdout: "", stderr: code === 0 ? "" : "resolve failed" };
+		}
+		if (command === "gh" && args[0] === "api" && args[1]?.includes("/pulls/42/comments")) {
+			const code = overrides.replyCode ?? 0;
+			return { code, stdout: "", stderr: code === 0 ? "" : "reply failed" };
+		}
+		if (command === "gh" && args[0] === "pr" && args[1] === "comment") {
+			const code = overrides.issueReplyCode ?? 0;
+			return { code, stdout: "", stderr: code === 0 ? "" : "comment failed" };
+		}
+		return { code: 1, stdout: "", stderr: `unexpected command: ${key}` };
+	};
+	return { exec, calls };
+}
+
+function parseThreads(json: string) {
+	const parsed = parseTriage(json);
+	if ("error" in parsed) throw new Error(parsed.error);
+	return parsed;
+}
+
+test("fix decision replies and resolves a review thread", async () => {
+	const state = makeThreadState([
+		{
+			id: "thread-1",
+			commenter: "reviewer",
+			body: "rename this",
+			path: "src/a.ts",
+			line: 1,
+			replyToId: 7,
+			source: "review-thread",
+		},
+	]);
+	const parsed = parseThreads(
+		JSON.stringify({
+			checks: [],
+			threads: [{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
+			conflicts: false,
+			draft: false,
+			summary: "",
+		}),
+	);
+	const { exec, calls } = makeReplyExec();
+	const repliedThreadIds: string[] = [];
+	const handled = await applyThreadReplies(
+		exec,
+		"/repo",
+		state,
+		parsed,
+		{ resolveFix: true, repliedThreadIds },
+		() => {},
+	);
+	assert.deepEqual(handled, ["thread-1"]);
+	assert.deepEqual(repliedThreadIds, ["thread-1"]);
+	assert.ok(calls.some((call) => call.startsWith("gh api repos/{owner}/{repo}/pulls/42/comments")));
+	assert.ok(calls.some((call) => call.startsWith("gh api graphql") && call.includes("id=thread-1")));
+});
+
+test("dismiss decision replies to an issue comment without resolving", async () => {
+	const state = makeThreadState([
+		{ id: "issue-comment-1", commenter: "reviewer", body: "remove this", source: "issue-comment", replyToId: 1 },
+	]);
+	const parsed = parseThreads(
+		JSON.stringify({
+			checks: [],
+			threads: [{ id: "issue-comment-1", decision: "dismiss", action: "out of scope", reply: "" }],
+			conflicts: false,
+			draft: false,
+			summary: "",
+		}),
+	);
+	const { exec, calls } = makeReplyExec();
+	const handled = await applyThreadReplies(
+		exec,
+		"/repo",
+		state,
+		parsed,
+		{ resolveFix: false, repliedThreadIds: [] },
+		() => {},
+	);
+	assert.deepEqual(handled, ["issue-comment-1"]);
+	assert.ok(calls.some((call) => call.startsWith("gh pr comment 42") && call.includes("Dismissing: out of scope")));
+	assert.equal(
+		calls.some((call) => call.startsWith("gh api graphql") && call.includes("id=")),
+		false,
+	);
+});
+
+test("failed review-thread reply does not resolve and warns", async () => {
+	const state = makeThreadState([
+		{
+			id: "thread-1",
+			commenter: "reviewer",
+			body: "rename this",
+			path: "src/a.ts",
+			line: 1,
+			replyToId: 7,
+			source: "review-thread",
+		},
+	]);
+	const parsed = parseThreads(
+		JSON.stringify({
+			checks: [],
+			threads: [{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
+			conflicts: false,
+			draft: false,
+			summary: "",
+		}),
+	);
+	const { exec } = makeReplyExec({ replyCode: 1 });
+	const warnings: string[] = [];
+	const repliedThreadIds: string[] = [];
+	const handled = await applyThreadReplies(
+		exec,
+		"/repo",
+		state,
+		parsed,
+		{ resolveFix: true, repliedThreadIds },
+		(message) => warnings.push(message),
+	);
+	assert.deepEqual(handled, []);
+	assert.deepEqual(repliedThreadIds, []);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0] ?? "", /Could not reply to thread thread-1/);
+});
+
+test("failed resolve keeps the reply id but not the handled id", async () => {
+	const state = makeThreadState([
+		{
+			id: "thread-1",
+			commenter: "reviewer",
+			body: "rename this",
+			path: "src/a.ts",
+			line: 1,
+			replyToId: 7,
+			source: "review-thread",
+		},
+	]);
+	const parsed = parseThreads(
+		JSON.stringify({
+			checks: [],
+			threads: [{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
+			conflicts: false,
+			draft: false,
+			summary: "",
+		}),
+	);
+	const { exec } = makeReplyExec({ resolveCode: 1 });
+	const repliedThreadIds: string[] = [];
+	const handled = await applyThreadReplies(
+		exec,
+		"/repo",
+		state,
+		parsed,
+		{ resolveFix: true, repliedThreadIds },
+		() => {},
+	);
+	assert.deepEqual(handled, []);
+	assert.deepEqual(repliedThreadIds, ["thread-1"]);
 });

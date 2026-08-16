@@ -74,6 +74,12 @@ async function resolveRepo(exec: ExecFn, cwd: string): Promise<ExecFnResult & { 
 	return /^[^/\s]+\/[^/\s]+$/.test(repo) ? { ...result, repo } : { ...result, repo: undefined };
 }
 
+/** Resolve the repo owner/name once per drive; thread the value into fetchPRState. */
+export async function resolveRepoName(exec: ExecFn, cwd: string): Promise<string | undefined> {
+	const result = await resolveRepo(exec, cwd);
+	return result.repo;
+}
+
 /**
  * Fetch the lowest unmerged open PR in the current repository, sorted by
  * number ascending. Returns nothing when no open PR exists.
@@ -163,8 +169,14 @@ export async function getReviewThreads(
 	exec: ExecFn,
 	cwd: string,
 	prNumber: number,
+	repo?: string,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
-	const repoResult = await resolveRepo(exec, cwd);
+	let repoResult: ExecFnResult & { repo?: string };
+	if (repo !== undefined) {
+		repoResult = { code: 0, stdout: repo, stderr: "", repo };
+	} else {
+		repoResult = await resolveRepo(exec, cwd);
+	}
 	if (!repoResult.repo) {
 		return { ...repoResult, threads: [] };
 	}
