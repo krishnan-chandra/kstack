@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import {
 	ArchiveStoreError,
@@ -12,8 +12,10 @@ import {
 	getArchiveStats,
 	getSessionRow,
 	importSessionPending,
+	listArchivedForIntegrity,
 	listSessionRows,
 	markError,
+	markVerified,
 	openArchiveDb,
 	openArchiveDbReadOnly,
 	type PendingImport,
@@ -55,7 +57,7 @@ describe("archive-store", () => {
 		const tree = makeTempTree();
 		const db = openArchiveDb(tree.dbPath);
 		const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-		assert.equal(version.user_version, 1);
+		assert.equal(version.user_version, 2);
 		db.exec("PRAGMA foreign_keys=ON");
 		assert.ok(existsSync(tree.dbPath));
 		db.close();
@@ -70,17 +72,101 @@ describe("archive-store", () => {
 			assert.ok(!entryColumns.some((column) => column.name === "raw_json"));
 			assert.ok(entryColumns.some((column) => column.name === "raw_offset"));
 			assert.ok(entryColumns.some((column) => column.name === "raw_length"));
+			assert.ok(sessionColumns.some((column) => column.name === "verified_at"));
+			assert.ok(sessionColumns.some((column) => column.name === "verified_mtime_ms"));
 		} finally {
 			again.close();
+		}
+	});
+
+	it("migrates schema from version 1 to version 2 adding verification columns", () => {
+		const tree = makeTempTree();
+		mkdirSync(tree.archiveRoot, { recursive: true });
+		const v1Db = new DatabaseSync(tree.dbPath);
+		v1Db.exec(`
+			CREATE TABLE archive_sessions (
+			  session_id TEXT PRIMARY KEY,
+			  cwd TEXT NOT NULL,
+			  name TEXT,
+			  created_at TEXT NOT NULL,
+			  archived_at TEXT,
+			  original_path TEXT NOT NULL,
+			  archive_path TEXT UNIQUE,
+			  state TEXT NOT NULL CHECK (state IN ('pending', 'archived', 'error')),
+			  file_size INTEGER NOT NULL,
+			  sha256 TEXT NOT NULL,
+			  entry_count INTEGER NOT NULL,
+			  last_error TEXT
+			);
+			CREATE TABLE archive_entries (
+			  rowid INTEGER PRIMARY KEY,
+			  session_id TEXT NOT NULL REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
+			  entry_id TEXT NOT NULL,
+			  parent_id TEXT,
+			  entry_type TEXT NOT NULL,
+			  timestamp TEXT NOT NULL,
+			  ordinal INTEGER NOT NULL,
+			  role TEXT,
+			  text_content TEXT,
+			  raw_offset INTEGER NOT NULL,
+			  raw_length INTEGER NOT NULL,
+			  UNIQUE(session_id, entry_id),
+			  UNIQUE(session_id, ordinal)
+			);
+			PRAGMA user_version = 1;
+		`);
+		v1Db
+			.prepare(`
+			INSERT INTO archive_sessions (
+			  session_id, cwd, name, created_at, archived_at, original_path,
+			  archive_path, state, file_size, sha256, entry_count, last_error
+			) VALUES ('test-v1-session', '/tmp', 'v1 name', '2026-08-16T12:00:00.000Z', '2026-08-16T12:05:00.000Z',
+			          '/active/session.jsonl', '/archive/session.jsonl', 'archived', 100, 'sha123', 5, NULL)
+		`)
+			.run();
+		v1Db.close();
+
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
+			assert.equal(version.user_version, 2);
+
+			const sessionColumns = db.prepare("PRAGMA table_info(archive_sessions)").all() as unknown as {
+				name: string;
+			}[];
+			assert.ok(sessionColumns.some((column) => column.name === "verified_at"));
+			assert.ok(sessionColumns.some((column) => column.name === "verified_mtime_ms"));
+
+			const row = getSessionRow(db, "test-v1-session");
+			assert.ok(row);
+			assert.equal(row.session_id, "test-v1-session");
+			assert.equal(row.name, "v1 name");
+			assert.equal(row.state, "archived");
+			assert.equal(row.verified_at, null);
+			assert.equal(row.verified_mtime_ms, null);
+
+			const integrityRows = listArchivedForIntegrity(db);
+			assert.equal(integrityRows.length, 1);
+			assert.equal(integrityRows[0].session_id, "test-v1-session");
+			assert.equal(integrityRows[0].verified_at, null);
+			assert.equal(integrityRows[0].verified_mtime_ms, null);
+
+			assert.equal(markVerified(db, "test-v1-session", 1700000000000, 1699999999000.5), true);
+			assert.equal(markVerified(db, "nonexistent-session", 1700000000000, 1699999999000.5), false);
+			const updated = getSessionRow(db, "test-v1-session");
+			assert.equal(updated?.verified_at, 1700000000000);
+			assert.equal(updated?.verified_mtime_ms, 1699999999000.5);
+		} finally {
+			db.close();
 		}
 	});
 
 	it("rejects unsupported schema versions", () => {
 		const tree = makeTempTree();
 		const db = openArchiveDb(tree.dbPath);
-		db.exec("PRAGMA user_version=2");
+		db.exec("PRAGMA user_version=99");
 		db.close();
-		assert.throws(() => openArchiveDb(tree.dbPath), /unsupported archive schema version 2/);
+		assert.throws(() => openArchiveDb(tree.dbPath), /unsupported archive schema version 99/);
 	});
 
 	it("opens existing archives read-only without creating or mutating them", () => {

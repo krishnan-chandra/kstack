@@ -5,8 +5,16 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { chmodReadOnly, hashFile, pathsReferToSameFile } from "./archive-files.ts";
-import { finalizeArchived, listSessionRows, markError, openArchiveDb } from "./archive-store.ts";
+import { chmodReadOnly, fileStat, hashFile, pathsReferToSameFile } from "./archive-files.ts";
+import {
+	type ArchivedIntegrityRow,
+	finalizeArchived,
+	listArchivedForIntegrity,
+	listSessionRows,
+	markError,
+	markVerified,
+	openArchiveDb,
+} from "./archive-store.ts";
 
 interface ReconcileIssue {
 	sessionId: string;
@@ -117,22 +125,55 @@ function reconcilePending(
 	});
 }
 
-interface ArchivedRow {
-	session_id: string;
-	archive_path: string | null;
-	sha256: string;
+interface IntegrityCheckEffects {
+	fileStat: (path: string) => { size: number; mtimeMs: number };
+	hashFile: (path: string) => { sha256: string; size: number };
+	now: () => number;
 }
 
-function checkArchivedIntegrity(row: ArchivedRow, integrity: ReconcileIssue[]): void {
-	if (!row.archive_path || !existsSync(row.archive_path)) {
+function checkArchivedIntegrity(
+	db: ReturnType<typeof openArchiveDb>,
+	row: ArchivedIntegrityRow,
+	integrity: ReconcileIssue[],
+	effects: IntegrityCheckEffects,
+): void {
+	if (!row.archive_path) {
 		integrity.push({ sessionId: row.session_id, message: "archived file is missing" });
 		return;
 	}
+
+	let stat: { size: number; mtimeMs: number };
 	try {
-		const actual = hashFile(row.archive_path);
+		stat = effects.fileStat(row.archive_path);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err as Error).message?.includes("ENOENT")) {
+			integrity.push({ sessionId: row.session_id, message: "archived file is missing" });
+		} else {
+			integrity.push({
+				sessionId: row.session_id,
+				message: `archived file could not be verified: ${(err as Error).message}`,
+			});
+		}
+		return;
+	}
+
+	const mtimeMs = stat.mtimeMs;
+	if (
+		row.verified_at !== null &&
+		stat.size === row.file_size &&
+		row.verified_mtime_ms !== null &&
+		mtimeMs === row.verified_mtime_ms
+	) {
+		return;
+	}
+
+	try {
+		const actual = effects.hashFile(row.archive_path);
 		if (actual.sha256 !== row.sha256) {
 			integrity.push({ sessionId: row.session_id, message: "archived file content drifted (hash mismatch)" });
+			return;
 		}
+		markVerified(db, row.session_id, effects.now(), mtimeMs);
 	} catch (err) {
 		integrity.push({
 			sessionId: row.session_id,
@@ -141,13 +182,32 @@ function checkArchivedIntegrity(row: ArchivedRow, integrity: ReconcileIssue[]): 
 	}
 }
 
-/** Read-only integrity inspection for /session-archives. */
-export function inspectArchiveIntegrity(dbPath: string, limit = 200): ReconcileIssue[] {
+interface InspectIntegrityOptions {
+	limit?: number;
+	fileStat?: (path: string) => { size: number; mtimeMs: number };
+	hashFile?: (path: string) => { sha256: string; size: number };
+	now?: () => number;
+}
+
+/**
+ * Inspect integrity of archived sessions for /session-archives.
+ * Uses a size-and-mtime fast path and records verified status for matching files.
+ */
+export function inspectArchiveIntegrity(dbPath: string, options: InspectIntegrityOptions = {}): ReconcileIssue[] {
+	const limit = options.limit ?? 200;
+	const statImpl = options.fileStat ?? fileStat;
+	const hashImpl = options.hashFile ?? hashFile;
+	const nowImpl = options.now ?? Date.now;
+
 	const integrity: ReconcileIssue[] = [];
 	const db = openArchiveDb(dbPath);
 	try {
-		for (const row of listSessionRows(db, { state: "archived", limit })) {
-			checkArchivedIntegrity(row, integrity);
+		for (const row of listArchivedForIntegrity(db, limit)) {
+			checkArchivedIntegrity(db, row, integrity, {
+				fileStat: statImpl,
+				hashFile: hashImpl,
+				now: nowImpl,
+			});
 		}
 	} finally {
 		db.close();
