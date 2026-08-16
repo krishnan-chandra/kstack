@@ -36,12 +36,12 @@ freshness, not authorization.
   bookmark. An empty working-copy child above the top is allowed.
 - Plans pushes, draft-PR creation, and base repairs from local/remote bookmark
   targets and open PRs in the same GitHub repository.
-- Generates each new draft's title and body from its exact slice diff with the
-  active Pi model. Bodies follow the `write-pr` `## Summary` and thematic
-  `## Review guide` structure. A response that fails strict validation is
-  retried once with the validator's error before the publication aborts, and
-  validation failures quote a bounded excerpt of the rejected output.
-  Existing PR metadata remains unchanged.
+- Generates each new draft's title and body from the slice subject, commit
+  descriptions, and changed paths. Bodies are rendered from a shared
+  `PrDocument` (`## Summary` plus a thematic `## Review guide`). Publication
+  does not call a model, so session thinking level cannot abort the stack.
+  Existing PR metadata remains unchanged. Rewrite drafts with the `write-pr`
+  skill when you want richer prose.
 - Publishes from `/jj-stack publish` after standard `ctx.ui.confirm`, or from
   `jj_stack_publish` after an explicit user request. Both paths recompute the
   plan and refuse a stale plan ID before mutation. Metadata generation for all

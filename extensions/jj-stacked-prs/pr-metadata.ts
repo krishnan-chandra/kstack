@@ -1,15 +1,15 @@
-/** Bounded slice evidence and strict write-pr metadata parsing. */
+/** Bounded slice evidence and write-pr metadata generation. */
 
 import { type Api, type Model, type Usage, uuidv7 } from "@earendil-works/pi-ai";
 import { isRecord } from "../shared/narrow.ts";
 import { bookmarkRevset } from "./jj.ts";
+import { MAX_TITLE_CHARS, type PrDocument, type PrMetadata, parsePrMarkdown, renderPrDocument } from "./pr-document.ts";
 import type { ProcessRunner } from "./process.ts";
 import { DEFAULT_TIMEOUT_MS } from "./types.ts";
 
 const DIFF_CAP_BYTES = 128 * 1024;
 const LOG_CAP_BYTES = 32 * 1024;
-const MAX_TITLE_CHARS = 120;
-const MAX_BODY_BYTES = 30 * 1024;
+const NAME_CAP_BYTES = 16 * 1024;
 const BEGIN = "-----BEGIN UNTRUSTED SLICE DATA-----";
 const END = "-----END UNTRUSTED SLICE DATA-----";
 const EXCERPT_CHARS = 160;
@@ -29,12 +29,6 @@ function excerpt(text: string): string {
 	}
 	return visible.length > EXCERPT_CHARS ? `${visible.slice(0, EXCERPT_CHARS)}…` : visible;
 }
-function hasPlaceholder(text: string): boolean {
-	return (
-		/\b(?:tbd|placeholder)\b|\[(?:todo|tbd)\]|<(?:todo|tbd)>|\btodo\s*[:\-–—([]/i.test(text) || /\bTODO\b/.test(text)
-	);
-}
-
 export interface PrMetadataRequest {
 	cwd: string;
 	bookmark: string;
@@ -47,12 +41,10 @@ export interface PrMetadataRequest {
 interface PrSliceEvidence {
 	diff: string;
 	log: string;
+	names: string;
 }
 
-export interface PrMetadata {
-	title: string;
-	body: string;
-}
+export type { PrMetadata };
 
 export type PrMetadataGenerator = (request: PrMetadataRequest) => Promise<PrMetadata>;
 
@@ -62,7 +54,7 @@ export async function collectSliceEvidence(run: ProcessRunner, request: PrMetada
 	const signal = request.signal ? AbortSignal.any([request.signal, controller.signal]) : controller.signal;
 
 	try {
-		const [diff, log] = await Promise.all([
+		const [diff, log, names] = await Promise.all([
 			run(["jj", "--no-pager", "diff", "--git", "-r", range], {
 				cwd: request.cwd,
 				signal,
@@ -93,6 +85,15 @@ export async function collectSliceEvidence(run: ProcessRunner, request: PrMetada
 				controller.abort();
 				throw err;
 			}),
+			run(["jj", "--no-pager", "diff", "--name-only", "-r", range], {
+				cwd: request.cwd,
+				signal,
+				timeoutMs: DEFAULT_TIMEOUT_MS,
+				stdoutCapBytes: NAME_CAP_BYTES,
+			}).catch((err) => {
+				controller.abort();
+				throw err;
+			}),
 		]);
 		if (diff.kind !== "ok") {
 			controller.abort();
@@ -102,14 +103,103 @@ export async function collectSliceEvidence(run: ProcessRunner, request: PrMetada
 			controller.abort();
 			throw new Error(`Could not collect the PR slice log: ${log.message}`);
 		}
+		if (names.kind !== "ok") {
+			controller.abort();
+			throw new Error(`Could not collect the PR slice paths: ${names.message}`);
+		}
 		if (!diff.stdout.trim()) {
 			throw new Error(`PR slice ${JSON.stringify(request.bookmark)} has an empty diff.`);
 		}
 
-		return { diff: diff.stdout, log: log.stdout };
+		return { diff: diff.stdout, log: log.stdout, names: names.stdout };
 	} finally {
 		controller.abort();
 	}
+}
+
+function firstLine(text: string): string {
+	const line = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+	return line;
+}
+
+function sanitizeTitle(raw: string, fallback: string): string {
+	let title = firstLine(raw).replace(/\.$/, "").trim();
+	if (!title || title.length > MAX_TITLE_CHARS || /[\r\n\0]/.test(title)) {
+		title = firstLine(fallback).replace(/\.$/, "").trim();
+	}
+	if (!title || title.length > MAX_TITLE_CHARS) {
+		title = "Update stacked PR slice";
+	}
+	return title;
+}
+
+function uniqueNonEmpty(values: readonly string[]): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const value of values) {
+		const trimmed = value.trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		out.push(trimmed);
+	}
+	return out;
+}
+
+function pathGroups(names: string): { label: string; files: string[] }[] {
+	const groups = new Map<string, string[]>();
+	for (const raw of names.split(/\r?\n/)) {
+		const path = raw.trim();
+		if (!path) continue;
+		const parts = path.split("/").filter(Boolean);
+		const label = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : (parts[0] ?? path);
+		const files = groups.get(label) ?? [];
+		const base = parts[parts.length - 1] ?? path;
+		files.push(base);
+		groups.set(label, files);
+	}
+	return [...groups.entries()].map(([label, files]) => ({ label, files: uniqueNonEmpty(files) }));
+}
+
+export function documentFromSliceEvidence(request: PrMetadataRequest, evidence: PrSliceEvidence): PrDocument {
+	const title = sanitizeTitle(request.subject, request.bookmark);
+	const descriptions = uniqueNonEmpty(
+		evidence.log.split(/\r?\n/).map((line) => {
+			const rest = line.replace(/^\S+\s+/, "").trim();
+			return firstLine(rest).replace(/\.$/, "");
+		}),
+	).filter((line) => line && line !== title);
+	const summaryBullets = uniqueNonEmpty([title, ...descriptions]).slice(0, 6);
+	const firstSummary = summaryBullets[0] ?? title;
+	const groups = pathGroups(evidence.names).slice(0, 5);
+	const reviewSteps =
+		groups.length > 0
+			? groups.map((group) => ({
+					label: group.label,
+					description: `Review changes in ${group.files.slice(0, 4).join(", ")}.`,
+				}))
+			: [
+					{
+						label: "Slice behavior",
+						description: `Review the exact changes published by \`${request.bookmark}\`.`,
+					},
+				];
+	const firstStep = reviewSteps[0];
+	if (firstStep === undefined) {
+		throw new Error(`PR slice ${JSON.stringify(request.bookmark)} has an empty review guide.`);
+	}
+	return {
+		title,
+		summaryBullets: [firstSummary, ...summaryBullets.slice(1)],
+		reviewSteps: [firstStep, ...reviewSteps.slice(1)],
+	};
+}
+
+export async function generateDeterministicPrMetadata(
+	run: ProcessRunner,
+	request: PrMetadataRequest,
+): Promise<PrMetadata> {
+	const evidence = await collectSliceEvidence(run, request);
+	return renderPrDocument(documentFromSliceEvidence(request, evidence));
 }
 
 export function buildPrMetadataPrompt(request: PrMetadataRequest, evidence: PrSliceEvidence): string {
@@ -158,15 +248,6 @@ function extractJsonPayload(text: string): string {
 	return trimmed;
 }
 
-function firstSectionLineMatches(lines: readonly string[], headingIndex: number, pattern: RegExp): boolean {
-	for (let index = headingIndex + 1; index < lines.length; index++) {
-		const line = lines[index];
-		if (!line.trim()) continue;
-		return pattern.test(line);
-	}
-	return false;
-}
-
 function canonicalizeSectionSpacing(body: string): string {
 	return body
 		.replace(/^(## (?:Summary|Review guide))\n(?:[ \t]*\n)*((?:-\s+|1\.\s))/gm, "$1\n\n$2")
@@ -184,30 +265,13 @@ export function parsePrMetadataResponse(text: string): PrMetadata {
 		throw new Error("PR metadata JSON must contain string title and body fields.");
 	}
 	const title = value.title.trim();
-	const body = value.body.replace(/\r\n/g, "\n").trim();
 	if (!title || title.length > MAX_TITLE_CHARS || title.endsWith(".") || /[\r\n\0]/.test(title)) {
 		throw new Error(
 			`PR metadata title must be non-empty, single-line, at most ${MAX_TITLE_CHARS} characters, and have no period.`,
 		);
 	}
-	if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
-		throw new Error(`PR metadata body exceeds ${MAX_BODY_BYTES} bytes.`);
-	}
-	const lines = body.split("\n");
-	if (lines[0] !== "## Summary" || !firstSectionLineMatches(lines, 0, /^\s*-\s+\S/)) {
-		throw new Error("PR metadata body must start with a Summary heading and bullet list.");
-	}
-	const reviewGuideIndex = lines.findIndex((line, index) => index > 0 && line === "## Review guide");
-	if (
-		reviewGuideIndex === -1 ||
-		!firstSectionLineMatches(lines, reviewGuideIndex, /^\s*1\.\s+\*\*[^*]+\*\*\s+[-—–]\s+\S/)
-	) {
-		throw new Error("PR metadata body must include a thematic Review guide with numbered steps.");
-	}
-	if (hasPlaceholder(title) || hasPlaceholder(body)) {
-		throw new Error("PR metadata contains placeholder text.");
-	}
-	return { title, body: canonicalizeSectionSpacing(body) };
+	const parsed = parsePrMarkdown(title, canonicalizeSectionSpacing(value.body.replace(/\r\n/g, "\n").trim()));
+	return renderPrDocument(parsed);
 }
 
 export function addUsage(current: Usage | undefined, next: Usage): Usage {

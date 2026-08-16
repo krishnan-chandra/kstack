@@ -75,7 +75,10 @@ Write one concrete sentence fragment that names the primary user-visible or deve
 
 ## Compose the body
 
-Use this compact default structure, adapting required repository template sections when present:
+Use this compact default structure. Stacked publication renders the same
+`PrDocument` shape from `extensions/jj-stacked-prs/pr-document.ts`; keep the
+headings and first-item forms so a later parse can recover the document.
+Adapt extra repository template sections only after Summary and Review guide:
 
 ```markdown
 ## Summary
