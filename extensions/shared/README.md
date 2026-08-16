@@ -24,7 +24,7 @@
 | `session-name.ts` | Derives and assigns workflow session names. |
 | `slug.ts` | Extracts the short keyword slug used for session names, branches, and worktree paths. |
 | `transcript-store.ts` | Stores bounded ephemeral child transcripts for live dashboards and inspectors. |
-| `vcs/` | Owns the Git and jj mutation contract. See [`vcs/README.md`](vcs/README.md) for backend contracts, config/factory, Git and jj implementations, preflight, and child guidance. |
+| `vcs/` | Owns the Git and jj mutation contract. See [`vcs/README.md`](vcs/README.md) for backend contracts, config/factory, Git and jj implementations, the shared worktree planner, preflight, and child guidance. |
 | `playbooks/` | Stores shared engineering principles and change-kind proof obligations. |
 
 ## Cross-extension imports

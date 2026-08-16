@@ -26,6 +26,11 @@ Git inspection continue to address the same repository.
 
 ## Workstream semantics
 
+`worktree-plan.ts` owns read-only managed-worktree allocation: base-ref
+resolution and collision-safe `kstack/<task-slug>` paths. `GitBackend.planIsolation`
+delegates to it and still returns only the `IsolationPlan`. Create and remove
+stay on `GitBackend`.
+
 The Git backend creates a clean `kstack/<task-slug>` branch and can create a
 managed linked worktree. The jj backend creates a `trunk()`-based change with a
 collision-safe `kstack/<task-slug>` bookmark. A completed jj workstream keeps
