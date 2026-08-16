@@ -1,7 +1,7 @@
 /** Unified kstack.json configuration and role-model resolution. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
 
@@ -22,10 +22,7 @@ export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [
 	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 ];
 
-export type ConfigLoad =
-	| { status: "loaded"; config: PlanImplementConfig; path: string }
-	| { status: "missing"; path: string }
-	| { status: "invalid"; path: string; error: string };
+export type ConfigLoad = SharedConfigLoad<PlanImplementConfig>;
 
 function validateRole(
 	raw: unknown,
@@ -83,12 +80,7 @@ export function validateConfig(raw: unknown): { ok: true; config: PlanImplementC
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const section = loadKstackSection("plan-implement", env);
-	if (section.status !== "found") return section;
-	const result = validateConfig(section.value);
-	return result.ok
-		? { status: "loaded", config: result.config, path: section.path }
-		: { status: "invalid", path: section.path, error: result.error };
+	return loadValidatedSection("plan-implement", validateConfig, env);
 }
 
 export interface ResolveDeps {

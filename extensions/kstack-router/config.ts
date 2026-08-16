@@ -1,14 +1,11 @@
 /** Router configuration from kstack.json. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
 
-export type ConfigLoad =
-	| { status: "loaded"; config: RouterConfig; path: string }
-	| { status: "missing"; path: string }
-	| { status: "invalid"; path: string; error: string };
+export type ConfigLoad = SharedConfigLoad<RouterConfig>;
 
 export function validateRouterConfig(raw: unknown): { ok: true; config: RouterConfig } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -46,12 +43,7 @@ export function validateRouterConfig(raw: unknown): { ok: true; config: RouterCo
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const section = loadKstackSection("kstack-router", env);
-	if (section.status !== "found") return section;
-	const result = validateRouterConfig(section.value);
-	return result.ok
-		? { status: "loaded", config: result.config, path: section.path }
-		: { status: "invalid", path: section.path, error: result.error };
+	return loadValidatedSection("kstack-router", validateRouterConfig, env);
 }
 
 export interface ClassifierModelResolution {

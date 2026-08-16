@@ -3,7 +3,14 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { getAgentDir, getKstackPath, isThinkingLevel, loadKstackSection, MODEL_ID_RE } from "./kstack-config.ts";
+import {
+	getAgentDir,
+	getKstackPath,
+	isThinkingLevel,
+	loadKstackSection,
+	loadValidatedSection,
+	MODEL_ID_RE,
+} from "./kstack-config.ts";
 
 describe("shared kstack config", () => {
 	it("uses the default agent directory", () => assert.equal(getAgentDir({}), join(homedir(), ".pi", "agent")));
@@ -22,6 +29,26 @@ describe("shared kstack config", () => {
 	it("reports a missing file", () => {
 		const dir = mkdtempSync(join(tmpdir(), "kstack-config-"));
 		assert.equal(loadKstackSection("one", { PI_CODING_AGENT_DIR: dir }).status, "missing");
+	});
+	it("loads validated sections and preserves load failures", () => {
+		const dir = mkdtempSync(join(tmpdir(), "kstack-config-"));
+		const env = { PI_CODING_AGENT_DIR: dir };
+		const path = join(dir, "kstack.json");
+		const validate = (value: unknown) =>
+			typeof value === "string"
+				? { ok: true as const, config: value }
+				: { ok: false as const, error: "must be a string" };
+
+		writeFileSync(path, '{"valid":"ok","invalid":42}');
+		assert.deepEqual(loadValidatedSection("valid", validate, env), { status: "loaded", config: "ok", path });
+		assert.deepEqual(loadValidatedSection("missing", validate, env), { status: "missing", path });
+		assert.deepEqual(loadValidatedSection("invalid", validate, env), {
+			status: "invalid",
+			path,
+			error: "must be a string",
+		});
+		writeFileSync(path, "{");
+		assert.equal(loadValidatedSection("valid", validate, env).status, "invalid");
 	});
 	it("rejects invalid JSON and non-object roots", () => {
 		const dir = mkdtempSync(join(tmpdir(), "kstack-config-"));

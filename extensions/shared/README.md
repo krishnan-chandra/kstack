@@ -12,7 +12,7 @@
 | `inspector-overlay.ts` | Renders the read-only child-transcript inspector overlay used by live dashboards. |
 | `live-dashboard.ts` | Stores and renders shared live-dashboard state with extension-specific copy and display policy. |
 | `terminal-text.ts` | Sanitizes and width-bounds untrusted terminal text, with fallbacks for tests outside the Pi host. |
-| `kstack-config.ts` | Locates `kstack.json`, loads sections, and defines common model and thinking predicates. |
+| `kstack-config.ts` | Locates `kstack.json`, loads and validates sections, and defines common model and thinking predicates. |
 | `model-availability.ts` | Checks whether a child process can reproduce an authenticated model. |
 | `model-spec.ts` | Validates, splits, and formats configured model references. |
 | `pi-json-lines.ts` | Parses and bounds Pi JSONL output. |

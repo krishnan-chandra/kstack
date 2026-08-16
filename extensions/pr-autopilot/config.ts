@@ -24,7 +24,7 @@
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
@@ -32,10 +32,7 @@ export { modelCliId } from "../shared/model-spec.ts";
 
 const TINY_THINKING = ["off", "minimal", "low"] as const;
 
-export type ConfigLoad =
-	| { status: "loaded"; config: ResolvedAutopilotConfig; path: string }
-	| { status: "missing"; path: string }
-	| { status: "invalid"; path: string; error: string };
+export type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
 
 /**
  * Built-in tiny model set, used when no pr-autopilot config section exists.
@@ -169,11 +166,14 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const section = loadKstackSection("pr-autopilot", env);
-	if (section.status !== "found") return section;
-	const result = validateConfig(section.value);
-	if (!result.ok) return { status: "invalid", path: section.path, error: result.error };
-	return { status: "loaded", config: { ...result.config, source: "config", warnings: [] }, path: section.path };
+	return loadValidatedSection(
+		"pr-autopilot",
+		(raw) => {
+			const result = validateConfig(raw);
+			return result.ok ? { ok: true, config: { ...result.config, source: "config", warnings: [] } } : result;
+		},
+		env,
+	);
 }
 
 export interface ResolveDeps {
