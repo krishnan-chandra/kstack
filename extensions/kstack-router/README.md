@@ -16,7 +16,7 @@ session name.
 |---|---|---|
 | `investigate` | Read-only research, explain, diagnose | Active session, read-only tools |
 | `change` | Feature, fix, refactor, prototype | plan-implement → panel-review |
-| `fast-change` | Explicit, bounded, low-risk implementation | fast-implement (takeover session or worktree child) |
+| `fast-change` | Implement an explicit, bounded existing plan | fast-implement (current session or worktree child) |
 | `arena` | Competing parallel candidates | Arena skill, frame-first |
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
@@ -85,7 +85,7 @@ the classifier has insufficient context:
 to a managed Git linked worktree beneath `~/.pi/kstack/worktrees`. It cannot be
 combined with `--stack` in v1. `fast-change` always uses single delivery; use `change --stack` for a decomposed jj stack.
 
-The classifier recommends `fast-change` only for explicit low-risk bounded edits. Security, authentication, concurrency, persistence, schemas, migrations, dependency updates, public APIs, multi-package changes, architectural choices, and unclear scope remain on the higher-assurance `change` or `investigate` routes. The route selection UI always lets users accept or override its recommendation.
+The classifier recommends `fast-change` when the task explicitly says an approved plan already exists and implementation is bounded and low risk. The route selection UI also offers **Fast implement** as an override after a `change` recommendation. Security, authentication, concurrency, persistence, schemas, migrations, dependency updates, public APIs, multi-package changes, architectural choices, and unclear scope remain on the higher-assurance `change` or `investigate` routes.
 
 Writable workstreams (`change`, and other routes after they become writable)
 create a dedicated `kstack/<task-slug>` branch before the first repository

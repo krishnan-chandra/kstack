@@ -77,7 +77,7 @@ describe("dispatchRoute", () => {
 		assert.equal(result.status, "aborted");
 	});
 
-	it("marks current fast-change dispatch as a takeover so the router stops using stale contexts", async () => {
+	it("keeps current fast-change dispatch in the active session", async () => {
 		const { lifecycle, token } = setup();
 		const bus: ExtensionAPI = {
 			events: {
@@ -90,11 +90,11 @@ describe("dispatchRoute", () => {
 		} as never;
 		assert.deepEqual(
 			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
-			{ status: "takeover" },
+			{ status: "dispatched" },
 		);
 	});
 
-	it("fails closed without stale parent access when current takeover dispatch throws", async () => {
+	it("reports a current-session fast-change dispatch failure", async () => {
 		const { lifecycle, token } = setup();
 		const bus: ExtensionAPI = {
 			events: {
@@ -106,7 +106,7 @@ describe("dispatchRoute", () => {
 		} as never;
 		assert.deepEqual(
 			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
-			{ status: "takeover" },
+			{ status: "failed", error: "fast-implement dispatch failed: replacement send failed" },
 		);
 	});
 

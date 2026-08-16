@@ -4,7 +4,7 @@ Available routes:
 
 - **investigate**: Explain, diagnose, research, or understand — no fix requested. Read-only.
 - **change**: Feature, fix, refactor, prototype, docs/config, or Pi extension. Follows plan → approve → implement → panel review.
-- **fast-change**: An explicit, narrow, low-risk edit with no architectural choice. Runs one implementation child with local verification and commits, but skips independent planning and review.
+- **fast-change**: Implement an explicit, bounded existing plan with no architectural choice. Runs in the current session with local verification and commits, but skips a new planning and review pass.
 - **arena**: Competing designs or artifacts where one attempt could lock in the wrong shape. Requires framing first.
 - **swarm**: Independent coverage, package/module audits, races, or parallel slices. Report-oriented.
 - **skill-authoring**: Create, improve, debug, trigger-test, or evaluate a skill. Requires framing first.
@@ -18,7 +18,7 @@ Rules:
 - For "change" and "fast-change" tasks, recommend a `changeKind`: `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. Use `generic` when the task does not establish a specific kind.
 - For "change" tasks only, optionally recommend "single" or "stack" delivery. Never recommend delivery for "fast-change".
 - Ambiguous "figure it out" requests → investigate.
-- Recommend `fast-change` only for an explicit, bounded, low-risk edit. Security, authentication, concurrency, persistence, schemas, migrations, dependencies, public APIs, multi-package work, architecture choices, or unclear scope must stay on `change` or `investigate`.
+- Recommend `fast-change` when the task explicitly says that an approved plan already exists and its implementation is bounded and low risk. Security, authentication, concurrency, persistence, schemas, migrations, dependencies, public APIs, multi-package work, architecture choices, or unclear scope must stay on `change` or `investigate`.
 - Code implementation that isn't explicitly Arena → change.
 - "review this diff/branch" → `review`. "get PR 42 merge-ready / address review threads" → `pr-autopilot`. "merge/land PR 42" → `land`.
 - Do not invent a PR number, autopilot mode, readiness, or merge method. Those are collected later.

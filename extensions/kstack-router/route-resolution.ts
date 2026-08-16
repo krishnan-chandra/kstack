@@ -96,7 +96,11 @@ export async function resolveRoute(
 				const recommendation = classifierResult.envelope;
 				fx.notify(formatRecommendation(recommendation, modelSource), "info");
 				const alternatives = buildRouteAlternatives(recommendation.route);
-				const selected = await fx.selectRoute("Accept route or choose another?", [
+				const selectionTitle =
+					recommendation.route === "change"
+						? "Accept route or select Fast implement for an existing plan?"
+						: "Accept route or choose another?";
+				const selected = await fx.selectRoute(selectionTitle, [
 					{ route: recommendation.route, label: `✓ Accept: ${getRouteLabel(recommendation.route)}` },
 					...alternatives.map((alternative) => ({
 						route: alternative.id,

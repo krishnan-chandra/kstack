@@ -16,18 +16,17 @@ Without `--worktree`, the command:
 1. validates the configured model and VCS backend;
 2. asks for confirmation;
 3. creates a local Git branch or jj change and bookmark;
-4. replaces the current TUI session with a fresh implementation session;
-5. links the new session to the parent through the handoff history tools; and
-6. verifies the committed workstream after the implementation agent settles.
+4. starts the configured implementer in the current session, preserving its plan and discussion in context; and
+5. verifies the committed workstream after the implementation agent settles.
 
-The parent session remains on disk and is never archived by `fast-implement`.
-Current-checkout mode requires a persisted parent session, so it is unavailable
-with `--no-session`. It also requires TUI mode because the implementation
-session takes over the current UI.
+Current-checkout mode works in the active TUI or RPC session, including
+`--no-session`. The extension temporarily selects the configured implementer
+model and thinking level, then restores the previous selection after verified
+completion when the user has not changed models during the run.
 
 Current-checkout mode has no hard timeout or output cap. Interrupt or steer the
-agent with Pi's normal controls. After each settle, the replacement extension
-checks for a new local commit. A clarifying question, interruption, or other
+agent with Pi's normal controls. After each settle, the extension checks for a
+new local commit. A clarifying question, interruption, or other
 settle without a commit leaves the run pending; verification retries after the
 next turn. The extension records completion only after verification succeeds.
 
