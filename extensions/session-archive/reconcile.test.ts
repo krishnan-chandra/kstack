@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readFileSync,
+	symlinkSync,
+	unlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, it } from "node:test";
-import { archiveDestination } from "./archive-files.ts";
+import { archiveDestination, fileStat, hashFile } from "./archive-files.ts";
 import { finalizeArchived, getSessionRow, importSessionPending, openArchiveDb } from "./archive-store.ts";
 import { inspectArchiveIntegrity, reconcileArchive } from "./reconcile.ts";
 import { parseSessionJsonl, sha256Hex } from "./session-jsonl.ts";
@@ -219,5 +228,237 @@ describe("reconcileArchive", () => {
 
 		const report = reconcileArchive({ dbPath: tree.dbPath, pendingLimit: 1 });
 		assert.equal(report.leftPending.length + report.finalized.length + report.errors.length, 1);
+	});
+});
+
+describe("inspectArchiveIntegrity caching", () => {
+	function setupArchived(tree: ReturnType<typeof makeTempTree>, content: string = richSessionJsonl()) {
+		const { dest, sha256, size } = setupPending(tree, content);
+		mkdirSync(dirname(dest), { recursive: true });
+		writeFileSync(dest, content);
+		const db = openArchiveDb(tree.dbPath);
+		finalizeArchived(db, TEST_SESSION_ID, dest, size, sha256);
+		db.close();
+		return { dest, sha256, size, content };
+	}
+
+	it("hashes and marks verified on first inspection", () => {
+		const tree = makeTempTree();
+		setupArchived(tree);
+
+		let hashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+			now: () => 1700000000000,
+		});
+
+		assert.equal(issues.length, 0);
+		assert.equal(hashCalls, 1);
+
+		const db = openArchiveDb(tree.dbPath);
+		const row = getSessionRow(db, TEST_SESSION_ID);
+		assert.equal(row?.verified_at, 1700000000000);
+		assert.ok(row?.verified_mtime_ms !== null && row.verified_mtime_ms > 0);
+		db.close();
+	});
+
+	it("skips hashing on second inspection when file is unchanged", () => {
+		const tree = makeTempTree();
+		setupArchived(tree);
+
+		inspectArchiveIntegrity(tree.dbPath, { now: () => 1700000000000 });
+
+		let hashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+			now: () => 1700000005000,
+		});
+
+		assert.equal(issues.length, 0);
+		assert.equal(hashCalls, 0);
+	});
+
+	it("forces a re-hash when file is touched (bumped mtime) and re-marks verified on match", () => {
+		const tree = makeTempTree();
+		const { dest } = setupArchived(tree);
+
+		inspectArchiveIntegrity(tree.dbPath, { now: () => 1700000000000 });
+
+		const futureTime = new Date(Date.now() + 60000);
+		utimesSync(dest, futureTime, futureTime);
+
+		let hashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+			now: () => 1700000010000,
+		});
+
+		assert.equal(issues.length, 0);
+		assert.equal(hashCalls, 1);
+
+		const db = openArchiveDb(tree.dbPath);
+		const row = getSessionRow(db, TEST_SESSION_ID);
+		assert.equal(row?.verified_at, 1700000010000);
+		assert.equal(row?.verified_mtime_ms, fileStat(dest).mtimeMs);
+		db.close();
+
+		let repeatHashCalls = 0;
+		const repeatIssues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				repeatHashCalls++;
+				return hashFile(path);
+			},
+		});
+		assert.equal(repeatIssues.length, 0);
+		assert.equal(repeatHashCalls, 0);
+	});
+
+	it("reports drift issue on rewritten content and leaves verification stale so next run re-hashes", () => {
+		const tree = makeTempTree();
+		const { dest } = setupArchived(tree);
+
+		inspectArchiveIntegrity(tree.dbPath, { now: () => 1700000000000 });
+
+		const db = openArchiveDb(tree.dbPath);
+		const initialVerifiedAt = getSessionRow(db, TEST_SESSION_ID)?.verified_at;
+		db.close();
+		assert.equal(initialVerifiedAt, 1700000000000);
+
+		writeFileSync(dest, "different content with different bytes");
+
+		let hashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+			now: () => 1700000020000,
+		});
+
+		assert.equal(issues.length, 1);
+		assert.equal(issues[0].sessionId, TEST_SESSION_ID);
+		assert.match(issues[0].message, /hash mismatch/);
+		assert.equal(hashCalls, 1);
+
+		const db2 = openArchiveDb(tree.dbPath);
+		const afterRow = getSessionRow(db2, TEST_SESSION_ID);
+		assert.equal(afterRow?.verified_at, 1700000000000);
+		db2.close();
+
+		let nextHashCalls = 0;
+		const nextIssues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				nextHashCalls++;
+				return hashFile(path);
+			},
+		});
+		assert.equal(nextIssues.length, 1);
+		assert.equal(nextHashCalls, 1);
+	});
+
+	it("reports missing file when archive file does not exist", () => {
+		const tree = makeTempTree();
+		const { dest } = setupArchived(tree);
+		unlinkSync(dest);
+
+		let hashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+		});
+
+		assert.equal(issues.length, 1);
+		assert.equal(issues[0].sessionId, TEST_SESSION_ID);
+		assert.match(issues[0].message, /missing/);
+		assert.equal(hashCalls, 0);
+	});
+
+	it("forces re-hash on sub-millisecond mtime change", () => {
+		const tree = makeTempTree();
+		const { size } = setupArchived(tree);
+
+		let currentMtime = 1700000000000.1;
+		let hashCalls = 0;
+
+		// First inspection: records verified_mtime_ms with sub-millisecond precision
+		inspectArchiveIntegrity(tree.dbPath, {
+			fileStat: () => ({ size, mtimeMs: currentMtime }),
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+			now: () => 1700000000000,
+		});
+		assert.equal(hashCalls, 1);
+
+		const db = openArchiveDb(tree.dbPath);
+		const row = getSessionRow(db, TEST_SESSION_ID);
+		assert.equal(row?.verified_mtime_ms, 1700000000000.1);
+		db.close();
+
+		// Second inspection with identical sub-ms mtime: skips hash
+		let cachedHashCalls = 0;
+		inspectArchiveIntegrity(tree.dbPath, {
+			fileStat: () => ({ size, mtimeMs: currentMtime }),
+			hashFile: (path) => {
+				cachedHashCalls++;
+				return hashFile(path);
+			},
+		});
+		assert.equal(cachedHashCalls, 0);
+
+		// Sub-millisecond mtime change (same integer ms, different fractional part)
+		currentMtime = 1700000000000.8;
+		let subMsHashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			fileStat: () => ({ size, mtimeMs: currentMtime }),
+			hashFile: (path) => {
+				subMsHashCalls++;
+				return hashFile(path);
+			},
+			now: () => 1700000010000,
+		});
+		assert.equal(issues.length, 0);
+		assert.equal(subMsHashCalls, 1);
+
+		const db2 = openArchiveDb(tree.dbPath);
+		const row2 = getSessionRow(db2, TEST_SESSION_ID);
+		assert.equal(row2?.verified_mtime_ms, 1700000000000.8);
+		assert.equal(row2?.verified_at, 1700000010000);
+		db2.close();
+	});
+
+	it("reports unreadable file when stat fails with a non-ENOENT error", () => {
+		const tree = makeTempTree();
+		setupArchived(tree);
+
+		let hashCalls = 0;
+		const issues = inspectArchiveIntegrity(tree.dbPath, {
+			fileStat: () => {
+				const err = new Error("permission denied") as NodeJS.ErrnoException;
+				err.code = "EACCES";
+				throw err;
+			},
+			hashFile: (path) => {
+				hashCalls++;
+				return hashFile(path);
+			},
+		});
+
+		assert.equal(issues.length, 1);
+		assert.equal(issues[0].sessionId, TEST_SESSION_ID);
+		assert.match(issues[0].message, /could not be verified: permission denied/);
+		assert.equal(hashCalls, 0);
 	});
 });

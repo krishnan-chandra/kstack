@@ -17,6 +17,7 @@ import {
 	archiveDestination,
 	canonicalizeActiveSource,
 	chmodReadOnly,
+	fileStat,
 	getArchiveRoot,
 	hashFile,
 	isArchiveWriteTarget,
@@ -246,6 +247,17 @@ describe("pathsReferToSameFile", () => {
 		const aliasDir = join(tree.root, "session-alias");
 		symlinkSync(tree.sessionDir, aliasDir);
 		assert.ok(pathsReferToSameFile(source, join(aliasDir, source.split("/").at(-1)!)));
+	});
+});
+
+describe("fileStat", () => {
+	it("returns file size and mtimeMs", () => {
+		const tree = makeTempTree();
+		const content = richSessionJsonl();
+		const path = tree.writeSession(TEST_SESSION_ID, content);
+		const { size, mtimeMs } = fileStat(path);
+		assert.equal(size, content.length);
+		assert.ok(typeof mtimeMs === "number" && Number.isFinite(mtimeMs) && mtimeMs > 0);
 	});
 });
 

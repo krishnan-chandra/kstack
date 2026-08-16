@@ -19,7 +19,7 @@ export class ArchiveStoreError extends Error {
 	}
 }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
 CREATE TABLE archive_sessions (
@@ -34,7 +34,9 @@ CREATE TABLE archive_sessions (
   file_size INTEGER NOT NULL,
   sha256 TEXT NOT NULL,
   entry_count INTEGER NOT NULL,
-  last_error TEXT
+  last_error TEXT,
+  verified_at INTEGER,
+  verified_mtime_ms REAL
 );
 
 CREATE TABLE archive_entries (
@@ -120,13 +122,20 @@ function initializeSchema(db: DatabaseSync): void {
 			db.exec("COMMIT");
 			return;
 		}
-		if (row.user_version !== 0) {
+		if (row.user_version === 0) {
+			db.exec(SCHEMA_SQL);
+			db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
+		} else if (row.user_version === 1) {
+			db.exec(`
+				ALTER TABLE archive_sessions ADD COLUMN verified_at INTEGER;
+				ALTER TABLE archive_sessions ADD COLUMN verified_mtime_ms REAL;
+				PRAGMA user_version=${SCHEMA_VERSION};
+			`);
+		} else {
 			throw new ArchiveStoreError(
 				`unsupported archive schema version ${row.user_version} (expected ${SCHEMA_VERSION})`,
 			);
 		}
-		db.exec(SCHEMA_SQL);
-		db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
 		db.exec("COMMIT");
 	} catch (err) {
 		db.exec("ROLLBACK");
@@ -179,13 +188,15 @@ export function importSessionPending(db: DatabaseSync, input: PendingImport): "i
 		db.prepare(
 			`INSERT INTO archive_sessions (
 			   session_id, cwd, name, created_at, archived_at, original_path,
-			   archive_path, state, file_size, sha256, entry_count, last_error
-			 ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'pending', ?, ?, ?, NULL)
+			   archive_path, state, file_size, sha256, entry_count, last_error,
+			   verified_at, verified_mtime_ms
+			 ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'pending', ?, ?, ?, NULL, NULL, NULL)
 			 ON CONFLICT(session_id) DO UPDATE SET
 			   cwd=excluded.cwd, name=excluded.name, created_at=excluded.created_at,
 			   archived_at=NULL, original_path=excluded.original_path,
 			   archive_path=excluded.archive_path, state='pending', file_size=excluded.file_size,
-			   sha256=excluded.sha256, entry_count=excluded.entry_count, last_error=NULL`,
+			   sha256=excluded.sha256, entry_count=excluded.entry_count, last_error=NULL,
+			   verified_at=NULL, verified_mtime_ms=NULL`,
 		).run(
 			input.header.id,
 			input.header.cwd,
@@ -307,6 +318,8 @@ interface ArchiveSessionRow {
 	sha256: string;
 	entry_count: number;
 	last_error: string | null;
+	verified_at: number | null;
+	verified_mtime_ms: number | null;
 }
 
 function decodeString(row: Record<string, unknown>, table: string, column: string): string {
@@ -323,6 +336,13 @@ function decodeNullableString(row: Record<string, unknown>, table: string, colum
 
 function decodeFiniteNumber(row: Record<string, unknown>, table: string, column: string): number {
 	const value = row[column];
+	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
+	return value;
+}
+
+function decodeNullableFiniteNumber(row: Record<string, unknown>, table: string, column: string): number | null {
+	const value = row[column];
+	if (value === null || value === undefined) return null;
 	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
 	return value;
 }
@@ -350,6 +370,8 @@ function decodeSessionRow(value: unknown): ArchiveSessionRow {
 		sha256: decodeString(row, table, "sha256"),
 		entry_count: decodeFiniteNumber(row, table, "entry_count"),
 		last_error: decodeNullableString(row, table, "last_error"),
+		verified_at: decodeNullableFiniteNumber(row, table, "verified_at"),
+		verified_mtime_ms: decodeNullableFiniteNumber(row, table, "verified_mtime_ms"),
 	};
 }
 
@@ -381,6 +403,54 @@ export function listSessionRows(db: DatabaseSync, opts: { state?: string; limit?
 		db.prepare("SELECT * FROM archive_sessions ORDER BY created_at DESC LIMIT ?").all(limit),
 		decodeSessionRow,
 	);
+}
+
+export interface ArchivedIntegrityRow {
+	session_id: string;
+	archive_path: string | null;
+	sha256: string;
+	file_size: number;
+	verified_at: number | null;
+	verified_mtime_ms: number | null;
+}
+
+function decodeArchivedIntegrityRow(value: unknown): ArchivedIntegrityRow {
+	const table = "archive_sessions";
+	const row = asRecord(value);
+	if (!row) throw new Error(`${table} returned a non-object row.`);
+	return {
+		session_id: decodeString(row, table, "session_id"),
+		archive_path: decodeNullableString(row, table, "archive_path"),
+		sha256: decodeString(row, table, "sha256"),
+		file_size: decodeFiniteNumber(row, table, "file_size"),
+		verified_at: decodeNullableFiniteNumber(row, table, "verified_at"),
+		verified_mtime_ms: decodeNullableFiniteNumber(row, table, "verified_mtime_ms"),
+	};
+}
+
+export function listArchivedForIntegrity(db: DatabaseSync, limit?: number): ArchivedIntegrityRow[] {
+	const safeLimit = boundedInteger(limit, 200, 1, 1000);
+	return decodeRows(
+		db
+			.prepare(
+				`SELECT session_id, archive_path, sha256, file_size, verified_at, verified_mtime_ms
+				   FROM archive_sessions
+				  WHERE state = 'archived' AND archive_path IS NOT NULL
+				  ORDER BY created_at DESC
+				  LIMIT ?`,
+			)
+			.all(safeLimit),
+		decodeArchivedIntegrityRow,
+	);
+}
+
+export function markVerified(db: DatabaseSync, sessionId: string, verifiedAt: number, mtimeMs: number): boolean {
+	const result = db
+		.prepare(
+			"UPDATE archive_sessions SET verified_at = ?, verified_mtime_ms = ? WHERE session_id = ? AND state = 'archived'",
+		)
+		.run(verifiedAt, mtimeMs, sessionId);
+	return Number(result.changes) === 1;
 }
 
 interface SearchHit {

@@ -236,6 +236,11 @@ export function fileSize(path: string): number {
 	return statSync(path).size;
 }
 
+export function fileStat(path: string): { size: number; mtimeMs: number } {
+	const stat = statSync(path);
+	return { size: stat.size, mtimeMs: stat.mtimeMs };
+}
+
 interface FileByteRange {
 	offset: number;
 	length: number;

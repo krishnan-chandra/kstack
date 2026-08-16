@@ -125,7 +125,12 @@ archive tools serve requests:
 
 Finalized archive files are not hashed during routine startup. The explicit
 `/session-archives` command checks finalized rows and reports missing or drifted
-files.
+files. Integrity checks use a size-and-mtime fast path: files whose byte size
+and modification time match their last successful verification are skipped
+without re-reading disk content. Any mtime bump, size difference, or initial
+inspection triggers a full SHA-256 re-hash. In-place rewrites that preserve both
+the exact byte size and modification timestamp fall outside this extension's
+threat model.
 
 Re-running any operation is idempotent: identical bytes at the destination
 complete the operation, different bytes are a hard collision error and are
