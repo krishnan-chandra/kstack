@@ -15,6 +15,7 @@
 | `kstack-config.ts` | Locates `kstack.json`, loads and validates sections, and defines common model and thinking predicates. |
 | `model-availability.ts` | Checks whether a child process can reproduce an authenticated model. |
 | `model-spec.ts` | Validates, splits, and formats configured model references. |
+| `narrow.ts` | Narrows untrusted JSON and event payloads to records. |
 | `pi-json-lines.ts` | Parses and bounds Pi JSONL output. |
 | `prompt-assets.ts` | Reads bundled prompt and playbook Markdown assets. |
 | `request-channel.ts` | Implements synchronous claim-once invocation between loaded extensions. |

@@ -1,6 +1,7 @@
 /** Strict parsing, search-text extraction, byte offsets, and hashing for Pi v3 session JSONL. */
 
 import { createHash } from "node:crypto";
+import { isRecord } from "../shared/narrow.ts";
 
 export class SessionParseError extends Error {
 	readonly lineNumber?: number;
@@ -39,10 +40,6 @@ export interface ParsedSession {
 	entries: ParsedEntry[];
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function requireString(value: unknown, field: string, line: number): string {
 	if (typeof value !== "string" || value.length === 0) {
 		throw new SessionParseError(`missing or invalid "${field}"`, line);
@@ -58,7 +55,7 @@ function extractText(content: unknown): string | undefined {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return undefined;
 	const parts = content.flatMap((block) =>
-		isObject(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : [],
+		isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : [],
 	);
 	return parts.length > 0 ? parts.join("\n") : undefined;
 }
@@ -70,7 +67,7 @@ function setText(entry: ParsedEntry, text: string | undefined): void {
 function extractEntryText(entry: ParsedEntry, raw: Record<string, unknown>): void {
 	if (entry.entryType === "message") {
 		const message = raw.message;
-		if (!isObject(message)) return;
+		if (!isRecord(message)) return;
 		entry.role = optionalString(message.role);
 		if (message.role === "bashExecution") {
 			const command = optionalString(message.command) ?? "";
@@ -136,7 +133,7 @@ export function parseSessionJsonl(content: string): ParsedSession {
 	} catch {
 		throw new SessionParseError("header is not valid JSON (file may be truncated)", headerLine.lineNumber);
 	}
-	if (!isObject(rawHeader) || rawHeader.type !== "session") {
+	if (!isRecord(rawHeader) || rawHeader.type !== "session") {
 		throw new SessionParseError('first line must be a {"type":"session"} header', headerLine.lineNumber);
 	}
 	if (rawHeader.version !== 3) {
@@ -160,7 +157,7 @@ export function parseSessionJsonl(content: string): ParsedSession {
 		} catch {
 			throw new SessionParseError("invalid JSON (file may be truncated)", line.lineNumber);
 		}
-		if (!isObject(raw)) throw new SessionParseError("entry is not a JSON object", line.lineNumber);
+		if (!isRecord(raw)) throw new SessionParseError("entry is not a JSON object", line.lineNumber);
 		const entryType = requireString(raw.type, "type", line.lineNumber);
 		if (entryType === "session") {
 			throw new SessionParseError("session header may only appear on the first line", line.lineNumber);

@@ -1,4 +1,5 @@
 import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
+import { isRecord } from "../shared/narrow.ts";
 import type { VcsBackend, VcsResult, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import type { VcsBackendId } from "../shared/vcs/config.ts";
 import { type FastImplementOutcome, LIMITS } from "./types.ts";
@@ -21,10 +22,6 @@ interface EntryLike {
 	type?: unknown;
 	customType?: unknown;
 	data?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readPendingRun(value: unknown): PendingFastImplementRun | undefined {

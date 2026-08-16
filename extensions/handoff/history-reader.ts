@@ -11,6 +11,7 @@ import {
 import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/session-jsonl.ts";
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
+import { isRecord } from "../shared/narrow.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 50 * 1024;
@@ -41,10 +42,6 @@ interface SearchHandoffHistoryOptions {
 	query: string;
 	role?: string;
 	limit?: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function sourceFromDetails(details: unknown): HandoffSource | undefined {

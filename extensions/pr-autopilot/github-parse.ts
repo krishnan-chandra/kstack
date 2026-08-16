@@ -5,6 +5,7 @@
  */
 
 import { KSTACK_COMMENT_MARKER } from "../jj-stacked-prs/types.ts";
+import { isRecord } from "../shared/narrow.ts";
 import type { CheckRun, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
 
@@ -17,10 +18,6 @@ function autopilotReplyBody(body: string): string {
 
 function isAutomationComment(body: string): boolean {
 	return body.includes(AUTOPILOT_REPLY_MARKER) || body.includes(KSTACK_COMMENT_MARKER);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function asString(value: unknown): string | undefined {
