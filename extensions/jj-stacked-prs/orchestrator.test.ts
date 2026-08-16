@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { GitHubError } from "./github.ts";
+import { buildNavigationComment, GitHubError, parseNavigationCommentEntries } from "./github.ts";
 import { JjError } from "./jj.ts";
 import { landStack, landStackFromTool } from "./land.ts";
 import {
@@ -13,7 +13,52 @@ import {
 	syncStack,
 } from "./orchestrator.ts";
 import { commit, fakeGithub, fakeJj, landed, openPrs, ui } from "./test-fixtures.ts";
-import type { BookmarkTarget, OpenPullRequest } from "./types.ts";
+import type { BookmarkTarget, NavigationEntry, OpenPullRequest } from "./types.ts";
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function changeIdAt(index: number): string {
+	return String.fromCharCode(97 + index).repeat(3);
+}
+
+function linearStack(size: number) {
+	return Array.from({ length: size }, (_, index) =>
+		commit(changeIdAt(index), `feat${index + 1}`, index === 0 ? "trunk" : `${changeIdAt(index - 1)}-commit`),
+	);
+}
+
+function linearPrs(size: number): OpenPullRequest[] {
+	return Array.from({ length: size }, (_, index) => ({
+		number: 11 + index,
+		headRef: `feat${index + 1}`,
+		headCommitId: `${changeIdAt(index)}-commit`,
+		baseRef: index === 0 ? "main" : `feat${index}`,
+		title: `feat${index + 1}`,
+		draft: true,
+		url: `https://example/${11 + index}`,
+		headOwner: "o",
+	}));
+}
+
+function stackedJj(size: number) {
+	const stack = linearStack(size);
+	const bookmarks = stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId }));
+	return fakeJj({
+		fetchStack: async () => stack,
+		listLocalBookmarks: async () => bookmarks,
+		listRemoteBookmarks: async () => bookmarks,
+	});
+}
+
+function navEntry(prNumber: number, bookmark: string, status: NavigationEntry["status"] = "open"): NavigationEntry {
+	return { prNumber, bookmark, base: "main", status };
+}
+
+function kstackComment(entries: readonly NavigationEntry[], id = 1) {
+	return { id, body: buildNavigationComment(entries, "main"), user: "publisher" };
+}
 
 describe("inspect and plan", () => {
 	it("inspects an injected stack that is independent of this repository's trunk", async () => {
@@ -466,6 +511,216 @@ describe("publishStack", () => {
 			["push-bookmark", "create-draft-pr"],
 		);
 		assert.equal(planned.plan.actions[0].kind === "push-bookmark" && planned.plan.actions[0].bookmark, "feat2");
+	});
+});
+
+describe("navigation comment reconciliation concurrency", () => {
+	it("caps concurrent comment reads at four", async () => {
+		let activeReads = 0;
+		let peakReads = 0;
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat6", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: stackedJj(6),
+				github: fakeGithub({
+					listOpenPrs: async () => linearPrs(6),
+					getPrComments: async () => {
+						activeReads += 1;
+						peakReads = Math.max(peakReads, activeReads);
+						await delay(20);
+						activeReads -= 1;
+						return [];
+					},
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.equal(peakReads, 4);
+	});
+
+	it("reduces prior navigation history in published order, not completion order", async () => {
+		const firstLongest = [
+			navEntry(101, "old-b1"),
+			navEntry(102, "old-b2"),
+			navEntry(103, "old-b3"),
+			navEntry(104, "old-b4"),
+			navEntry(11, "feat1", "draft"),
+		];
+		const tiedLater = [
+			navEntry(201, "old-c1"),
+			navEntry(202, "old-c2"),
+			navEntry(203, "old-c3"),
+			navEntry(204, "old-c4"),
+			navEntry(11, "feat1", "draft"),
+		];
+		const shorter = [navEntry(301, "old-a1"), navEntry(11, "feat1", "draft")];
+		const github = fakeGithub({
+			listOpenPrs: async () => linearPrs(4),
+			getPrComments: async (_repo, prNumber) => {
+				if (prNumber === 11) {
+					await delay(40);
+					return [kstackComment(firstLongest)];
+				}
+				if (prNumber === 12) {
+					await delay(5);
+					return [kstackComment(shorter)];
+				}
+				if (prNumber === 13) {
+					await delay(10);
+					return [kstackComment(tiedLater)];
+				}
+				await delay(15);
+				return [];
+			},
+		});
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat4", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: stackedJj(4),
+				github,
+			},
+		);
+		assert.equal(result.status, "completed");
+		const written = parseNavigationCommentEntries(github.comments[0] ?? "");
+		assert.deepEqual(
+			written.slice(0, 4).map((entry) => entry.bookmark),
+			["old-b1", "old-b2", "old-b3", "old-b4"],
+		);
+	});
+
+	it("finishes every comment and status read before serial comment writes", async () => {
+		let outstandingReads = 0;
+		let peakWrites = 0;
+		let activeWrites = 0;
+		let writeStartedDuringReads = false;
+		const prior = [navEntry(101, "old-1"), navEntry(102, "old-2"), navEntry(11, "feat1", "draft")];
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat3", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: stackedJj(3),
+				github: fakeGithub({
+					listOpenPrs: async () => linearPrs(3),
+					getPrComments: async () => {
+						outstandingReads += 1;
+						await delay(15);
+						outstandingReads -= 1;
+						return [kstackComment(prior)];
+					},
+					getPrStatus: async () => {
+						outstandingReads += 1;
+						await delay(15);
+						outstandingReads -= 1;
+						return "open";
+					},
+					createOrUpdateComment: async (input) => {
+						if (outstandingReads > 0) writeStartedDuringReads = true;
+						activeWrites += 1;
+						peakWrites = Math.max(peakWrites, activeWrites);
+						await delay(10);
+						activeWrites -= 1;
+						return { id: input.existingCommentId ?? 1 };
+					},
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.equal(writeStartedDuringReads, false);
+		assert.equal(peakWrites, 1);
+	});
+
+	it("caps ancestor status reads at four and skips duplicates, merged, and active PRs", async () => {
+		let activeStatus = 0;
+		let peakStatus = 0;
+		const statusCalls: number[] = [];
+		const prior = [
+			navEntry(101, "old-1"),
+			navEntry(102, "old-2"),
+			navEntry(103, "old-3"),
+			navEntry(104, "old-4"),
+			navEntry(105, "old-5"),
+			navEntry(102, "old-2-dup"),
+			navEntry(106, "old-merged", "merged"),
+			navEntry(11, "feat1", "draft"),
+			navEntry(12, "feat2", "draft"),
+		];
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: stackedJj(2),
+				github: fakeGithub({
+					listOpenPrs: async () => linearPrs(2),
+					getPrComments: async () => [kstackComment(prior)],
+					getPrStatus: async (_repo, prNumber) => {
+						statusCalls.push(prNumber);
+						activeStatus += 1;
+						peakStatus = Math.max(peakStatus, activeStatus);
+						await delay(20);
+						activeStatus -= 1;
+						return "open";
+					},
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(
+			[...statusCalls].sort((left, right) => left - right),
+			[101, 102, 103, 104, 105],
+		);
+		assert.equal(statusCalls.length, 5);
+		assert.equal(peakStatus, 4);
+	});
+
+	it("keeps successful writes and unknown ancestor status after independent read failures", async () => {
+		const written: number[] = [];
+		let writtenBody = "";
+		const prior = [
+			navEntry(101, "old-1"),
+			navEntry(102, "old-2"),
+			navEntry(11, "feat1", "draft"),
+			navEntry(12, "feat2", "draft"),
+		];
+		const github = fakeGithub({
+			listOpenPrs: async () => linearPrs(2),
+			getPrComments: async (_repo, prNumber) => {
+				if (prNumber === 12) throw new Error("comments unavailable");
+				return [kstackComment(prior)];
+			},
+			getPrStatus: async (_repo, prNumber) => {
+				if (prNumber === 101) throw new Error("status unavailable");
+				return "open";
+			},
+			createOrUpdateComment: async (input) => {
+				written.push(input.prNumber);
+				writtenBody = input.body;
+				return { id: 1 };
+			},
+		});
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: stackedJj(2),
+				github,
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(written, [11]);
+		if (result.status === "completed") {
+			assert.ok(result.commentErrors?.includes("PR #12: comments unavailable"));
+			assert.ok(result.commentErrors?.includes("status unavailable"));
+		}
+		const writtenEntries = parseNavigationCommentEntries(writtenBody);
+		assert.equal(writtenEntries.find((entry) => entry.prNumber === 101)?.status, "unknown");
+		assert.equal(writtenEntries.find((entry) => entry.prNumber === 102)?.status, "open");
 	});
 });
 
