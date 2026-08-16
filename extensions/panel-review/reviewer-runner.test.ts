@@ -41,6 +41,23 @@ describe("buildChildArgs", () => {
 	});
 });
 
+type FakeEventHandlers = Record<string, ((value: never) => void)[]>;
+
+function addFakeEventHandler(handlers: FakeEventHandlers, event: string, callback: (value: never) => void): void {
+	const callbacks = handlers[event];
+	if (callbacks) {
+		callbacks.push(callback);
+	} else {
+		handlers[event] = [callback];
+	}
+}
+
+function closeFakeProcess(handlers: FakeEventHandlers, code: number): void {
+	for (const callback of handlers.close ?? []) {
+		(callback as (exitCode: number) => void)(code);
+	}
+}
+
 interface FakeProcSpec {
 	events?: object[];
 	stderr?: string;
@@ -58,20 +75,20 @@ interface FakeProcSpec {
 function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImpl {
 	return () => {
 		const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
-		const handlers: Record<string, ((v: never) => void)[]> = {};
+		const handlers: FakeEventHandlers = {};
 		const proc = {
 			killed: false,
 			pid: undefined,
 			stdout: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stdout.push(cb) },
 			stderr: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stderr.push(cb) },
 			on(event: string, cb: (v: never) => void) {
-				(handlers[event] ??= []).push(cb);
+				addFakeEventHandler(handlers, event, cb);
 			},
 			kill(sig?: string) {
 				proc.killed = true;
 				onKill?.(sig ?? "SIGTERM");
 				if (!spec.closeOnSig || sig === spec.closeOnSig) {
-					queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+					queueMicrotask(() => closeFakeProcess(handlers, 143));
 				}
 				return true;
 			},
@@ -92,7 +109,7 @@ function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImp
 					for (const cb of listeners.stdout) cb(Buffer.from(`${JSON.stringify(e)}\n`));
 				}
 				if (spec.stderr) for (const cb of listeners.stderr) cb(Buffer.from(spec.stderr));
-				handlers.close?.forEach((cb) => (cb as (c: number) => void)(spec.exitCode ?? 0));
+				closeFakeProcess(handlers, spec.exitCode ?? 0);
 			});
 		}
 		return proc;
@@ -271,19 +288,19 @@ function timedSpawn(
 ): SpawnImpl {
 	return () => {
 		const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
-		const handlers: Record<string, ((v: never) => void)[]> = {};
+		const handlers: FakeEventHandlers = {};
 		const proc = {
 			killed: false,
 			pid: undefined,
 			stdout: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stdout.push(cb) },
 			stderr: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stderr.push(cb) },
 			on(event: string, cb: (v: never) => void) {
-				(handlers[event] ??= []).push(cb);
+				addFakeEventHandler(handlers, event, cb);
 			},
 			kill(sig?: string) {
 				proc.killed = true;
 				onKill?.(sig ?? "SIGTERM");
-				queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+				queueMicrotask(() => closeFakeProcess(handlers, 143));
 				return true;
 			},
 		};
@@ -299,7 +316,7 @@ function timedSpawn(
 					message: { role: "assistant", content: [{ type: "text", text: spec.finalText ?? "done" }], usage: {} },
 				};
 				for (const cb of listeners.stdout) cb(Buffer.from(`${JSON.stringify(assistant)}\n`));
-				handlers.close?.forEach((cb) => (cb as (c: number) => void)(0));
+				closeFakeProcess(handlers, 0);
 			}, spec.closeAtMs).unref();
 		}
 		return proc;
@@ -447,18 +464,18 @@ describe("runReviewer live text preview", () => {
 		// Split every JSON line across two chunks to exercise the streaming decoder.
 		const spawnImpl: SpawnImpl = () => {
 			const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
-			const handlers: Record<string, ((v: never) => void)[]> = {};
+			const handlers: FakeEventHandlers = {};
 			const proc = {
 				killed: false,
 				pid: undefined,
 				stdout: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stdout.push(cb) },
 				stderr: { on: (_: "data", cb: (d: Buffer) => void) => listeners.stderr.push(cb) },
 				on(event: string, cb: (v: never) => void) {
-					(handlers[event] ??= []).push(cb);
+					addFakeEventHandler(handlers, event, cb);
 				},
 				kill() {
 					proc.killed = true;
-					queueMicrotask(() => handlers.close?.forEach((cb) => (cb as (c: number) => void)(143)));
+					queueMicrotask(() => closeFakeProcess(handlers, 143));
 					return true;
 				},
 			};
@@ -473,7 +490,7 @@ describe("runReviewer live text preview", () => {
 					message: { role: "assistant", content: [{ type: "text", text: "Hello world" }], usage: {} },
 				});
 				for (const cb of listeners.stdout) cb(Buffer.from(`${end}\n`));
-				handlers.close?.forEach((cb) => (cb as (c: number) => void)(0));
+				closeFakeProcess(handlers, 0);
 			});
 			return proc;
 		};

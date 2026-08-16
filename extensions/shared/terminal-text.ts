@@ -8,12 +8,13 @@ export interface TerminalText {
 	truncateToWidth(text: string, width: number): string;
 }
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal control sequences is the point
 const ANSI_PATTERN =
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal control sequences is the point
 	/[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal control sequences is the point
-const OSC_PATTERN = /(?:\u001B[\]PX^_]|[\u0090\u0098\u009d-\u009f]).*?(?:\u0007|\u001B\\|\u009c|$)/gs;
+const OSC_PATTERN =
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal control sequences is the point
+	/(?:\u001B[\]PX^_]|[\u0090\u0098\u009d-\u009f]).*?(?:\u0007|\u001B\\|\u009c|$)/gs;
 
 export function stripTerminalSequencesFallback(input: string): string {
 	return input.replace(OSC_PATTERN, "").replace(ANSI_PATTERN, "");

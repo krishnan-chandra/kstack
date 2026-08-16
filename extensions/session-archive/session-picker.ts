@@ -12,7 +12,11 @@ import { SessionSelectionModel, selectSessionChoicesWithDialogs } from "./sessio
 
 function sanitizeLabel(label: string): string {
 	return stripTerminalSequences(label)
-		.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ")
+		.replace(
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: sanitize terminal control characters
+			/[\x00-\x1f\x7f-\x9f]+/g,
+			" ",
+		)
 		.replace(/\s+/g, " ")
 		.trim();
 }

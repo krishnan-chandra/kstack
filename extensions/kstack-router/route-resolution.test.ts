@@ -187,9 +187,16 @@ test("a manually overridden change defaults to single without prompting", async 
 
 test("session invalidation after route selection cancels further work", async () => {
 	let checks = 0;
-	const { fx, calls } = effects({ routes: ["change"], current: () => (++checks === 1 ? false : false) });
+	const { fx, calls } = effects({
+		routes: ["change"],
+		current: () => {
+			checks += 1;
+			return false;
+		},
+	});
 	const result = await resolve({ task: "do work" }, fx);
 	assert.deepEqual(result, { cancelled: true });
+	assert.equal(checks, 1);
 	assert.equal(
 		calls.some((call) => call.startsWith("option:")),
 		false,

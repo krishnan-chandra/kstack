@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, type Stats, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getArchiveDbPath, getArchiveRoot, isPathInside, validateSessionId } from "../session-archive/archive-files.ts";
 import {
@@ -150,7 +150,7 @@ function readActiveSession(
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
-	let stat;
+	let stat: Stats;
 	try {
 		stat = fsImpl.statSync(canonical);
 	} catch (error) {
@@ -168,7 +168,7 @@ function readActiveSession(
 		return parseCache.parsed;
 	}
 
-	let parsed;
+	let parsed: ReturnType<typeof parseSessionJsonlBytes>;
 	try {
 		parsed = parseSessionJsonlBytes(fsImpl.readFileSync(canonical));
 	} catch (error) {

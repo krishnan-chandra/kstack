@@ -136,34 +136,28 @@ export function validateConfig(raw: unknown): ValidateConfigResult | ValidateCon
 		models.push(result.spec);
 	}
 
-	let maxConcurrency;
+	let maxConcurrency = 3;
 	if (obj.maxConcurrency !== undefined) {
 		if (!validateBoundedNumber(obj.maxConcurrency, { integer: true, min: 1, max: 5 })) {
 			return { ok: false, error: `"maxConcurrency" must be an integer between 1 and 5.` };
 		}
 		maxConcurrency = obj.maxConcurrency;
-	} else {
-		maxConcurrency = 3;
 	}
 
-	let timeoutMinutes;
+	let timeoutMinutes = 5;
 	if (obj.timeoutMinutes !== undefined) {
 		if (!validateBoundedNumber(obj.timeoutMinutes, { min: 1, max: 15 })) {
 			return { ok: false, error: `"timeoutMinutes" must be a number between 1 and 15.` };
 		}
 		timeoutMinutes = obj.timeoutMinutes;
-	} else {
-		timeoutMinutes = 5;
 	}
 
-	let maxRuntimeMinutes;
+	let maxRuntimeMinutes = 15;
 	if (obj.maxRuntimeMinutes !== undefined) {
 		if (!validateBoundedNumber(obj.maxRuntimeMinutes, { min: 2, max: 60 })) {
 			return { ok: false, error: `"maxRuntimeMinutes" must be a number between 2 and 60.` };
 		}
 		maxRuntimeMinutes = obj.maxRuntimeMinutes;
-	} else {
-		maxRuntimeMinutes = 15;
 	}
 
 	if (maxRuntimeMinutes < timeoutMinutes) {

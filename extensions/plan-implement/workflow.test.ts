@@ -17,11 +17,24 @@ describe("runWorkflow", () => {
 	it("passes the exact approved plan to the implementer in order", async () => {
 		const events: string[] = [];
 		const result = await runWorkflow({
-			runPlanner: async () => (events.push("planner"), plan),
-			onPlan: async () => void events.push("show-plan"),
-			approvePlan: async () => (events.push("approve"), true),
-			runImplementer: async (text) => (events.push(`implement:${text}`), implementation),
-			onImplementation: async () => void events.push("show-implementation"),
+			runPlanner: async () => {
+				events.push("planner");
+				return plan;
+			},
+			onPlan: async () => {
+				events.push("show-plan");
+			},
+			approvePlan: async () => {
+				events.push("approve");
+				return true;
+			},
+			runImplementer: async (text) => {
+				events.push(`implement:${text}`);
+				return implementation;
+			},
+			onImplementation: async () => {
+				events.push("show-implementation");
+			},
 		});
 		assert.equal(result.status, "completed");
 		assert.deepEqual(events, ["planner", "show-plan", "approve", "implement:the plan", "show-implementation"]);
@@ -34,8 +47,14 @@ describe("runWorkflow", () => {
 			onPlan: () => {
 				later = true;
 			},
-			approvePlan: async () => (later = true),
-			runImplementer: async () => ((later = true), implementation),
+			approvePlan: async () => {
+				later = true;
+				return true;
+			},
+			runImplementer: async () => {
+				later = true;
+				return implementation;
+			},
 			onImplementation: () => {
 				later = true;
 			},
@@ -50,7 +69,10 @@ describe("runWorkflow", () => {
 			runPlanner: async () => plan,
 			onPlan: () => {},
 			approvePlan: async () => false,
-			runImplementer: async () => ((implemented = true), implementation),
+			runImplementer: async () => {
+				implemented = true;
+				return implementation;
+			},
 			onImplementation: () => {},
 		});
 		assert.equal(result.status, "rejected");

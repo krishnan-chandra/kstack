@@ -24,7 +24,7 @@ describe("porcelain and forbidden paths", () => {
 		].join(nul);
 
 		let capturedArgs: string[] | undefined;
-		const backend = new GitBackend(async (cmd, args, _opts) => {
+		const backend = new GitBackend(async (_cmd, args, _opts) => {
 			capturedArgs = args;
 			return { code: 0, stdout: output, stderr: "" };
 		});

@@ -76,7 +76,11 @@ export function sanitizeMultilineText(input: string, text: TerminalText = fallba
 	return stripped
 		.replace(/\r\n/g, "\n")
 		.replace(/\r/g, "\n")
-		.replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]+/g, " ");
+		.replace(
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: sanitize terminal control characters except newlines
+			/[\x00-\x09\x0b-\x1f\x7f-\x9f]+/g,
+			" ",
+		);
 }
 
 /** Format token counts compactly (e.g. 12.4k or 800). */
