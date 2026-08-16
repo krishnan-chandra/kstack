@@ -150,7 +150,7 @@ export async function runReviewPipeline(
 					spec,
 					model: modelCliId(spec),
 					promptFile: reviewerPromptFile,
-					task: `Review the bundle at ${scope.path}.`,
+					task: `Run a complete independent thermo-nuclear review of the entire bundle at ${scope.path}. Apply every relevant rubric dimension and the full Approval Bar.`,
 					cwd: scope.repoRoot,
 					noContextFiles: scope.contextFilesTouched,
 					signal: fx.runSignal,
@@ -301,7 +301,7 @@ export async function runReviewPipeline(
 	}
 }
 
-function assembleReviewerPrompt(): string {
+export function assembleReviewerPrompt(): string {
 	return ["reviewer.md", "rubric.md", "code-quality.md", "thermo-nuclear.md"]
 		.map((name) => readPromptAsset(PROMPTS_DIR, name).trim())
 		.join("\n\n---\n\n");

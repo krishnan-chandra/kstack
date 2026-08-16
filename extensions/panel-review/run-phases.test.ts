@@ -6,7 +6,7 @@ import type { PanelConfig, ScopeBundle } from "./types.ts";
 
 const panelConfig: PanelConfig = {
 	reviewers: [
-		{ label: "one", model: "test/one", thinking: "high" },
+		{ label: "one", model: "test/one", thinking: "medium" },
 		{ label: "two", model: "test/two" },
 	],
 	maxConcurrency: 2,
@@ -177,6 +177,8 @@ test("pipeline forwards and observes the lifecycle run signal", async () => {
 		},
 		runReviewer: async (input) => {
 			assert.equal(input.signal, controller.signal);
+			assert.match(input.task, /complete independent thermo-nuclear review of the entire bundle/);
+			assert.match(input.task, /every relevant rubric dimension and the full Approval Bar/);
 			controller.abort();
 			assert.equal(input.signal.aborted, true);
 			return { status: "aborted", label: input.spec.label, model: input.model };

@@ -13,7 +13,7 @@
 		"reviewers": [
 			{ "label": "sonnet", "model": "anthropic/claude-sonnet-5", "thinking": "medium" },
 			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "medium" },
-			{ "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "high" }
+			{ "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "medium" }
 		],
 		"maxConcurrency": 5,
 		"timeoutMinutes": 10,

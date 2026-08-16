@@ -212,7 +212,7 @@ describe("resolveReviewers", () => {
 			{ label: "sonnet", model: "anthropic/claude-sonnet-5", thinking: "medium" },
 			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 			{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
-			{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "high" },
+			{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "medium" },
 		]);
 		assert.equal(r.maxConcurrency, 5);
 		assert.equal(r.warnings.length, 0);
