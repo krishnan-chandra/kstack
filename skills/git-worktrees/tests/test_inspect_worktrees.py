@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "inspect_worktrees.py"
-PLANNER = Path(__file__).parents[1] / "scripts" / "plan_worktree.py"
+PLANNER = Path(__file__).parents[1] / "scripts" / "plan_worktree.ts"
 SPEC = importlib.util.spec_from_file_location("inspect_worktrees", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -43,7 +43,7 @@ class InspectWorktreesTest(unittest.TestCase):
             subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
             subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
             planned = subprocess.run(
-                [sys.executable, str(PLANNER), "--repo", str(repo), "--root", str(managed), "--task", "change"],
+                ["node", str(PLANNER), "--repo", str(repo), "--root", str(managed), "--task", "change"],
                 capture_output=True,
                 text=True,
                 check=True,

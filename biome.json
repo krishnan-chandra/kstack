@@ -8,6 +8,7 @@
 			"check-exports.mjs",
 			"check-exports.test.mjs",
 			"skills/**/*.mjs",
+			"skills/**/*.ts",
 			"!**/node_modules"
 		]
 	},
