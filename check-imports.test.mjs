@@ -65,3 +65,42 @@ test("rejects shared imports from an extension", () => {
 test("keeps every documented exception tied to existing files", () => {
 	assert.deepEqual(findStaleImportExceptions({ root: EXTENSIONS_ROOT, exceptions: IMPORT_EXCEPTIONS }), []);
 });
+
+test("rejects relative imports escaping extensions root", () => {
+	const root = tempRoot();
+	write(root, "alpha/index.ts", 'import { outside } from "../../outside.ts";\nvoid outside;\n');
+	assert.deepEqual(findImportViolations({ root, exceptions: [] }), [
+		{
+			importer: "alpha/index.ts",
+			target: "../outside.ts",
+			rule: "relative imports must stay under extensions/",
+		},
+	]);
+});
+
+test("flags stale import exception when importer does not exist", () => {
+	const root = tempRoot();
+	write(root, "beta/target.ts", "export const value = 1;\n");
+	const exceptions = [
+		{
+			importer: "alpha/missing.ts",
+			target: "beta/target.ts",
+			reason: "missing importer test",
+		},
+	];
+	assert.deepEqual(findStaleImportExceptions({ root, exceptions }), exceptions);
+});
+
+test("flags stale import exception when import is no longer present", () => {
+	const root = tempRoot();
+	write(root, "alpha/index.ts", "export const x = 1;\n");
+	write(root, "beta/target.ts", "export const value = 1;\n");
+	const exceptions = [
+		{
+			importer: "alpha/index.ts",
+			target: "beta/target.ts",
+			reason: "unused exception test",
+		},
+	];
+	assert.deepEqual(findStaleImportExceptions({ root, exceptions }), exceptions);
+});

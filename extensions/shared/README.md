@@ -45,3 +45,7 @@ The gate has these narrow exceptions:
 
 Treat each exception as dependency debt. Add a public `api.ts` or `types.ts`
 contract instead of extending the exception list.
+
+## Environment variables
+
+Set `KSTACK_CHILD_DEBUG_CAP_BYTES` to a positive integer to raise child process output and stderr buffer limits during debugging.
