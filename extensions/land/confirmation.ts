@@ -1,12 +1,13 @@
 /** In-process confirmation capability for trusted Land callers. */
 
-const LAND_CONFIRMATION = Symbol("kstack.land.confirmation");
+// Pi gives each extension a separate module graph. The global registry keeps the marker stable across those graphs.
+const LAND_CONFIRMATION = Symbol.for("kstack.land.confirmation");
 
 export interface LandConfirmation {
 	readonly [LAND_CONFIRMATION]: true;
 }
 
-/** Issue a confirmation that only this module can mint. */
+/** Issue a confirmation for a trusted in-process caller. */
 export function issueLandConfirmation(): LandConfirmation {
 	return { [LAND_CONFIRMATION]: true };
 }
