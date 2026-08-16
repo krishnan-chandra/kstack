@@ -12,7 +12,7 @@ import {
 	requestPublicationFromInput,
 	syncStack,
 } from "./orchestrator.ts";
-import { commit, fakeGithub, fakeJj, landed, openPrs, ui } from "./test-fixtures.ts";
+import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
 import type { BookmarkTarget, NavigationEntry, OpenPullRequest } from "./types.ts";
 
 function delay(ms: number): Promise<void> {
@@ -126,6 +126,7 @@ describe("publishStack", () => {
 						ready.push(prNumber);
 					},
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -146,17 +147,20 @@ describe("publishStack", () => {
 				},
 				jj,
 				github: fakeGithub(),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
 		assert.deepEqual(jj.calls, ["push:feat1", "push:feat2"]);
 	});
 
-	it("replans and refuses a stale model-tool publication", async () => {
+	it("replans under the lock, refuses a stale model-tool publication, and releases", async () => {
+		const events: string[] = [];
 		let remoteReads = 0;
 		const jj = fakeJj({
 			listRemoteBookmarks: async () => {
 				remoteReads++;
+				events.push(`plan-${remoteReads}`);
 				return remoteReads === 1 ? [] : [{ name: "feat2", commitId: "changed" }];
 			},
 		});
@@ -167,9 +171,17 @@ describe("publishStack", () => {
 				ui: ui({ hasUI: false }),
 				jj,
 				github: fakeGithub(),
+				acquirePublicationLock: () => {
+					events.push("acquire");
+					return {
+						ok: true,
+						lock: { release: () => events.push("release") },
+					};
+				},
 			},
 		);
 		assert.equal(result.status, "stale");
+		assert.deepEqual(events, ["plan-1", "acquire", "plan-2", "release"]);
 		assert.deepEqual(jj.calls, []);
 	});
 
@@ -198,6 +210,7 @@ describe("publishStack", () => {
 				ui: ui(),
 				jj: fakeJj(),
 				github,
+				acquirePublicationLock: permissiveLock(),
 				generatePrMetadata: async (request) => {
 					metadataRequests.push({ bookmark: request.bookmark, baseRevset: request.baseRevset });
 					return {
@@ -254,6 +267,7 @@ describe("publishStack", () => {
 				generatePrMetadata: async () => {
 					throw new Error("model unavailable");
 				},
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "failed");
@@ -295,6 +309,7 @@ describe("publishStack", () => {
 					title: `Title for ${request.bookmark}`,
 					body: `## Summary\n\n- Summary.\n\n## Review guide\n\n1. **Flow** — Verify.`,
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "stale");
@@ -347,6 +362,7 @@ describe("publishStack", () => {
 					],
 				}),
 				github,
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -370,6 +386,7 @@ describe("publishStack", () => {
 					listRemoteBookmarks: async () => remoteBookmarks,
 				}),
 				github: fakeGithub(),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "stale");
@@ -390,6 +407,7 @@ describe("publishStack", () => {
 						return { id: 1 };
 					},
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -411,6 +429,7 @@ describe("publishStack", () => {
 						throw new Error("comment API failed");
 					},
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -434,6 +453,7 @@ describe("publishStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub(),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "partial");
@@ -459,6 +479,7 @@ describe("publishStack", () => {
 				jj: fakeJj(),
 				github: fakeGithub(),
 				signal: controller.signal,
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(cancelled.status, "cancelled");
@@ -475,6 +496,7 @@ describe("publishStack", () => {
 				ui: ui(),
 				jj: fakeJj(),
 				github,
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(indeterminate.status, "indeterminate");
@@ -514,6 +536,105 @@ describe("publishStack", () => {
 	});
 });
 
+describe("publication lock", () => {
+	it("blocks publication when the lock is held and reports the holder pid", async () => {
+		const jj = fakeJj();
+		const github = fakeGithub();
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj,
+				github,
+				acquirePublicationLock: () => ({
+					ok: false,
+					holder: { pid: 42, startedAt: "2025-06-01T00:00:00.000Z" },
+				}),
+			},
+		);
+		assert.equal(result.status, "blocked");
+		if (result.status === "blocked") {
+			assert.ok(result.blockers.some((blocker) => blocker.code === "publication-locked"));
+			assert.ok(result.blockers.some((blocker) => /pid 42/.test(blocker.message)));
+		}
+		// No remote mutation ran
+		assert.deepEqual(jj.calls, []);
+		assert.equal(github.comments.length, 0);
+	});
+
+	it("reports lock filesystem failures without remote mutation", async () => {
+		const jj = fakeJj();
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj,
+				github: fakeGithub(),
+				acquirePublicationLock: () => {
+					throw new Error("permission denied");
+				},
+			},
+		);
+		assert.deepEqual(result, {
+			status: "failed",
+			error: "Unable to acquire publication lock: permission denied",
+		});
+		assert.deepEqual(jj.calls, []);
+	});
+
+	it("releases the lock on success and on publication failure", async () => {
+		// Success path
+		let released = false;
+		const successResult = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj: fakeJj(),
+				github: fakeGithub(),
+				acquirePublicationLock: () => ({
+					ok: true,
+					lock: {
+						release() {
+							released = true;
+						},
+					},
+				}),
+			},
+		);
+		assert.equal(successResult.status, "completed");
+		assert.equal(released, true);
+
+		// Failure path (applyPublication throws)
+		let releasedOnFailure = false;
+		const failureResult = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj: fakeJj({
+					pushBookmark: async () => {
+						throw new Error("push failure");
+					},
+				}),
+				github: fakeGithub(),
+				acquirePublicationLock: () => ({
+					ok: true,
+					lock: {
+						release() {
+							releasedOnFailure = true;
+						},
+					},
+				}),
+			},
+		);
+		assert.equal(failureResult.status, "partial");
+		assert.equal(releasedOnFailure, true);
+	});
+});
+
 describe("navigation comment reconciliation concurrency", () => {
 	it("caps concurrent comment reads at four", async () => {
 		let activeReads = 0;
@@ -534,6 +655,7 @@ describe("navigation comment reconciliation concurrency", () => {
 						return [];
 					},
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -582,6 +704,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				ui: ui(),
 				jj: stackedJj(4),
 				github,
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -627,6 +750,7 @@ describe("navigation comment reconciliation concurrency", () => {
 						return { id: input.existingCommentId ?? 1 };
 					},
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -667,6 +791,7 @@ describe("navigation comment reconciliation concurrency", () => {
 						return "open";
 					},
 				}),
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -710,6 +835,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				ui: ui(),
 				jj: stackedJj(2),
 				github,
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -1042,6 +1168,7 @@ describe("requestPublicationFromInput", () => {
 				jj: fakeJj(),
 				github: fakeGithub(),
 				realpath: (path) => path,
+				acquirePublicationLock: permissiveLock(),
 			},
 		);
 		assert.equal(result.status, "completed");

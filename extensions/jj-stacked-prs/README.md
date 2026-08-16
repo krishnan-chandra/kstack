@@ -132,8 +132,15 @@ Partial and indeterminate results list completed or in-flight actions and
 require a fresh plan. The extension never rolls back a valid push, PR creation,
 or base repair. Comment failures are reported separately.
 
-Cross-process duplicate publication is deferred. Two Pi processes can still
-publish the same stack; use one session.
+Publication acquires an advisory per-repository file lock under
+`<agentDir>/kstack-locks/`. A second process that attempts to publish the same
+repository is blocked with the holder's pid and start time. Locks owned by a
+dead pid are reclaimed automatically; an unreadable or corrupt lock receives a
+one-hour grace period before reclamation. A live holder is never displaced just
+because publication runs for a long time. If a process is killed during the
+brief reclamation step, a `.reaper` file can conservatively block later stale
+cleanup; remove it only after verifying that no publication is active. The lock
+covers publication only; advance, sync, and land are not yet covered.
 
 ## Development
 

@@ -73,7 +73,7 @@ export type StackBlocker =
 			bookmark?: string;
 	  }
 	| {
-			code: "truncated" | "missing-remote" | "ambiguous-remote" | "non-github-remote";
+			code: "truncated" | "missing-remote" | "ambiguous-remote" | "non-github-remote" | "publication-locked";
 			message: string;
 	  };
 
