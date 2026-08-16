@@ -42,7 +42,7 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import { markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
+import { markPrReady, rerunFailedRun, resolveRepoName, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
 	buildFixerTask,
@@ -149,25 +149,41 @@ export async function runAutopilot(
 	}
 	const prNumber = target.prNumber;
 	const repoKey = repoPersistKey(cwd);
+	let repoName: Promise<string | undefined> | undefined;
+	const resolveRepoOnce = () => (repoName ??= resolveRepoName(exec, cwd));
 	const selected = params.selectedModel ?? pickModel(config.models);
 	notify(`Driving PR #${prNumber} in ${mode} mode. Model: ${selected.label}`, "info");
 
 	if (mode === "check") {
 		setPhase("checking");
 		const persisted = await ops.loadPersistedState(repoKey, prNumber);
-		const state = await fetchPRState(exec, cwd, prNumber, null, {
-			concurrency: config.maxConcurrency,
-			handledThreadIds: persisted.handledThreadIds,
-		});
+		const state = await fetchPRState(
+			exec,
+			cwd,
+			prNumber,
+			null,
+			{
+				concurrency: config.maxConcurrency,
+				handledThreadIds: persisted.handledThreadIds,
+			},
+			await resolveRepoOnce(),
+		);
 		setPhase("idle");
 		if (typeof state === "string") {
 			notify(state, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [state], usage };
 		}
-		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, {
-			concurrency: config.maxConcurrency,
-			handledThreadIds: persisted.handledThreadIds,
-		});
+		const verified = await fetchPRState(
+			exec,
+			cwd,
+			prNumber,
+			state.headSha,
+			{
+				concurrency: config.maxConcurrency,
+				handledThreadIds: persisted.handledThreadIds,
+			},
+			await resolveRepoOnce(),
+		);
 		if (typeof verified === "string") {
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [verified], usage };
 		}
@@ -209,10 +225,17 @@ export async function runAutopilot(
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking", cycle);
-		return fetchPRState(exec, cwd, prNumber, verifiedHeadSha, {
-			concurrency: config.maxConcurrency,
-			handledThreadIds: persisted.handledThreadIds,
-		});
+		return fetchPRState(
+			exec,
+			cwd,
+			prNumber,
+			verifiedHeadSha,
+			{
+				concurrency: config.maxConcurrency,
+				handledThreadIds: persisted.handledThreadIds,
+			},
+			await resolveRepoOnce(),
+		);
 	};
 
 	const declareReady = async (snapshot: PRState): Promise<AutopilotResult | undefined> => {
@@ -247,10 +270,17 @@ export async function runAutopilot(
 			}
 		}
 		setPhase("settling", cycle);
-		const settled = await fetchPRState(exec, cwd, prNumber, snapshot.headSha, {
-			concurrency: config.maxConcurrency,
-			handledThreadIds: persisted.handledThreadIds,
-		});
+		const settled = await fetchPRState(
+			exec,
+			cwd,
+			prNumber,
+			snapshot.headSha,
+			{
+				concurrency: config.maxConcurrency,
+				handledThreadIds: persisted.handledThreadIds,
+			},
+			await resolveRepoOnce(),
+		);
 		if (typeof settled === "string") {
 			notify(settled, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [settled], usage };

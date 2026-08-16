@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { JjBackend } from "../shared/vcs/jj-backend.ts";
@@ -560,23 +563,115 @@ describe("pr-autopilot state machine", () => {
 	});
 
 	describe("persisted state", () => {
+		async function withAgentDir(fn: (agentDir: string) => Promise<void>): Promise<void> {
+			const agentDir = await mkdtemp(join(tmpdir(), "kstack-autopilot-state-"));
+			const previous = process.env.PI_CODING_AGENT_DIR;
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			try {
+				await fn(agentDir);
+			} finally {
+				if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+				else process.env.PI_CODING_AGENT_DIR = previous;
+				await rm(agentDir, { recursive: true, force: true });
+			}
+		}
+
 		it("uses distinct paths for the same PR in different repositories", () => {
 			assert.notEqual(persistPath("repo-a", 5), persistPath("repo-b", 5));
 		});
 
 		it("round-trips handled thread ids with its repository key", async () => {
-			const repoKey = `test-${process.pid}-${Date.now()}`;
-			await savePersistedState({
-				repoKey,
-				prNumber: 5,
-				headSha: "abc",
-				handledThreadIds: ["thread-1"],
-				repliedThreadIds: [],
-				flakeRetried: [],
+			await withAgentDir(async () => {
+				const repoKey = `test-${process.pid}-${Date.now()}`;
+				await savePersistedState({
+					repoKey,
+					prNumber: 5,
+					headSha: "abc",
+					handledThreadIds: ["thread-1"],
+					repliedThreadIds: [],
+					flakeRetried: [],
+				});
+				const loaded = await loadPersistedState(repoKey, 5);
+				assert.deepEqual(loaded.handledThreadIds, ["thread-1"]);
+				assert.equal(loaded.repoKey, repoKey);
 			});
-			const loaded = await loadPersistedState(repoKey, 5);
-			assert.deepEqual(loaded.handledThreadIds, ["thread-1"]);
-			assert.equal(loaded.repoKey, repoKey);
+		});
+
+		it("refuses to read persisted state through a symlink", async () => {
+			await withAgentDir(async (agentDir) => {
+				const repoKey = "symlink-read";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				const target = join(agentDir, "target.json");
+				await writeFile(
+					target,
+					JSON.stringify({
+						repoKey,
+						prNumber: 7,
+						headSha: "hijacked",
+						handledThreadIds: ["evil"],
+						repliedThreadIds: [],
+						flakeRetried: [],
+					}),
+				);
+				await symlink(target, path);
+				const loaded = await loadPersistedState(repoKey, 7);
+				assert.equal(loaded.repoKey, repoKey);
+				assert.deepEqual(loaded.handledThreadIds, []);
+			});
+		});
+
+		it("refuses to write persisted state through a symlink", async () => {
+			await withAgentDir(async (agentDir) => {
+				const repoKey = "symlink-write";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				const target = join(agentDir, "target.json");
+				await writeFile(target, "unchanged");
+				await symlink(target, path);
+				await savePersistedState({
+					repoKey,
+					prNumber: 7,
+					headSha: "new",
+					handledThreadIds: ["t"],
+					repliedThreadIds: [],
+					flakeRetried: [],
+				});
+				assert.equal(await readFile(target, "utf8"), "unchanged");
+			});
+		});
+
+		it("refuses to read or write through a symlinked state directory", async () => {
+			await withAgentDir(async (agentDir) => {
+				const dir = join(agentDir, "pr-autopilot");
+				const target = join(agentDir, "real-target");
+				await mkdir(target, { recursive: true });
+				await symlink(target, dir, "dir");
+				const repoKey = "symlinked-dir";
+				const loaded = await loadPersistedState(repoKey, 7);
+				assert.deepEqual(loaded.handledThreadIds, []);
+				await savePersistedState({
+					repoKey,
+					prNumber: 7,
+					headSha: "new",
+					handledThreadIds: ["t"],
+					repliedThreadIds: [],
+					flakeRetried: [],
+				});
+				assert.deepEqual(await readdir(target), []);
+			});
+		});
+
+		it("returns empty state for malformed JSON", async () => {
+			await withAgentDir(async () => {
+				const repoKey = "malformed";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				await writeFile(path, "not json");
+				const loaded = await loadPersistedState(repoKey, 7);
+				assert.deepEqual(loaded.handledThreadIds, []);
+				assert.equal(loaded.repoKey, repoKey);
+			});
 		});
 	});
 
