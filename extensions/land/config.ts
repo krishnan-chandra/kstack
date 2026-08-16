@@ -18,14 +18,13 @@
  * never a valid configured method.
  */
 
+import { isMergeMethod } from "../shared/github.ts";
 import { loadKstackSection } from "../shared/kstack-config.ts";
 import type { MergeMethod } from "./types.ts";
 
 export interface LandConfig {
 	repos: Record<string, MergeMethod>;
 }
-
-const VALID_METHODS: ReadonlySet<string> = new Set(["squash", "rebase"]);
 
 /**
  * Load the land section from kstack.json and return the per-repo method map.
@@ -40,9 +39,7 @@ export function loadLandConfig(): LandConfig {
 	if (typeof obj.repos !== "object" || obj.repos === null || Array.isArray(obj.repos)) return { repos: {} };
 	const repos: Record<string, MergeMethod> = {};
 	for (const [key, method] of Object.entries(obj.repos)) {
-		if (typeof method === "string" && VALID_METHODS.has(method)) {
-			repos[key] = method as MergeMethod;
-		}
+		if (isMergeMethod(method)) repos[key] = method;
 	}
 	return { repos };
 }

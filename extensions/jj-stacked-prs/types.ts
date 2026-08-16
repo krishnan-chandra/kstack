@@ -1,5 +1,9 @@
 /** Public domain types and result unions for stacked-PR inspection and publication. */
 
+import type { MergeMethod } from "../shared/github.ts";
+
+export { KSTACK_COMMENT_MARKER } from "../shared/github.ts";
+
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_MAX_STACK = 50;
 export const MIN_MAX_STACK = 1;
@@ -14,7 +18,6 @@ export const CHANGE_ID_DISPLAY_CHARS = 12;
 export const COMMIT_ID_DISPLAY_CHARS = 12;
 export const MAX_NAVIGATION_ENTRIES = 100;
 export const MAX_NAVIGATION_COMMENT_BYTES = 60_000;
-export const KSTACK_COMMENT_MARKER = "<!-- kstack-stack-nav -->";
 export const KSTACK_COMMENT_SCHEMA_VERSION = 1;
 export const TOOL_CONTENT_MAX_BYTES = 50 * 1024;
 export const TOOL_CONTENT_MAX_LINES = 2_000;
@@ -237,7 +240,7 @@ export type AdvanceOutcome =
 	| { status: "indeterminate"; operationId?: string; inFlight: string }
 	| { status: "failed"; error: string; operationId?: string };
 
-export type StackMergeMethod = "squash" | "rebase";
+export type StackMergeMethod = MergeMethod;
 export type StackReadinessMode = "check" | "watch";
 
 export interface StackLandFrontier {

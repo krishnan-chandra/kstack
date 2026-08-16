@@ -27,4 +27,21 @@
 | `vcs/` | Owns the Git and jj mutation contract. See [`vcs/README.md`](vcs/README.md) for backend contracts, config/factory, Git and jj implementations, preflight, and child guidance. |
 | `playbooks/` | Stores shared engineering principles and change-kind proof obligations. |
 
-`handoff` deliberately imports `session-archive` reader modules (`archive-files`, `session-jsonl`, `tool-output`, and `archive-store`). Handoff is a reader of the archive by design. This one-directional dependency is accepted; do not move the archive engine here.
+## Cross-extension imports
+
+Extension code may import a sibling extension only through its `api.ts` or
+`types.ts`. Request-channel APIs remain optional when a peer extension is not
+loaded; deep implementation imports create an unconditional module dependency.
+`check-imports.mjs` enforces this rule. Shared modules may not import extension
+modules.
+
+The gate has these narrow exceptions:
+
+- `handoff` imports the `session-archive` files, operations, store, JSONL parser,
+  and output bounds needed to archive a source session and read its history.
+- `fast-implement` imports handoff's history-reference formatter and source type.
+- `jj-stacked-prs` imports `land/confirmation.ts` so the trusted stack lander can
+  mint the confirmation capability documented in [`land/README.md`](../land/README.md).
+
+Treat each exception as dependency debt. Add a public `api.ts` or `types.ts`
+contract instead of extending the exception list.

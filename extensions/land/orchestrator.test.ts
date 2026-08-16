@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AutopilotResult } from "../pr-autopilot/driver.ts";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { issueLandConfirmation } from "./confirmation.ts";
 import { runLand } from "./orchestrator.ts";
 import type { ExecFn, ExecResult, MergeMethod } from "./types.ts";

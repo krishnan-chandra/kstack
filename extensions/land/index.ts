@@ -4,7 +4,7 @@ import { requestStackLanding } from "../jj-stacked-prs/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import { findOpenPullRequestByHead, getPullRequest } from "../shared/github.ts";
+import { findOpenPullRequestByHead, getPullRequest, isMergeMethod } from "../shared/github.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
@@ -19,7 +19,7 @@ import { summarizeLandResult } from "./summary.ts";
 import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 
 function selectedMethod(value: string | undefined): MergeMethod | undefined {
-	return value === "squash" || value === "rebase" ? value : undefined;
+	return isMergeMethod(value) ? value : undefined;
 }
 
 function blocked(reason: string): LandResult {

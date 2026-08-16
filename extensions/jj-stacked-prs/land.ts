@@ -1,5 +1,6 @@
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
+import { isMergeMethod } from "../shared/github.ts";
 import {
 	createGitHubAdapter,
 	findKstackComment,
@@ -404,7 +405,7 @@ async function resolveLandMethod(
 	}
 	if (deps.ui.hasUI) {
 		const picked = await deps.ui.select("Select an allowed merge method", allowed);
-		if (picked === "squash" || picked === "rebase") return { status: "ok", method: picked };
+		if (isMergeMethod(picked)) return { status: "ok", method: picked };
 		return {
 			status: "blocked",
 			blockers: [{ code: "land-unavailable", message: "No merge method selected." }],

@@ -2,8 +2,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
-import type { AutopilotResult } from "./driver.ts";
-import type { AutopilotMode } from "./types.ts";
+import type { AutopilotMode, AutopilotResult } from "./types.ts";
+
+export { issueAutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
+export type { AutopilotConfirmation } from "./types.ts";
 
 export const PRAUTOPILOT_REQUEST_EVENT = "kstack:pr-autopilot:request";
 const MODES: ReadonlySet<string> = new Set(["check", "threads", "drive", "watch", "cleanup"]);

@@ -13,6 +13,8 @@ import type { ExecFn, ExecFnOptions, ExecFnResult } from "../shared/git-exec.ts"
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import type { ModelSpec } from "../shared/model-spec.ts";
 
+export type { AutopilotConfirmation } from "./confirmation.ts";
+
 /** Autopilot modes — the explicit user-facing entry points. */
 export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
 
@@ -118,6 +120,16 @@ export interface PRState {
 	threads: ReviewThread[];
 	/** Whether the PR is blocked by unaddressed review items. */
 	hasUnresolvedThreads: boolean;
+}
+
+/** Outcome of a full autopilot run. */
+export interface AutopilotResult {
+	status: "merge-ready" | "blocked" | "declined" | "incomplete" | "cleaned" | "aborted" | "failed";
+	prState?: PRState;
+	mergeReady: boolean;
+	cyclesCompleted: number;
+	blockedReasons: string[];
+	usage: UsageSummary;
 }
 
 /** Persisted across ticks so a later drive/watch resume does not re-handle work. */

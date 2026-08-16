@@ -4,7 +4,7 @@
  * These helpers never run `gh` or `git`. Execution wrappers live in `github.ts`.
  */
 
-import { KSTACK_COMMENT_MARKER } from "../jj-stacked-prs/types.ts";
+import { KSTACK_COMMENT_MARKER } from "../shared/github.ts";
 import { isRecord } from "../shared/narrow.ts";
 import type { CheckRun, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";

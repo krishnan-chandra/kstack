@@ -2,11 +2,11 @@
 
 import { Type, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { requestLand } from "../land/api.ts";
-import { getRepoMethod, loadLandConfig } from "../land/config.ts";
+import { getRepoMethod, loadLandConfig, requestLand } from "../land/api.ts";
 import { issueLandConfirmation } from "../land/confirmation.ts";
-import { issueAutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
+import { issueAutopilotConfirmation } from "../pr-autopilot/api.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
+import { isMergeMethod } from "../shared/github.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
 	claimJjStackCapabilities,
@@ -507,7 +507,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			maxStack: Type.Optional(Type.Integer({ minimum: MIN_MAX_STACK, maximum: DEFAULT_MAX_STACK })),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			const method = params.method === "squash" || params.method === "rebase" ? params.method : undefined;
+			const method = isMergeMethod(params.method) ? params.method : undefined;
 			const readiness = params.readiness === "check" ? "check" : "watch";
 			const outcome = await withRun(
 				ctx,

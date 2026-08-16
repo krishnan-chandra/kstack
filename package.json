@@ -16,10 +16,11 @@
 	},
 	"scripts": {
 		"check:exports": "bun check-exports.mjs",
+		"check:imports": "bun check-imports.mjs",
 		"check:test-split": "bun test-split-check.mjs",
 		"format": "bunx biome check --write .",
 		"lint": "bunx biome check .",
-		"test": "bun run check:test-split && bun test --dots install.test.mjs check-exports.test.mjs test-split-check.test.mjs extensions/ skills/ && bun run test:sqlite",
+		"test": "bun run check:test-split && bun test --dots install.test.mjs check-exports.test.mjs check-imports.test.mjs test-split-check.test.mjs extensions/ skills/ && bun run test:sqlite",
 		"test:extensions": "bun run check:test-split && bun test --dots extensions/ && bun run test:sqlite",
 		"test:handoff": "bun test --dots extensions/handoff/ && bun run test:sqlite:handoff",
 		"test:session-archive": "bun test --dots extensions/session-archive/ && bun run test:sqlite:session-archive",
