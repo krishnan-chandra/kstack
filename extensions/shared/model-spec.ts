@@ -1,11 +1,13 @@
-import { isThinkingLevel, MODEL_ID_RE, THINKING_LEVELS, type ThinkingLevel } from "./kstack-config.ts";
+import { isThinkingLevel, MODEL_ID_RE, type ModelThinkingLevel, THINKING_LEVELS } from "./kstack-config.ts";
 
 /** A model reference as configured in kstack.json sections. */
-interface ModelSpecLike {
+export interface ModelSpec {
 	label?: string;
 	model: string;
-	thinking?: string;
+	thinking?: ModelThinkingLevel;
 }
+
+type ModelSpecLike = ModelSpec;
 
 /** Format a spec as a Pi CLI id (provider/model[:thinking]). */
 export function modelCliId(spec: ModelSpecLike): string {
@@ -31,7 +33,7 @@ interface ModelSpecFieldRules {
 }
 
 type ModelSpecFieldResult =
-	| { ok: true; label?: string; model: string; thinking?: ThinkingLevel }
+	| { ok: true; label?: string; model: string; thinking?: ModelThinkingLevel }
 	| { ok: false; error: string };
 
 /** Validate the common model-spec fields while callers retain their error text. */

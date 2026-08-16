@@ -24,13 +24,22 @@
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import {
+	loadValidatedSection,
+	type ModelThinkingLevel,
+	type ConfigLoad as SharedConfigLoad,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
-import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
+import type { AutopilotModelSpec, ResolvedAutopilotConfig, TinyThinkingLevel } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
 
-const TINY_THINKING = ["off", "minimal", "low"] as const;
+const TINY_THINKING = ["off", "minimal", "low"] as const satisfies readonly TinyThinkingLevel[];
+
+function isTinyThinkingLevel(value: ModelThinkingLevel): value is TinyThinkingLevel {
+	return TINY_THINKING.some((allowed) => allowed === value);
+}
 
 export type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
 
@@ -73,7 +82,14 @@ function validateModelSpec(
 	if (!fields.ok) return fields;
 	const label = fields.label;
 	if (!label) return { ok: false, error: `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].` };
-	return { ok: true, spec: { label, model: fields.model, thinking: fields.thinking ?? "low" } };
+	const thinking = fields.thinking ?? "low";
+	if (!isTinyThinkingLevel(thinking)) {
+		return {
+			ok: false,
+			error: `Model entry ${index} (${label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`,
+		};
+	}
+	return { ok: true, spec: { label, model: fields.model, thinking } };
 }
 
 interface ValidateConfigResult {

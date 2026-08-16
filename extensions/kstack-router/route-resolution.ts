@@ -1,6 +1,7 @@
 /** Route decision pipeline, isolated from Pi command and UI contexts. */
 
 import type { ChangeKind } from "../shared/change-kind.ts";
+import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { getRouteLabel } from "./catalog.ts";
 import { buildRouteAlternatives, formatRecommendation } from "./classification.ts";
 import type { ClassifierRunResult } from "./classifier-runner.ts";
@@ -13,7 +14,7 @@ export interface RouteResolutionEffects {
 	selectOption(title: string, options: string[]): Promise<string | undefined>;
 	runClassifier(input: {
 		model: string;
-		thinking?: string;
+		thinking?: ModelThinkingLevel;
 		task: string;
 		timeoutSeconds?: number;
 		signal: AbortSignal;

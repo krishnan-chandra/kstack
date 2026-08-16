@@ -18,7 +18,7 @@
  * get a slug key so "Claude Sonnet 4.5" is reachable as `claude-sonnet-4.5`
  * when quoting is inconvenient.
  */
-import { isThinkingLevel, MODEL_ID_RE, type ThinkingLevel } from "./kstack-config.ts";
+import { isThinkingLevel, MODEL_ID_RE, type ModelThinkingLevel } from "./kstack-config.ts";
 import { MODEL_LABEL_RE } from "./model-spec.ts";
 
 /** A single alias mapping a short name to a provider/model-id reference. */
@@ -30,7 +30,7 @@ export interface ModelAlias {
 	/** Target `provider/model-id` reference. */
 	modelRef: string;
 	/** Default thinking level from the kstack.json entry, when present. */
-	thinking?: ThinkingLevel;
+	thinking?: ModelThinkingLevel;
 	/** Where the alias came from, for diagnostics. */
 	source: "kstack.json" | "model name";
 }

@@ -8,6 +8,7 @@ import {
 	type SpawnedProcess,
 	type SpawnImpl,
 } from "../shared/child-agent-runner.ts";
+import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { parseClassifierOutput } from "./classification.ts";
 import { type ClassifierEnvelope, DEFAULTS } from "./types.ts";
 
@@ -33,7 +34,7 @@ export type ClassifierRunResult =
 interface ClassifierRunnerOptions {
 	model: string;
 	task: string;
-	thinking?: string;
+	thinking?: ModelThinkingLevel;
 	signal?: AbortSignal;
 	timeoutSeconds?: number;
 	stderrCapBytes?: number;
@@ -43,7 +44,7 @@ interface ClassifierRunnerOptions {
 }
 export function buildClassifierChildArgs(
 	model: string,
-	options: { promptFile?: string; thinking?: string } = {},
+	options: { promptFile?: string; thinking?: ModelThinkingLevel } = {},
 ): string[] {
 	return [
 		...childIsolationArgs({ noContextFiles: true, noToolsNoApprove: true }),

@@ -3,11 +3,17 @@
 import { validateBoundedNumber } from "../shared/config-validate.ts";
 import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
-import { LIMITS, type PlanImplementConfig, type ResolvedRoles, type RoleSpec, type ThinkingLevel } from "./types.ts";
+import {
+	LIMITS,
+	type ModelThinkingLevel,
+	type PlanImplementConfig,
+	type ResolvedRoles,
+	type RoleSpec,
+} from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
 
-const HIGH_THINKING = new Set<ThinkingLevel>(["high", "xhigh", "max"]);
+const HIGH_THINKING = new Set<ModelThinkingLevel>(["high", "xhigh", "max"]);
 
 export const DEFAULT_PLANNERS: readonly RoleSpec[] = [
 	{ model: "openai/gpt-5.6-sol", thinking: "high" },
@@ -41,7 +47,7 @@ function validateRole(
 		},
 	});
 	if (!fields.ok) return fields;
-	const thinking: ThinkingLevel | undefined = fields.thinking ?? (role === "planner" ? "high" : undefined);
+	const thinking: ModelThinkingLevel | undefined = fields.thinking ?? (role === "planner" ? "high" : undefined);
 	if (role === "planner" && (!thinking || !HIGH_THINKING.has(thinking))) {
 		return { ok: false, error: '"planner.thinking" must be high, xhigh, or max.' };
 	}

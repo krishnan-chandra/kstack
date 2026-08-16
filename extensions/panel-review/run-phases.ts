@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import {
 	type ConfigLoad,
@@ -25,7 +26,7 @@ interface PanelResolution {
 	reviewers: ReviewerSpec[];
 	maxConcurrency: number;
 	warnings: string[];
-	synthesis: { model: string; thinking?: string; cliId: string };
+	synthesis: { model: string; thinking?: ModelThinkingLevel; cliId: string };
 	timeoutMinutes: number;
 	maxRuntimeMinutes: number;
 }

@@ -1,7 +1,12 @@
 /** Router configuration from kstack.json. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import {
+	loadValidatedSection,
+	type ModelThinkingLevel,
+	type ConfigLoad as SharedConfigLoad,
+	THINKING_LEVELS,
+} from "../shared/kstack-config.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
 
@@ -50,7 +55,7 @@ export interface ClassifierModelResolution {
 	modelId: string;
 	source: "config" | "default" | "active";
 	/** Configured thinking level for the classifier child, if any. */
-	thinking?: string;
+	thinking?: ModelThinkingLevel;
 	warning?: string;
 }
 

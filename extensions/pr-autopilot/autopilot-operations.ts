@@ -47,6 +47,7 @@ import {
 	type PRState,
 	type ReviewThread,
 	type ThreadDecision,
+	type TinyThinkingLevel,
 	type UsageSummary,
 } from "./types.ts";
 import { shouldForceAsk } from "./untrusted.ts";
@@ -137,7 +138,7 @@ export async function runChildRole(
 	role: "triager" | "fixer",
 	opts: {
 		model: string;
-		thinking?: string;
+		thinking?: TinyThinkingLevel;
 		promptFile: string;
 		taskFile: string;
 		timeoutMinutes: number;

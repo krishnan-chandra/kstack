@@ -53,6 +53,7 @@ import {
 } from "./pr-state.ts";
 import {
 	type AutopilotMode,
+	type AutopilotModelSpec,
 	type ExecFn,
 	LIMITS,
 	type PRState,
@@ -103,7 +104,7 @@ export async function runAutopilot(
 		triagerPromptFile: string;
 		fixerPromptFile: string;
 		/** One tiny model for every child in this run. Chosen before confirmation. */
-		selectedModel?: { model: string; label: string; thinking?: string };
+		selectedModel?: Pick<AutopilotModelSpec, "model" | "label" | "thinking">;
 	},
 	handlers: {
 		setPhase: (phase: LifecyclePhase, cycles?: number) => void;

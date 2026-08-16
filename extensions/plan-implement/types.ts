@@ -1,7 +1,7 @@
 /** Shared types and limits for the plan/implement workflow. */
-import type { ThinkingLevel } from "../shared/kstack-config.ts";
+import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
-export type { ThinkingLevel };
+export type { ModelThinkingLevel };
 
 /** How the approved plan is delivered. */
 export type DeliveryMode = "single" | "stack";
@@ -19,7 +19,7 @@ export interface SkillRef {
 
 export interface RoleSpec {
 	model: string;
-	thinking?: ThinkingLevel;
+	thinking?: ModelThinkingLevel;
 }
 
 export interface PlanImplementConfig {
