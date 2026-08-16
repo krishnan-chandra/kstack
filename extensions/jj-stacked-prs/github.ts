@@ -224,6 +224,7 @@ export interface GitHubAdapter {
 		bookmark: string;
 		base: string;
 		title: string;
+		body: string;
 		cwd: string;
 		signal?: AbortSignal;
 	}): Promise<OpenPullRequest>;
@@ -376,7 +377,7 @@ export function createGitHubAdapter(run: ProcessRunner): GitHubAdapter {
 					"--title",
 					input.title,
 					"--body",
-					`Stacked PR for bookmark \`${input.bookmark}\`.`,
+					input.body,
 					"--draft",
 				],
 				{ cwd: input.cwd, signal: input.signal },

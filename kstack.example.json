@@ -1,8 +1,13 @@
 {
 	"vcs": { "backend": "git" },
+	"land": {
+		"repos": {
+			"krishnan-chandra/kstack": "squash"
+		}
+	},
 	"panel-review": {
 		"reviewers": [
-			{ "label": "claude", "model": "anthropic/claude-sonnet-5", "thinking": "medium" },
+			{ "label": "sonnet", "model": "anthropic/claude-sonnet-5", "thinking": "medium" },
 			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "medium" },
 			{ "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "high" }
 		],

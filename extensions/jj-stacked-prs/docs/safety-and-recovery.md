@@ -49,10 +49,22 @@ when the repo relies on pre-commit.
 Do not add `--ignore-immutable` by default. Use it only on a specific
 inspected revision after explicit approval.
 
+## PR metadata generation
+
+Before any remote mutation, publication collects each new PR's exact slice diff
+and asks the active Pi model for a `write-pr` title and body. Missing model
+authentication, oversized evidence, cancellation, provider failure, and invalid
+JSON all stop the run with no pushes or PR creation. Fix the reported problem
+and rerun the publication plan.
+
+Existing PR metadata is not regenerated or replaced during structural
+publication. Use `write-pr` explicitly when an existing title or body needs an
+update.
+
 ## Partial `/jj-stack publish` failures
 
-Publication pushes bookmarks and creates or updates PRs in stack order. If it
-fails partway:
+After metadata is ready, publication pushes bookmarks and creates or updates PRs
+in stack order. If it fails partway:
 
 - Some bookmarks may be pushed and some PRs created while others are not.
 - Re-run `/jj-stack plan` to see the residual plan. The publisher updates

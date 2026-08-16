@@ -19,6 +19,7 @@ describe("createDraftPr", () => {
 				bookmark: "feature",
 				base: "main",
 				title: "Title",
+				body: "## Summary\n\n- Add the feature.\n\n## Review guide\n\n1. **Flow** — Verify it.",
 				cwd: ".",
 			});
 			assert.fail("expected createDraftPr to throw");
@@ -28,6 +29,7 @@ describe("createDraftPr", () => {
 			assert.match(error.message, /Run plan again/);
 		}
 		assert.equal(calls[0]?.[2], "create");
+		assert.ok(calls[0]?.includes("## Summary\n\n- Add the feature.\n\n## Review guide\n\n1. **Flow** — Verify it."));
 	});
 
 	it("treats a created comment whose id cannot be read as indeterminate", async () => {

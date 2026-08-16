@@ -1,6 +1,6 @@
 /** Thin Pi adapter for stacked-PR inspection, planning, and bounded mutation. */
 
-import { Type } from "@earendil-works/pi-ai";
+import { Type, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestLand } from "../land/api.ts";
 import { getRepoMethod, loadLandConfig } from "../land/config.ts";
@@ -29,6 +29,7 @@ import {
 	type StackUi,
 	syncStack,
 } from "./orchestrator.ts";
+import { createModelMetadataGenerator, type PrMetadataGenerator } from "./pr-metadata.ts";
 import { createProcessRunner } from "./process.ts";
 import { boundText, renderInspect, renderLandOutcome, renderOutcome, renderPlan } from "./render.ts";
 import { combinePublicationSignals } from "./signals.ts";
@@ -84,12 +85,49 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		};
 	}
 
+	function metadataGenerator(ctx: ExtensionContext): {
+		generate: PrMetadataGenerator;
+		usage: () => Usage | undefined;
+	} {
+		if (!ctx.model) {
+			return {
+				generate: async () => {
+					throw new Error("The active Pi model is unavailable or has no configured authentication.");
+				},
+				usage: () => undefined,
+			};
+		}
+		return createModelMetadataGenerator(run, {
+			model: ctx.model,
+			hasConfiguredAuth: (m) => ctx.modelRegistry.hasConfiguredAuth(m),
+			complete: (m, opts, rt) => ctx.modelRegistry.complete(m, opts, rt),
+			thinkingLevel: ctx.thinkingLevel,
+			onProgress: (bookmark) => ctx.ui.setStatus("jj-stack", `writing PR metadata: ${bookmark}`),
+		});
+	}
+
+	function publicationDeps(
+		ctx: ExtensionContext,
+		signal: AbortSignal,
+	): {
+		deps: OrchestratorDeps;
+		usage: () => Usage | undefined;
+	} {
+		const metadata = metadataGenerator(ctx);
+		return {
+			deps: { run, ui: uiFrom(ctx), signal, generatePrMetadata: metadata.generate },
+			usage: metadata.usage,
+		};
+	}
+
 	function landDeps(ctx: ExtensionContext, signal: AbortSignal): OrchestratorDeps {
 		const config = loadLandConfig();
+		const metadata = metadataGenerator(ctx);
 		return {
 			run,
 			ui: uiFrom(ctx),
 			signal,
+			generatePrMetadata: metadata.generate,
 			configuredMethodFor: (nameWithOwner) => getRepoMethod(config, nameWithOwner),
 			landPr: async ({ prNumber, readiness, method }) =>
 				requestLand(
@@ -134,12 +172,10 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			}
 			return withRun(
 				ctx,
-				(signal) =>
-					requestPublicationFromInput(input, {
-						run,
-						ui: uiFrom(ctx),
-						signal: combinePublicationSignals(signal, ctx.signal),
-					}),
+				(signal) => {
+					const combined = combinePublicationSignals(signal, ctx.signal);
+					return requestPublicationFromInput(input, publicationDeps(ctx, combined).deps);
+				},
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
 			);
 		}),
@@ -246,7 +282,6 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			const outcome = await withRun(
 				ctx,
 				async (signal) => {
-					const deps = { run, ui: uiFrom(ctx), signal };
 					if (command.action === "publish") {
 						return publishStack(
 							{
@@ -257,9 +292,10 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 								maxStack: command.maxStack,
 								ready: command.ready,
 							},
-							deps,
+							publicationDeps(ctx, signal).deps,
 						);
 					}
+					const deps = { run, ui: uiFrom(ctx), signal };
 					if (command.action === "sync") {
 						return syncStack(
 							{
@@ -398,7 +434,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		name: "jj_stack_publish",
 		label: "Publish stacked PRs",
 		description:
-			"Publish a linear jj bookmark stack by pushing bookmarks, creating draft PRs, repairing PR bases, and reconciling navigation comments. Mutates the remote immediately without UI confirmation.",
+			"Publish a linear jj bookmark stack by generating write-pr metadata from each exact slice, pushing bookmarks, creating draft PRs, repairing PR bases, and reconciling navigation comments. Mutates the remote immediately without UI confirmation.",
 		promptSnippet: "Publish the current jj stack without a redundant confirmation after an explicit user request.",
 		promptGuidelines: [
 			"Call jj_stack_publish only when the user explicitly asks to publish the current stack; the tool mutates remotes without confirmation.",
@@ -414,10 +450,12 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
+			let nestedUsage: Usage | undefined;
 			const outcome = await withRun(
 				ctx,
-				(runSignal) =>
-					publishStackFromTool(
+				async (runSignal) => {
+					const metadata = publicationDeps(ctx, combinePublicationSignals(runSignal, signal));
+					const published = await publishStackFromTool(
 						{
 							cwd: ctx.cwd,
 							top: params.top,
@@ -426,13 +464,17 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 							maxStack: params.maxStack,
 							ready: params.ready === true,
 						},
-						{ run, ui: uiFrom(ctx), signal: combinePublicationSignals(runSignal, signal) },
-					),
+						metadata.deps,
+					);
+					nestedUsage = metadata.usage();
+					return published;
+				},
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
 			);
 			return {
 				content: [{ type: "text" as const, text: boundText(renderOutcome(outcome)) }],
 				details: outcome,
+				usage: nestedUsage,
 			};
 		},
 	});

@@ -14,6 +14,7 @@ import {
 	reconcileStackEntries,
 } from "./github.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
+import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
 import type { ProcessRunner } from "./process.ts";
 import { buildPublicationPlan, type PublicationSnapshot, slicesForPublication } from "./publication.ts";
 import { renderConfirmation } from "./render.ts";
@@ -58,6 +59,7 @@ export interface OrchestratorDeps {
 		method: StackMergeMethod;
 	}) => Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
 	configuredMethodFor?: (nameWithOwner: string) => StackMergeMethod | undefined;
+	generatePrMetadata?: PrMetadataGenerator;
 }
 
 interface InspectOptions {
@@ -428,6 +430,56 @@ async function applyPublication(
 ): Promise<StackPublicationOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const metadataByBookmark = new Map<string, PrMetadata>();
+	const slicesNeedingMetadata = plan.slices.filter((slice) =>
+		slice.actions.some((action) => action.kind === "create-draft-pr"),
+	);
+	if (slicesNeedingMetadata.length > 0) {
+		if (deps.signal?.aborted) return { status: "cancelled", completedActions: [] };
+		const controller = new AbortController();
+		const generationSignal = deps.signal ? AbortSignal.any([deps.signal, controller.signal]) : controller.signal;
+		try {
+			const results = await Promise.all(
+				slicesNeedingMetadata.map(async (slice) => {
+					try {
+						const metadata = deps.generatePrMetadata
+							? await deps.generatePrMetadata({
+									cwd: options.cwd,
+									bookmark: slice.bookmark,
+									baseRevset: slice.baseBookmark ? bookmarkRevset(slice.baseBookmark) : (options.trunk ?? "trunk()"),
+									subject: slice.subject,
+									changeIds: slice.changeIds,
+									signal: generationSignal,
+								})
+							: provisionalPrMetadata(slice.subject, slice.bookmark);
+						return [slice.bookmark, metadata] as const;
+					} catch (error) {
+						controller.abort();
+						throw new Error(
+							`Could not generate PR metadata for ${JSON.stringify(slice.bookmark)}: ${errorMessage(error)}`,
+						);
+					}
+				}),
+			);
+			for (const [bookmark, metadata] of results) {
+				metadataByBookmark.set(bookmark, metadata);
+			}
+		} catch (error) {
+			if (deps.signal?.aborted) return { status: "cancelled", completedActions: [] };
+			return {
+				status: "failed",
+				error: errorMessage(error),
+				completedActions: [],
+			};
+		} finally {
+			controller.abort();
+		}
+		const fresh = await planStack(options, deps);
+		if (fresh.status === "blocked") return { status: "blocked", blockers: fresh.blockers, planId: plan.planId };
+		if (fresh.plan.planId !== plan.planId) {
+			return { status: "stale", providedPlanId: plan.planId, recomputedPlanId: fresh.plan.planId };
+		}
+	}
 	const completed: CompletedPublicationAction[] = [];
 	const published = plan.slices.map((slice) => ({
 		bookmark: slice.bookmark,
@@ -448,11 +500,14 @@ async function applyPublication(
 					await jj.pushBookmark(options.cwd, options.remote, action.bookmark, deps.signal);
 					completed.push({ kind: "push-bookmark", bookmark: action.bookmark });
 				} else if (action.kind === "create-draft-pr") {
+					const metadata = metadataByBookmark.get(action.bookmark);
+					if (!metadata) throw new Error(`No PR metadata was prepared for ${JSON.stringify(action.bookmark)}.`);
 					const created = await github.createDraftPr({
 						repo: plan.repository,
 						bookmark: action.bookmark,
 						base: action.targetBase.replace(/^refs\/heads\//, ""),
-						title: action.provisionalTitle,
+						title: metadata.title,
+						body: metadata.body,
 						cwd: options.cwd,
 						signal: deps.signal,
 					});
@@ -798,6 +853,22 @@ function toFailedAction(
 	bookmark: string,
 ): FailedPublicationAction {
 	return { kind, bookmark, error: errorMessage(error) };
+}
+
+function provisionalPrMetadata(subject: string, bookmark: string): PrMetadata {
+	const title = subject || bookmark;
+	return {
+		title,
+		body: [
+			"## Summary",
+			"",
+			`- ${title}`,
+			"",
+			"## Review guide",
+			"",
+			`1. **Slice behavior** — Review the exact changes published by \`${bookmark}\`.`,
+		].join("\n"),
+	};
 }
 
 function isIndeterminate(error: unknown): boolean {

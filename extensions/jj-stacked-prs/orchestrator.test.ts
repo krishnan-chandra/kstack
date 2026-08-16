@@ -128,8 +128,24 @@ describe("publishStack", () => {
 		assert.deepEqual(jj.calls, []);
 	});
 
-	it("creates draft PRs and comments that include every returned number", async () => {
-		const github = fakeGithub();
+	it("creates draft PRs with generated slice metadata and comments that include every returned number", async () => {
+		const created: Array<{ bookmark: string; title: string; body: string }> = [];
+		const github = fakeGithub({
+			createDraftPr: async (input) => {
+				created.push({ bookmark: input.bookmark, title: input.title, body: input.body });
+				return {
+					number: input.bookmark === "feat1" ? 11 : 12,
+					headRef: input.bookmark,
+					headCommitId: input.bookmark === "feat1" ? "aaa-commit" : "bbb-commit",
+					baseRef: input.base,
+					title: input.title,
+					draft: true,
+					url: `https://example/${input.bookmark}`,
+					headOwner: "o",
+				};
+			},
+		});
+		const metadataRequests: Array<{ bookmark: string; baseRevset: string }> = [];
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
@@ -137,6 +153,13 @@ describe("publishStack", () => {
 				ui: ui(),
 				jj: fakeJj(),
 				github,
+				generatePrMetadata: async (request) => {
+					metadataRequests.push({ bookmark: request.bookmark, baseRevset: request.baseRevset });
+					return {
+						title: `Title for ${request.bookmark}`,
+						body: `## Summary\n\n- Summary for ${request.bookmark}.\n\n## Review guide\n\n1. **Flow** — Verify ${request.bookmark}.`,
+					};
+				},
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -145,11 +168,93 @@ describe("publishStack", () => {
 			result.publication.pullRequests.map((pr) => pr.prNumber),
 			[11, 12],
 		);
+		assert.deepEqual(metadataRequests, [
+			{ bookmark: "feat1", baseRevset: "trunk()" },
+			{ bookmark: "feat2", baseRevset: 'bookmarks(exact:"feat1")' },
+		]);
+		assert.deepEqual(created, [
+			{
+				bookmark: "feat1",
+				title: "Title for feat1",
+				body: "## Summary\n\n- Summary for feat1.\n\n## Review guide\n\n1. **Flow** — Verify feat1.",
+			},
+			{
+				bookmark: "feat2",
+				title: "Title for feat2",
+				body: "## Summary\n\n- Summary for feat2.\n\n## Review guide\n\n1. **Flow** — Verify feat2.",
+			},
+		]);
 		assert.equal(github.comments.length, 2);
 		for (const body of github.comments) {
 			assert.match(body, /#11/);
 			assert.match(body, /#12/);
 		}
+	});
+
+	it("fails metadata generation before the first remote mutation", async () => {
+		const jj = fakeJj();
+		let created = false;
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj,
+				github: fakeGithub({
+					createDraftPr: async () => {
+						created = true;
+						throw new Error("must not create");
+					},
+				}),
+				generatePrMetadata: async () => {
+					throw new Error("model unavailable");
+				},
+			},
+		);
+		assert.equal(result.status, "failed");
+		assert.deepEqual(jj.calls, []);
+		assert.equal(created, false);
+	});
+
+	it("detects a stale plan if the stack changes while metadata is generating", async () => {
+		let callCount = 0;
+		const jj = fakeJj({
+			listLocalBookmarks: async () => {
+				callCount++;
+				if (callCount > 2) {
+					return [
+						{ name: "feat1", commitId: "aaa-commit" },
+						{ name: "feat2", commitId: "ccc-commit" },
+					];
+				}
+				return [
+					{ name: "feat1", commitId: "aaa-commit" },
+					{ name: "feat2", commitId: "bbb-commit" },
+				];
+			},
+		});
+		let created = false;
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj,
+				github: fakeGithub({
+					createDraftPr: async () => {
+						created = true;
+						throw new Error("must not create");
+					},
+				}),
+				generatePrMetadata: async (request) => ({
+					title: `Title for ${request.bookmark}`,
+					body: `## Summary\n\n- Summary.\n\n## Review guide\n\n1. **Flow** — Verify.`,
+				}),
+			},
+		);
+		assert.equal(result.status, "stale");
+		assert.deepEqual(jj.calls, []);
+		assert.equal(created, false);
 	});
 
 	it("repairs only a wrong base and leaves existing title/draft untouched", async () => {

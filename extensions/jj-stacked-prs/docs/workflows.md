@@ -110,20 +110,17 @@ Reinspect afterward.
 ```
 
 The command shows the exact plan, confirms it, recomputes state, and mutates
-only when the full plan ID still matches. Missing PRs are created as drafts.
+only when the full plan ID still matches. Missing PRs are created as drafts. Before the first push, the active Pi model
+writes each new PR's title, `## Summary`, and thematic `## Review guide` from
+that slice's exact diff (`trunk()` below the bottom slice and the preceding
+bookmark below later slices). Publication stops without remote mutation if the
+diff is too large, the model is unavailable, or the response fails validation.
 Existing title, body, and draft state are preserved. Navigation comments carry
 verified merged, closed, open, and draft ancestors.
 
-After structural publication, author titles and bodies with `write-pr` from
-each slice's exact diff (`trunk()` below the bottom slice, the preceding
-bookmark below later slices), then:
-
-```bash
-gh pr edit <pr-number> --title '<title>' --body-file <body-file>
-```
-
-If a metadata update fails, report a partial publication. Do not claim every
-PR has a completed description.
+`plan-implement --stack` may run its metadata and reviewer child afterward. That
+child can refine the generated title and body from the same exact slice, but it
+must not push bookmarks, create PRs, repair bases, or update navigation comments.
 
 ## 7. Process review feedback on a middle PR
 

@@ -137,7 +137,7 @@ the `"panel-review"` section:
   "panel-review": {
     "reviewers": [
       { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "high" },
-      { "label": "claude", "model": "anthropic/claude-sonnet-5", "thinking": "medium" }
+      { "label": "sonnet", "model": "anthropic/claude-sonnet-5", "thinking": "medium" }
     ],
     "maxConcurrency": 5,
     "timeoutMinutes": 10,

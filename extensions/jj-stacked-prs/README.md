@@ -36,10 +36,14 @@ freshness, not authorization.
   bookmark. An empty working-copy child above the top is allowed.
 - Plans pushes, draft-PR creation, and base repairs from local/remote bookmark
   targets and open PRs in the same GitHub repository.
+- Generates each new draft's title and body from its exact slice diff with the
+  active Pi model. Bodies follow the `write-pr` `## Summary` and thematic
+  `## Review guide` structure. Existing PR metadata remains unchanged.
 - Publishes from `/jj-stack publish` after standard `ctx.ui.confirm`, or from
   `jj_stack_publish` after an explicit user request. Both paths recompute the
-  plan and refuse a stale plan ID before mutation. Pass `--ready` to mark the
-  published drafts ready after the structural work.
+  plan and refuse a stale plan ID before mutation. Metadata generation for all
+  new PRs finishes before the first push. Pass `--ready` to mark the published
+  drafts ready after the structural work.
 - Syncs only the selected stack: `jj git fetch --remote <remote>` then
   `jj rebase -b <top> -o <trunk>`.
 - Advances only when inspection has no blockers, the merged PR's head commit
@@ -95,6 +99,8 @@ Completed outcomes return a base-to-top PR map. Other outcomes are
 | Command timeout | 20s jj, 30s gh |
 | Abort grace | 5s SIGTERM then SIGKILL |
 | Tool content | 50 KiB / 2,000 lines |
+| Metadata input per slice | 128 KiB diff / 32 KiB log |
+| Generated PR body | 30 KiB |
 | Navigation comment | 100 entries / 60 KiB |
 | Concurrent mutation runs | 1 per session |
 | Ready + branch-delete `gh` calls | 30s each |
@@ -109,6 +115,11 @@ remote acceptance cannot be disproved.
 Extensions run with the user's OS permissions. This is not a sandbox. Commands
 operate on `ctx.cwd` only. `repositoryPath` exists for trusted in-process
 callers such as `plan-implement`.
+
+Diffs and commit descriptions are untrusted model input. The metadata call has
+no tools, and its JSON output must pass title, size, heading, review-guide, and
+placeholder checks before GitHub receives it. Publication stops without remote
+mutation when evidence collection or metadata generation fails.
 
 Partial and indeterminate results list completed or in-flight actions and
 require a fresh plan. The extension never rolls back a valid push, PR creation,
