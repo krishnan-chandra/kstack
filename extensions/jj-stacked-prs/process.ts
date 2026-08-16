@@ -129,7 +129,30 @@ export async function runCommand(
 		});
 		child.on("error", (error) => {
 			spawnError = redact(`Spawn failed: ${errorMessage(error)}`);
-			if (!killStarted) finish({ kind: "spawn-failed", message: spawnError });
+			if (overflow) {
+				return finish({
+					kind: "overflow",
+					stream: overflow,
+					message: `Command output exceeded the ${overflow === "stdout" ? stdoutCap : stderrCap}-byte ${overflow} cap: ${command}`,
+				});
+			}
+			if (cancelled) {
+				return finish({
+					kind: "cancelled",
+					message: `Command cancelled: ${command}`,
+					stdout: stdout.toString(),
+					stderr: stderr.toString(),
+				});
+			}
+			if (timedOut) {
+				return finish({
+					kind: "timeout",
+					message: `Command timed out after ${options.timeoutMs}ms: ${command}`,
+					stdout: stdout.toString(),
+					stderr: stderr.toString(),
+				});
+			}
+			finish({ kind: "spawn-failed", message: spawnError });
 		});
 		child.on("close", (code, signal) => {
 			const out = stdout.toString();

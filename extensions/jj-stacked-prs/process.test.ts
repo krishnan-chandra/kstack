@@ -11,6 +11,8 @@ class FakeProcess implements SpawnedProcess {
 	pid = 4242;
 	killed = false;
 	ignoreTerm = false;
+	/** When false, kill() models a child that is already gone and never emits "close". */
+	closeOnKill = true;
 
 	on(event: "close", cb: (code: number | null, signal: NodeJS.Signals | null) => void): void;
 	on(event: "error", cb: (error: Error) => void): void;
@@ -23,6 +25,7 @@ class FakeProcess implements SpawnedProcess {
 	kill(signal = "SIGTERM"): boolean {
 		this.killed = true;
 		this.kills.push(signal);
+		if (!this.closeOnKill) return false;
 		if (signal === "SIGTERM" && this.ignoreTerm) return true;
 		queueMicrotask(() => this.emitClose(null, signal as NodeJS.Signals));
 		return true;
@@ -33,6 +36,22 @@ class FakeProcess implements SpawnedProcess {
 	emitError(error: Error): void {
 		this.events.emit("error", error);
 	}
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`did not settle within ${ms}ms`)), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
 }
 
 describe("process runner", () => {
@@ -101,6 +120,27 @@ describe("process runner", () => {
 		child.emitClose(null, "SIGTERM");
 		const result = await pending;
 		assert.equal(result.kind, "cancelled");
+	});
+
+	it("settles as cancelled when error fires after abort without close", async () => {
+		const child = new FakeProcess();
+		child.closeOnKill = false;
+		const controller = new AbortController();
+		const pending = runCommand(["sleep"], { cwd: "/tmp", signal: controller.signal, killGraceMs: 5 }, () => child);
+		controller.abort();
+		child.emitError(new Error("boom"));
+		const result = await withTimeout(pending, 500);
+		assert.equal(result.kind, "cancelled");
+	});
+
+	it("settles as timeout when error fires after timeout without close", async () => {
+		const child = new FakeProcess();
+		child.closeOnKill = false;
+		const pending = runCommand(["sleep"], { cwd: "/tmp", timeoutMs: 5, killGraceMs: 60_000 }, () => child);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		child.emitError(new Error("boom"));
+		const result = await withTimeout(pending, 500);
+		assert.equal(result.kind, "timeout");
 	});
 
 	it("reports an uncertain close when there is no exit code", async () => {
