@@ -1,7 +1,38 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
-import { isForbiddenStagingPath } from "./github.ts";
+import { getReviewThreads, isForbiddenStagingPath } from "./github.ts";
+
+describe("GitHub state boundaries", () => {
+	it("fails review-thread state when repository identity cannot be resolved", async () => {
+		const result = await getReviewThreads(
+			async () => ({ code: 1, stdout: "", stderr: "not authenticated" }),
+			"/repo",
+			7,
+		);
+		assert.deepEqual(result, {
+			code: 1,
+			stdout: "",
+			stderr: "Could not resolve GitHub repository for review threads: not authenticated",
+			threads: [],
+		});
+	});
+
+	it("fails review-thread state when repository identity is malformed", async () => {
+		const result = await getReviewThreads(
+			async () => ({ code: 0, stdout: "not-a-repository", stderr: "" }),
+			"/repo",
+			7,
+		);
+		assert.deepEqual(result, {
+			code: 1,
+			stdout: "",
+			stderr:
+				"Could not resolve GitHub repository for review threads: GitHub CLI returned an invalid repository identity.",
+			threads: [],
+		});
+	});
+});
 
 describe("porcelain and forbidden paths", () => {
 	it("enumerates changed paths losslessly from git status --porcelain=v1 -z", async () => {

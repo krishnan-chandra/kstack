@@ -5,12 +5,71 @@ import {
 	findOpenPullRequestByHead,
 	getPullRequest,
 	getRepository,
+	ghExec,
 	mergePullRequest,
 	type PullRequestSnapshot,
 	type RepositorySnapshot,
+	resolveRepoName,
+	resolveRepoNameResult,
 } from "./github.ts";
 
 const SHA = "a".repeat(40);
+
+test("ghExec passes successful results through and converts execution failures to envelopes", async () => {
+	const success = { code: 0, stdout: "ok", stderr: "" };
+	const successfulExec: ExecFn = async () => success;
+	assert.equal(await ghExec(successfulExec, "/repo", ["status"]), success);
+
+	const failedExec: ExecFn = async () => {
+		throw new Error("gh unavailable");
+	};
+	assert.deepEqual(await ghExec(failedExec, "/repo", ["status"]), {
+		code: 1,
+		stdout: "",
+		stderr: "gh unavailable",
+	});
+
+	const nonErrorExec: ExecFn = async () => {
+		throw "gh unavailable";
+	};
+	assert.deepEqual(await ghExec(nonErrorExec, "/repo", ["status"]), {
+		code: 1,
+		stdout: "",
+		stderr: "gh unavailable",
+	});
+});
+
+test("ghExec retains the 15-second default, custom timeout, and signal", async () => {
+	let options: { timeout?: number; signal?: AbortSignal } | undefined;
+	const exec: ExecFn = async (_command, _args, received) => {
+		options = received;
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	await ghExec(exec, "/repo", ["status"]);
+	assert.equal(options?.timeout, 15_000);
+
+	const controller = new AbortController();
+	await ghExec(exec, "/repo", ["status"], 20_000, controller.signal);
+	assert.equal(options?.timeout, 20_000);
+	assert.equal(options?.signal, controller.signal);
+});
+
+test("resolveRepoName accepts only a trimmed owner/name result", async () => {
+	const valid: ExecFn = async () => ({ code: 0, stdout: " owner/repo\n", stderr: "" });
+	assert.equal(await resolveRepoName(valid, "/repo"), "owner/repo");
+
+	const failed = { code: 1, stdout: "owner/repo", stderr: "not authenticated" };
+	const failedExec: ExecFn = async () => failed;
+	assert.deepEqual(await resolveRepoNameResult(failedExec, "/repo"), { ...failed, repo: undefined });
+
+	for (const output of [
+		{ code: 0, stdout: "", stderr: "" },
+		{ code: 0, stdout: "owner only", stderr: "" },
+	]) {
+		const exec: ExecFn = async () => output;
+		assert.equal(await resolveRepoName(exec, "/repo"), undefined);
+	}
+});
 
 test("parses repository policy and a pinned PR snapshot", async () => {
 	const outputs = [

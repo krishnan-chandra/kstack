@@ -8,6 +8,7 @@
  */
 
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
+import { ghExec as gh, resolveRepoNameResult } from "../shared/github.ts";
 import {
 	autopilotReplyBody,
 	clipLog,
@@ -54,31 +55,6 @@ const RESOLVE_THREAD_MUTATION = `mutation($id: ID!) {
     thread { isResolved }
   }
 }`;
-
-/** Run a gh command and return its result. */
-export async function gh(exec: ExecFn, cwd: string, args: string[], timeout = 15_000): Promise<ExecFnResult> {
-	try {
-		return await exec("gh", args, { cwd, timeout });
-	} catch (error) {
-		return { code: 1, stdout: "", stderr: (error as Error).message };
-	}
-}
-
-/** Resolve the repo owner/name for the current checkout. */
-async function resolveRepo(exec: ExecFn, cwd: string): Promise<ExecFnResult & { repo?: string }> {
-	const result = await gh(exec, cwd, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
-	if (result.code !== 0 || !result.stdout.trim()) {
-		return { ...result, repo: undefined };
-	}
-	const repo = result.stdout.trim();
-	return /^[^/\s]+\/[^/\s]+$/.test(repo) ? { ...result, repo } : { ...result, repo: undefined };
-}
-
-/** Resolve the repo owner/name once per drive; thread the value into fetchPRState. */
-export async function resolveRepoName(exec: ExecFn, cwd: string): Promise<string | undefined> {
-	const result = await resolveRepo(exec, cwd);
-	return result.repo;
-}
 
 /**
  * Fetch the lowest unmerged open PR in the current repository, sorted by
@@ -171,17 +147,19 @@ export async function getReviewThreads(
 	prNumber: number,
 	repo?: string,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
-	let repoResult: ExecFnResult & { repo?: string };
-	if (repo !== undefined) {
-		repoResult = { code: 0, stdout: repo, stderr: "", repo };
-	} else {
-		repoResult = await resolveRepo(exec, cwd);
+	const repoResult =
+		repo !== undefined ? { code: 0, stdout: repo, stderr: "", repo } : await resolveRepoNameResult(exec, cwd);
+	const split = repoResult.repo ? splitRepo(repoResult.repo) : undefined;
+	if (!split) {
+		// Review threads are required GitHub state; neither a CLI failure nor malformed identity is complete state.
+		const reason = repoResult.stderr.trim() || "GitHub CLI returned an invalid repository identity.";
+		return {
+			code: 1,
+			stdout: "",
+			stderr: `Could not resolve GitHub repository for review threads: ${reason}`,
+			threads: [],
+		};
 	}
-	if (!repoResult.repo) {
-		return { ...repoResult, threads: [] };
-	}
-	const split = splitRepo(repoResult.repo);
-	if (!split) return { ...repoResult, threads: [] };
 
 	const threads: ReviewThread[] = [];
 	let cursor: string | undefined;

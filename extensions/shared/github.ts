@@ -1,4 +1,4 @@
-import type { ExecFn } from "./git-exec.ts";
+import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 import { asRecord } from "./narrow.ts";
 
 /** Merge methods Kstack permits anywhere; merge commits are never allowed. */
@@ -48,6 +48,44 @@ const DEFAULT_LIMITS: GithubLimits = {
 	diagnosticsBytes: 8 * 1024,
 };
 const SHA = /^[0-9a-f]{40}$/i;
+const REPOSITORY_NAME = /^[^/\s]+\/[^/\s]+$/;
+
+/** Run a bounded GitHub CLI command without propagating execution failures. */
+export async function ghExec(
+	exec: ExecFn,
+	cwd: string,
+	args: string[],
+	timeout = DEFAULT_LIMITS.queryMs,
+	signal?: AbortSignal,
+): Promise<ExecFnResult> {
+	try {
+		return await exec("gh", args, { cwd, timeout, signal });
+	} catch (error) {
+		return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/** Resolve the current checkout's GitHub owner/name and preserve CLI diagnostics. */
+export async function resolveRepoNameResult(
+	exec: ExecFn,
+	cwd: string,
+	signal?: AbortSignal,
+): Promise<ExecFnResult & { repo?: string }> {
+	const result = await ghExec(
+		exec,
+		cwd,
+		["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+		undefined,
+		signal,
+	);
+	const repo = result.stdout.trim();
+	return { ...result, repo: result.code === 0 && REPOSITORY_NAME.test(repo) ? repo : undefined };
+}
+
+/** Resolve the current checkout's GitHub owner/name, if available. */
+export async function resolveRepoName(exec: ExecFn, cwd: string, signal?: AbortSignal): Promise<string | undefined> {
+	return (await resolveRepoNameResult(exec, cwd, signal)).repo;
+}
 
 function parseJson(text: string): unknown {
 	try {
