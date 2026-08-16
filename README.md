@@ -146,7 +146,7 @@ rows stay unnamed.
 - Pi 0.84.1 or newer
 - [Bun](https://bun.sh) 1.3.14 or newer for local tooling. Install it with `curl -fsSL https://bun.sh/install | bash`.
 - Node.js 22 or newer for Pi's runtime and the `node:sqlite` test carve-out
-- Python 3.12 or newer for the `git-worktrees` skill scripts and their tests
+- Python 3.12 or newer for the remaining `git-worktrees` inspection scripts and their tests
 - A local filesystem for Pi's agent directory
 
 The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
@@ -347,11 +347,12 @@ bun test skills/investigation-model.test.mjs
 bun run test:sqlite
 ```
 
-Python 3 is required to develop the `git-worktrees` skill. Run its hermetic
-suite and compile the bundled scripts without writing bytecode into the
-checkout:
+The `git-worktrees` planner is a Node TypeScript CLI. Inspection is still
+Python. Run both suites and compile the remaining Python without writing
+bytecode into the checkout:
 
 ```bash
+bun test skills/git-worktrees/
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/tests -p 'test_*.py'
 PYTHONPYCACHEPREFIX=/tmp/kstack-pycache python3 -m py_compile skills/git-worktrees/scripts/*.py
 ```

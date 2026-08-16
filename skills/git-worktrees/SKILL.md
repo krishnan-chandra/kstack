@@ -2,7 +2,7 @@
 name: git-worktrees
 description: Create, inspect, reuse, repair, and safely remove local Git linked worktrees managed under ~/.pi/kstack/worktrees. Use whenever the user asks to work in a worktree, isolate a change from the current checkout, list or clean up worktrees, prune stale worktree records, or mentions plan-implement/kstack with --worktree. This skill is for Git worktrees, not Jujutsu workspaces.
 license: MIT
-compatibility: Requires Git with `git worktree` support and python3 for the bundled read-only inspection helper. Managed worktrees default to ~/.pi/kstack/worktrees. Mutations require confirmation in interactive use.
+compatibility: Requires Git with `git worktree` support, Node 22+ for the bundled planner, and python3 for the bundled read-only inspection helper. Managed worktrees default to ~/.pi/kstack/worktrees. Mutations require confirmation in interactive use.
 ---
 
 # Managed Git worktrees
@@ -46,10 +46,10 @@ Never treat a directory scan alone as authority. Validate the owning repository 
 1. Run the bundled read-only planner. It resolves the canonical common Git directory, remote default base, repository hash, collision-free branch, and destination without fetching or mutating:
 
    ```bash
-   python3 <skill-dir>/scripts/plan_worktree.py --repo <repo> --task "<task>"
+   node <skill-dir>/scripts/plan_worktree.ts --repo <repo> --task "<task>"
    ```
 
-2. Review the planner's `base_ref`, immutable `base_sha`, `branch`, and `path`. It prefers the symbolic default branch of `origin`, then other remotes; it falls back through remote and local `main`/`master`, then `HEAD`. Report any fallback.
+2. Review the planner's `base_ref`, immutable `base_sha`, `branch`, and `path`. The planner uses the same slug and base-ref rules as `/plan-implement --worktree`: `extractSlug` (30 characters, no mid-word cut) and origin-first symbolic HEAD, then remote and local `main`/`master`, then `HEAD`. Report any fallback.
 3. Recheck both the branch and destination. If either exists, do not overwrite or reset it; rerun the planner to allocate `-2`, `-3`, and so on, or offer explicit reuse after inspection.
 4. Show the exact base, branch, and destination, then ask for confirmation. An approved non-interactive `plan-implement --worktree` plan already authorizes this one creation; it does not authorize cleanup or publication.
 5. Create with argument-separated Git invocation, not shell interpolation:
