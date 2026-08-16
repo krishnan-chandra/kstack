@@ -68,16 +68,17 @@ Additional rules:
 5. Run the extension tests from the repository root:
 
 ```bash
-node --test extensions/<name>/*.test.ts
+# Run the extension tests under Bun. For session-archive or handoff, use its
+# named command because part of the suite requires Node's node:sqlite:
+bun test extensions/<name>/
+# Or: bun run test:session-archive
+# Or: bun run test:handoff
 ```
 
 6. Run all repository extension tests before finishing:
 
 ```bash
-node --test extensions/session-archive/*.test.ts \
-  extensions/handoff/*.test.ts \
-  extensions/panel-review/*.test.ts \
-  extensions/<name>/*.test.ts
+bun run test:extensions
 ```
 
 7. Load with `pi -e extensions/<name>/index.ts` or use an isolated `PI_CODING_AGENT_DIR` smoke test. Never use real sessions, archives, credentials, or repositories as destructive fixtures.

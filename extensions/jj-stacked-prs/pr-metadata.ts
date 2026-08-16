@@ -13,8 +13,7 @@ const BEGIN = "-----BEGIN UNTRUSTED SLICE DATA-----";
 const END = "-----END UNTRUSTED SLICE DATA-----";
 function hasPlaceholder(text: string): boolean {
 	return (
-		/\b(?:tbd|placeholder)\b|\[(?:todo|tbd)\]|<(?:todo|tbd)>|\btodo\s*[:\-–—\(\[]/i.test(text) ||
-		/\bTODO\b/.test(text)
+		/\b(?:tbd|placeholder)\b|\[(?:todo|tbd)\]|<(?:todo|tbd)>|\btodo\s*[:\-–—\(\[]/i.test(text) || /\bTODO\b/.test(text)
 	);
 }
 
@@ -56,7 +55,16 @@ export async function collectSliceEvidence(run: ProcessRunner, request: PrMetada
 				throw err;
 			}),
 			run(
-				["jj", "--no-pager", "log", "-r", range, "--no-graph", "-T", 'change_id.short() ++ " " ++ description ++ "\\n"'],
+				[
+					"jj",
+					"--no-pager",
+					"log",
+					"-r",
+					range,
+					"--no-graph",
+					"-T",
+					'change_id.short() ++ " " ++ description ++ "\\n"',
+				],
 				{
 					cwd: request.cwd,
 					signal,

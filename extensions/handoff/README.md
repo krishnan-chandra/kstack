@@ -82,7 +82,7 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 ## Tests
 
 ```bash
-node --test extensions/handoff/*.test.ts
+bun run test:handoff
 ```
 
 The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), inheritance, explicit model/effort switching and clamping, restoration of model and effort on cancelled or pre-replacement failures, scoped-model validation, and override detection without making any model calls.

@@ -144,8 +144,9 @@ cross-process session-liveness detection described above.
 ## Development
 
 ```bash
-# Unit + integration tests (Node 22+; no Pi runtime imports needed)
-node --test ~/.pi/agent/extensions/session-archive/*.test.ts
+# Unit + integration tests. The command runs Bun-compatible tests and the
+# node:sqlite tests under Node 22:
+bun run test:session-archive
 ```
 
 Structure:

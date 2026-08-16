@@ -85,6 +85,6 @@ mode.
 Run the focused tests and typecheck from the repository root:
 
 ```bash
-node --test extensions/fast-implement/*.test.ts
-npm run typecheck
+bun test extensions/fast-implement/
+bun run typecheck
 ```

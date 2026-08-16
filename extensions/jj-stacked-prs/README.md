@@ -131,9 +131,9 @@ publish the same stack; use one session.
 ## Development
 
 ```bash
-node --test extensions/jj-stacked-prs/*.test.ts
-npm run typecheck
-npm run check:exports
+bun test extensions/jj-stacked-prs/
+bun run typecheck
+bun run check:exports
 ```
 
 Tests inject process and GitHub/jj adapters. They do not use real credentials

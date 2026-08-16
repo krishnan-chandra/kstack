@@ -212,7 +212,7 @@ synthesis) is unit-tested with injected Git/spawn/fs dependencies — no real
 provider calls:
 
 ```bash
-node --test extensions/panel-review/*.test.ts
+bun test extensions/panel-review/
 ```
 
 Manual smoke test: in a fixture repository with committed, staged, unstaged,

@@ -30,5 +30,5 @@ Instead, this extension replaces the main editor via `ctx.ui.setEditorComponent`
 Run the focused test:
 
 ```bash
-node --test extensions/steering-swap/*.test.ts
+bun test extensions/steering-swap/
 ```

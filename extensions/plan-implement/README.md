@@ -310,7 +310,7 @@ Publication stops when workstream changes have not been recorded.
 Unit tests make no provider calls:
 
 ```bash
-node --test extensions/plan-implement/*.test.ts
+bun test extensions/plan-implement/
 ```
 
 Implementation plans are temporary working state under `local/plans/` and are
