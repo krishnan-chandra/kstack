@@ -1,14 +1,11 @@
-import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { formatHistoryReference } from "../handoff/handoff-context.ts";
-import type { HandoffSource } from "../handoff/history-reader.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { splitModelRef } from "../shared/model-spec.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
-import { deriveSessionName, nameSessionIfUnnamed } from "../shared/session-name.ts";
+import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
@@ -75,14 +72,34 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 				"warning",
 			);
 			ctx.ui.setStatus("fast-implement", undefined);
-			settlementController.finish(pending.runId, false);
+			settlementController.finish(pending.runId);
 			return;
 		}
+		await restorePreviousModel(pending, ctx);
 		pi.appendEntry(FAST_IMPLEMENT_RUN_COMPLETE_ENTRY, { runId: pending.runId, status: "completed" });
 		postOutcome(settlement.outcome, ctx);
 		ctx.ui.setStatus("fast-implement", undefined);
-		settlementController.finish(pending.runId, true);
+		settlementController.finish(pending.runId);
 	});
+
+	async function restorePreviousModel(run: PendingFastImplementRun, ctx: ExtensionContext): Promise<void> {
+		if (!run.previousModel || !run.implementerModel || ctx.model === undefined) return;
+		if (`${ctx.model.provider}/${ctx.model.id}` !== run.implementerModel) {
+			ctx.ui.notify(
+				"Fast implementation left your model selection unchanged because it changed during the run.",
+				"info",
+			);
+			return;
+		}
+		const { provider, modelId } = splitModelRef(run.previousModel);
+		const previous = ctx.modelRegistry.find(provider, modelId);
+		if (!previous) return;
+		try {
+			if ((await pi.setModel(previous)) && run.previousThinking) pi.setThinkingLevel(run.previousThinking);
+		} catch {
+			// Restoration is best effort after verified work.
+		}
+	}
 
 	function postOutcome(outcome: FastImplementOutcome, ctx: ExtensionContext): void {
 		const retained =
@@ -109,36 +126,24 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 		backend: VcsBackend,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
-		if (ctx.mode !== "tui") {
-			ctx.ui.notify("Current-checkout fast implementation requires interactive TUI mode.", "error");
-			return;
-		}
-		const parentFile = ctx.sessionManager.getSessionFile();
-		if (!parentFile) {
-			ctx.ui.notify(
-				"Current-checkout fast implementation requires a persisted session and is unavailable with --no-session.",
-				"error",
-			);
-			return;
-		}
 		const created = await createTakeoverWorkstream(backend, ctx.cwd, request.task);
 		if (!created.ok) {
 			postOutcome({ status: "failed", error: created.error }, ctx);
 			return;
 		}
 
-		const parentId = ctx.sessionManager.getSessionId();
 		const cwd = ctx.cwd;
-		const historyRef = formatHistoryReference(parentFile, parentId, cwd);
-		const source: HandoffSource = { version: 1, sessionFile: parentFile, sessionId: parentId, cwd };
 		const pending: PendingFastImplementRun = {
 			schemaVersion: 1,
-			runId: randomUUID(),
+			runId: crypto.randomUUID(),
 			task: request.task,
 			changeKind: request.changeKind,
 			backend: backend.id,
 			cwd,
 			checkpoint: created,
+			implementerModel: role.implementer.model,
+			...(ctx.model ? { previousModel: `${ctx.model.provider}/${ctx.model.id}` } : {}),
+			...(ctx.thinkingLevel ? { previousThinking: ctx.thinkingLevel } : {}),
 		};
 		let kickoff: string;
 		try {
@@ -170,25 +175,6 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 			);
 			return;
 		}
-		const previousModel = ctx.model;
-		const previousThinking = ctx.thinkingLevel;
-		let replacementStarted = false;
-		const restoreParent = async (): Promise<void> => {
-			if (previousModel) {
-				try {
-					await pi.setModel(previousModel);
-				} catch {
-					// Best effort: the parent remains on the implementer model.
-				}
-			}
-			if (typeof previousThinking === "string") {
-				try {
-					pi.setThinkingLevel(previousThinking);
-				} catch {
-					// Best effort: the parent retains the selected thinking level.
-				}
-			}
-		};
 		try {
 			if (!(await pi.setModel(targetModel))) {
 				postOutcome(
@@ -203,33 +189,9 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			if (role.implementer.thinking) pi.setThinkingLevel(role.implementer.thinking);
-			const result = await ctx.newSession({
-				parentSession: parentFile,
-				setup: async (sm) => {
-					sm.appendSessionInfo(deriveSessionName(request.task));
-					sm.appendCustomMessageEntry("handoff", historyRef, true, source);
-					sm.appendCustomEntry(FAST_IMPLEMENT_RUN_ENTRY, pending);
-				},
-				withSession: async (fresh) => {
-					replacementStarted = true;
-					await fresh.sendUserMessage(kickoff);
-				},
-			});
-			if (result.cancelled) {
-				await restoreParent();
-				postOutcome(
-					{
-						status: "aborted",
-						error: "Implementation session replacement was cancelled.",
-						branch: created.ref,
-						cwd,
-					},
-					ctx,
-				);
-			}
+			pi.appendEntry(FAST_IMPLEMENT_RUN_ENTRY, pending);
 		} catch (error) {
-			if (replacementStarted) throw error;
-			await restoreParent();
+			await restorePreviousModel(pending, ctx);
 			postOutcome(
 				{
 					status: "failed",
@@ -238,6 +200,15 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 					cwd,
 				},
 				ctx,
+			);
+			return;
+		}
+		try {
+			pi.sendUserMessage(kickoff);
+		} catch (error) {
+			ctx.ui.notify(
+				`Fast implementation kickoff may have been accepted: ${error instanceof Error ? error.message : String(error)}. The run remains pending and will be verified when the session settles.`,
+				"warning",
 			);
 		}
 	}
@@ -296,13 +267,13 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 		}
 		try {
 			const confirmed = await ctx.ui.confirm(
-				current ? "Start a fast implementation takeover session?" : "Run one fast implementation worktree child?",
-				`Implementer: ${modelCliId(role.role.implementer)}\nVCS backend: ${backend.id}\nChange kind: ${request.changeKind}\nLocation: ${current ? (backend.id === "jj" ? "current jj workspace" : "current Git checkout") : "managed Git worktree"}\nTimeout: ${current ? "none (interrupt or steer the session normally)" : `${role.role.timeoutMinutes} min`}\n\nFast mode skips independent planning and panel review, but still requires inspection, verification, and locally recorded changes. It never publishes automatically.${current ? " A fresh linked implementation session will replace this TUI session; the parent is retained and never archived." : ""}`,
+				current ? "Start fast implementation in this session?" : "Run one fast implementation worktree child?",
+				`Implementer: ${modelCliId(role.role.implementer)}\nVCS backend: ${backend.id}\nChange kind: ${request.changeKind}\nLocation: ${current ? (backend.id === "jj" ? "current jj workspace" : "current Git checkout") : "managed Git worktree"}\nTimeout: ${current ? "none (interrupt or steer the session normally)" : `${role.role.timeoutMinutes} min`}\n\nFast mode skips independent planning and panel review, but still requires inspection, verification, and locally recorded changes. It never publishes automatically.${current ? " The implementation starts in this session, so its existing plan and discussion remain in context." : ""}`,
 			);
 			if (!confirmed || !lifecycle.isCurrent(runToken)) return;
 			ctx.ui.setStatus(
 				"fast-implement",
-				current ? "fast-implement: starting takeover…" : "fast-implement: implementing…",
+				current ? "fast-implement: starting in this session…" : "fast-implement: implementing…",
 			);
 			if (current) {
 				await startTakeover(request, role.role, backend, ctx);
@@ -316,7 +287,7 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("fast-implement", {
-		description: "Implement a bounded change in a fresh session with local commits",
+		description: "Implement a bounded change in this session with local commits",
 		handler: async (args, ctx) => {
 			const parsed = parseFastImplementArgs(args ?? "");
 			if (!parsed.ok) {

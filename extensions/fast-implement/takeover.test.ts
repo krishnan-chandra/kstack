@@ -48,15 +48,15 @@ describe("findPendingFastImplementRun", () => {
 });
 
 describe("TakeoverSettlementController", () => {
-	it("re-arms a pending run and stops only after successful completion", () => {
+	it("does not latch after an unrelated settle or a completed run", () => {
 		const controller = new TakeoverSettlementController();
 		const entries = [{ type: "custom", customType: FAST_IMPLEMENT_RUN_ENTRY, data: run }];
 		assert.deepEqual(controller.begin(entries), run);
 		assert.equal(controller.begin(entries), undefined, "does not overlap verification");
-		controller.finish(run.runId, false);
+		controller.finish(run.runId);
 		assert.deepEqual(controller.begin(entries), run, "retries after a provisional settle");
-		controller.finish(run.runId, true);
-		assert.equal(controller.begin(entries), undefined, "stops after verified completion");
+		controller.finish(run.runId);
+		assert.deepEqual(controller.begin(entries), run, "can verify a later run in the same session");
 	});
 
 	it("resets when a replacement session starts", () => {
@@ -151,12 +151,12 @@ describe("takeover settlement", () => {
 });
 
 describe("buildTakeoverKickoff", () => {
-	it("includes guidance, workstream facts, history recovery, and publication prohibitions", () => {
+	it("includes guidance, workstream facts, same-session context, and publication prohibitions", () => {
 		const prompt = buildTakeoverKickoff(run, "IMPLEMENTER GUIDANCE");
 		assert.ok(prompt.includes("IMPLEMENTER GUIDANCE"));
 		assert.ok(prompt.includes(run.task));
 		assert.ok(prompt.includes(run.checkpoint.ref));
-		assert.ok(prompt.includes("read_handoff_history"));
+		assert.ok(prompt.includes("plan and prior discussion already in this session"));
 		assert.ok(prompt.includes("Do not push, publish, open a PR, or land."));
 	});
 

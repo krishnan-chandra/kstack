@@ -10,16 +10,6 @@ const RELATIVE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)(["'])(\.\.?\
 
 export const IMPORT_EXCEPTIONS = [
 	{
-		importer: "fast-implement/index.ts",
-		target: "handoff/handoff-context.ts",
-		reason: "fast-implement reuses handoff history-reference formatting",
-	},
-	{
-		importer: "fast-implement/index.ts",
-		target: "handoff/history-reader.ts",
-		reason: "fast-implement reuses handoff history-reference types",
-	},
-	{
 		importer: "handoff/command.ts",
 		target: "session-archive/archive-files.ts",
 		reason: "handoff reads and archives the source session",

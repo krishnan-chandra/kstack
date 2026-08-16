@@ -18,9 +18,9 @@ const CATALOG: Record<RouteId, RouteMetadata> = {
 	},
 	"fast-change": {
 		id: "fast-change",
-		label: "Fast change",
+		label: "Fast implement",
 		description:
-			"Implement an explicit, bounded, low-risk change with one confirmed child and local commits. Skips independent planning and review.",
+			"Implement an explicit, bounded change when a plan already exists in this session. Uses one confirmed implementer and local commits; skips new planning and review.",
 		requires: ["fast-implement"],
 	},
 	arena: {

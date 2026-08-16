@@ -1,3 +1,4 @@
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { isRecord } from "../shared/narrow.ts";
 import type { VcsBackend, VcsResult, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
@@ -6,6 +7,7 @@ import { type FastImplementOutcome, LIMITS } from "./types.ts";
 
 export const FAST_IMPLEMENT_RUN_ENTRY = "fast-implement-run";
 export const FAST_IMPLEMENT_RUN_COMPLETE_ENTRY = "fast-implement-run-complete";
+type PreviousThinking = NonNullable<ExtensionContext["thinkingLevel"]>;
 const MAX_KICKOFF_BYTES = 128 * 1024;
 
 export interface PendingFastImplementRun {
@@ -16,12 +18,27 @@ export interface PendingFastImplementRun {
 	backend: VcsBackendId;
 	cwd: string;
 	checkpoint: WorkstreamCheckpoint;
+	implementerModel?: string;
+	previousModel?: string;
+	previousThinking?: PreviousThinking;
 }
 
 interface EntryLike {
 	type?: unknown;
 	customType?: unknown;
 	data?: unknown;
+}
+
+function isPreviousThinking(value: unknown): value is PreviousThinking {
+	return (
+		value === "off" ||
+		value === "minimal" ||
+		value === "low" ||
+		value === "medium" ||
+		value === "high" ||
+		value === "xhigh" ||
+		value === "max"
+	);
 }
 
 function readPendingRun(value: unknown): PendingFastImplementRun | undefined {
@@ -41,7 +58,12 @@ function readPendingRun(value: unknown): PendingFastImplementRun | undefined {
 		typeof value.checkpoint.ref !== "string" ||
 		value.checkpoint.ref.length === 0 ||
 		typeof value.checkpoint.baseSha !== "string" ||
-		value.checkpoint.baseSha.length === 0
+		value.checkpoint.baseSha.length === 0 ||
+		(value.implementerModel !== undefined &&
+			(typeof value.implementerModel !== "string" || value.implementerModel.length === 0)) ||
+		(value.previousModel !== undefined &&
+			(typeof value.previousModel !== "string" || value.previousModel.length === 0)) ||
+		(value.previousThinking !== undefined && !isPreviousThinking(value.previousThinking))
 	) {
 		return undefined;
 	}
@@ -53,6 +75,9 @@ function readPendingRun(value: unknown): PendingFastImplementRun | undefined {
 		backend: value.backend,
 		cwd: value.cwd,
 		checkpoint: { ref: value.checkpoint.ref, baseSha: value.checkpoint.baseSha },
+		...(typeof value.implementerModel === "string" ? { implementerModel: value.implementerModel } : {}),
+		...(typeof value.previousModel === "string" ? { previousModel: value.previousModel } : {}),
+		...(isPreviousThinking(value.previousThinking) ? { previousThinking: value.previousThinking } : {}),
 	};
 }
 
@@ -74,30 +99,21 @@ export function findPendingFastImplementRun(entries: readonly EntryLike[]): Pend
 }
 
 export class TakeoverSettlementController {
-	private checked = false;
 	private verifyingRunId: string | undefined;
 
 	reset(): void {
-		this.checked = false;
 		this.verifyingRunId = undefined;
 	}
 
 	begin(entries: readonly EntryLike[]): PendingFastImplementRun | undefined {
-		if (this.checked) return undefined;
 		const pending = findPendingFastImplementRun(entries);
-		if (!pending) {
-			this.checked = true;
-			return undefined;
-		}
-		if (this.verifyingRunId === pending.runId) return undefined;
+		if (!pending || this.verifyingRunId === pending.runId) return undefined;
 		this.verifyingRunId = pending.runId;
 		return pending;
 	}
 
-	finish(runId: string, completed: boolean): void {
-		if (this.verifyingRunId !== runId) return;
-		this.verifyingRunId = undefined;
-		if (completed) this.checked = true;
+	finish(runId: string): void {
+		if (this.verifyingRunId === runId) this.verifyingRunId = undefined;
 	}
 }
 
@@ -144,7 +160,7 @@ export async function verifyTakeoverRun(
 		status: "completed",
 		branch: run.checkpoint.ref,
 		cwd: run.cwd,
-		output: "The takeover session settled with a verified local commit.",
+		output: "The fast implementation session settled with a verified local commit.",
 	};
 }
 
@@ -166,7 +182,7 @@ export async function checkTakeoverSettlement(
 }
 
 export function buildTakeoverKickoff(run: PendingFastImplementRun, guidance: string): string {
-	const prompt = `${guidance}\n\n---\n\n# Fast implementation task\n\n${run.task}\n\nVCS backend: ${run.backend}\nWorkstream: ${run.checkpoint.ref}\nStarting revision: ${run.checkpoint.baseSha}\n\nFirst call read_handoff_history to recover relevant context. Then inspect the repository, implement this task, run focused verification, and commit coherent changes locally. Do not push, publish, open a PR, or land. When your work is committed and verified, finish the turn; the extension will verify the workstream automatically.`;
+	const prompt = `${guidance}\n\n---\n\n# Fast implementation task\n\n${run.task}\n\nVCS backend: ${run.backend}\nWorkstream: ${run.checkpoint.ref}\nStarting revision: ${run.checkpoint.baseSha}\n\nUse the plan and prior discussion already in this session as context. Then inspect the repository, implement this task, run focused verification, and commit coherent changes locally. Do not push, publish, open a PR, or land. When your work is committed and verified, finish the turn; the extension will verify the workstream automatically.`;
 	if (Buffer.byteLength(prompt, "utf8") > MAX_KICKOFF_BYTES) {
 		throw new Error(`Fast implementation kickoff exceeds ${MAX_KICKOFF_BYTES} bytes.`);
 	}
