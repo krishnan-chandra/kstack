@@ -9,6 +9,7 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { asRecord } from "../shared/narrow.ts";
 import type { ParsedEntry, ParsedSessionHeader } from "./session-jsonl.ts";
 
 export class ArchiveStoreError extends Error {
@@ -308,10 +309,57 @@ interface ArchiveSessionRow {
 	last_error: string | null;
 }
 
+function decodeString(row: Record<string, unknown>, table: string, column: string): string {
+	const value = row[column];
+	if (typeof value !== "string") throw new Error(`${table} returned invalid ${column}.`);
+	return value;
+}
+
+function decodeNullableString(row: Record<string, unknown>, table: string, column: string): string | null {
+	const value = row[column];
+	if (value !== null && typeof value !== "string") throw new Error(`${table} returned invalid ${column}.`);
+	return value;
+}
+
+function decodeFiniteNumber(row: Record<string, unknown>, table: string, column: string): number {
+	const value = row[column];
+	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
+	return value;
+}
+
+function decodeState(row: Record<string, unknown>, table: string): ArchiveSessionRow["state"] {
+	const state = decodeString(row, table, "state");
+	if (state === "pending" || state === "archived" || state === "error") return state;
+	throw new Error(`${table} returned invalid state.`);
+}
+
+function decodeSessionRow(value: unknown): ArchiveSessionRow {
+	const table = "archive_sessions";
+	const row = asRecord(value);
+	if (!row) throw new Error(`${table} returned a non-object row.`);
+	return {
+		session_id: decodeString(row, table, "session_id"),
+		cwd: decodeString(row, table, "cwd"),
+		name: decodeNullableString(row, table, "name"),
+		created_at: decodeString(row, table, "created_at"),
+		archived_at: decodeNullableString(row, table, "archived_at"),
+		original_path: decodeString(row, table, "original_path"),
+		archive_path: decodeNullableString(row, table, "archive_path"),
+		state: decodeState(row, table),
+		file_size: decodeFiniteNumber(row, table, "file_size"),
+		sha256: decodeString(row, table, "sha256"),
+		entry_count: decodeFiniteNumber(row, table, "entry_count"),
+		last_error: decodeNullableString(row, table, "last_error"),
+	};
+}
+
+function decodeRows<T>(values: unknown[], decode: (value: unknown) => T): T[] {
+	return values.map(decode);
+}
+
 export function getSessionRow(db: DatabaseSync, sessionId: string): ArchiveSessionRow | undefined {
-	return db.prepare("SELECT * FROM archive_sessions WHERE session_id = ?").get(sessionId) as
-		| ArchiveSessionRow
-		| undefined;
+	const row = db.prepare("SELECT * FROM archive_sessions WHERE session_id = ?").get(sessionId);
+	return row === undefined ? undefined : decodeSessionRow(row);
 }
 
 function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
@@ -322,13 +370,17 @@ function boundedInteger(value: number | undefined, fallback: number, minimum: nu
 export function listSessionRows(db: DatabaseSync, opts: { state?: string; limit?: number } = {}): ArchiveSessionRow[] {
 	const limit = boundedInteger(opts.limit, 100, 1, 1000);
 	if (opts.state) {
-		return db
-			.prepare("SELECT * FROM archive_sessions WHERE state = ? ORDER BY created_at DESC LIMIT ?")
-			.all(opts.state, limit) as unknown as ArchiveSessionRow[];
+		return decodeRows(
+			db
+				.prepare("SELECT * FROM archive_sessions WHERE state = ? ORDER BY created_at DESC LIMIT ?")
+				.all(opts.state, limit),
+			decodeSessionRow,
+		);
 	}
-	return db
-		.prepare("SELECT * FROM archive_sessions ORDER BY created_at DESC LIMIT ?")
-		.all(limit) as unknown as ArchiveSessionRow[];
+	return decodeRows(
+		db.prepare("SELECT * FROM archive_sessions ORDER BY created_at DESC LIMIT ?").all(limit),
+		decodeSessionRow,
+	);
 }
 
 interface SearchHit {
@@ -341,6 +393,23 @@ interface SearchHit {
 	session_name: string | null;
 	archived_at: string | null;
 	snippet: string;
+}
+
+function decodeSearchHit(value: unknown): SearchHit {
+	const table = "archive search";
+	const row = asRecord(value);
+	if (!row) throw new Error(`${table} returned a non-object row.`);
+	return {
+		session_id: decodeString(row, table, "session_id"),
+		entry_id: decodeString(row, table, "entry_id"),
+		entry_type: decodeString(row, table, "entry_type"),
+		role: decodeNullableString(row, table, "role"),
+		timestamp: decodeString(row, table, "timestamp"),
+		cwd: decodeString(row, table, "cwd"),
+		session_name: decodeNullableString(row, table, "session_name"),
+		archived_at: decodeNullableString(row, table, "archived_at"),
+		snippet: decodeString(row, table, "snippet"),
+	};
 }
 
 export class FtsQueryError extends Error {
@@ -378,16 +447,19 @@ export function searchArchive(
 		  LIMIT ?`,
 	);
 	try {
-		return statement.all(
-			opts.query,
-			opts.cwd ?? null,
-			opts.cwd ?? null,
-			opts.role ?? null,
-			opts.role ?? null,
-			opts.sessionId ?? null,
-			opts.sessionId ?? null,
-			limit,
-		) as unknown as SearchHit[];
+		return decodeRows(
+			statement.all(
+				opts.query,
+				opts.cwd ?? null,
+				opts.cwd ?? null,
+				opts.role ?? null,
+				opts.role ?? null,
+				opts.sessionId ?? null,
+				opts.sessionId ?? null,
+				limit,
+			),
+			decodeSearchHit,
+		);
 	} catch (err) {
 		const message = (err as Error).message;
 		if (/fts5:|unterminated string|no such column:/i.test(message)) {
@@ -412,26 +484,52 @@ interface ArchiveEntryRow {
 	raw_length: number;
 }
 
-export function countEntries(db: DatabaseSync, sessionId: string): number {
-	const row = db.prepare("SELECT COUNT(*) AS n FROM archive_entries WHERE session_id = ?").get(sessionId) as {
-		n: number;
+function decodeArchiveEntryRow(value: unknown): ArchiveEntryRow {
+	const table = "archive_entries";
+	const row = asRecord(value);
+	if (!row) throw new Error(`${table} returned a non-object row.`);
+	return {
+		entry_id: decodeString(row, table, "entry_id"),
+		parent_id: decodeNullableString(row, table, "parent_id"),
+		entry_type: decodeString(row, table, "entry_type"),
+		timestamp: decodeString(row, table, "timestamp"),
+		ordinal: decodeFiniteNumber(row, table, "ordinal"),
+		role: decodeNullableString(row, table, "role"),
+		text_content: decodeNullableString(row, table, "text_content"),
+		raw_offset: decodeFiniteNumber(row, table, "raw_offset"),
+		raw_length: decodeFiniteNumber(row, table, "raw_length"),
 	};
-	return row.n;
+}
+
+function decodeCount(value: unknown, table: string): number {
+	const row = asRecord(value);
+	if (!row) throw new Error(`${table} returned a non-object row.`);
+	return decodeFiniteNumber(row, table, "n");
+}
+
+export function countEntries(db: DatabaseSync, sessionId: string): number {
+	return decodeCount(
+		db.prepare("SELECT COUNT(*) AS n FROM archive_entries WHERE session_id = ?").get(sessionId),
+		"archive_entries",
+	);
 }
 
 export function readEntries(db: DatabaseSync, sessionId: string, offset: number, limit: number): ArchiveEntryRow[] {
 	const safeOffset = boundedInteger(offset, 0, 0, 2_147_483_647);
 	const safeLimit = boundedInteger(limit, 50, 1, 200);
-	return db
-		.prepare(
-			`SELECT entry_id, parent_id, entry_type, timestamp, ordinal,
+	return decodeRows(
+		db
+			.prepare(
+				`SELECT entry_id, parent_id, entry_type, timestamp, ordinal,
 			        role, text_content, raw_offset, raw_length
 			   FROM archive_entries
 			  WHERE session_id = ?
 			  ORDER BY ordinal
 			  LIMIT ? OFFSET ?`,
-		)
-		.all(sessionId, safeLimit, safeOffset) as unknown as ArchiveEntryRow[];
+			)
+			.all(sessionId, safeLimit, safeOffset),
+		decodeArchiveEntryRow,
+	);
 }
 
 interface ArchiveStats {
@@ -442,16 +540,21 @@ interface ArchiveStats {
 }
 
 export function getArchiveStats(db: DatabaseSync): ArchiveStats {
-	const byState = db.prepare("SELECT state, COUNT(*) AS n FROM archive_sessions GROUP BY state").all() as unknown as {
-		state: string;
-		n: number;
-	}[];
-	const entries = db.prepare("SELECT COUNT(*) AS n FROM archive_entries").get() as { n: number };
-	const count = (state: string) => byState.find((r) => r.state === state)?.n ?? 0;
+	const byState = decodeRows(
+		db.prepare("SELECT state, COUNT(*) AS n FROM archive_sessions GROUP BY state").all(),
+		(value) => {
+			const table = "archive_sessions";
+			const row = asRecord(value);
+			if (!row) throw new Error(`${table} returned a non-object row.`);
+			return { state: decodeState(row, table), n: decodeFiniteNumber(row, table, "n") };
+		},
+	);
+	const entries = decodeCount(db.prepare("SELECT COUNT(*) AS n FROM archive_entries").get(), "archive_entries");
+	const count = (state: ArchiveSessionRow["state"]) => byState.find((row) => row.state === state)?.n ?? 0;
 	return {
 		sessionsArchived: count("archived"),
 		sessionsPending: count("pending"),
 		sessionsError: count("error"),
-		entriesTotal: entries.n,
+		entriesTotal: entries,
 	};
 }
