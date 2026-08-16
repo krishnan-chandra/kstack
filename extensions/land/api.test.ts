@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { issueAutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
 import { claimLandRequest, isLandRequest, LAND_REQUEST_EVENT, requestLand } from "./api.ts";
 import { issueLandConfirmation } from "./confirmation.ts";
 import type { LandResult } from "./types.ts";
@@ -60,12 +61,28 @@ test("rejects malformed and removed stack requests", () => {
 		isLandRequest({
 			schemaVersion: 1,
 			payload: {
-				options: { target: { kind: "single", prNumber: 3 }, readiness: "check", confirmation: issueLandConfirmation() },
+				options: {
+					target: { kind: "single", prNumber: 3 },
+					readiness: "check",
+					confirmation: issueLandConfirmation(),
+					autopilotConfirmation: issueAutopilotConfirmation(),
+				},
 				ctx: {},
 			},
 			claimed: false,
 		}),
 		true,
+	);
+	assert.equal(
+		isLandRequest({
+			schemaVersion: 1,
+			payload: {
+				options: { target: { kind: "single", prNumber: 3 }, readiness: "check", autopilotConfirmation: true },
+				ctx: {},
+			},
+			claimed: false,
+		}),
+		false,
 	);
 	assert.equal(
 		isLandRequest({

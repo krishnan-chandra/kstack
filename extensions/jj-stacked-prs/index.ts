@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { requestLand } from "../land/api.ts";
 import { getRepoMethod, loadLandConfig } from "../land/config.ts";
 import { issueLandConfirmation } from "../land/confirmation.ts";
+import { issueAutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
@@ -129,6 +130,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			signal,
 			generatePrMetadata: metadata.generate,
 			configuredMethodFor: (nameWithOwner) => getRepoMethod(config, nameWithOwner),
+			// Keep confirmation capability minting at this production boundary.
 			landPr: async ({ prNumber, readiness, method }) =>
 				requestLand(
 					pi,
@@ -138,6 +140,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 						method,
 						cwd: ctx.cwd,
 						confirmation: issueLandConfirmation(),
+						autopilotConfirmation: issueAutopilotConfirmation(),
 					},
 					ctx,
 				),

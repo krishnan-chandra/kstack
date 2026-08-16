@@ -146,13 +146,14 @@ export async function runChildRole(
 	},
 	ctx: { cwd: string; signal?: AbortSignal },
 ): Promise<{ ok: true; output: string; usage: UsageSummary } | { ok: false; error: string; usage: UsageSummary }> {
+	const triagerTask = role === "triager" ? await readFile(opts.taskFile, "utf8") : undefined;
 	const result = await runAgent({
 		role,
 		spec: { label: role, model: opts.model, thinking: opts.thinking },
 		promptFile: opts.promptFile,
-		taskFile: opts.taskFile,
+		...(role === "triager" ? { noTools: true, stdin: triagerTask } : { taskFile: opts.taskFile }),
 		cwd: ctx.cwd,
-		tools: role === "triager" ? "read,grep,find,ls" : "read,grep,find,ls,bash,write,edit",
+		...(role === "fixer" ? { tools: "read,grep,find,ls,bash,write,edit" } : {}),
 		signal: ctx.signal,
 		deps: {
 			timeoutMs: opts.timeoutMinutes * 60_000,

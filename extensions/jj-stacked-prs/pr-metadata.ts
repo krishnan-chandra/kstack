@@ -12,9 +12,26 @@ const MAX_TITLE_CHARS = 120;
 const MAX_BODY_BYTES = 30 * 1024;
 const BEGIN = "-----BEGIN UNTRUSTED SLICE DATA-----";
 const END = "-----END UNTRUSTED SLICE DATA-----";
+const EXCERPT_CHARS = 160;
+
+/** Bounded, single-line quote of rejected model output so validation failures are diagnosable. */
+function excerpt(text: string): string {
+	const flattened = text.trim().replace(/\s+/g, " ");
+	if (!flattened) return "(empty response)";
+	let visible = "";
+	for (const character of flattened) {
+		const codePoint = character.codePointAt(0);
+		if (codePoint !== undefined && (codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f))) {
+			visible += `\\u${codePoint.toString(16).padStart(4, "0")}`;
+		} else {
+			visible += character;
+		}
+	}
+	return visible.length > EXCERPT_CHARS ? `${visible.slice(0, EXCERPT_CHARS)}…` : visible;
+}
 function hasPlaceholder(text: string): boolean {
 	return (
-		/\b(?:tbd|placeholder)\b|\[(?:todo|tbd)\]|<(?:todo|tbd)>|\btodo\s*[:\-–—\(\[]/i.test(text) || /\bTODO\b/.test(text)
+		/\b(?:tbd|placeholder)\b|\[(?:todo|tbd)\]|<(?:todo|tbd)>|\btodo\s*[:\-–—([]/i.test(text) || /\bTODO\b/.test(text)
 	);
 }
 
@@ -227,6 +244,34 @@ export function createModelMetadataGenerator(
 	deps: MetadataModelDeps,
 ): { generate: PrMetadataGenerator; usage: () => Usage | undefined } {
 	let totalUsage: Usage | undefined;
+	const completeText = async (
+		request: PrMetadataRequest,
+		messages: Array<{ role: "user"; content: Array<{ type: "text"; text: string }>; timestamp: number }>,
+	): Promise<string> => {
+		const response = await deps.complete(
+			deps.model,
+			{ messages },
+			{
+				signal: request.signal,
+				cacheRetention: "none",
+				sessionId: uuidv7(),
+				...(deps.thinkingLevel === "off" || !deps.thinkingLevel ? {} : { reasoning: deps.thinkingLevel }),
+			},
+		);
+		totalUsage = addUsage(totalUsage, response.usage);
+		if (response.stopReason === "error" || response.stopReason === "aborted") {
+			throw new Error(response.errorMessage || `Metadata model stopped with ${response.stopReason}.`);
+		}
+		return response.content
+			.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+			.map((part) => part.text)
+			.join("\n");
+	};
+	const userMessage = (text: string) => ({
+		role: "user" as const,
+		content: [{ type: "text" as const, text }],
+		timestamp: Date.now(),
+	});
 	return {
 		generate: async (request) => {
 			if (!deps.hasConfiguredAuth(deps.model)) {
@@ -234,33 +279,35 @@ export function createModelMetadataGenerator(
 			}
 			deps.onProgress?.(request.bookmark);
 			const evidence = await collectSliceEvidence(run, request);
-			const response = await deps.complete(
-				deps.model,
-				{
-					messages: [
-						{
-							role: "user",
-							content: [{ type: "text", text: buildPrMetadataPrompt(request, evidence) }],
-							timestamp: Date.now(),
-						},
-					],
-				},
-				{
-					signal: request.signal,
-					cacheRetention: "none",
-					sessionId: uuidv7(),
-					...(deps.thinkingLevel === "off" || !deps.thinkingLevel ? {} : { reasoning: deps.thinkingLevel }),
-				},
-			);
-			totalUsage = addUsage(totalUsage, response.usage);
-			if (response.stopReason === "error" || response.stopReason === "aborted") {
-				throw new Error(response.errorMessage || `Metadata model stopped with ${response.stopReason}.`);
+			const prompt = buildPrMetadataPrompt(request, evidence);
+			const first = await completeText(request, [userMessage(prompt)]);
+			let firstError: string;
+			try {
+				return parsePrMetadataResponse(first);
+			} catch (error) {
+				firstError = error instanceof Error ? error.message : String(error);
 			}
-			const text = response.content
-				.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
-				.map((part) => part.text)
-				.join("\n");
-			return parsePrMetadataResponse(text);
+			// One corrective retry: strict validation plus small models means the
+			// first response sometimes misses the exact shape. Feed the validator's
+			// error back instead of aborting the whole publication.
+			const retry = await completeText(request, [
+				userMessage(
+					[
+						prompt,
+						"",
+						"Your previous response was rejected by strict validation.",
+						`Validation error: ${firstError}`,
+						wrapUntrusted(`Rejected response began: ${excerpt(first)}`),
+						"Return exactly one corrected JSON object with string fields `title` and `body` that satisfies every rule above. No Markdown fence, no commentary.",
+					].join("\n"),
+				),
+			]);
+			try {
+				return parsePrMetadataResponse(retry);
+			} catch (retryError) {
+				const message = retryError instanceof Error ? retryError.message : String(retryError);
+				throw new Error(`${message} Rejected model output began: ${excerpt(retry)}`);
+			}
 		},
 		usage: () => totalUsage,
 	};

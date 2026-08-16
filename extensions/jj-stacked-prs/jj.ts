@@ -22,6 +22,8 @@ const STACK_TEMPLATE =
 const COMMIT_ID_TEMPLATE = 'commit_id ++ "\\n"';
 const CHANGE_ID_TEMPLATE = 'change_id ++ "\\n"';
 const OPERATION_ID_TEMPLATE = 'self.id().short() ++ "\\n"';
+const WORKING_COPY_TEMPLATE =
+	'commit_id ++ "\\t" ++ if(empty, "true", "false") ++ "\\t" ++ if(local_bookmarks.len() > 0, "true", "false") ++ "\\t" ++ json(parents.map(|c| c.commit_id())) ++ "\\n"';
 
 export class JjError extends Error {
 	readonly kind: "failed" | "indeterminate";
@@ -31,10 +33,19 @@ export class JjError extends Error {
 	}
 }
 
+interface WorkingCopyStatus {
+	commitId: string;
+	empty: boolean;
+	bookmarked: boolean;
+	parentCommitIds: readonly string[];
+}
+
 export interface JjAdapter {
 	preflight(cwd: string, signal?: AbortSignal): Promise<{ workspaceRoot: string; jjVersion: string }>;
 	resolveRevset(cwd: string, revset: string, signal?: AbortSignal): Promise<string>;
 	workingCopyChangeId(cwd: string, signal?: AbortSignal): Promise<string | undefined>;
+	workingCopyStatus(cwd: string, signal?: AbortSignal): Promise<WorkingCopyStatus | undefined>;
+	rebaseWorkingCopy(cwd: string, commitId: string, signal?: AbortSignal): Promise<void>;
 	listLocalBookmarks(cwd: string, signal?: AbortSignal): Promise<BookmarkTarget[]>;
 	listRemoteBookmarks(cwd: string, remote: string, signal?: AbortSignal): Promise<BookmarkTarget[]>;
 	fetchStack(cwd: string, revset: string, signal?: AbortSignal): Promise<StackCommit[]>;
@@ -99,6 +110,36 @@ export function createJjAdapter(run: ProcessRunner): JjAdapter {
 			} catch {
 				return undefined;
 			}
+		},
+		async workingCopyStatus(cwd, signal) {
+			const result = await runJj(run, ["log", "-r", "@", "--no-graph", "--no-pager", "-T", WORKING_COPY_TEMPLATE], {
+				cwd,
+				signal,
+			});
+			const rows = nonemptyLines(result.stdout);
+			if (rows.length !== 1) return undefined;
+			const [commitId, empty, bookmarked, rawParents, ...extra] = rows[0].split("\t");
+			const isFlag = (value: string | undefined): value is "true" | "false" => value === "true" || value === "false";
+			if (!commitId || !isFlag(empty) || !isFlag(bookmarked) || !rawParents || extra.length > 0) return undefined;
+			let parents: unknown;
+			try {
+				parents = JSON.parse(rawParents);
+			} catch {
+				return undefined;
+			}
+			if (!Array.isArray(parents) || !parents.every((parent): parent is string => typeof parent === "string")) {
+				return undefined;
+			}
+			return {
+				commitId,
+				empty: empty === "true",
+				bookmarked: bookmarked === "true",
+				parentCommitIds: parents,
+			};
+		},
+		async rebaseWorkingCopy(cwd, commitId, signal) {
+			assertBoundedName(commitId, "commit id", MAX_REVSET_CHARS);
+			await runJj(run, ["rebase", "-r", "@", "-d", commitId], { cwd, signal });
 		},
 		async listLocalBookmarks(cwd, signal) {
 			const result = await runJj(run, ["bookmark", "list", "--no-pager", "-T", BOOKMARK_TEMPLATE], { cwd, signal });

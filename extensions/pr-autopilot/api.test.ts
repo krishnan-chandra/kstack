@@ -6,6 +6,7 @@ import {
 	type PrAutopilotRequest,
 	requestPrAutopilot,
 } from "./api.ts";
+import { issueAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotResult } from "./driver.ts";
 
 const outcome: AutopilotResult = {
@@ -70,6 +71,34 @@ test("invalid supplied PR is rejected before emission", async () => {
 	assert.deepEqual(await requestPrAutopilot(pi as never, "check", 0, ctx as never, "/repo"), { handled: false });
 	assert.deepEqual(await requestPrAutopilot(pi as never, "check", 1.5, ctx as never, "/repo"), { handled: false });
 	assert.equal(emitted.length, 0);
+});
+
+test("a minted confirmation passes through the request channel", async () => {
+	const { pi } = fakeBus();
+	const seen: unknown[] = [];
+	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) =>
+		claimPrAutopilotRequest(value, async (_mode, _prNumber, _ctx, _cwd, confirmation) => {
+			seen.push(confirmation);
+			return outcome;
+		}),
+	);
+	const confirmation = issueAutopilotConfirmation();
+	const result = await requestPrAutopilot(pi as never, "watch", 7, ctx as never, "/repo", confirmation);
+	assert.deepEqual(result, { handled: true, outcome });
+	assert.deepEqual(seen, [confirmation]);
+});
+
+test("a forged confirmation object is rejected as an invalid payload", async () => {
+	const { pi } = fakeBus();
+	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) =>
+		claimPrAutopilotRequest(value, async () => {
+			assert.fail("a forged confirmation must not be claimed");
+		}),
+	);
+	const forged = { confirmed: true } as never;
+	assert.deepEqual(await requestPrAutopilot(pi as never, "watch", 7, ctx as never, "/repo", forged), {
+		handled: false,
+	});
 });
 
 test("unclaimed request reports unavailable", async () => {

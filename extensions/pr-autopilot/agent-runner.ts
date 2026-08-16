@@ -15,17 +15,18 @@ export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
 export function buildChildArgs(opts: {
 	model: string;
 	promptFile: string;
-	taskFile: string;
+	taskFile?: string;
 	tools?: string;
+	noTools?: boolean;
 }): string[] {
 	return [
-		...childIsolationArgs({ noContextFiles: true }),
+		...childIsolationArgs({ noContextFiles: true, noToolsNoApprove: opts.noTools }),
 		...(opts.tools ? ["--tools", opts.tools] : []),
 		"--model",
 		opts.model,
 		"--append-system-prompt",
 		opts.promptFile,
-		`Read the task at ${opts.taskFile}.`,
+		opts.taskFile ? `Read the task at ${opts.taskFile}.` : "Use the task supplied on standard input.",
 	];
 }
 interface AgentRunResultBase {
@@ -41,9 +42,11 @@ export interface RunAgentOptions {
 	role: AutopilotAgentRole;
 	spec: AutopilotModelSpec;
 	promptFile: string;
-	taskFile: string;
+	taskFile?: string;
 	cwd: string;
 	tools?: string;
+	noTools?: boolean;
+	stdin?: string;
 	signal?: AbortSignal;
 	deps?: RunnerDeps;
 	onProgress?: (info: { role: AutopilotAgentRole; turns: number; activity?: string; preview?: string }) => void;
@@ -52,8 +55,15 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 	const deps = options.deps ?? {};
 	const model = options.spec.thinking ? `${options.spec.model}:${options.spec.thinking}` : options.spec.model;
 	const result = await runChildAgent({
-		args: buildChildArgs({ model, promptFile: options.promptFile, taskFile: options.taskFile, tools: options.tools }),
+		args: buildChildArgs({
+			model,
+			promptFile: options.promptFile,
+			taskFile: options.taskFile,
+			tools: options.tools,
+			noTools: options.noTools,
+		}),
 		cwd: options.cwd,
+		stdin: options.stdin,
 		signal: options.signal,
 		deps: {
 			...deps,

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isAutopilotConfirmation } from "../pr-autopilot/confirmation.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import { isLandConfirmation } from "./confirmation.ts";
 import type { LandOptions, LandResult } from "./types.ts";
@@ -26,6 +27,12 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 		if ("cwd" in options && options.cwd !== undefined && (typeof options.cwd !== "string" || options.cwd.length === 0))
 			return false;
 		if ("confirmation" in options && options.confirmation !== undefined && !isLandConfirmation(options.confirmation))
+			return false;
+		if (
+			"autopilotConfirmation" in options &&
+			options.autopilotConfirmation !== undefined &&
+			!isAutopilotConfirmation(options.autopilotConfirmation)
+		)
 			return false;
 		if (
 			!("readiness" in options) ||

@@ -221,15 +221,16 @@ test("check mode performs two fresh reads and never mutates", async (t) => {
 	assert.deepEqual(mutatingCalls(harness.calls), []);
 });
 
-test("dirty worktree blocks before child agents or mutation", async (t) => {
+test("dirty worktree blocks the fixer before any mutation", async (t) => {
 	const { harness, result } = await run("drive", {
 		dirty: true,
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
+		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
 	});
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
 	assert.match(result.blockedReasons[0] ?? "", /clean/);
-	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(harness.roles, ["triager"], "the fixer must never run against an unvalidated workspace");
 	assert.deepEqual(mutatingCalls(harness.calls), []);
 });
 
@@ -237,11 +238,37 @@ test("branch mismatch identifies the expected and actual branches", async (t) =>
 	const { harness, result } = await run("drive", {
 		branch: "kstack/other",
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
+		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
 	});
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
 	assert.match(result.blockedReasons[0] ?? "", /kstack\/fix-thing/);
 	assert.match(result.blockedReasons[0] ?? "", /kstack\/other/);
+	assert.deepEqual(harness.roles, ["triager"]);
+	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+test("a merge-ready readiness pass never validates the PR workspace", async (t) => {
+	const { harness, result } = await run("drive", { branch: "kstack/other" });
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "merge-ready");
+	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+test("watching pending checks does not require the PR workspace", async (t) => {
+	const { harness, result } = await run("drive", {
+		branch: "kstack/other",
+		checks: [{ name: "test", state: "PENDING", bucket: "pending" }],
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "blocked");
+	assert.ok(result.blockedReasons.includes("CI still pending after watch"));
+	assert.equal(
+		result.blockedReasons.some((reason) => reason.includes("kstack/other")),
+		false,
+		"a readiness-only pass must not fail on workstream selection",
+	);
 	assert.deepEqual(harness.roles, []);
 });
 

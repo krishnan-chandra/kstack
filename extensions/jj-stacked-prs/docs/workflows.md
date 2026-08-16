@@ -3,7 +3,8 @@
 Exact `jj 0.44` procedures. Every command is the full canonical form — no
 personal aliases. Replace `<remote>` with the GitHub remote (usually
 `origin`); `<top>` with the topmost bookmark; `<trunk>` with `trunk()` unless
-the repo needs otherwise.
+the repo needs otherwise. In shell commands, single-quote revsets that contain
+parentheses, such as `'trunk()'`, so the shell does not parse them.
 
 Inspect before and after any history-changing step:
 

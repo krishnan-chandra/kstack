@@ -1,6 +1,7 @@
 /** Typed in-process contract for invoking PR autopilot from another extension. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotResult } from "./driver.ts";
 import type { AutopilotMode } from "./types.ts";
 
@@ -12,6 +13,8 @@ interface PrAutopilotPayload {
 	prNumber?: number;
 	ctx: ExtensionContext;
 	cwd: string;
+	/** Minted capability from a trusted caller that already holds user consent; skips run prompts. */
+	confirmation?: AutopilotConfirmation;
 }
 
 function isPositivePr(value: unknown): value is number {
@@ -34,6 +37,7 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		"mode" in value &&
 		MODES.has(typeof value.mode === "string" ? value.mode : "") &&
 		(!("prNumber" in value) || isOptionalPr(value.prNumber)) &&
+		(!("confirmation" in value) || value.confirmation === undefined || isAutopilotConfirmation(value.confirmation)) &&
 		"ctx" in value &&
 		typeof value.ctx === "object" &&
 		value.ctx !== null &&
@@ -54,9 +58,12 @@ export function claimPrAutopilotRequest(
 		prNumber: number | undefined,
 		ctx: ExtensionContext,
 		cwd: string,
+		confirmation: AutopilotConfirmation | undefined,
 	) => Promise<AutopilotResult>,
 ): boolean {
-	return channel.claim(value, (payload) => run(payload.mode, payload.prNumber, payload.ctx, payload.cwd));
+	return channel.claim(value, (payload) =>
+		run(payload.mode, payload.prNumber, payload.ctx, payload.cwd, payload.confirmation),
+	);
 }
 
 export function requestPrAutopilot(
@@ -65,7 +72,8 @@ export function requestPrAutopilot(
 	prNumber: number | undefined,
 	ctx: ExtensionContext,
 	cwd: string,
+	confirmation?: AutopilotConfirmation,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
 	if (prNumber !== undefined && !isPositivePr(prNumber)) return Promise.resolve({ handled: false });
-	return channel.request(pi, { mode, prNumber, ctx, cwd });
+	return channel.request(pi, { mode, prNumber, ctx, cwd, ...(confirmation === undefined ? {} : { confirmation }) });
 }

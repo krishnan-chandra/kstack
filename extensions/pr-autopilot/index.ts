@@ -27,6 +27,7 @@ import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./command.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
+import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import { type AutopilotResult, type LifecyclePhase, runAutopilot } from "./driver.ts";
 import { AutopilotLifecycle } from "./lifecycle.ts";
 import { pickModel } from "./pr-state.ts";
@@ -118,6 +119,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		prNumber: number | undefined,
 		ctx: ExtensionContext,
 		cwd = ctx.cwd,
+		confirmation?: AutopilotConfirmation,
 	): Promise<AutopilotResult> {
 		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({
 			status,
@@ -163,23 +165,33 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		const exec = makeExec(pi);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
 
-		// Confirm the run before starting. One randomly chosen tiny model runs the children.
+		// Confirm the run before starting unless a trusted in-process caller already
+		// holds user consent (for example, an explicitly requested stack land).
+		// One randomly chosen tiny model runs the children.
 		const selected = pickModel(config.models);
-		const confirmed = await ctx.ui.confirm(
-			`Run pr-autopilot (${mode} mode)?`,
-			`PR: ${prNumber ? `#${prNumber}` : "lowest unmerged (auto-detected)"}\n` +
-				`VCS backend: ${backend.id}\n` +
-				`Model (1 of ${config.models.length}, chosen at random): ${selected.label} (${modelCliId(selected)})\n\n` +
-				`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
-				"Bounded invariants:\n" +
-				"- Works the lowest unmerged PR first\n" +
-				`- Conflicts/behind: merge the remote base with ${backend.id} (never rebase)\n` +
-				"- Comments before CI; watch pending checks instead of inventing work\n" +
-				"- Stops at merge-ready (never auto-merges)\n" +
-				"- One tiny model per run, chosen at random from the configured pool",
-		);
+		const callerConfirmed = isAutopilotConfirmation(confirmation);
+		if (callerConfirmed) {
+			notify(
+				`pr-autopilot: starting ${mode} run for PR ${prNumber ? `#${prNumber}` : "(auto-detected)"} — pre-authorized by the requesting extension. Model: ${selected.label}`,
+				"info",
+			);
+		} else {
+			const confirmed = await ctx.ui.confirm(
+				`Run pr-autopilot (${mode} mode)?`,
+				`PR: ${prNumber ? `#${prNumber}` : "lowest unmerged (auto-detected)"}\n` +
+					`VCS backend: ${backend.id}\n` +
+					`Model (1 of ${config.models.length}, chosen at random): ${selected.label} (${modelCliId(selected)})\n\n` +
+					`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
+					"Bounded invariants:\n" +
+					"- Works the lowest unmerged PR first\n" +
+					`- Conflicts/behind: merge the remote base with ${backend.id} (never rebase)\n` +
+					"- Comments before CI; watch pending checks instead of inventing work\n" +
+					"- Stops at merge-ready (never auto-merges)\n" +
+					"- One tiny model per run, chosen at random from the configured pool",
+			);
+			if (!confirmed) return early("declined", "autopilot confirmation declined");
+		}
 		if (!lifecycle.isSessionCurrent(sessionToken)) return early("aborted", "session changed during confirmation");
-		if (!confirmed) return early("declined", "autopilot confirmation declined");
 
 		const runToken = lifecycle.beginRun(sessionToken);
 		if (!runToken) {
@@ -230,7 +242,12 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 				{
 					setPhase: (phase, cycles) => updateStatus(phase, cycles),
 					notify: notify,
-					confirm: (label, body) => ctx.ui.confirm(label, body),
+					confirm: callerConfirmed
+						? async (label: string) => {
+								notify(`pr-autopilot: auto-approved (pre-authorized run): ${label}`, "info");
+								return true;
+							}
+						: (label, body) => ctx.ui.confirm(label, body),
 				},
 				runSignal,
 			);
@@ -297,6 +314,8 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	// Listen for in-process API requests from the router or other extensions.
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
-		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd) => runAutopilotCommand(mode, prNumber, ctx, cwd));
+		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd, confirmation) =>
+			runAutopilotCommand(mode, prNumber, ctx, cwd, confirmation),
+		);
 	});
 }

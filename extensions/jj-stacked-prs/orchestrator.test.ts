@@ -879,6 +879,128 @@ describe("landStack", () => {
 		);
 	});
 
+	it("rebases the selected stack's empty working-copy child onto refreshed trunk", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : "aaa-commit"),
+			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+			workingCopyChangeId: async () => "wc-change",
+			workingCopyStatus: async () => ({
+				commitId: "wc-commit",
+				empty: true,
+				bookmarked: false,
+				parentCommitIds: ["aaa-commit"],
+			}),
+			isAncestor: async (_cwd, ancestor, descendant) => ancestor.startsWith("merge-") && descendant === "trunk",
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.ok(jj.calls.includes("rebase-wc:trunk"));
+		if (result.status === "completed") {
+			assert.ok(result.completedMutations.includes("Rebased the empty working copy onto the refreshed trunk"));
+		}
+	});
+
+	it("reports a pre-land working-copy inspection failure without blocking landing", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+			workingCopyStatus: async () => {
+				throw new Error("template error");
+			},
+			isAncestor: async (_cwd, ancestor, descendant) => ancestor.startsWith("merge-") && descendant === "trunk",
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		if (result.status === "completed") {
+			assert.ok(
+				result.completedMutations.includes("Could not inspect the working copy before landing: template error"),
+			);
+		}
+	});
+
+	it("leaves an empty working copy with intervening changes in place after the final land", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : "aaa-commit"),
+			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+			workingCopyChangeId: async () => "unrelated-change",
+			workingCopyStatus: async () => ({
+				commitId: "unrelated-commit",
+				empty: true,
+				bookmarked: false,
+				parentCommitIds: ["intervening-commit"],
+			}),
+			isAncestor: async (_cwd, ancestor, descendant) => ancestor.startsWith("merge-") && descendant === "trunk",
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.equal(
+			jj.calls.some((call) => call.startsWith("rebase-wc:")),
+			false,
+		);
+	});
+
+	it("leaves a bookmarked or non-empty working copy in place after the final land", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+			workingCopyStatus: async () => ({
+				commitId: "wc-commit",
+				empty: false,
+				bookmarked: true,
+				parentCommitIds: ["aaa-commit"],
+			}),
+			isAncestor: async (_cwd, ancestor) => ancestor.startsWith("merge-"),
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.equal(
+			jj.calls.some((call) => call.startsWith("rebase-wc:")),
+			false,
+		);
+	});
+
 	it("resumes an already-merged bottom PR with advance only", async () => {
 		const calls: string[] = [];
 		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];

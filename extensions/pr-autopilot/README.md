@@ -70,6 +70,19 @@ shared `vcs.backend` setting selects `"git"` or `"jj"` for checkout validation,
 base integration, path-scoped fixes, restore, and push. Mutating modes run the
 selected backend's preflight before confirmation.
 
+The local checkout is validated lazily, immediately before a mutation (a base
+merge or a fixer edit). Readiness-only passes — merge-ready checks, CI
+watching, triage, and thread replies — never require the PR's worktree, branch,
+or jj checkpoint, so a stack lander can drive PRs whose heads are not checked
+out.
+
+Each run asks for confirmation before starting and before pushing a fix. A
+trusted in-process caller that already holds user consent (for example, an
+explicitly requested `/jj-stack land`) may pass a capability minted by
+`issueAutopilotConfirmation()` in `confirmation.ts`; only that minted object
+skips the run and push prompts, and every skipped prompt is reported with a
+notification. A boolean or reconstructed payload is ignored.
+
 ## Invariants
 
 These are enforced by the state machine and cannot be bypassed at runtime:
@@ -127,8 +140,9 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 
 Each run picks one tiny model, then spawns two child agents with that model:
 
-- **Triager** — read-only (`read`, `grep`, `find`, `ls` tools only). Classifies
-  CI check failures (with log excerpts) and review threads. Runs with
+- **Triager** — receives bounded task data through stdin and has no tools. It
+  classifies CI check failures (with log excerpts) and review threads without
+  access to the local checkout, which may belong to another stacked PR. Runs with
   `--no-extensions --no-skills`.
 - **Fixer** — has `read`, `grep`, `find`, `ls`, `bash`, `write`, `edit` tools.
   Generates code fixes for classified "code" failures and `fix` threads.

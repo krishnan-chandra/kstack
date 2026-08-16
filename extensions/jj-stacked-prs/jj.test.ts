@@ -37,6 +37,55 @@ describe("jj adapters", () => {
 		]);
 	});
 
+	it("reads working-copy status and rejects malformed rows", async () => {
+		const calls: string[][] = [];
+		const byOutput = (stdout: string) =>
+			createJjAdapter(async (argv) => {
+				calls.push([...argv]);
+				return { kind: "ok", code: 0, stdout, stderr: "" };
+			}).workingCopyStatus(".");
+		assert.deepEqual(await byOutput('abc123\ttrue\tfalse\t["parent"]\n'), {
+			commitId: "abc123",
+			empty: true,
+			bookmarked: false,
+			parentCommitIds: ["parent"],
+		});
+		assert.deepEqual(await byOutput('abc123\tfalse\ttrue\t["left","right"]\n'), {
+			commitId: "abc123",
+			empty: false,
+			bookmarked: true,
+			parentCommitIds: ["left", "right"],
+		});
+		assert.equal(await byOutput(""), undefined);
+		assert.equal(await byOutput('abc123\tmaybe\tfalse\t["parent"]\n'), undefined);
+		assert.equal(await byOutput("abc123\ttrue\tfalse\tnot-json\n"), undefined);
+		assert.equal(await byOutput('a\ttrue\tfalse\t["p"]\nb\ttrue\tfalse\t["p"]\n'), undefined);
+		const template = calls[0][calls[0].indexOf("-T") + 1];
+		assert.match(template, /local_bookmarks\.len\(\) > 0/);
+	});
+
+	it("surfaces working-copy status command failures", async () => {
+		const adapter = createJjAdapter(async () => ({
+			kind: "nonzero",
+			code: 1,
+			stdout: "",
+			stderr: "template error",
+			message: "template error",
+		}));
+		await assert.rejects(() => adapter.workingCopyStatus("."), /template error/);
+	});
+
+	it("rebases the working copy onto a bounded commit id", async () => {
+		const calls: string[][] = [];
+		const adapter = createJjAdapter(async (argv) => {
+			calls.push([...argv]);
+			return { kind: "ok", code: 0, stdout: "", stderr: "" };
+		});
+		await adapter.rebaseWorkingCopy(".", "deadbeef");
+		assert.deepEqual(calls, [["jj", "rebase", "-r", "@", "-d", "deadbeef"]]);
+		await assert.rejects(() => adapter.rebaseWorkingCopy(".", "x".repeat(10_000)), /commit id/);
+	});
+
 	it("does not treat this repository's current trunk as a fixture", () => {
 		const commits = parseStackCommits(
 			'{"change_id":"aaa","commit_id":"111","subject":"feat","empty":false,"conflict":false,"divergent":false,"merge":false,"bookmarks":["feat1"],"remote_bookmarks":[],"parents":["independent-trunk"]}',
