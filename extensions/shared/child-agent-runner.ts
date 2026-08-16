@@ -7,6 +7,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import { parsePositiveInteger } from "./config-validate.ts";
 import { JsonLineParser } from "./pi-json-lines.ts";
 
 export interface SpawnedProcess {
@@ -149,8 +150,9 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 	const deps = options.deps ?? {};
 	const spawnImpl = deps.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
 	const invocation = (deps.piInvocation ?? getPiInvocation)(options.args);
-	const outputCap = deps.outputCapBytes ?? DEFAULT_OUTPUT_CAP;
-	const stderrCap = deps.stderrCapBytes ?? DEFAULT_STDERR_CAP;
+	const debugCap = parsePositiveInteger(process.env.KSTACK_CHILD_DEBUG_CAP_BYTES);
+	const outputCap = debugCap ?? deps.outputCapBytes ?? DEFAULT_OUTPUT_CAP;
+	const stderrCap = debugCap ?? deps.stderrCapBytes ?? DEFAULT_STDERR_CAP;
 	const lineCap = deps.stdoutLineCapBytes ?? DEFAULT_LINE_CAP;
 	const killGraceMs = deps.killGraceMs ?? DEFAULT_KILL_GRACE;
 

@@ -231,6 +231,41 @@ describe("runChildAgent", () => {
 		child.close(0);
 		assert.equal((await promise).status, "completed");
 	});
+	it("raises output and stderr caps via KSTACK_CHILD_DEBUG_CAP_BYTES", async () => {
+		const previous = process.env.KSTACK_CHILD_DEBUG_CAP_BYTES;
+		try {
+			process.env.KSTACK_CHILD_DEBUG_CAP_BYTES = "2048";
+			const child = new FakeProcess();
+			const promise = run(child, { stdoutLineCapBytes: 4096 });
+			const text = "a".repeat(1500);
+			child.output(event(text));
+			child.close(0);
+			const result = await promise;
+			assert.equal(result.status, "completed");
+			if (result.status === "completed") {
+				assert.equal(result.output, text);
+				assert.ok(!result.output.includes("truncated"));
+			}
+		} finally {
+			if (previous === undefined) delete process.env.KSTACK_CHILD_DEBUG_CAP_BYTES;
+			else process.env.KSTACK_CHILD_DEBUG_CAP_BYTES = previous;
+		}
+	});
+	it("ignores invalid KSTACK_CHILD_DEBUG_CAP_BYTES values", async () => {
+		const previous = process.env.KSTACK_CHILD_DEBUG_CAP_BYTES;
+		try {
+			process.env.KSTACK_CHILD_DEBUG_CAP_BYTES = "invalid";
+			const child = new FakeProcess();
+			const promise = run(child);
+			child.output(event("ok"));
+			child.close(0);
+			const result = await promise;
+			assert.equal(result.status, "completed");
+		} finally {
+			if (previous === undefined) delete process.env.KSTACK_CHILD_DEBUG_CAP_BYTES;
+			else process.env.KSTACK_CHILD_DEBUG_CAP_BYTES = previous;
+		}
+	});
 	it("emits structured ChildEvents in order", async () => {
 		const child = new FakeProcess();
 		const events: ChildEvent[] = [];

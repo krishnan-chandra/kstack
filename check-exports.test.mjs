@@ -38,6 +38,19 @@ test("accepts a marker-comment export", () => {
 	assert.deepEqual(findUnusedExports({ root }), []);
 });
 
+test("honors an export marker on the line immediately above", () => {
+	const root = tempRoot();
+	write(root, "marked-above.ts", "/* exported: contract */\nexport function standalone() {\n\treturn 1;\n}\n");
+	assert.deepEqual(findUnusedExports({ root }), []);
+});
+
+test("ignores an export marker separated by a blank line (pins current 2-line window)", () => {
+	// Documents, not endorses, that hasExportMarker only looks back one line above the export.
+	const root = tempRoot();
+	write(root, "marked-blank.ts", "/* exported: contract */\n\nexport function standalone() {\n\treturn 1;\n}\n");
+	assert.deepEqual(findUnusedExports({ root }), [{ file: "marked-blank.ts", line: 3, symbol: "standalone" }]);
+});
+
 test("passes re-exports through", () => {
 	const root = tempRoot();
 	write(root, "source.ts", "export function helper() {\n\treturn 1;\n}\n");

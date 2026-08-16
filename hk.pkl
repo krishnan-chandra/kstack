@@ -8,6 +8,9 @@ local linters = new Mapping<String, Step> {
         check = "bunx biome check --no-errors-on-unmatched --diagnostic-level=error {{ files }}"
         fix = "bunx biome check --no-errors-on-unmatched --write --unsafe {{ files }}"
     }
+    ["typecheck"] { check = "bun run typecheck" }
+    ["check-exports"] { check = "bun run check:exports" }
+    ["check-imports"] { check = "bun run check:imports" }
 }
 
 hooks {

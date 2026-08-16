@@ -147,6 +147,8 @@ rows stay unnamed.
 - [Bun](https://bun.sh) 1.3.14 or newer for local tooling. Install it with `curl -fsSL https://bun.sh/install | bash`.
 - Node.js 22 or newer for Pi's runtime and the `node:sqlite` test carve-out
 - A local filesystem for Pi's agent directory
+- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
+- `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 
 The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
 
