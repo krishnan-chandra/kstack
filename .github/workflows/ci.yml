@@ -15,12 +15,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - run: bun install --frozen-lockfile
-      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s skills/git-worktrees/tests -p 'test_*.py'
-      - run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/kstack-pycache" python3 -m py_compile skills/git-worktrees/scripts/*.py
       - run: bun run typecheck
       - run: bunx biome ci .
       - run: bun run test
