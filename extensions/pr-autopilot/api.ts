@@ -4,7 +4,7 @@ import { createRequestChannel, type RequestEnvelope } from "../shared/request-ch
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotMode, AutopilotResult } from "./types.ts";
 
-export { issueAutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
+export { isAutopilotConfirmation, issueAutopilotConfirmation } from "./confirmation.ts";
 export type { AutopilotConfirmation } from "./types.ts";
 
 export const PRAUTOPILOT_REQUEST_EVENT = "kstack:pr-autopilot:request";

@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const skillDir = dirname(fileURLToPath(import.meta.url));
-const skillPath = resolve(skillDir, "SKILL.md");
+const _skillPath = resolve(skillDir, "SKILL.md");
 
 async function read(path) {
 	return readFile(resolve(skillDir, path), "utf8");
