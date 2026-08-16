@@ -2,6 +2,7 @@
 
 import { realpathSync } from "node:fs";
 import type { LandResult } from "../land/types.ts";
+import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import {
 	buildNavigationComment,
 	createGitHubAdapter,
@@ -37,6 +38,8 @@ import {
 	type StackReadinessMode,
 	type SyncOutcome,
 } from "./types.ts";
+
+const NAVIGATION_READ_CONCURRENCY = 4;
 
 export interface StackUi {
 	hasUI: boolean;
@@ -658,23 +661,34 @@ async function reconcileComments(
 	const existingByPr = new Map<number, GitHubComment[]>();
 	const failedFetches = new Set<number>();
 	let priorEntries: NavigationEntry[] = [];
-	for (const slice of published) {
-		if (slice.prNumber === undefined) continue;
+	const publishedWithPrs = published.filter(
+		(slice): slice is (typeof published)[number] & { prNumber: number } => slice.prNumber !== undefined,
+	);
+	const commentReads = await mapWithConcurrencyLimit(publishedWithPrs, NAVIGATION_READ_CONCURRENCY, async (slice) => {
 		try {
 			const comments = await github.getPrComments(plan.repository, slice.prNumber, options.cwd, deps.signal);
-			existingByPr.set(slice.prNumber, comments);
-			const existing = findKstackComment(comments, user);
-			const entries = existing ? parseNavigationCommentEntries(existing.body) : [];
-			if (entries.length > priorEntries.length) priorEntries = entries;
+			return { kind: "ok" as const, prNumber: slice.prNumber, comments };
 		} catch (error) {
-			failedFetches.add(slice.prNumber);
-			errors.push(`PR #${slice.prNumber}: ${errorMessage(error)}`);
+			return { kind: "error" as const, prNumber: slice.prNumber, error };
 		}
+	});
+	for (const read of commentReads) {
+		if (read.kind === "error") {
+			failedFetches.add(read.prNumber);
+			errors.push(`PR #${read.prNumber}: ${errorMessage(read.error)}`);
+			continue;
+		}
+		existingByPr.set(read.prNumber, read.comments);
+		const existing = findKstackComment(read.comments, user);
+		const entries = existing ? parseNavigationCommentEntries(existing.body) : [];
+		if (entries.length > priorEntries.length) priorEntries = entries;
 	}
 	const statusByPr: Record<number, string> = {};
 	for (const slice of published) {
 		if (slice.prNumber !== undefined) statusByPr[slice.prNumber] = slice.createPr || slice.draft ? "draft" : "open";
 	}
+	const queuedAncestorPrs: number[] = [];
+	const queuedAncestorSeen = new Set<number>();
 	for (const entry of findNavigationAncestors(
 		published.map((slice) => ({
 			bookmark: slice.bookmark,
@@ -687,11 +701,28 @@ async function reconcileComments(
 			statusByPr[entry.prNumber] = "merged";
 			continue;
 		}
-		try {
-			statusByPr[entry.prNumber] = await github.getPrStatus(plan.repository, entry.prNumber, options.cwd, deps.signal);
-		} catch (error) {
-			statusByPr[entry.prNumber] = "unknown";
-			errors.push(errorMessage(error));
+		if (queuedAncestorSeen.has(entry.prNumber)) continue;
+		queuedAncestorSeen.add(entry.prNumber);
+		queuedAncestorPrs.push(entry.prNumber);
+	}
+	const statusReads = await mapWithConcurrencyLimit(
+		queuedAncestorPrs,
+		NAVIGATION_READ_CONCURRENCY,
+		async (prNumber) => {
+			try {
+				const status = await github.getPrStatus(plan.repository, prNumber, options.cwd, deps.signal);
+				return { kind: "ok" as const, prNumber, status };
+			} catch (error) {
+				return { kind: "error" as const, prNumber, error };
+			}
+		},
+	);
+	for (const read of statusReads) {
+		if (read.kind === "ok") {
+			statusByPr[read.prNumber] = read.status;
+		} else {
+			statusByPr[read.prNumber] = "unknown";
+			errors.push(errorMessage(read.error));
 		}
 	}
 	let body: string;
