@@ -144,6 +144,9 @@ export function buildPrMetadataPrompt(request: PrMetadataRequest, evidence: PrSl
 		"- Tell the reviewer what contract, behavior, or flow to verify. Do not give a file-by-file inventory.",
 		"- Use plain language. Omit empty sections, generic benefits, placeholders, and unverified test claims.",
 		"",
+		"Return JSON in this exact shape:",
+		'{"title":"Add profile editing","body":"## Summary\\n\\n- Add profile editing controls.\\n\\n## Review guide\\n\\n1. **Editing flow** — Verify the form."}',
+		"",
 		untrusted,
 	].join("\n");
 }
@@ -153,6 +156,21 @@ function extractJsonPayload(text: string): string {
 	const fences = [...trimmed.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/gi)];
 	if (fences.length === 1) return fences[0][1].trim();
 	return trimmed;
+}
+
+function firstSectionLineMatches(lines: readonly string[], headingIndex: number, pattern: RegExp): boolean {
+	for (let index = headingIndex + 1; index < lines.length; index++) {
+		const line = lines[index];
+		if (!line.trim()) continue;
+		return pattern.test(line);
+	}
+	return false;
+}
+
+function canonicalizeSectionSpacing(body: string): string {
+	return body
+		.replace(/^(## (?:Summary|Review guide))\n(?:[ \t]*\n)*((?:-\s+|1\.\s))/gm, "$1\n\n$2")
+		.replace(/\n(?:[ \t]*\n)*## Review guide/g, "\n\n## Review guide");
 }
 
 export function parsePrMetadataResponse(text: string): PrMetadata {
@@ -175,16 +193,21 @@ export function parsePrMetadataResponse(text: string): PrMetadata {
 	if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
 		throw new Error(`PR metadata body exceeds ${MAX_BODY_BYTES} bytes.`);
 	}
-	if (!/^## Summary\n\n-\s+\S/.test(body)) {
+	const lines = body.split("\n");
+	if (lines[0] !== "## Summary" || !firstSectionLineMatches(lines, 0, /^\s*-\s+\S/)) {
 		throw new Error("PR metadata body must start with a Summary heading and bullet list.");
 	}
-	if (!/\n\n## Review guide\n\n1\.\s+\*\*[^*]+\*\*\s+[-—–]\s+\S/.test(body)) {
+	const reviewGuideIndex = lines.findIndex((line, index) => index > 0 && line === "## Review guide");
+	if (
+		reviewGuideIndex === -1 ||
+		!firstSectionLineMatches(lines, reviewGuideIndex, /^\s*1\.\s+\*\*[^*]+\*\*\s+[-—–]\s+\S/)
+	) {
 		throw new Error("PR metadata body must include a thematic Review guide with numbered steps.");
 	}
 	if (hasPlaceholder(title) || hasPlaceholder(body)) {
 		throw new Error("PR metadata contains placeholder text.");
 	}
-	return { title, body };
+	return { title, body: canonicalizeSectionSpacing(body) };
 }
 
 export function addUsage(current: Usage | undefined, next: Usage): Usage {

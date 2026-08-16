@@ -116,6 +116,11 @@ describe("PR metadata prompt and response", () => {
 		assert.match(prompt, /## Summary/);
 		assert.match(prompt, /## Review guide/);
 		assert.match(prompt, /thematic numbered review guide/i);
+		assert.ok(
+			prompt.includes(
+				'"body":"## Summary\\n\\n- Add profile editing controls.\\n\\n## Review guide\\n\\n1. **Editing flow** — Verify the form."',
+			),
+		);
 		assert.equal((prompt.match(/BEGIN UNTRUSTED SLICE DATA/g) ?? []).length, 1);
 		assert.equal((prompt.match(/END UNTRUSTED SLICE DATA/g) ?? []).length, 1);
 	});
@@ -128,6 +133,19 @@ describe("PR metadata prompt and response", () => {
 		assert.equal(metadata.title, "Add profile editing");
 		assert.match(metadata.body, /^## Summary/);
 		assert.match(metadata.body, /## Review guide/);
+	});
+
+	it("accepts and canonicalizes section lists without blank lines", () => {
+		const metadata = parsePrMetadataResponse(
+			JSON.stringify({
+				title: "Add profile editing",
+				body: "## Summary\n- Add profile editing controls.\n## Review guide\n1. **Editing flow** — Verify the form.",
+			}),
+		);
+		assert.equal(
+			metadata.body,
+			"## Summary\n\n- Add profile editing controls.\n\n## Review guide\n\n1. **Editing flow** — Verify the form.",
+		);
 	});
 
 	it("unwraps markdown json code fences around model response", () => {
@@ -193,6 +211,20 @@ describe("PR metadata prompt and response", () => {
 
 	it("rejects prose, missing sections, placeholders, and oversized titles", () => {
 		assert.throws(() => parsePrMetadataResponse("Here is the metadata"), /valid JSON/);
+		assert.throws(
+			() =>
+				parsePrMetadataResponse(
+					'{"title":"Title","body":"## Summary\\nSummary prose only.\\n\\n## Review guide\\n\\n1. **Flow** — Verify the behavior."}',
+				),
+			/Summary heading and bullet list/,
+		);
+		assert.throws(
+			() =>
+				parsePrMetadataResponse(
+					'{"title":"Title","body":"## Summary\\n\\n- Change things.\\n\\n## Review guide\\nReview prose only."}',
+				),
+			/Review guide/,
+		);
 		assert.throws(
 			() => parsePrMetadataResponse('{"title":"Title","body":"## Summary\\n\\n- Change things"}'),
 			/Review guide/,
