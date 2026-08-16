@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findOpenPullRequestByHead, getPullRequest, getRepository, mergePullRequest } from "./github.ts";
-import type { ExecFn } from "./types.ts";
+import type { ExecFn } from "./git-exec.ts";
+import {
+	findOpenPullRequestByHead,
+	getPullRequest,
+	getRepository,
+	mergePullRequest,
+	type PullRequestSnapshot,
+	type RepositorySnapshot,
+} from "./github.ts";
 
 const SHA = "a".repeat(40);
 
@@ -29,12 +36,14 @@ test("parses repository policy and a pinned PR snapshot", async () => {
 		}),
 	];
 	const exec: ExecFn = async () => ({ code: 0, stdout: outputs.shift() ?? "", stderr: "" });
-	assert.deepEqual(await getRepository(exec, "/repo"), {
+	const repository: RepositorySnapshot = await getRepository(exec, "/repo");
+	assert.deepEqual(repository, {
 		nameWithOwner: "o/r",
 		defaultBranch: "main",
 		allowedMethods: ["squash", "rebase"],
 	});
-	assert.equal((await getPullRequest(exec, "/repo", 3)).headOid, SHA);
+	const pullRequest: PullRequestSnapshot = await getPullRequest(exec, "/repo", 3);
+	assert.equal(pullRequest.headOid, SHA);
 });
 
 test("builds allowedMethods from squash and rebase only, ignoring merge commit capability", async () => {
@@ -62,6 +71,20 @@ test("resolves exactly one open PR for the current branch", async () => {
 		stderr: "",
 	});
 	assert.equal(await findOpenPullRequestByHead(exec, "/repo", "feature"), 8);
+});
+
+test("honors a custom query timeout", async () => {
+	let timeout: number | undefined;
+	const exec: ExecFn = async (_command, _args, options) => {
+		timeout = options.timeout;
+		return {
+			code: 0,
+			stdout: JSON.stringify([{ number: 8, headRefName: "feature" }]),
+			stderr: "",
+		};
+	};
+	await findOpenPullRequestByHead(exec, "/repo", "feature", undefined, { queryMs: 42 });
+	assert.equal(timeout, 42);
 });
 
 test("rejects ambiguous branch mappings", async () => {

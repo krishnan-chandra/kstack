@@ -5,7 +5,6 @@ import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-wor
 import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { requestJjStackCapabilities, requestStackPublication } from "../jj-stacked-prs/api.ts";
 import { requestLand } from "../land/api.ts";
-import { findOpenPullRequestByHead } from "../land/github.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import {
@@ -17,6 +16,7 @@ import {
 } from "../shared/change-kind.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
+import { findOpenPullRequestByHead } from "../shared/github.ts";
 import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
