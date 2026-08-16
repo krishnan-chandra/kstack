@@ -1,11 +1,9 @@
 /** Git implementation of K-Stack's repository-mutation contract. */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
-import { extractSlug, MAX_SLUG_LENGTH, normalizePathSegment } from "../slug.ts";
+import { extractSlug } from "../slug.ts";
 import type {
 	CurrentRef,
 	GitVcsBackend,
@@ -15,6 +13,7 @@ import type {
 	WorkstreamCheckpoint,
 } from "./backend.ts";
 import { preflightVcs } from "./preflight.ts";
+import { planManagedWorktree } from "./worktree-plan.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -108,12 +107,6 @@ export class GitBackend implements GitVcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec, { exists: this.deps.exists });
-	}
-
-	private async workspaceRoot(cwd: string): Promise<VcsResult<{ path: string }>> {
-		const result = await this.git(cwd, ["rev-parse", "--show-toplevel"], 8_000);
-		const path = oneLine(result);
-		return path ? { ok: true, path } : { ok: false, error: "The git backend requires a Git working tree." };
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {
@@ -210,61 +203,15 @@ export class GitBackend implements GitVcsBackend {
 	}
 
 	async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		const root = await this.workspaceRoot(cwd);
-		if (!root.ok) return { ok: false, error: "Worktree mode requires a Git working tree." };
-		const sourceRepoRoot = root.path;
-		const commonResult = await this.git(sourceRepoRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-		const commonRaw = oneLine(commonResult);
-		if (!commonRaw) {
-			return {
-				ok: false,
-				error: `Could not resolve the repository's common Git directory: ${commonResult.stderr.trim()}`,
-			};
-		}
-		const realpath = this.deps.realpath ?? realpathSync;
-		let commonGitDir: string;
-		try {
-			commonGitDir = realpath(resolve(sourceRepoRoot, commonRaw));
-		} catch (error) {
-			return { ok: false, error: `Could not canonicalize the common Git directory: ${failure(error).stderr}` };
-		}
-		const base = await this.resolveIsolationBase(sourceRepoRoot);
-		if (!base) {
-			return {
-				ok: false,
-				error:
-					"Could not resolve a worktree base. Configure origin/HEAD, main, or master, or ensure HEAD names a commit.",
-			};
-		}
-		const managedRoot = resolve(this.deps.managedRoot ?? join(homedir(), ".pi", "kstack", "worktrees"));
-		const repositoryName = normalizePathSegment(basename(sourceRepoRoot));
-		const repositoryHash = createHash("sha256").update(commonGitDir).digest("hex").slice(0, 8);
-		const repositoryId = `${repositoryName}-${repositoryHash}`;
-		const baseSlug = extractSlug(task);
-		const pathExists = this.deps.exists ?? existsSync;
-		for (let attempt = 1; attempt <= MAX_COLLISION_ATTEMPTS; attempt++) {
-			const suffix = attempt === 1 ? "" : `-${attempt}`;
-			const slug = `${baseSlug.slice(0, MAX_SLUG_LENGTH - suffix.length)}${suffix}`;
-			const ref = `kstack/${slug}`;
-			const path = join(managedRoot, repositoryId, slug);
-			const branchLookup = await this.git(sourceRepoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${ref}`]);
-			if (branchLookup.code !== 0 && !pathExists(path)) {
-				return {
-					ok: true,
-					plan: {
-						sourceRepoRoot,
-						ref,
-						path,
-						baseRef: base.ref,
-						baseSha: base.sha,
-					},
-				};
-			}
-		}
-		return {
-			ok: false,
-			error: `Could not allocate a unique managed worktree after ${MAX_COLLISION_ATTEMPTS} attempts.`,
-		};
+		const planned = await planManagedWorktree({
+			exec: this.exec,
+			cwd,
+			task,
+			managedRoot: this.deps.managedRoot,
+			exists: this.deps.exists,
+			realpath: this.deps.realpath,
+		});
+		return planned.ok ? { ok: true, plan: planned.plan } : planned;
 	}
 
 	async createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
@@ -409,43 +356,5 @@ export class GitBackend implements GitVcsBackend {
 			kind: "failed",
 			error: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
 		};
-	}
-
-	private async resolveIsolationBase(repoRoot: string): Promise<{ ref: string; sha: string } | undefined> {
-		const remoteOutput = oneLine(await this.git(repoRoot, ["remote"]));
-		const remotes = (
-			remoteOutput
-				?.split(/\r?\n/)
-				.map((remote) => remote.trim())
-				.filter(Boolean) ?? []
-		).sort();
-		if (remotes.includes("origin")) {
-			remotes.splice(remotes.indexOf("origin"), 1);
-			remotes.unshift("origin");
-		}
-		const remoteHeads: string[] = [];
-		for (const remote of remotes) {
-			const head = oneLine(await this.git(repoRoot, ["symbolic-ref", "--quiet", `refs/remotes/${remote}/HEAD`]));
-			if (head) remoteHeads.push(head);
-		}
-		if (remoteHeads.length === 0) {
-			const originHead = oneLine(await this.git(repoRoot, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]));
-			if (originHead) remoteHeads.push(originHead);
-		}
-		const conventional = remotes.flatMap((remote) => [`refs/remotes/${remote}/main`, `refs/remotes/${remote}/master`]);
-		const candidates = [
-			...remoteHeads,
-			...conventional,
-			"refs/remotes/origin/main",
-			"refs/remotes/origin/master",
-			"refs/heads/main",
-			"refs/heads/master",
-			"HEAD",
-		];
-		for (const ref of [...new Set(candidates)]) {
-			const sha = oneLine(await this.git(repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`]));
-			if (SHA_RE.test(sha ?? "")) return { ref, sha: sha! };
-		}
-		return undefined;
 	}
 }
