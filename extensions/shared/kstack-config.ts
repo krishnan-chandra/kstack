@@ -32,6 +32,11 @@ type RawSectionLoad =
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
 
+export type ConfigLoad<T> =
+	| { status: "loaded"; config: T; path: string }
+	| { status: "missing"; path: string }
+	| { status: "invalid"; path: string; error: string };
+
 type RawRootLoad =
 	| { status: "found"; path: string; root: Record<string, unknown> }
 	| { status: "missing"; path: string }
@@ -57,4 +62,18 @@ export function loadKstackSection(section: string, env: NodeJS.ProcessEnv = proc
 	if (load.status !== "found") return load;
 	if (load.root[section] === undefined) return { status: "missing", path: load.path };
 	return { status: "found", value: load.root[section], path: load.path, root: load.root };
+}
+
+/** Load and validate one extension section from kstack.json. */
+export function loadValidatedSection<T>(
+	section: string,
+	validate: (value: unknown) => { ok: true; config: T } | { ok: false; error: string },
+	env: NodeJS.ProcessEnv = process.env,
+): ConfigLoad<T> {
+	const raw = loadKstackSection(section, env);
+	if (raw.status !== "found") return raw;
+	const result = validate(raw.value);
+	return result.ok
+		? { status: "loaded", config: result.config, path: raw.path }
+		: { status: "invalid", path: raw.path, error: result.error };
 }

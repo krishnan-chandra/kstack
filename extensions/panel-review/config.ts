@@ -31,7 +31,7 @@
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { loadKstackSection, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { MODEL_LABEL_RE, splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import type { PanelConfig, ReviewerSpec } from "./types.ts";
 
@@ -65,10 +65,7 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
  */
 export const DEFAULT_SYNTHESIS = { model: "openai/gpt-5.6-terra", thinking: "medium" } as const;
 
-export type ConfigLoad =
-	| { status: "loaded"; config: PanelConfig; path: string }
-	| { status: "missing"; path: string }
-	| { status: "invalid"; path: string; error: string };
+export type ConfigLoad = SharedConfigLoad<PanelConfig>;
 
 export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } | { ok: false; error: string } {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -181,12 +178,7 @@ function validateSynthesis(
  * `"panel-review"` key.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
-	const section = loadKstackSection("panel-review", env);
-	if (section.status !== "found") return section;
-	const result = validateConfig(section.value);
-	return result.ok
-		? { status: "loaded", config: result.config, path: section.path }
-		: { status: "invalid", path: section.path, error: result.error };
+	return loadValidatedSection("panel-review", validateConfig, env);
 }
 
 interface ModelLike {
