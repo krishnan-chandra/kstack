@@ -114,14 +114,18 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 	}
 
 	function landDeps(ctx: ExtensionContext, signal: AbortSignal): OrchestratorDeps {
-		const config = loadLandConfig();
+		const configLoad = loadLandConfig();
+		if (configLoad.status === "invalid") {
+			ctx.ui.notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
+		}
 		const metadata = metadataGenerator(ctx);
 		return {
 			run,
 			ui: uiFrom(ctx),
 			signal,
 			generatePrMetadata: metadata.generate,
-			configuredMethodFor: (nameWithOwner) => getRepoMethod(config, nameWithOwner),
+			configuredMethodFor: (nameWithOwner) =>
+				configLoad.status === "loaded" ? getRepoMethod(configLoad.config, nameWithOwner) : undefined,
 			// Keep confirmation capability minting at this production boundary.
 			landPr: async ({ prNumber, readiness, method }) =>
 				requestLand(
