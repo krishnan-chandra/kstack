@@ -30,7 +30,7 @@ import {
 	type StackUi,
 	syncStack,
 } from "./orchestrator.ts";
-import { createModelMetadataGenerator, type PrMetadataGenerator } from "./pr-metadata.ts";
+import { generateDeterministicPrMetadata, type PrMetadataGenerator } from "./pr-metadata.ts";
 import { createProcessRunner } from "./process.ts";
 import { boundText, renderInspect, renderLandOutcome, renderOutcome, renderPlan } from "./render.ts";
 import { combinePublicationSignals } from "./signals.ts";
@@ -90,21 +90,13 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		generate: PrMetadataGenerator;
 		usage: () => Usage | undefined;
 	} {
-		if (!ctx.model) {
-			return {
-				generate: async () => {
-					throw new Error("The active Pi model is unavailable or has no configured authentication.");
-				},
-				usage: () => undefined,
-			};
-		}
-		return createModelMetadataGenerator(run, {
-			model: ctx.model,
-			hasConfiguredAuth: (m) => ctx.modelRegistry.hasConfiguredAuth(m),
-			complete: (m, opts, rt) => ctx.modelRegistry.complete(m, opts, rt),
-			thinkingLevel: ctx.thinkingLevel,
-			onProgress: (bookmark) => ctx.ui.setStatus("jj-stack", `writing PR metadata: ${bookmark}`),
-		});
+		return {
+			generate: async (request) => {
+				ctx.ui.setStatus("jj-stack", `writing PR metadata: ${request.bookmark}`);
+				return generateDeterministicPrMetadata(run, request);
+			},
+			usage: () => undefined,
+		};
 	}
 
 	function publicationDeps(

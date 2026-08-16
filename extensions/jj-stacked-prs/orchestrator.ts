@@ -15,6 +15,7 @@ import {
 	reconcileStackEntries,
 } from "./github.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
+import { renderPrDocument } from "./pr-document.ts";
 import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
 import type { ProcessRunner } from "./process.ts";
 import { buildPublicationPlan, type PublicationSnapshot, slicesForPublication } from "./publication.ts";
@@ -891,19 +892,16 @@ function toFailedAction(
 }
 
 function provisionalPrMetadata(subject: string, bookmark: string): PrMetadata {
-	const title = subject || bookmark;
-	return {
-		title,
-		body: [
-			"## Summary",
-			"",
-			`- ${title}`,
-			"",
-			"## Review guide",
-			"",
-			`1. **Slice behavior** — Review the exact changes published by \`${bookmark}\`.`,
-		].join("\n"),
-	};
+	return renderPrDocument({
+		title: subject || bookmark,
+		summaryBullets: [subject || bookmark],
+		reviewSteps: [
+			{
+				label: "Slice behavior",
+				description: `Review the exact changes published by \`${bookmark}\`.`,
+			},
+		],
+	});
 }
 
 function isIndeterminate(error: unknown): boolean {
