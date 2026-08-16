@@ -15,6 +15,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
 import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
+import { loadKstackRoot } from "../shared/kstack-config.ts";
+import { collectCatalogueNameAliases, collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
 import { findHandoffSource, type HandoffSource } from "./history-reader.ts";
@@ -62,11 +64,18 @@ export function createHandoffHandler(api: HandoffApi) {
 			const catalogue: HandoffModel[] = scopedActive
 				? scoped.map((s) => s.model)
 				: (ctx.modelRegistry.getAll() as HandoffModel[]);
-			const resolution = resolveModelReference(catalogue, parsed.modelRef);
+			// Short names come from kstack.json {label, model, thinking?} entries
+			// and from model display names; both resolve against the same catalogue.
+			const kstackRoot = loadKstackRoot();
+			const aliases = [
+				...(kstackRoot.status === "found" ? collectKstackModelAliases(kstackRoot.root) : []),
+				...collectCatalogueNameAliases(catalogue),
+			];
+			const resolution = resolveModelReference(catalogue, parsed.modelRef, aliases);
 			if (resolution.status === "not-found") {
 				const hint = scopedActive
 					? " Model scoping is active, so only scoped models are accepted (see /scoped-models)."
-					: " Use provider/model-id or provider/model-id:<effort>; see /model for available models.";
+					: " Use provider/model-id, a kstack.json model label, or a model display name (quote names with spaces), optionally with :<effort>; see /model for available models.";
 				ctx.ui.notify(`Unknown model "${parsed.modelRef}".${hint}`, "error");
 				return;
 			}

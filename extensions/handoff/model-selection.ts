@@ -16,6 +16,7 @@
  * overridden at startup.
  */
 import { THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { type ModelAlias, matchModelAliases } from "../shared/model-aliases.ts";
 
 /** Canonical Pi thinking/effort levels accepted by `/handoff --model <ref>:<effort>`. */
 const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
@@ -38,13 +39,67 @@ type ModelResolution =
 	| { status: "not-found" }
 	| { status: "ambiguous"; matches: HandoffModel[] };
 
+type ModelMatch =
+	| { status: "resolved"; model: HandoffModel; aliasThinking?: HandoffEffortLevel }
+	| { status: "not-found" }
+	| { status: "ambiguous"; matches: HandoffModel[] };
+
 export function isHandoffEffortLevel(value: string): value is HandoffEffortLevel {
 	return (HANDOFF_EFFORT_LEVELS as readonly string[]).includes(value);
 }
 
+const MODEL_VALUE_HINT =
+	"--model requires a value, e.g. /handoff --model anthropic/claude-sonnet-4-5 continue the plan";
+
+/**
+ * Read a `--model` value starting at tokens[index] (separate form) or from
+ * `inline` (--model= form). A value opening with a double quote consumes
+ * tokens until the closing quote so multi-word display names survive
+ * tokenization. `nextIndex` is the first token index after the value.
+ */
+function readModelValue(
+	tokens: string[],
+	index: number,
+	inline: string | undefined,
+): { ok: true; value: string; nextIndex: number } | { ok: false; error: string } {
+	let first = inline;
+	if (first === undefined) {
+		if (index >= tokens.length) return { ok: false, error: MODEL_VALUE_HINT };
+		first = tokens[index];
+		index++;
+	}
+	if (!first.startsWith('"')) {
+		if (first === "") return { ok: false, error: MODEL_VALUE_HINT };
+		return { ok: true, value: first, nextIndex: index };
+	}
+	const parts: string[] = [];
+	let current = first.slice(1);
+	for (;;) {
+		const closing = current.indexOf('"');
+		if (closing !== -1) {
+			parts.push(current.slice(0, closing));
+			// An effort suffix may hug the closing quote ("name":high); anything
+			// else after it is almost certainly a forgotten space.
+			const rest = current.slice(closing + 1);
+			if (rest !== "" && !/^:[^\s"]+$/.test(rest)) {
+				return { ok: false, error: "unexpected text after the closing quote in the --model value" };
+			}
+			const value = parts.join(" ").trim();
+			if (value === "") return { ok: false, error: MODEL_VALUE_HINT };
+			return { ok: true, value: `${value}${rest}`, nextIndex: index };
+		}
+		parts.push(current);
+		if (index >= tokens.length) return { ok: false, error: "unterminated quote in the --model value" };
+		current = tokens[index];
+		index++;
+	}
+}
+
 /**
  * Extract an optional `--model <ref>` (also `-m <ref>` or `--model=<ref>`)
- * from the raw command arguments. Everything else becomes the goal text.
+ * from the raw command arguments. Double-quote the reference to use model
+ * display names containing spaces (e.g. --model "Claude Sonnet 4.5").
+ * Everything else becomes the goal text.
  */
 export function parseHandoffArgs(raw: string): HandoffParseResult {
 	const tokens = raw.trim() === "" ? [] : raw.trim().split(/\s+/);
@@ -61,24 +116,18 @@ export function parseHandoffArgs(raw: string): HandoffParseResult {
 			if (modelRef !== undefined) {
 				return { ok: false, error: "handoff accepts only one --model value" };
 			}
-			const value = tokens[i + 1];
-			if (value === undefined) {
-				return {
-					ok: false,
-					error: "--model requires a value, e.g. /handoff --model anthropic/claude-sonnet-4-5 continue the plan",
-				};
-			}
-			modelRef = value;
-			i++;
+			const value = readModelValue(tokens, i + 1, undefined);
+			if (!value.ok) return value;
+			modelRef = value.value;
+			i = value.nextIndex - 1;
 		} else if (token.startsWith("--model=")) {
 			if (modelRef !== undefined) {
 				return { ok: false, error: "handoff accepts only one --model value" };
 			}
-			const value = token.slice("--model=".length);
-			if (value === "") {
-				return { ok: false, error: "--model requires a value, e.g. --model=anthropic/claude-sonnet-4-5" };
-			}
-			modelRef = value;
+			const value = readModelValue(tokens, i + 1, token.slice("--model=".length));
+			if (!value.ok) return value;
+			modelRef = value.value;
+			i = value.nextIndex - 1;
 		} else {
 			goalTokens.push(token);
 		}
@@ -97,11 +146,28 @@ export function parseHandoffArgs(raw: string): HandoffParseResult {
  * (OpenRouter `:exacto`, Ollama tags, etc.). Invalid suffixes stay part of
  * the model reference rather than being silently dropped.
  */
-export function resolveModelReference(models: HandoffModel[], reference: string): ModelResolution {
+/**
+ * `aliases` are shared short names (kstack.json labels and model display
+ * names; see shared/model-aliases.ts). They match exactly after
+ * normalization, ranked after canonical and bare-id references but before
+ * partial matching. An alias target that is absent from `models` (for
+ * example a kstack.json label pointing outside the scoped models) resolves
+ * as not-found.
+ */
+export function resolveModelReference(
+	models: HandoffModel[],
+	reference: string,
+	aliases: readonly ModelAlias[] = [],
+): ModelResolution {
 	const trimmed = reference.trim();
 	if (trimmed === "") return { status: "not-found" };
 
-	const full = matchModelReference(models, trimmed);
+	const full = matchModelReference(models, trimmed, aliases);
+	if (full.status === "resolved") {
+		return full.aliasThinking === undefined
+			? { status: "resolved", model: full.model }
+			: { status: "resolved", model: full.model, effort: full.aliasThinking };
+	}
 	if (full.status !== "not-found") return full;
 
 	const lastColon = trimmed.lastIndexOf(":");
@@ -114,14 +180,15 @@ export function resolveModelReference(models: HandoffModel[], reference: string)
 		.toLowerCase();
 	if (prefix === "" || !isHandoffEffortLevel(suffix)) return { status: "not-found" };
 
-	const prefixMatch = matchModelReference(models, prefix);
+	const prefixMatch = matchModelReference(models, prefix, aliases);
 	if (prefixMatch.status === "resolved") {
+		// An explicit effort suffix always wins over the alias's configured level.
 		return { status: "resolved", model: prefixMatch.model, effort: suffix };
 	}
 	return prefixMatch;
 }
 
-function matchModelReference(models: HandoffModel[], reference: string): ModelResolution {
+function matchModelReference(models: HandoffModel[], reference: string, aliases: readonly ModelAlias[]): ModelMatch {
 	const lower = reference.toLowerCase();
 
 	// 1. Canonical provider/model-id, case-insensitive.
@@ -134,7 +201,27 @@ function matchModelReference(models: HandoffModel[], reference: string): ModelRe
 	if (matches.length === 1) return { status: "resolved", model: matches[0] };
 	if (matches.length > 1) return { status: "ambiguous", matches };
 
-	// 3. For slashed references, constrain partial matching to the provider.
+	// 3. Exact alias short name (kstack.json label or model display name).
+	const aliasMatches = matchModelAliases(aliases, reference);
+	if (aliasMatches.length > 0) {
+		const targets = new Map<string, { model: HandoffModel; thinking?: HandoffEffortLevel }>();
+		for (const alias of aliasMatches) {
+			const target = exactModelLookup(models, alias.modelRef);
+			if (target) {
+				const key = `${target.provider}/${target.id}`.toLowerCase();
+				if (!targets.has(key)) targets.set(key, { model: target, thinking: alias.thinking });
+			}
+		}
+		if (targets.size === 1) {
+			const [{ model, thinking }] = targets.values();
+			return { status: "resolved", model, aliasThinking: thinking };
+		}
+		if (targets.size > 1) return { status: "ambiguous", matches: [...targets.values()].map((t) => t.model) };
+		// An alias claimed this reference but its target is unavailable.
+		return { status: "not-found" };
+	}
+
+	// 4. For slashed references, constrain partial matching to the provider.
 	const slashIndex = reference.indexOf("/");
 	if (slashIndex !== -1) {
 		const provider = reference.slice(0, slashIndex).trim().toLowerCase();
@@ -153,12 +240,22 @@ function matchModelReference(models: HandoffModel[], reference: string): ModelRe
 		}
 	}
 
-	// 4. Unique partial match on id or name across all providers.
+	// 5. Unique partial match on id or name across all providers.
 	matches = models.filter((m) => m.id.toLowerCase().includes(lower) || (m.name ?? "").toLowerCase().includes(lower));
 	if (matches.length === 1) return { status: "resolved", model: matches[0] };
 	if (matches.length > 1) return { status: "ambiguous", matches };
 
 	return { status: "not-found" };
+}
+
+/** Exact lookup for an alias target: canonical provider/model-id, then unique bare id. */
+function exactModelLookup(models: HandoffModel[], modelRef: string): HandoffModel | undefined {
+	const lower = modelRef.trim().toLowerCase();
+	const canonical = models.filter((m) => `${m.provider}/${m.id}`.toLowerCase() === lower);
+	if (canonical.length === 1) return canonical[0];
+	const bare = models.filter((m) => m.id.toLowerCase() === lower);
+	if (bare.length === 1) return bare[0];
+	return undefined;
 }
 
 /** Format a model as the canonical `provider/model-id` reference. */

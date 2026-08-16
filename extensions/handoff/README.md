@@ -27,10 +27,19 @@ With `--archive`, the active parent path is moved, so the replacement omits the 
 
 `--model` (also `-m` or `--model=provider/model-id[:effort]`) selects the model
 and optional effort for the replacement session. It accepts a canonical
-`provider/model-id`, a unique bare model id, or a unique partial id/name match
-(provider-scoped when the reference contains a slash). Append `:<effort>` to
-request a Pi thinking level: `off`, `minimal`, `low`, `medium`, `high`,
-`xhigh`, or `max`. The full model reference is tried first so IDs that already
+`provider/model-id`, a unique bare model id, an exact short name, or a unique
+partial id/name match (provider-scoped when the reference contains a slash).
+Short names come from two centralized sources (see
+`extensions/shared/model-aliases.ts`): any `{ "label", "model", "thinking" }`
+entry in `kstack.json` (panel-review reviewers, arena runners, pr-autopilot
+models, ...) and model display names from the Pi catalogue. Display names
+match exactly, case-insensitively, in either their written or slug form
+(`Claude Sonnet 4.5` or `claude-sonnet-4.5`); quote names that contain
+spaces, e.g. `--model "Claude Sonnet 4.5"`. A kstack.json label's configured
+`thinking` level applies when no explicit suffix is given. Append `:<effort>`
+to request a Pi thinking level: `off`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, or `max`; an explicit suffix always overrides a label's configured
+level. The full model reference is tried first so IDs that already
 contain a colon (OpenRouter `:exacto`, Ollama tags) still resolve; only then is
 the final colon treated as an effort suffix. When model scoping is active
 (`--models` / `enabledModels`), only scoped models are accepted. Without a
@@ -82,7 +91,7 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 ## Tests
 
 ```bash
-bun run test:handoff
+node --test extensions/handoff/*.test.ts
 ```
 
 The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), inheritance, explicit model/effort switching and clamping, restoration of model and effort on cancelled or pre-replacement failures, scoped-model validation, and override detection without making any model calls.

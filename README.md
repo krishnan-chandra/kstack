@@ -65,7 +65,9 @@ or `"jj"` for repository mutations and defaults to `"git"` when omitted.
 Model assignments for panel-review, plan-implement, arena, swarm, and the
 `how` and `why` investigation skills use sections in the same file. The optional
 `fast-implement` section configures its one-shot implementer independently of
-`plan-implement`.
+`plan-implement`. A top-level `aliases` array (or any `{label, model, thinking}`
+entry anywhere in the file) defines model short names that `/handoff --model`
+resolves alongside Pi model display names.
 
 Copy the starter and edit:
 

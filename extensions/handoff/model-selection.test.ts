@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { ModelAlias } from "../shared/model-aliases.ts";
 import {
 	formatModelEffort,
 	formatModelRef,
@@ -116,6 +117,41 @@ describe("parseHandoffArgs", () => {
 		const result = parseHandoffArgs("--model openai/gpt-5.2 -m google/gemini-3-pro goal");
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.ok(result.error.includes("only one --model"));
+	});
+
+	it("extracts a quoted multi-word display name", () => {
+		assert.deepEqual(parseHandoffArgs('--model "Claude Sonnet 4.5" continue the work'), {
+			ok: true,
+			goal: "continue the work",
+			modelRef: "Claude Sonnet 4.5",
+			archive: false,
+		});
+	});
+
+	it("extracts a quoted multi-word display name in --model= form", () => {
+		assert.deepEqual(parseHandoffArgs('goal --model="Claude Sonnet 4.5" more goal'), {
+			ok: true,
+			goal: "goal more goal",
+			modelRef: "Claude Sonnet 4.5",
+			archive: false,
+		});
+	});
+
+	it("keeps an effort suffix outside the quotes", () => {
+		const result = parseHandoffArgs('--model "Qwen3 Coder Exacto":high goal');
+		assert.deepEqual(result, { ok: true, goal: "goal", modelRef: "Qwen3 Coder Exacto:high", archive: false });
+	});
+
+	it("errors on an unterminated quote", () => {
+		const result = parseHandoffArgs('--model "Claude Sonnet goal');
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.ok(result.error.includes("unterminated quote"));
+	});
+
+	it("errors on text after the closing quote", () => {
+		const result = parseHandoffArgs('--model "Claude Sonnet 4.5"extra goal');
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.ok(result.error.includes("closing quote"));
 	});
 });
 
@@ -252,6 +288,85 @@ describe("resolveModelReference", () => {
 	it("treats an invalid suffix as part of an unknown model reference", () => {
 		assert.deepEqual(resolveModelReference(MODELS, "openai/gpt-5.2:turbo"), { status: "not-found" });
 		assert.deepEqual(resolveModelReference(MODELS, "openai/gpt-5.2:"), { status: "not-found" });
+	});
+});
+
+describe("resolveModelReference with aliases", () => {
+	const ALIASES: ModelAlias[] = [
+		{ key: "terra", alias: "terra", modelRef: "openai/gpt-5.2", thinking: "max", source: "kstack.json" },
+		{
+			key: "claude sonnet 4.5",
+			alias: "Claude Sonnet 4.5",
+			modelRef: "anthropic/claude-sonnet-4-5",
+			source: "model name",
+		},
+		{
+			key: "claude-sonnet-4.5",
+			alias: "Claude Sonnet 4.5",
+			modelRef: "anthropic/claude-sonnet-4-5",
+			source: "model name",
+		},
+	];
+
+	it("resolves a kstack.json label with its configured thinking level", () => {
+		const result = resolveModelReference(MODELS, "terra", ALIASES);
+		assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort: "max" });
+	});
+
+	it("lets an explicit effort suffix override the alias thinking level", () => {
+		const result = resolveModelReference(MODELS, "terra:low", ALIASES);
+		assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort: "low" });
+	});
+
+	it("resolves a display name by normalized and slug forms", () => {
+		assert.deepEqual(resolveModelReference(MODELS, "Claude Sonnet 4.5", ALIASES), {
+			status: "resolved",
+			model: MODELS[0],
+		});
+		assert.deepEqual(resolveModelReference(MODELS, "claude-sonnet-4.5", ALIASES), {
+			status: "resolved",
+			model: MODELS[0],
+		});
+	});
+
+	it("prefers a canonical or bare-id reference over an alias", () => {
+		const colliding: ModelAlias[] = [
+			{ key: "gpt-5.2", alias: "gpt-5.2", modelRef: "anthropic/claude-opus-4-6", source: "kstack.json" },
+		];
+		const result = resolveModelReference(MODELS, "gpt-5.2", colliding);
+		assert.deepEqual(result, { status: "resolved", model: MODELS[2] });
+	});
+
+	it("prefers an alias over partial matching", () => {
+		const codexAlias: ModelAlias[] = [
+			{ key: "gpt", alias: "gpt", modelRef: "openai/gpt-5.2-codex", source: "kstack.json" },
+		];
+		const result = resolveModelReference(MODELS, "gpt", codexAlias);
+		assert.deepEqual(result, { status: "resolved", model: MODELS[3] });
+	});
+
+	it("reports not-found when the alias target is outside the catalogue", () => {
+		const scoped = [MODELS[0]];
+		assert.deepEqual(resolveModelReference(scoped, "terra", ALIASES), { status: "not-found" });
+	});
+
+	it("reports ambiguity when aliases map one name to different models", () => {
+		const dupes: ModelAlias[] = [
+			{ key: "fast", alias: "fast", modelRef: "openai/gpt-5.2", source: "kstack.json" },
+			{ key: "fast", alias: "GPT-5.2 Codex", modelRef: "openai/gpt-5.2-codex", source: "model name" },
+		];
+		const result = resolveModelReference(MODELS, "fast", dupes);
+		assert.equal(result.status, "ambiguous");
+		if (result.status === "ambiguous") assert.equal(result.matches.length, 2);
+	});
+
+	it("dedupes aliases from two sources pointing at the same model", () => {
+		const dupes: ModelAlias[] = [
+			{ key: "sonnet", alias: "sonnet", modelRef: "anthropic/claude-sonnet-4-5", source: "kstack.json" },
+			{ key: "sonnet", alias: "Sonnet", modelRef: "claude-sonnet-4-5", source: "model name" },
+		];
+		const result = resolveModelReference(MODELS, "sonnet", dupes);
+		assert.equal(result.status, "resolved");
 	});
 });
 

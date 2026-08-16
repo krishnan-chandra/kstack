@@ -1,5 +1,9 @@
 {
 	"vcs": { "backend": "git" },
+	"aliases": [
+		{ "label": "sol", "model": "openai/gpt-5.6-sol", "thinking": "high" },
+		{ "label": "fable", "model": "anthropic/claude-fable-5", "thinking": "high" }
+	],
 	"land": {
 		"repos": {
 			"krishnan-chandra/kstack": "squash"

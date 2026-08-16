@@ -32,7 +32,13 @@ type RawSectionLoad =
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
 
-export function loadKstackSection(section: string, env: NodeJS.ProcessEnv = process.env): RawSectionLoad {
+type RawRootLoad =
+	| { status: "found"; path: string; root: Record<string, unknown> }
+	| { status: "missing"; path: string }
+	| { status: "invalid"; path: string; error: string };
+
+/** Load the whole kstack.json object for cross-section consumers such as model aliases. */
+export function loadKstackRoot(env: NodeJS.ProcessEnv = process.env): RawRootLoad {
 	const path = getKstackPath(env);
 	if (!existsSync(path)) return { status: "missing", path };
 	try {
@@ -40,10 +46,15 @@ export function loadKstackSection(section: string, env: NodeJS.ProcessEnv = proc
 		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 			return { status: "invalid", path, error: "kstack.json must be a JSON object." };
 		}
-		const root = raw as Record<string, unknown>;
-		if (root[section] === undefined) return { status: "missing", path };
-		return { status: "found", value: root[section], path, root };
+		return { status: "found", path, root: raw as Record<string, unknown> };
 	} catch (error) {
 		return { status: "invalid", path, error: `Unreadable config: ${(error as Error).message}` };
 	}
+}
+
+export function loadKstackSection(section: string, env: NodeJS.ProcessEnv = process.env): RawSectionLoad {
+	const load = loadKstackRoot(env);
+	if (load.status !== "found") return load;
+	if (load.root[section] === undefined) return { status: "missing", path: load.path };
+	return { status: "found", value: load.root[section], path: load.path, root: load.root };
 }
