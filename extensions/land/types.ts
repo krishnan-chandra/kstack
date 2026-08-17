@@ -26,7 +26,7 @@ export interface FrontierResult {
 	prNumber: number;
 	url: string;
 	expectedHeadSha: string;
-	method: MergeMethod;
+	method: MergeMethod | "graphite";
 	state: "landed" | "queued" | "blocked" | "not-attempted";
 }
 export interface LandResult {

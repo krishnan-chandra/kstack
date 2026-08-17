@@ -1,9 +1,9 @@
 # Land
 
 `/land` merges a GitHub pull request after `pr-autopilot` verifies its current
-head. In jj mode, selecting an upper PR in a confirmed local stack lands the
-complete prefix from trunk through that PR. Land confirms the stack once, then
-revalidates each pull request before it asks GitHub to merge or enqueue it.
+head. In jj or Graphite mode, selecting a PR in a confirmed local stack lands
+the complete prefix from trunk through that PR. Land confirms the stack once,
+then revalidates each pull request before it asks GitHub or Graphite to merge it.
 
 ## Usage
 
@@ -19,6 +19,13 @@ Git branch or jj bookmark, according to the shared `vcs.backend` setting. Land
 stops when Git is detached, when the current jj change has no unique bookmark,
 or when GitHub finds zero or multiple matching PRs. Pass `--pr` to select a PR
 without checking out its local head.
+
+In Graphite mode, Land derives the bounded prefix from exact GitHub head/base
+relationships, verifies every local branch at the exact remote SHA, and requires
+the selected branch to be checked out. A related bottom, middle, or top branch
+routes through native `gt merge`; a branch with no open stack relatives keeps
+the ordinary exact-head GitHub path. Graphite stack landing rejects `--method`
+because repository/Graphite settings own the merge strategy and queue policy.
 
 In jj mode, Land asks `jj-stacked-prs` whether the selected PR head closes a
 local linear stack. A stack with two or more slices lands bottom-up through the
@@ -63,7 +70,8 @@ repository and skip both the method-selection and confirmation prompts:
 Precedence: `--method` CLI flag > per-repo config > interactive prompt. When the
 method comes from config (not CLI), the confirmation prompt is also skipped.
 Only `"squash"` and `"rebase"` are valid; unknown or invalid values are silently
-ignored.
+ignored. This configuration applies only to standalone and jj-frontier GitHub
+merges, not native Graphite stack landing.
 
 ## Safety and partial results
 
@@ -77,6 +85,12 @@ GitHub until the pinned PR reports `MERGED`. If GitHub accepts the request but
 polling fails, times out, or is cancelled, Land reports `partially-landed` and
 preserves the accepted mutation in its result.
 
+Graphite stack landing performs a native dry run before confirmation and again
+under the shared repository publication lock after exact topology revalidation.
+It invokes `gt merge` once, then verifies every pinned PR remotely. A lost or
+nonzero merge process is treated as indeterminate/partial and is never retried
+automatically. Land never runs `gt sync` or removes local Graphite branches.
+
 Press Ctrl+Shift+L to abort an active subprocess or polling wait. Cancellation
 cannot undo a merge or remove a request from a merge queue.
 
@@ -84,8 +98,8 @@ cannot undo a merge or remove a request from a merge queue.
 
 The `kstack:land:request` event accepts typed `LandOptions` with a positive PR
 number and returns a structured `LandResult`. The request is claimed
-synchronously, and callers await its completion. In jj mode, the request uses
-the same stack-prefix discovery as `/land`.
+synchronously, and callers await its completion. In jj and Graphite modes, the
+request uses the same stack-prefix discovery as `/land`.
 
 Trusted in-process callers such as `/jj-stack land` may pass a capability from
 `issueLandConfirmation()` after they have already obtained consent for that
@@ -93,10 +107,10 @@ exact PR. Only that minted object skips Land's interactive merge confirmation.
 A boolean or reconstructed payload is ignored. Land still revalidates the PR,
 pins the exact head, and passes `--match-head-commit`.
 
-Stack landing passes a separate pr-autopilot confirmation after its plan prompt,
-so each frontier's readiness pass runs without additional prompts. A plain
-`/land`, and any caller that provides only a Land confirmation, still confirms
-the autopilot run interactively.
+Trusted stack callers may pass a separate pr-autopilot confirmation, so each
+readiness pass runs without additional prompts. A plain `/land`, and any caller
+that provides only a Land confirmation, still confirms mutating autopilot runs
+interactively.
 
 ## Limits
 
@@ -108,7 +122,7 @@ the autopilot run interactively.
 - Concurrent Land runs per session: 1
 
 `/land --pr <number>` lands through the selected PR when its head closes a
-confirmed local jj stack. Use `/jj-stack land` or `jj_stack_land` when you want
+confirmed local jj or Graphite stack. Use `/jj-stack land` or `jj_stack_land` when you want
 to name the top bookmark, remote, trunk revset, or stack-size limit explicitly.
 Both paths call Land once per pull request with a minted confirmation and retain its
 head pin, revalidation, and `--match-head-commit` checks.

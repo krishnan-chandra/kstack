@@ -1,6 +1,7 @@
 import type { StackLandOutcome, StackPrefixLandOutcome } from "../jj-stacked-prs/types.ts";
 import type { VcsBackendId } from "../shared/vcs/config.ts";
 import { isLandConfirmation } from "./confirmation.ts";
+import type { GraphiteLandingResponse } from "./graphite-stack-landing.ts";
 import type { FrontierResult, LandOptions, LandResult } from "./types.ts";
 
 type StackLandingResponse = { handled: false } | { handled: true; outcome: StackPrefixLandOutcome };
@@ -8,6 +9,7 @@ type StackLandingResponse = { handled: false } | { handled: true; outcome: Stack
 interface RouteLandDeps {
 	backend: VcsBackendId;
 	requestStackLanding(): Promise<StackLandingResponse>;
+	requestGraphiteStackLanding?(): Promise<GraphiteLandingResponse>;
 	runSingle(): Promise<LandResult>;
 }
 
@@ -91,7 +93,20 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 }
 
 export async function routeLand(options: LandOptions, deps: RouteLandDeps): Promise<LandResult> {
-	if (deps.backend !== "jj" || isLandConfirmation(options.confirmation)) return deps.runSingle();
+	if (deps.backend === "git") return deps.runSingle();
+	if (deps.backend === "graphite") {
+		if (!deps.requestGraphiteStackLanding)
+			return blocked("Graphite stack landing is unavailable; refusing a possible individual middle-stack merge.");
+		try {
+			const response = await deps.requestGraphiteStackLanding();
+			return response.status === "not-stack" ? deps.runSingle() : response.outcome;
+		} catch (error) {
+			return blocked(
+				`Could not inspect Graphite stack topology: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+	if (isLandConfirmation(options.confirmation)) return deps.runSingle();
 
 	let response: StackLandingResponse;
 	try {

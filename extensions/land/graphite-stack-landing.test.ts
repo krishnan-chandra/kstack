@@ -1,0 +1,223 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
+import type { ExecFn } from "../shared/git-exec.ts";
+import { requestGraphiteStackLanding } from "./graphite-stack-landing.ts";
+
+const bottomSha = "a".repeat(40);
+const topSha = "b".repeat(40);
+const prs = [
+	{
+		number: 11,
+		url: "https://example/11",
+		headRefName: "kstack/bottom",
+		baseRefName: "main",
+		headRefOid: bottomSha,
+		isDraft: false,
+	},
+	{
+		number: 12,
+		url: "https://example/12",
+		headRefName: "kstack/top",
+		baseRefName: "kstack/bottom",
+		headRefOid: topSha,
+		isDraft: false,
+	},
+];
+
+function harness() {
+	const calls: string[] = [];
+	const exec: ExecFn = async (command, args) => {
+		const key = `${command} ${args.join(" ")}`;
+		calls.push(key);
+		if (key === "git rev-parse --show-toplevel") return { code: 0, stdout: "/repo\n", stderr: "" };
+		if (key === "gt --no-interactive trunk") return { code: 0, stdout: "main\n", stderr: "" };
+		if (key.startsWith("gh pr view 12 ")) {
+			return {
+				code: 0,
+				stdout: JSON.stringify({
+					number: 12,
+					url: "https://example/12",
+					title: "Top",
+					state: "OPEN",
+					isDraft: false,
+					headRefName: "kstack/top",
+					baseRefName: "kstack/bottom",
+					headRefOid: topSha,
+					mergeable: "MERGEABLE",
+					mergeStateStatus: "CLEAN",
+					mergedAt: null,
+					mergeCommit: null,
+				}),
+				stderr: "",
+			};
+		}
+		if (key.startsWith("gh pr list --state open")) {
+			const headIndex = args.indexOf("--head");
+			const baseIndex = args.indexOf("--base");
+			const matches =
+				headIndex >= 0
+					? prs.filter((pr) => pr.headRefName === args[headIndex + 1])
+					: prs.filter((pr) => pr.baseRefName === args[baseIndex + 1]);
+			return { code: 0, stdout: JSON.stringify(matches), stderr: "" };
+		}
+		if (key === "git branch --show-current") return { code: 0, stdout: "kstack/top\n", stderr: "" };
+		if (key.includes("refs/heads/kstack/bottom")) return { code: 0, stdout: `${bottomSha}\n`, stderr: "" };
+		if (key.includes("refs/heads/kstack/top")) return { code: 0, stdout: `${topSha}\n`, stderr: "" };
+		if (key === "gt --no-interactive merge --dry-run" || key === "gt --no-interactive merge") {
+			return { code: 0, stdout: "ready\n", stderr: "" };
+		}
+		return { code: 1, stdout: "", stderr: `unexpected ${key}` };
+	};
+	return { calls, exec };
+}
+
+function ready(prNumber: number): AutopilotResult {
+	const pr = prs.find((item) => item.number === prNumber)!;
+	return {
+		status: "merge-ready",
+		mergeReady: true,
+		cyclesCompleted: 0,
+		blockedReasons: [],
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+		prState: {
+			number: pr.number,
+			title: "Ready",
+			state: "open",
+			isDraft: false,
+			headSha: pr.headRefOid,
+			verifiedHeadSha: pr.headRefOid,
+			baseRef: pr.baseRefName,
+			headRef: pr.headRefName,
+			mergeable: "mergeable",
+			mergeStateStatus: "CLEAN",
+			checks: [],
+			threads: [],
+			hasUnresolvedThreads: false,
+		},
+	};
+}
+
+describe("Graphite stack landing", () => {
+	it("verifies the exact prefix, dry-runs twice, merges once, and never syncs", async () => {
+		const { calls, exec } = harness();
+		const readiness: number[] = [];
+		let released = false;
+		let preview = "";
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async (_mode, pr) => {
+					readiness.push(pr);
+					return { handled: true, outcome: ready(pr) };
+				},
+				confirmMerge: async (body) => {
+					preview = body;
+					return true;
+				},
+				now: () => 0,
+				sleep: async () => {},
+				acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+				waitForMerge: async (_exec, _cwd, number) => ({
+					merged: true,
+					snapshot: { number } as never,
+				}),
+			},
+		);
+		assert.equal(response.status, "stack");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "landed");
+		assert.deepEqual(readiness, [11, 12]);
+		assert.match(preview, /PR #11: kstack\/bottom -> main/);
+		assert.match(preview, /PR #12: kstack\/top -> kstack\/bottom/);
+		assert.equal(calls.filter((call) => call === "gt --no-interactive merge --dry-run").length, 2);
+		assert.equal(calls.filter((call) => call === "gt --no-interactive merge").length, 1);
+		assert.equal(
+			calls.some((call) => call.includes("gt sync")),
+			false,
+		);
+		assert.equal(released, true);
+	});
+
+	it("rejects an explicit merge method before readiness or mutation", async () => {
+		const { calls, exec } = harness();
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "check", method: "squash" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async () => assert.fail("readiness must not run"),
+				confirmMerge: async () => false,
+				now: () => 0,
+				sleep: async () => {},
+			},
+		);
+		assert.equal(response.status, "stack");
+		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /--method is not supported/);
+		assert.equal(
+			calls.some((call) => call === "gt --no-interactive merge"),
+			false,
+		);
+	});
+
+	it("declines after the dry run without acquiring the mutation lock", async () => {
+		const { calls, exec } = harness();
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
+				confirmMerge: async () => false,
+				now: () => 0,
+				sleep: async () => {},
+				acquireLock: () => assert.fail("declining must not acquire the publication lock"),
+			},
+		);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "declined");
+		assert.equal(calls.filter((call) => call === "gt --no-interactive merge --dry-run").length, 1);
+		assert.equal(
+			calls.some((call) => call === "gt --no-interactive merge"),
+			false,
+		);
+	});
+
+	it("blocks a stale topology under the lock and releases it", async () => {
+		const base = harness();
+		let listReads = 0;
+		let released = false;
+		const exec: ExecFn = async (command, args, options) => {
+			if (command === "gh" && args[0] === "pr" && args[1] === "list" && ++listReads === 5) {
+				return {
+					code: 0,
+					stdout: JSON.stringify([{ ...prs[0], headRefOid: "c".repeat(40) }]),
+					stderr: "",
+				};
+			}
+			return base.exec(command, args, options);
+		};
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
+				confirmMerge: async () => true,
+				now: () => 0,
+				sleep: async () => {},
+				acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+			},
+		);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
+		assert.equal(
+			base.calls.some((call) => call === "gt --no-interactive merge"),
+			false,
+		);
+		assert.equal(released, true);
+	});
+});
