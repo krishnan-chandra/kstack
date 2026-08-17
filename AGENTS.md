@@ -9,46 +9,43 @@ application boundaries.
 
 ## Verify
 
-Run the full test suite and typecheck from the repository root (Bun for local tooling):
+Run the full test suite and typecheck from the repository root:
 
 ```bash
-bun install
-bun run test
-bun run typecheck
-bun run lint
-bun run check:exports
+npm ci
+npm test
+npm run typecheck
+npm run lint
+npm run check:exports
 ```
 
-`bun run test` runs the suite under Bun, then chains `test:sqlite`, which runs the
-`session-archive` and handoff tests that require Node under Node 22.
-`archive-store.ts` uses `node:sqlite` because the extension executes inside
-Pi's Node runtime, and Bun has no `node:sqlite`. `bunfig.toml` centralizes the
-Bun exclusions. `bun run check:test-split` verifies that the config and the
-`test:sqlite*` scripts stay aligned when the SQLite surface changes.
+The suite runs directly under Node, including the `session-archive` and handoff
+tests that use `node:sqlite`. The package requires Node 22.18 or newer so native
+TypeScript type stripping and the SQLite API are available without a loader.
 
 Use a colocated test file for a focused iteration, such as
-`bun run test:handoff` or `bun test check-exports.test.mjs`.
+`npm run test:handoff` or `node --test check-exports.test.mjs`.
 
 The `git-worktrees` planner and inspector are Node TypeScript CLIs. Run them
 with the rest of the skill suite:
 
 ```bash
-bun test skills/git-worktrees/
+node --test skills/git-worktrees/
 ```
 
 ## Conventions
 
-- Write TypeScript ESM for the extension runtime (Pi runs Node 22+; Node runs
-  `.ts` files through type stripping without a build step). Local tooling
-  (tests, typecheck, lint, install) runs under Bun.
-- Colocate tests in `*.test.ts` using `node:test` — Bun's test runner accepts
-  these imports, so the suite runs under `bun test` with no per-file rewrite.
+- Write TypeScript ESM for the extension runtime (Pi runs Node 22.18+; Node runs
+  `.ts` files through type stripping without a build step). Keep runtime syntax
+  erasable: do not use enums, parameter properties, or runtime namespaces.
+- Colocate tests in `*.test.ts` using `node:test` so production and tests use the
+  same runtime.
 - Keep extension `index.ts` files as thin Pi adapters. Put domain behavior in
   named modules and inject filesystem, Git, process, time, and model effects.
 - Prefer exhaustive `if` / `else if` / `switch` over nested ternaries. A
   one-level `a ? b : c` is fine; a chain of `? :` is not.
 - Avoid runtime dependencies unless the platform cannot provide the capability.
-- Export a symbol only for a real consumer: another module, a colocated test, or a marked contract (`/* exported: <reason> */`). `bun run check:exports` enforces this.
+- Export a symbol only for a real consumer: another module, a colocated test, or a marked contract (`/* exported: <reason> */`). `npm run check:exports` enforces this.
 
 ## Extension ground rules
 

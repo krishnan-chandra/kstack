@@ -108,8 +108,11 @@ function mapJjOutcome(outcome: JjPublicationOutcome): StackDeliveryOutcome {
 
 class JjStackDeliveryAdapter implements StackDeliveryAdapter {
 	readonly backendId = "jj" as const;
+	private readonly deps: StackAdapterDeps;
 
-	constructor(private readonly deps: StackAdapterDeps) {}
+	constructor(deps: StackAdapterDeps) {
+		this.deps = deps;
+	}
 
 	async preflight(cwd: string): Promise<VcsResult<StackPreflight>> {
 		if (!this.deps.requestJjCapabilities || !this.deps.requestJjPublication) {
@@ -139,8 +142,11 @@ class JjStackDeliveryAdapter implements StackDeliveryAdapter {
 
 class GraphiteStackDeliveryAdapter implements StackDeliveryAdapter {
 	readonly backendId = "graphite" as const;
+	private readonly deps: StackAdapterDeps;
 
-	constructor(private readonly deps: StackAdapterDeps) {}
+	constructor(deps: StackAdapterDeps) {
+		this.deps = deps;
+	}
 
 	async preflight(cwd: string): Promise<VcsResult<StackPreflight>> {
 		const common = await preflightVcs(cwd, "graphite", this.deps.exec);

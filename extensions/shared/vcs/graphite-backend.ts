@@ -71,6 +71,8 @@ function isSafeRelativePath(path: string): boolean {
 /** Graphite owns all workstream mutations; Git is used only for inspection. */
 export class GraphiteBackend implements VcsBackend {
 	readonly id = "graphite" as const;
+	private readonly exec: ExecFn;
+	private readonly deps: GraphiteBackendDeps;
 	readonly descriptor = {
 		refNoun: "Graphite branch",
 		workstreamNoun: "Graphite checkout",
@@ -89,10 +91,10 @@ export class GraphiteBackend implements VcsBackend {
 			this.publishRecordedChanges(cwd, ref, options),
 	};
 
-	constructor(
-		private readonly exec: ExecFn,
-		private readonly deps: GraphiteBackendDeps = {},
-	) {}
+	constructor(exec: ExecFn, deps: GraphiteBackendDeps = {}) {
+		this.exec = exec;
+		this.deps = deps;
+	}
 
 	private async run(command: string, args: string[], cwd: string, timeout = 10_000): Promise<ExecFnResult> {
 		try {

@@ -91,12 +91,11 @@ export function childIsolationArgs(options: ChildIsolationOptions = {}): string[
 
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
+	if (currentScript && existsSync(currentScript)) {
 		return { command: process.execPath, args: [currentScript, ...args] };
 	}
 	const execName = basename(process.execPath).toLowerCase();
-	if (!/^(node|bun)(\.exe)?$/.test(execName)) return { command: process.execPath, args };
+	if (!/^node(\.exe)?$/.test(execName)) return { command: process.execPath, args };
 	return { command: "pi", args };
 }
 

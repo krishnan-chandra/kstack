@@ -145,9 +145,9 @@ covers publication only; advance, sync, and land are not yet covered.
 ## Development
 
 ```bash
-bun test extensions/jj-stacked-prs/
-bun run typecheck
-bun run check:exports
+node --test extensions/jj-stacked-prs/
+npm run typecheck
+npm run check:exports
 ```
 
 Tests inject process and GitHub/jj adapters. They do not use real credentials
