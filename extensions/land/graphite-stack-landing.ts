@@ -6,6 +6,7 @@ import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequest, waitForMerge } from "../shared/github.ts";
 import { asRecord } from "../shared/narrow.ts";
 import { acquirePublicationLock } from "../shared/publication-lock.ts";
+import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
 const MAX_REFS = 50;
@@ -202,11 +203,22 @@ async function inspectPlan(
 	const children = await queryOpenPullRequests(exec, repositoryRoot, ["--base", selected.ref], 1, signal);
 	if (!children.ok) return children;
 	const hasChild = children.pullRequests.length > 0;
-	if (prefix.length === 1 && !hasChild) return { ok: true };
-
 	const current = await run(exec, "git", ["branch", "--show-current"], repositoryRoot, signal);
 	if (current.code !== 0 || current.stdout.trim() !== selected.ref) {
+		if (prefix.length === 1 && !hasChild) {
+			return {
+				ok: false,
+				error: `Graphite landing requires selected branch ${selected.ref} to be checked out before proving it has no unpublished descendants.`,
+			};
+		}
 		return { ok: false, error: `Graphite stack landing requires selected branch ${selected.ref} to be checked out.` };
+	}
+	if (prefix.length === 1 && !hasChild) {
+		const localChildren = await run(exec, "gt", ["--no-interactive", "children"], repositoryRoot, signal, 8_000);
+		if (localChildren.code !== 0) {
+			return { ok: false, error: `Could not inspect local Graphite descendants: ${diagnostic(localChildren)}` };
+		}
+		if (!localChildren.stdout.trim()) return { ok: true };
 	}
 	for (const pr of prefix) {
 		const local = await run(
@@ -255,7 +267,13 @@ async function dryRun(
 		deps.signal,
 		60_000,
 	);
-	return result.code === 0 ? { ok: true } : { ok: false, error: `gt merge --dry-run failed: ${diagnostic(result)}` };
+	if (result.code !== 0) return { ok: false, error: `gt merge --dry-run failed: ${diagnostic(result)}` };
+	const scope = verifyGraphiteDryRunAffectedRefs(
+		`${result.stdout}\n${result.stderr}`,
+		"merge",
+		plan.pullRequests.map((pr) => pr.ref).reverse(),
+	);
+	return scope.ok ? { ok: true } : { ok: false, error: `Refusing Graphite stack landing: ${scope.error}` };
 }
 
 export async function requestGraphiteStackLanding(
@@ -280,6 +298,7 @@ export async function requestGraphiteStackLanding(
 	}
 
 	let plan = inspected.plan;
+	const readinessEvidence = new Map<number, { ref: string; baseRef: string; headSha: string }>();
 	for (const pr of plan.pullRequests) {
 		const readiness = await deps.runAutopilot(options.readiness, pr.number);
 		if (!readiness.handled) return { status: "stack", outcome: blocked("pr-autopilot extension is unavailable.") };
@@ -291,7 +310,7 @@ export async function requestGraphiteStackLanding(
 			result.prState.verifiedHeadSha !== result.prState.headSha ||
 			result.prState.number !== pr.number ||
 			result.prState.headRef !== pr.ref ||
-			result.prState.headSha !== pr.headSha
+			result.prState.baseRef !== pr.baseRef
 		) {
 			return {
 				status: "stack",
@@ -304,6 +323,11 @@ export async function requestGraphiteStackLanding(
 				},
 			};
 		}
+		readinessEvidence.set(pr.number, {
+			ref: result.prState.headRef,
+			baseRef: result.prState.baseRef,
+			headSha: result.prState.headSha,
+		});
 	}
 
 	const refreshed = await inspectPlan(deps.cwd, options.target.prNumber, deps.exec, deps.signal);
@@ -312,7 +336,23 @@ export async function requestGraphiteStackLanding(
 			status: "stack",
 			outcome: blocked(refreshed.ok ? "Graphite stack topology disappeared after readiness checks." : refreshed.error),
 		};
-	plan = refreshed.plan;
+	const refreshedPlan = refreshed.plan;
+	const readinessChanged =
+		refreshedPlan.pullRequests.length !== readinessEvidence.size ||
+		refreshedPlan.pullRequests.some((pr) => {
+			const evidence = readinessEvidence.get(pr.number);
+			return !evidence || evidence.ref !== pr.ref || evidence.baseRef !== pr.baseRef || evidence.headSha !== pr.headSha;
+		});
+	if (readinessChanged) {
+		return {
+			status: "stack",
+			outcome: {
+				...blocked("Graphite PR heads or topology changed after readiness checks; no merge ran."),
+				autopilotRan: true,
+			},
+		};
+	}
+	plan = refreshedPlan;
 	if (plan.pullRequests.some((pr) => pr.draft))
 		return { status: "stack", outcome: blocked("Every Graphite prefix PR must be ready for review before landing.") };
 	const previewDryRun = await dryRun(plan, deps);
@@ -403,13 +443,23 @@ export async function requestGraphiteStackLanding(
 				},
 			};
 		}
-		const frontiers = results.map(({ pr, verified }) => ({
-			prNumber: pr.number,
-			url: pr.url,
-			expectedHeadSha: pr.headSha,
-			method: "graphite" as const,
-			state: verified.merged ? ("landed" as const) : ("queued" as const),
-		}));
+		const frontiers = results.map(({ pr, verified }) => {
+			const unchangedOpen =
+				verified.snapshot.state === "OPEN" &&
+				verified.snapshot.headRef === pr.ref &&
+				verified.snapshot.headOid === pr.headSha;
+			let state: "landed" | "queued" | "blocked";
+			if (verified.merged) state = "landed";
+			else if (unchangedOpen) state = "queued";
+			else state = "blocked";
+			return {
+				prNumber: pr.number,
+				url: pr.url,
+				expectedHeadSha: pr.headSha,
+				method: "graphite" as const,
+				state,
+			};
+		});
 		const allMerged = results.every((item) => item.verified.merged);
 		return {
 			status: "stack",
@@ -426,9 +476,15 @@ export async function requestGraphiteStackLanding(
 				],
 				blockers: allMerged
 					? []
-					: [
-							"Graphite accepted the merge, but not every exact PR reached verified MERGED state. Inspect the listed PRs; do not blindly retry.",
-						],
+					: results
+							.filter((item) => !item.verified.merged)
+							.map(({ pr, verified }) => {
+								const snapshot = verified.snapshot;
+								if (snapshot.state === "OPEN" && snapshot.headRef === pr.ref && snapshot.headOid === pr.headSha) {
+									return `PR #${pr.number} remains open at the expected head and may be queued.`;
+								}
+								return `PR #${pr.number} verification stopped at ${snapshot.state} ${snapshot.headRef}@${snapshot.headOid.slice(0, 12)}; expected OPEN or MERGED ${pr.ref}@${pr.headSha.slice(0, 12)}.`;
+							}),
 			},
 		};
 	} finally {

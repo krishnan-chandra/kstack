@@ -22,10 +22,12 @@ without checking out its local head.
 
 In Graphite mode, Land derives the bounded prefix from exact GitHub head/base
 relationships, verifies every local branch at the exact remote SHA, and requires
-the selected branch to be checked out. A related bottom, middle, or top branch
-routes through native `gt merge`; a branch with no open stack relatives keeps
-the ordinary exact-head GitHub path. Graphite stack landing rejects `--method`
-because repository/Graphite settings own the merge strategy and queue policy.
+the selected branch to be checked out. It also checks local Graphite descendants,
+so an unpublished child prevents fallback to the generic single-PR path. A
+related bottom, middle, or top branch routes through native `gt merge`; a branch
+with no open stack relatives keeps the ordinary exact-head GitHub path. Graphite
+stack landing rejects `--method` because repository/Graphite settings own the
+merge strategy and queue policy.
 
 In jj mode, Land asks `jj-stacked-prs` whether the selected PR head closes a
 local linear stack. A stack with two or more slices lands bottom-up through the
@@ -85,8 +87,9 @@ GitHub until the pinned PR reports `MERGED`. If GitHub accepts the request but
 polling fails, times out, or is cancelled, Land reports `partially-landed` and
 preserves the accepted mutation in its result.
 
-Graphite stack landing performs a native dry run before confirmation and again
-under the shared repository publication lock after exact topology revalidation.
+Graphite stack landing parses the exact affected branch list from a native dry
+run before confirmation and again under the shared repository publication lock
+after exact topology revalidation.
 It invokes `gt merge` once, then verifies every pinned PR remotely. A lost or
 nonzero merge process is treated as indeterminate/partial and is never retried
 automatically. Land never runs `gt sync` or removes local Graphite branches.
