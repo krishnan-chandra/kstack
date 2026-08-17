@@ -41,7 +41,7 @@ interface BuildChildArgsOptions {
  * workflow composition. In stack mode, Arena is deterministically excluded by
  * disabling skill discovery (`--no-skills`) and re-adding every other skill
  * with repeated `--skill`; this prevents parallel candidates from corrupting a
- * shared jj operation log while preserving task-specific skills.
+ * shared stack state while preserving task-specific skills.
  */
 export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 	const mode: DeliveryMode = options.mode ?? "single";
@@ -55,18 +55,20 @@ export function buildChildArgs(options: BuildChildArgsOptions): string[] {
 	let target: string;
 	if (options.role === "planner") {
 		const delivery = stackMode
-			? 'This is a stacked-PR delivery. Begin the plan with a line reading exactly "Delivery: stacked-prs", then a line "Stack base: trunk()", then ordered PR slices.'
+			? 'This is a stacked-PR delivery. Begin the plan with a line reading exactly "Delivery: stacked-prs", then a "Stack base:" line using the exact backend trunk named in the task file, then ordered PR slices.'
 			: 'This is a single-PR delivery. Begin the plan with a line reading exactly "Delivery: single-pr".';
 		target = `Read the user task at ${options.taskFile}, inspect the repository, and produce the plan. ${delivery}`;
 	} else if (options.role === "implementer") {
-		const stackNote = stackMode ? " This is a stacked-PR delivery; follow the appended local jj stack policy." : "";
+		const stackNote = stackMode
+			? " This is a stacked-PR delivery; follow the appended backend-specific local stack policy."
+			: "";
 		const ledgerNote = options.ledgerFile
 			? ` Read and update the execution ledger at ${options.ledgerFile}; its final contents and the complete ledger in your response must close every plan item.`
 			: " Include the complete execution ledger in your response, even if no ledger file was supplied.";
 		target = `Read the user task at ${options.taskFile} and the approved plan at ${options.planFile}, then implement and verify it.${ledgerNote}${stackNote}${worktreeNote}`;
 	} else if (options.role === "fixer") {
 		const stackNote = stackMode
-			? " This is a stacked-PR delivery; follow the appended local jj stack policy and amend the local stack instead of creating new commits."
+			? " This is a stacked-PR delivery; follow the appended backend-specific local stack policy and amend the correct slice."
 			: "";
 		target = `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then address the actionable findings and verify your fixes.${stackNote}${worktreeNote}`;
 	} else {

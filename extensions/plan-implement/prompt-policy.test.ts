@@ -50,7 +50,7 @@ describe("plan-implement prompt policy", () => {
 	it("keeps review fixes on the existing branch or bookmark", () => {
 		assert.match(fixer, /Stay on the existing workstream branch or bookmark/);
 		assert.match(fixer, /record each independent, verified fix batch/);
-		assert.match(fixer, /commits or jj changes created/);
+		assert.match(fixer, /recorded changes created/);
 	});
 
 	it("publishes with only the selected backend", () => {
@@ -65,7 +65,7 @@ describe("plan-implement prompt policy", () => {
 		const stacked = publisher.slice(publisher.indexOf("### Stacked-PR delivery"));
 		assert.match(stacked, /Inspect each exact slice/);
 		assert.match(stacked, /use `trunk\(\)` below the bottom slice/);
-		assert.match(stacked, /Do not use jj change descriptions as PR bodies/);
+		assert.match(stacked, /Do not use commit\/change descriptions as PR bodies/);
 		assert.match(stacked, /gh pr edit <slice-pr-number>/);
 		assert.doesNotMatch(stacked, /publish_stack\.py/);
 		assert.doesNotMatch(stacked, /jj git push/);
@@ -79,16 +79,17 @@ describe("plan-implement prompt policy", () => {
 		assert.doesNotMatch(fixer, /does not commit/);
 	});
 
-	it("treats stacked delivery as described jj changes rather than a Git task branch", () => {
-		assert.match(planner, /Bookmark boundaries are the stacked equivalent of a task branch/);
-		assert.match(implementer, /stacked equivalent of a task branch and incremental commits/);
-		assert.match(implementer, /do not also create a Git task branch/);
+	it("treats stacked delivery as backend-specific local refs", () => {
+		assert.match(planner, /Ref boundaries are the stacked equivalent of a task branch/);
+		assert.match(implementer, /appended backend-specific local stack policy/);
+		assert.match(implementer, /Do not mix jj and Graphite\/Git mutation models/);
 		assert.match(fixer, /amend the slice each finding belongs to/);
 	});
 
 	it("does not send implementer or fixer to a deleted stacked-prs skill", () => {
 		assert.doesNotMatch(implementer, /jj-stacked-prs skill/);
 		assert.doesNotMatch(fixer, /jj-stacked-prs skill/);
-		assert.match(implementer, /appended local jj stack policy/);
+		assert.match(implementer, /appended backend-specific local stack policy/);
+		assert.doesNotMatch(implementer, /Inspect the current jj operation state/);
 	});
 });

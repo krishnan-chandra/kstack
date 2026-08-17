@@ -3,7 +3,6 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { StackPublicationOutcome } from "../jj-stacked-prs/types.ts";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
@@ -14,6 +13,7 @@ import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
 import type { PlanPipelineDashboard } from "./live-dashboard.ts";
+import type { StackDeliveryOutcome } from "./stack-delivery.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
@@ -37,9 +37,7 @@ export interface PhaseEffects {
 		prNumber: number,
 		cwd: string,
 	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
-	requestStackPublication?(
-		cwd: string,
-	): Promise<{ handled: false } | { handled: true; outcome: StackPublicationOutcome }>;
+	requestStackPublication?(cwd: string): Promise<{ handled: false } | { handled: true; outcome: StackDeliveryOutcome }>;
 	dashboard?: PlanPipelineDashboard;
 }
 
@@ -57,6 +55,7 @@ export interface ApprovedWorkflowOptions {
 	/** Appended only to stack implementer and review-fixer children. */
 	mutationPrompts?: string[];
 	trunkSha?: string;
+	stackTrunkRef?: string;
 	worktreePlan?: IsolationPlan;
 }
 
@@ -66,7 +65,7 @@ export function phaseErrorText(result: AgentRunResult): string {
 	return result.output;
 }
 
-function describeStackPublication(outcome: StackPublicationOutcome): string {
+function describeStackPublication(outcome: StackDeliveryOutcome): string {
 	switch (outcome.status) {
 		case "completed":
 			return `Published ${outcome.publication.pullRequests.length} stacked PR(s).`;
@@ -75,17 +74,17 @@ function describeStackPublication(outcome: StackPublicationOutcome): string {
 		case "busy":
 			return outcome.message;
 		case "blocked":
-			return `Stacked publication blocked: ${outcome.blockers.map((blocker) => blocker.message).join("; ")}`;
+			return `Stacked publication blocked: ${outcome.message}`;
 		case "stale":
-			return "Stacked publication plan went stale after confirmation; no mutation ran.";
+			return outcome.message;
 		case "partial":
-			return `Stacked publication was partial: ${outcome.failedAction.error}`;
+			return `Stacked publication was partial: ${outcome.message}`;
 		case "cancelled":
 			return "Stacked publication was cancelled; the metadata publisher was not launched.";
 		case "indeterminate":
-			return `Stacked publication is indeterminate: ${outcome.inFlight.error}`;
+			return `Stacked publication is indeterminate: ${outcome.message}`;
 		case "failed":
-			return `Stacked publication failed: ${outcome.error}`;
+			return `Stacked publication failed: ${outcome.message}`;
 		default: {
 			const _exhaustive: never = outcome;
 			return _exhaustive;
@@ -407,6 +406,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		skillPaths,
 		changePrompts,
 		trunkSha,
+		stackTrunkRef,
 		worktreePlan,
 	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
@@ -444,10 +444,14 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 			const ledgerFile = join(tempDir, "execution-ledger.md");
 			let immutablePlanSnapshot: string | undefined;
 			let planValidationError: string | undefined;
-			writeFileSync(taskFile, `# User task\n\n${task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${mode}\n`, {
-				encoding: "utf8",
-				mode: 0o600,
-			});
+			writeFileSync(
+				taskFile,
+				`# User task\n\n${task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${mode}\n${stackTrunkRef ? `Stack base: ${stackTrunkRef}\n` : ""}`,
+				{
+					encoding: "utf8",
+					mode: 0o600,
+				},
+			);
 			const outcome = await runWorkflow({
 				runPlanner: async () => {
 					const controller = fx.beginChild("planning");
@@ -512,7 +516,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					return fx.confirm(
 						"Approve planner output?",
 						mode === "stack"
-							? `Review the Planner card above. Continue with ${implementerModel}, which creates local jj changes and bookmarks?`
+							? `Review the Planner card above. Continue with ${implementerModel}, which creates a local ${fx.backend.id} stack?`
 							: fx.backend.id === "jj"
 								? `Review the Planner card above. Continue with ${implementerModel}, which creates a trunk-based jj change and task bookmark?`
 								: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`,

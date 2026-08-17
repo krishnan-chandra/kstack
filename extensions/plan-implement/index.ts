@@ -1,4 +1,6 @@
 /** Two-model plan → approve → implement → panel-review orchestration. */
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
@@ -28,12 +30,12 @@ import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
-import { preflightStack } from "./delivery-mode.ts";
 import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 import { PlanImplementDashboardStore, type PlanPipelineDashboard } from "./live-dashboard.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
+import { createStackDeliveryAdapter } from "./stack-delivery.ts";
 import { PlanImplementTranscriptStore } from "./transcript-store.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
 import { validateVcsMode } from "./vcs-mode.ts";
@@ -200,6 +202,12 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const exec = makeExec(pi);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
+		const stackAdapter = createStackDeliveryAdapter(vcsConfig.backend, {
+			exec,
+			jjPolicy: readPromptAsset(PROMPTS_DIR, "jj-stack-local.md"),
+			requestJjCapabilities: () => requestJjStackCapabilities(pi),
+			requestJjPublication: (cwd) => requestStackPublication(pi, { repositoryPath: cwd }, ctx),
+		});
 		const engineeringPrinciplesPrompt = readPromptAsset(PLAYBOOKS_DIR, "engineering-principles.md");
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readPromptAsset(PLAYBOOKS_DIR, playbookFile) : undefined;
@@ -246,25 +254,36 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const plannerModel = modelCliId(roles.planner);
 		const implementerModel = modelCliId(roles.implementer);
 		let trunkSha: string | undefined;
+		let stackTrunkRef: string | undefined;
 		let skillPaths: string[] = [];
 		let mutationPrompts: string[] = [];
 		let worktreePlan: IsolationPlan | undefined;
+		let stackTempDir: string | undefined;
+		let stackManifestPath: string | undefined;
 		if (mode === "stack") {
-			const capabilities = await requestJjStackCapabilities(pi);
-			if (!lifecycle.isSessionCurrent(commandSession)) return;
-			if (!capabilities.handled) {
-				notify("Stack mode requires the jj-stacked-prs extension to be loaded before any model call.", "error");
+			if (!stackAdapter) {
+				notify("The configured backend does not provide stack delivery.", "error");
 				return;
 			}
-			const preflight = await preflightStack(ctx.cwd, exec);
+			const preflight = await stackAdapter.preflight(ctx.cwd);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!preflight.ok) {
 				notify(preflight.error, "error");
 				return;
 			}
 			trunkSha = preflight.trunkSha;
+			stackTrunkRef = preflight.trunkRef;
 			skillPaths = buildStackSkillPolicy(discoveredSkills).map((skill) => skill.baseDir);
-			mutationPrompts = [readPromptAsset(PROMPTS_DIR, "jj-stack-local.md")];
+			if (stackAdapter.backendId === "graphite") {
+				stackTempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-graphite-stack-"));
+				stackManifestPath = join(stackTempDir, "manifest.json");
+				writeFileSync(
+					stackManifestPath,
+					`${JSON.stringify({ schemaVersion: 1, trunkRef: preflight.trunkRef, trunkSha: preflight.trunkSha, slices: [] }, null, 2)}\n`,
+					{ encoding: "utf8", mode: 0o600 },
+				);
+			}
+			mutationPrompts = [stackAdapter.childPolicy({ ...preflight, manifestPath: stackManifestPath })];
 		} else if (workLocation === "worktree") {
 			if (!backend.isolation) {
 				notify("--worktree requires a backend with managed-worktree support.", "error");
@@ -285,12 +304,16 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					? "Run plan → implement in managed worktree → panel review → fix → publish?"
 					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
-				? `Planner (read-only): ${plannerModel}\nImplementer (creates local jj changes + bookmarks): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: trunk() @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nStack mode disables skill discovery in children and re-adds every discovered skill except arena, so parallel candidates cannot corrupt a shared jj operation log. The jj-stacked-prs extension is required. The implementer builds a LOCAL stack only — it does not push or create PRs. You will approve the plan before implementation. Successful implementation invokes panel review once against the trunk() base. After the verdict the loaded extension confirms structural publication, then you may approve a metadata/reviewer child.`
+				? `Planner (read-only): ${plannerModel}\nImplementer (creates a local ${stackAdapter?.backendId ?? "configured"} stack): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackAdapter?.backendId === "jj" ? "trunk()" : "Graphite trunk"} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nThe implementer builds a LOCAL stack only — it does not push or create PRs. The parent independently validates the complete stack, shows the exact publication plan, confirms it, and verifies every resulting draft PR before launching the metadata/reviewer child.`
 				: `Planner (read-only): ${plannerModel}\nImplementer (${backend.id === "jj" ? "creates a dedicated jj change and task bookmark" : "creates a dedicated branch and incremental Git commits"}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : backend.id === "jj" ? "Location: current jj workspace\n" : "Location: current Git working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : backend.id === "jj" ? "The parent creates a trunk()-based jj change and task bookmark after plan approval. jj snapshots the current workspace state, so Git dirty-tree rules do not apply. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
 		);
-		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
+		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) {
+			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
+			return;
+		}
 		const token = lifecycle.beginWorkflow(commandSession);
 		if (!token) {
+			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 			notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
 			return;
 		}
@@ -310,6 +333,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					changePrompts,
 					mutationPrompts,
 					trunkSha,
+					stackTrunkRef,
 					worktreePlan,
 				},
 				{
@@ -344,13 +368,20 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					requestLand: (prNumber, cwd) =>
 						requestLand(pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
 					requestAutopilot: (prNumber, cwd) => requestPrAutopilot(pi, "drive", prNumber, ctx, cwd),
-					requestStackPublication: (cwd) => requestStackPublication(pi, { repositoryPath: cwd }, ctx),
+					requestStackPublication: async (cwd) =>
+						stackAdapter
+							? {
+									handled: true,
+									outcome: await stackAdapter.publish(cwd, stackManifestPath, ctx.ui.confirm.bind(ctx.ui)),
+								}
+							: { handled: false },
 					dashboard,
 				},
 			);
 		} finally {
 			dashboard?.dispose();
 			lifecycle.finishWorkflow(token);
+			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 		}
 	}
 

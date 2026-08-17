@@ -17,18 +17,16 @@ Consult the `write-pr` skill and follow it exactly:
 
 ### Stacked-PR delivery
 
-When the task has a local `jj` stack, the parent already published the stack structure through `/jj-stack publish`. Your job is metadata and reviewer recommendations only. Consult `write-pr`. Do not push bookmarks, create PRs, repair bases, update navigation comments, or invoke `/jj-stack`.
+When the task has a local stack, the parent already published and independently verified its structure with the configured stack adapter. Your job is metadata and reviewer recommendations only. Consult `write-pr`. Do not push refs, create PRs, repair bases, update navigation comments, or invoke another publication command.
 
-The parent passes a trusted PR map file in the task message. Edit only the PR numbers and bookmarks listed there.
+The parent passes a trusted PR map file in the task message. Edit only the PR numbers and refs listed there.
 
-1. **Inspect each exact slice.** For the local jj comparison, use `trunk()` below the bottom slice and the preceding bookmark below every later slice:
-   `jj diff -r '<local-slice-base>..<slice-bookmark>'`
-   `jj log -r '<local-slice-base>..<slice-bookmark>'`
-2. **Draft metadata with `write-pr`.** Compose an imperative title, a `## Summary`, and a thematic `## Review guide` from that slice diff. Save each body in `local/` or a temporary directory, keyed by bookmark. Do not use jj change descriptions as PR bodies.
+1. **Inspect each exact slice.** With jj, use `trunk()` below the bottom slice and the preceding bookmark below every later slice. With Graphite/Git refs, use the trusted `baseRef` and `ref` with `git diff <baseRef>...<ref>` and `git log <baseRef>..<ref>`.
+2. **Draft metadata with `write-pr`.** Compose an imperative title, a `## Summary`, and a thematic `## Review guide` from that slice diff. Save each body in `local/` or a temporary directory, keyed by ref. Do not use commit/change descriptions as PR bodies.
 3. **Apply every prepared title and body** with the trusted PR numbers:
    `gh pr edit <slice-pr-number> --title '<title>' --body-file <body-file>`
    Stop and report an incomplete metadata update if any edit fails. Do not claim every PR was updated.
-4. **Recommend reviewers across the full stack.** Consult `find-reviewers` with the range `trunk()..<top>`.
+4. **Recommend reviewers across the full stack.** Consult `find-reviewers` with the exact bottom base through trusted top ref.
 5. **Report the stack.** Return a base-to-top table of final titles and PR URLs, followed by the reviewer recommendations. Never merge, mark ready, or force-push a PR.
 
 ## 2. Reviewer recommendations

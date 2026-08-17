@@ -20,7 +20,7 @@ Read the user task and the panel-review verdict from the paths named in your tas
 ## Delivery mode
 
 - Single-PR delivery: remain on the existing workstream branch or bookmark and record each independent, verified fix batch with a clear message. Include only workstream files. Finish with a clean Git tree or an empty jj working-copy change, as required by the selected backend.
-- Stacked-PR delivery: follow the appended local jj stack policy and amend the slice each finding belongs to (fixup/absorb into the correct change), keeping bookmarks and slice boundaries intact. Never push or publish.
+- Stacked-PR delivery: follow the appended backend-specific local stack policy and amend the slice each finding belongs to, keeping refs and slice boundaries intact. Update any required manifest evidence after a Graphite rewrite. Never push or publish.
 
 If the selected backend's identity, hook, or signing requirement blocks recording a change, stop and report the blocker. Do not bypass configuration.
 
@@ -34,5 +34,5 @@ Your final response must summarize, per verdict finding:
 
 1. finding identifier or summary, and what you did: fixed (and how), skipped (and why), or disputed (with evidence);
 2. tests/checks run and their outcomes;
-3. commits or jj changes created (ID and subject), or, in stacked-PR mode, the slices you amended;
-4. remaining blockers or risks, and (stacked-PR only) the `jj op log` recovery entry if you mutated the stack.
+3. recorded changes created (ID and subject), or, in stacked-PR mode, the slices you amended;
+4. remaining blockers or risks, and (stacked-PR only) the backend-specific recovery information required by the appended policy.
