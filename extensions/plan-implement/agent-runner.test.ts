@@ -196,7 +196,7 @@ describe("plan-implement child runner", () => {
 		});
 		assert.ok(fixer.includes("--no-skills"));
 		for (const path of skillPaths) assert.ok(fixer.includes(path));
-		assert.match(fixer.at(-1) ?? "", /amend the local stack/);
+		assert.match(fixer.at(-1) ?? "", /amend the correct slice/);
 
 		const publisher = buildChildArgs({
 			role: "publisher",

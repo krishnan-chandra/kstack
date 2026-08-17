@@ -219,17 +219,13 @@ describe("plan-implement phases", () => {
 				handled: true,
 				outcome: {
 					status: "completed",
-					planId: "abc",
-					completedActions: [],
 					publication: {
-						repository: { owner: "o", repo: "r" },
-						remote: "origin",
-						topBookmark: "feat2",
+						backend: "jj",
+						topRef: "feat2",
 						pullRequests: [
 							{
-								bookmark: "feat2",
-								baseBookmark: null,
-								changeIds: ["aaa"],
+								ref: "feat2",
+								baseRef: null,
 								prNumber: 12,
 								url: "https://example/12",
 								draft: true,

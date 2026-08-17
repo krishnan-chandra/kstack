@@ -47,19 +47,16 @@ Inspect the selected backend's status and current branch or bookmark before the 
 
 ## Stacked-PR implementation
 
-When the plan is a stacked-PR delivery, follow the appended local jj stack policy. The goal is a local stack of `jj` changes and bookmarks — **not** published PRs. Described `jj` changes and bookmark boundaries are the stacked equivalent of a task branch and incremental commits; do not also create a Git task branch.
+When the plan is a stacked-PR delivery, follow the appended backend-specific local stack policy. The goal is a local stack — **not** published PRs. Do not mix jj and Graphite/Git mutation models.
 
 You are running non-interactively with no confirmation channel, so treat the **approved plan as authorization**: it names the slices and bookmarks, and the user approved it before you started. Do not halt to ask for per-mutation confirmation. Do, however: report each mutation as you make it; stop and report if live evidence contradicts the plan; and never perform a mutation the plan did not authorize (pushing, publishing, or abandoning work you did not create).
 
-1. Inspect the current jj operation state and **preserve pre-existing work**; do not abandon or rebase changes you did not create.
-2. Start the new stack from `trunk()` (e.g. `jj new trunk()`), not from an arbitrary existing change.
-3. Implement each approved slice in dependency order, lowest PR first.
-4. Describe each completed change (`jj describe -m "..."`) and place its bookmark (`jj bookmark create <name> --revision @`) using the bookmark names from the plan.
-5. Verify each slice before moving upstack (build, focused tests).
-6. Leave an empty working-copy change above the top bookmark when practical (`jj new`).
-7. Reinspect the full stack for conflicts, divergence, merges, empty descriptions, and missing bookmarks.
-8. Report the base-to-top stack table (bookmark, change ID, subject, state) and the recovery operation id from `jj op log`.
-9. **Never** run `jj git push`, `gh pr create`, `/jj-stack publish`, or any publication command. The parent extension reviews the local stack; publishing is a separate, later, confirmed step.
+1. Follow the appended backend-specific policy exactly, including its trunk identity, mutation commands, ref naming, evidence, and recovery rules.
+2. Preserve pre-existing work and stop if live repository state contradicts the approved plan or the appended policy.
+3. Implement each approved slice in dependency order, lowest PR first, and verify each slice before moving upstack.
+4. Keep every slice boundary and required evidence file current after each mutation or rewrite.
+5. Reinspect the full stack for conflicts, divergence, missing refs, empty subjects, and incorrect parentage.
+6. **Never** push, submit, create PRs, merge, or invoke any publication command. The parent extension reviews the local stack; publishing is a separate, later, confirmed step.
 
 Partial failure leaves the local stack intact. Report exactly which slices completed and which remain, and the recovery operation. Do not claim success for a slice you did not finish and verify.
 
@@ -70,6 +67,6 @@ Your final response must summarize:
 1. files changed and behavior implemented (single-PR), including the branch or bookmark and ordered Git commits or jj changes, or the base-to-top stack table with slice completion status (stacked-PR);
 2. tests/checks run and their outcomes;
 3. deviations from the approved plan and why;
-4. remaining blockers or risks, and (stacked-PR only) the `jj op log` recovery entry.
+4. remaining blockers or risks, and (stacked-PR only) the backend-specific recovery information required by the appended policy.
 
 A terse final response is not a substitute for doing the work. If implementation fails after partial edits, report committed checkpoints and any uncommitted partial work honestly.

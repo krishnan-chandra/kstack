@@ -14,7 +14,7 @@ Your task message tells you whether this is a **single-PR** or **stacked-PR** de
 - Stacked-PR plan — first two lines:
   ```
   Delivery: stacked-prs
-  Stack base: trunk()
+  Stack base: <exact backend trunk from the task file>
   ```
 
 The planner does not auto-promote a single-PR run into a stack. If the task asks for one deliverable, produce a single-PR plan even if the work is large; only produce a stacked-PR plan when the task or delivery mode explicitly asks for a stack of PRs.
@@ -56,13 +56,13 @@ Resolve important ambiguity through repository evidence. If the task cannot safe
 
 ## Stacked-PR plan body
 
-A stacked-PR plan splits the work into ordered, independently reviewable PR slices built on `trunk()`. Each slice becomes one GitHub PR whose base is the bookmark below it. Multiple `jj` changes may share a slice, but one bookmark is one PR.
+A stacked-PR plan splits the work into ordered, independently reviewable PR slices built on the selected backend's trunk. Each slice becomes one GitHub PR whose base is the ref below it. The parent supplies the exact backend-specific stack policy; use its ref vocabulary and constraints.
 
 After the delivery header, include a whole-stack verification section and one section per slice, in dependency order (lowest PR first):
 
 ```markdown
 ## PR 1 — <title>
-- Bookmark: <stack>/<slice>
+- Ref: <stack>/<slice>
 - Purpose:
 - Changes:
 - Verification:
@@ -70,7 +70,7 @@ After the delivery header, include a whole-stack verification section and one se
 
 ## PR 2 — <title>
 - Depends on: PR 1
-- Bookmark: <stack>/<slice>
+- Ref: <stack>/<slice>
 - Purpose:
 - Changes:
 - Verification:
@@ -81,9 +81,9 @@ Ensure:
 
 - Each slice is independently reviewable and runnable on top of the slice below it.
 - Dependencies flow only from lower to higher PRs; no cycle, no upstack dependency on a downstack slice that is not yet present.
-- Bookmark names are unique across the stack and lowercase-hyphenated.
+- Ref names are unique across the stack and lowercase-hyphenated.
 - Migrations, schema changes, and their tests appear in the slice that needs them, not lumped into the top slice.
 - The final section is whole-stack verification (build, focused tests, and the relevant regression suite).
-- Bookmark boundaries are the stacked equivalent of a task branch; describe coherent `jj` changes incrementally as each slice is completed.
+- Ref boundaries are the stacked equivalent of a task branch; describe coherent changes incrementally as each slice is completed.
 
-Do **not** include push, `jj git push`, `gh pr create`, or any publication step. The implementer builds the local stack only; publishing is a later, separately confirmed step. Do not edit or write repository files.
+Do **not** include push, submit, `gh pr create`, or any publication step. The implementer builds the local stack only; publishing is a later, separately confirmed step. Do not edit or write repository files.
