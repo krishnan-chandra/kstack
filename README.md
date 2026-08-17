@@ -15,16 +15,16 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Moves completed Pi sessions—including a multi-selected batch of inactive sessions—out of the active session directory, preserves their canonical JSONL, and indexes them locally with SQLite/FTS5. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
-| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git worktrees, with a live multi-phase TUI dashboard and transcript inspector. |
+| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with a live multi-phase TUI dashboard and transcript inspector. |
 | [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation session for an explicit, bounded change. Current-checkout mode takes over the TUI in a fresh linked session; `--worktree` uses an isolated child process. Both modes verify local commits, skip independent planning and review, and never publish. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 | [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, advances, and lands linear GitHub PR stacks on a colocated jj workspace. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
 
-Writable workstreams use a dedicated `kstack/<task-slug>` Git branch or jj
+Writable workstreams use a dedicated `kstack/<task-slug>` Git/Graphite branch or jj
 bookmark and record coherent increments with the configured backend. Git
 current-checkout runs stop on a dirty tree; jj runs use automatic snapshots.
-Neither backend pushes or publishes without user authorization. An explicit
+No backend pushes or publishes without user authorization. An explicit
 request to publish the current jj stack is sufficient authorization for
 `jj_stack_publish`; command workflows retain their confirmation. Read-only
 routes do not create workstreams.
@@ -60,8 +60,8 @@ routes do not create workstreams.
 ## Configuration
 
 K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
-(default `~/.pi/agent/kstack.json`). The `vcs.backend` setting selects `"git"`
-or `"jj"` for repository mutations and defaults to `"git"` when omitted.
+(default `~/.pi/agent/kstack.json`). The `vcs.backend` setting selects `"git"`,
+`"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
 Model assignments for panel-review, plan-implement, arena, swarm, and the
 `how` and `why` investigation skills use sections in the same file. The optional
 `fast-implement` section configures its one-shot implementer independently of
@@ -89,24 +89,26 @@ user configuration, run:
 a separate follow-up change.
 
 The backends are exclusive for each run. Git mode requires a plain Git working
-tree and supports current-checkout or managed-worktree single delivery. jj mode
+tree and supports current-checkout or managed-worktree single delivery. Graphite
+mode requires gt 1.8.4+, Git 2.38+, and initialized Graphite metadata, and uses
+native `gt` mutation in current or managed-worktree single delivery. jj mode
 requires jj 0.44 or newer, a configured jj user name and email, and a colocated
 jj/Git workspace. It supports current-workspace single delivery and stacked
 PRs, but not Git worktree isolation. K-Stack refuses a mismatched workspace
 before launching a model or mutating repository state.
 
-| Workflow | Git backend | jj backend |
-| --- | --- | --- |
-| `fast-implement` | Current branch or `--worktree` | Current workspace; no `--worktree` |
-| `plan-implement --single` | Current branch or `--worktree` | `trunk()`-based change and bookmark |
-| `plan-implement --stack` | Refused | Local jj stack |
-| `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push |
-| `land` auto-discovery | Current branch | Bookmark targeting `@` |
+| Workflow | Git backend | jj backend | Graphite backend |
+| --- | --- | --- | --- |
+| `fast-implement` | Current branch or `--worktree` | Current workspace; no `--worktree` | Current branch or tracked `--worktree` |
+| `plan-implement --single` | Current branch or `--worktree` | `trunk()`-based change and bookmark | Current branch or tracked `--worktree` |
+| `plan-implement --stack` | Refused | Local jj stack | Graphite stack adapter |
+| `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push | Branch validation and native Graphite record/restack/submit |
+| `land` auto-discovery | Current branch | Bookmark targeting `@` | Current Graphite branch |
 
 ### Migrating existing installations
 
-Existing installations that omit `vcs` continue to use Git. To adopt jj, run
-`/skill:setup-kstack`, select jj, review the preview, and approve the update to
+Existing installations that omit `vcs` continue to use Git. To adopt jj or Graphite, run
+`/skill:setup-kstack`, select the backend, review the preview, and approve the update to
 the user-level `kstack.json`. Ensure the repository is colocated and configure
 `jj config set --user user.name` and `user.email` first. The installer and
 package updates never create, overwrite, or migrate `kstack.json`; they preserve
@@ -149,6 +151,7 @@ rows stay unnamed.
 - A local filesystem for Pi's agent directory
 - `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
+- `gt` — [Graphite CLI](https://graphite.dev/docs/cli-quick-start) 1.8.4 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
 
 The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
 

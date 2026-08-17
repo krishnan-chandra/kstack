@@ -1,0 +1,125 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { ExecFn } from "../git-exec.ts";
+import { GraphiteBackend } from "./graphite-backend.ts";
+
+const sha = "a".repeat(40);
+
+function scripted(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {
+	const calls: string[] = [];
+	const exec: ExecFn = async (command, args) => {
+		const key = `${command} ${args.join(" ")}`;
+		calls.push(key);
+		const result = responses[key] ?? {};
+		return { code: result.code ?? 0, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+	};
+	return { exec, calls };
+}
+
+describe("GraphiteBackend", () => {
+	it("creates a collision-safe workstream with native gt", async () => {
+		const { exec, calls } = scripted({
+			"git status --porcelain=v1 --untracked-files=all": {},
+			"git rev-parse HEAD": { stdout: `${sha}\n` },
+			"git show-ref --verify --quiet refs/heads/kstack/fix-search": { code: 1 },
+			"git branch --show-current": { stdout: "kstack/fix-search\n" },
+		});
+		const result = await new GraphiteBackend(exec).createWorkstream("/repo", "Fix search");
+		assert.deepEqual(result, { ok: true, ref: "kstack/fix-search", baseSha: sha });
+		assert.ok(calls.includes("gt --no-interactive --no-ai create kstack/fix-search --message Fix search"));
+		assert.equal(
+			calls.some((call) => call.startsWith("git switch")),
+			false,
+		);
+	});
+
+	it("records and publishes through native Graphite commands", async () => {
+		const nextSha = "b".repeat(40);
+		let headReads = 0;
+		const { exec, calls } = scripted({
+			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"git fetch origin kstack/fix": {},
+			"git rev-parse origin/kstack/fix": { stdout: `${nextSha}\n` },
+		});
+		const wrapped: ExecFn = async (command, args, options) => {
+			if (command === "git" && args.join(" ") === "rev-parse HEAD") {
+				return { code: 0, stdout: `${headReads++ === 0 ? sha : nextSha}\n`, stderr: "" };
+			}
+			return exec(command, args, options);
+		};
+		const backend = new GraphiteBackend(wrapped);
+		assert.deepEqual(await backend.recordPaths("/repo", ["src/file.ts"], "Record change"), { ok: true });
+		assert.deepEqual(await backend.publishRecordedChanges("/repo", "kstack/fix"), { ok: true });
+		assert.ok(calls.includes("gt --no-interactive add -- src/file.ts"));
+		assert.ok(calls.includes("gt --no-interactive --no-ai modify --commit --message Record change"));
+		assert.ok(calls.includes("gt --no-interactive --no-ai submit --no-stack --draft --no-edit --dry-run"));
+		assert.ok(calls.includes("gt --no-interactive --no-ai submit --no-stack --draft --no-edit"));
+		assert.equal(
+			calls.some((call) => call.startsWith("git commit") || call.startsWith("git push")),
+			false,
+		);
+	});
+
+	it("restacks through Graphite and reports whether HEAD changed", async () => {
+		let head = sha;
+		const { exec, calls } = scripted({});
+		const wrapped: ExecFn = async (command, args, options) => {
+			if (command === "git" && args.join(" ") === "rev-parse HEAD") return { code: 0, stdout: `${head}\n`, stderr: "" };
+			if (command === "gt" && args.includes("restack")) head = "b".repeat(40);
+			return exec(command, args, options);
+		};
+		assert.deepEqual(await new GraphiteBackend(wrapped).updateBase("/repo", "main"), {
+			kind: "clean",
+			headSha: "b".repeat(40),
+		});
+		assert.ok(calls.includes("gt --no-interactive restack"));
+	});
+
+	it("parses rename records and removes only enumerated untracked paths", async () => {
+		const removed: string[] = [];
+		const { exec } = scripted({
+			"git status --porcelain=v1 -z --untracked-files=all": {
+				stdout: "R  new name.ts\0old name.ts\0?? scratch.txt\0",
+			},
+			"git ls-files --error-unmatch -- scratch.txt": { code: 1 },
+		});
+		const backend = new GraphiteBackend(exec, { unlink: (path) => removed.push(path) });
+		assert.deepEqual(await backend.changedPaths("/repo"), {
+			ok: true,
+			paths: ["new name.ts", "old name.ts", "scratch.txt"],
+		});
+		assert.deepEqual(await backend.restorePaths("/repo", ["scratch.txt"]), { ok: true });
+		assert.deepEqual(removed, ["/repo/scratch.txt"]);
+	});
+
+	it("allocates a Git worktree and tracks it with Graphite metadata", async () => {
+		const { exec, calls } = scripted({
+			"git rev-parse --show-toplevel": { stdout: "/repo\n" },
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
+			"git remote": { stdout: "origin\n" },
+			"git symbolic-ref --quiet refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+			"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${sha}\n` },
+			"git show-ref --verify --quiet refs/heads/kstack/fix-search": { code: 1 },
+			"gt --no-interactive trunk": { stdout: "main\n" },
+			"git rev-parse --verify refs/heads/main^{commit}": { stdout: `${sha}\n` },
+			"git branch --show-current": { stdout: "kstack/fix-search\n" },
+		});
+		const backend = new GraphiteBackend(exec, {
+			managedRoot: "/managed",
+			exists: () => false,
+			realpath: (path) => path,
+			mkdir: () => {},
+		});
+		const planned = await backend.isolation.plan("/repo", "Fix search");
+		assert.equal(planned.ok, true);
+		if (!planned.ok) return;
+		assert.equal(planned.plan.baseRef, "main");
+		assert.deepEqual(await backend.isolation.create(planned.plan), { ok: true, plan: planned.plan });
+		assert.ok(
+			calls.includes(
+				`git worktree add --no-guess-remote -b ${planned.plan.ref} ${planned.plan.path} ${planned.plan.baseSha}`,
+			),
+		);
+		assert.ok(calls.includes("gt --no-interactive track kstack/fix-search --parent main"));
+	});
+});

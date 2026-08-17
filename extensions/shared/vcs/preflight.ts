@@ -6,6 +6,8 @@ import type { VcsBackendId } from "./config.ts";
 
 const MIN_JJ_MAJOR = 0;
 const MIN_JJ_MINOR = 44;
+const MIN_GRAPHITE: readonly [number, number, number] = [1, 8, 4];
+const MIN_GIT: readonly [number, number, number] = [2, 38, 0];
 
 interface PreflightDeps {
 	exists?: (path: string) => boolean;
@@ -20,7 +22,77 @@ export async function preflightVcs(
 	deps: PreflightDeps = {},
 ): Promise<VcsResult<{ workspaceRoot: string }>> {
 	if (backend === "git") return preflightGit(cwd, exec, deps);
-	return preflightJj(cwd, exec, deps);
+	if (backend === "jj") return preflightJj(cwd, exec, deps);
+	return preflightGraphite(cwd, exec, deps);
+}
+
+async function preflightGraphite(
+	cwd: string,
+	exec: ExecFn,
+	deps: PreflightDeps,
+): Promise<VcsResult<{ workspaceRoot: string }>> {
+	try {
+		const graphite = await exec("gt", ["--version"], { cwd, timeout: 8_000 });
+		const graphiteVersion = parseSemver(graphite.stdout);
+		if (graphite.code !== 0 || !graphiteVersion || compareSemver(graphiteVersion, MIN_GRAPHITE) < 0) {
+			return {
+				ok: false,
+				error: `The graphite backend requires gt >= ${MIN_GRAPHITE.join(".")}. Install or upgrade Graphite, then run gt init --trunk <branch>.`,
+			};
+		}
+		const gitVersion = await exec("git", ["--version"], { cwd, timeout: 8_000 });
+		const parsedGit = parseSemver(gitVersion.stdout);
+		if (gitVersion.code !== 0 || !parsedGit || compareSemver(parsedGit, MIN_GIT) < 0) {
+			return { ok: false, error: `The graphite backend requires Git >= ${MIN_GIT.join(".")}.` };
+		}
+		const root = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 8_000 });
+		const workspaceRoot = root.stdout.trim();
+		if (root.code !== 0 || !workspaceRoot)
+			return { ok: false, error: "The graphite backend requires a Git working tree." };
+		if ((deps.exists ?? existsSync)(join(workspaceRoot, ".jj"))) {
+			return {
+				ok: false,
+				error: "The graphite backend cannot run in a colocated jj repository. Select the jj backend instead.",
+			};
+		}
+		const trunk = await exec("gt", ["--no-interactive", "trunk"], { cwd: workspaceRoot, timeout: 8_000 });
+		const ref = trunk.stdout.trim();
+		if (trunk.code !== 0 || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) {
+			return {
+				ok: false,
+				error: "Graphite is not initialized for this repository. Run gt init --trunk <branch> and retry.",
+			};
+		}
+		const sha = await exec("git", ["rev-parse", "--verify", `refs/heads/${ref}^{commit}`], {
+			cwd: workspaceRoot,
+			timeout: 8_000,
+		});
+		if (sha.code !== 0 || !/^[0-9a-f]{40}$/.test(sha.stdout.trim())) {
+			return {
+				ok: false,
+				error: `Graphite trunk ${ref} is not a resolvable local branch. Run gt init --trunk <branch> and retry.`,
+			};
+		}
+		return { ok: true, workspaceRoot };
+	} catch (error) {
+		return {
+			ok: false,
+			error: `The graphite backend preflight failed: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
+/** Parse the first stable x.y.z version token from a CLI response. */
+export function parseSemver(text: string): [number, number, number] | null {
+	const match = text.match(/(?:^|\s)(\d+)\.(\d+)\.(\d+)(?:\s|$|-)/);
+	return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+
+function compareSemver(left: readonly number[], right: readonly number[]): number {
+	for (let index = 0; index < 3; index++) {
+		if (left[index] !== right[index]) return left[index] - right[index];
+	}
+	return 0;
 }
 
 async function preflightGit(
