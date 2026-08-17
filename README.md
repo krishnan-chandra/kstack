@@ -322,6 +322,22 @@ Check TypeScript types before submitting changes:
 npm run typecheck
 ```
 
+### Startup benchmark
+
+Measure startup from Pi process spawn to the correlated RPC `get_commands` response:
+
+```bash
+bun run benchmark:startup
+# One measured round with no warmups.
+bun run benchmark:startup -- --runs 1 --warmups 0
+```
+
+The harness runs `empty`, `package-disabled`, `skills-only`, `extensions-only`, and `full` profiles. Each profile verifies the complete Kstack command and skill inventory that its filter should load.
+
+Its primary metric is the `full` median - `empty` median. It writes raw JSON samples and a Markdown summary under `local/benchmarks/startup/`.
+
+The benchmark is warm, offline, isolated, and headless. It does not measure MCP, TUI paint, disk-cold startup, network work, or an LLM request. Compare reports only when the machine, Pi executable and version, options, workload, and recorded startup-environment fingerprint match. Run `node startup-benchmark.mjs --help` to list options.
+
 For focused runs, use the individual test commands:
 
 ```bash
