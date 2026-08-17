@@ -31,6 +31,9 @@ function harness() {
 		const key = `${command} ${args.join(" ")}`;
 		calls.push(key);
 		if (key === "git rev-parse --show-toplevel") return { code: 0, stdout: "/repo\n", stderr: "" };
+		if (key === "git rev-parse --path-format=absolute --git-common-dir") {
+			return { code: 0, stdout: "/repo/.git\n", stderr: "" };
+		}
 		if (key === "gt --no-interactive trunk") return { code: 0, stdout: "main\n", stderr: "" };
 		if (key.startsWith("gh pr view 12 ")) {
 			return {
@@ -127,6 +130,7 @@ describe("Graphite stack landing", () => {
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => ({
 					merged: true,
 					snapshot: { number } as never,
@@ -273,6 +277,9 @@ describe("Graphite stack landing", () => {
 			const key = `${command} ${args.join(" ")}`;
 			calls.push(key);
 			if (key === "git rev-parse --show-toplevel") return { code: 0, stdout: "/repo\n", stderr: "" };
+			if (key === "git rev-parse --path-format=absolute --git-common-dir") {
+				return { code: 0, stdout: "/repo/.git\n", stderr: "" };
+			}
 			if (key === "gt --no-interactive trunk") return { code: 0, stdout: "main\n", stderr: "" };
 			if (key.startsWith("gh pr view 20 ")) {
 				return {
@@ -334,6 +341,7 @@ describe("Graphite stack landing", () => {
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				realpath: (path) => path,
 				waitForMerge: async () => ({ merged: true, snapshot: { number: 20 } as never }),
 			},
 		);
@@ -356,6 +364,7 @@ describe("Graphite stack landing", () => {
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => ({
 					merged: number === 11,
 					snapshot: {
@@ -378,6 +387,35 @@ describe("Graphite stack landing", () => {
 		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partially-landed");
 		assert.equal(response.status === "stack" ? response.outcome.frontiers[1].state : undefined, "blocked");
 		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /CLOSED/);
+	});
+
+	it("preserves fulfilled merge evidence when another remote verifier rejects", async () => {
+		const { exec } = harness();
+		let bottomSettled = false;
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
+				confirmMerge: async () => true,
+				now: () => 0,
+				sleep: async () => {},
+				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				realpath: (path) => path,
+				waitForMerge: async (_exec, _cwd, number) => {
+					if (number === 12) throw new Error("GitHub unavailable");
+					bottomSettled = true;
+					return { merged: true, snapshot: { number } as never };
+				},
+			},
+		);
+		assert.equal(bottomSettled, true);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partially-landed");
+		assert.equal(response.status === "stack" ? response.outcome.frontiers[0].state : undefined, "landed");
+		assert.equal(response.status === "stack" ? response.outcome.frontiers[1].state : undefined, "blocked");
+		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /GitHub unavailable/);
 	});
 
 	it("blocks a stale topology under the lock and releases it", async () => {
@@ -405,6 +443,7 @@ describe("Graphite stack landing", () => {
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+				realpath: (path) => path,
 			},
 		);
 		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");

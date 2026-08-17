@@ -88,11 +88,14 @@ polling fails, times out, or is cancelled, Land reports `partially-landed` and
 preserves the accepted mutation in its result.
 
 Graphite stack landing parses the exact affected branch list from a native dry
-run before confirmation and again under the shared repository publication lock
-after exact topology revalidation.
-It invokes `gt merge` once, then verifies every pinned PR remotely. A lost or
-nonzero merge process is treated as indeterminate/partial and is never retried
-automatically. Land never runs `gt sync` or removes local Graphite branches.
+run before confirmation and again after exact topology revalidation under the
+shared repository publication lock. The lock is keyed by the canonical common
+Git directory, so linked worktrees cannot publish or land concurrently.
+It invokes `gt merge` once, then waits for every pinned PR verification to
+settle and preserves each successful merge result even if another verifier
+fails. A lost or nonzero merge process is treated as indeterminate/partial and
+is never retried automatically. Land never runs `gt sync` or removes local
+Graphite branches.
 
 Press Ctrl+Shift+L to abort an active subprocess or polling wait. Cancellation
 cannot undo a merge or remove a request from a merge queue.

@@ -13,7 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { acquirePublicationLock } from "./publication-lock.ts";
+import type { ExecFn } from "./git-exec.ts";
+import { acquirePublicationLock, acquireRepositoryPublicationLock } from "./publication-lock.ts";
 
 function lockFile(locksDir: string): string {
 	const name = readdirSync(locksDir).find((entry) => entry.startsWith("publish-") && entry.endsWith(".json"));
@@ -218,5 +219,27 @@ describe("shared publication lock", () => {
 		assert.equal(second.ok, true);
 		if (first.ok) first.lock.release();
 		if (second.ok) second.lock.release();
+	});
+
+	it("serializes linked worktrees through their canonical common Git directory", async () => {
+		const locksDir = tempLocksDir();
+		const exec: ExecFn = async (command, args) => {
+			assert.equal(command, "git");
+			assert.deepEqual(args, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+			return { code: 0, stdout: "/repo/.git\n", stderr: "" };
+		};
+		const first = await acquireRepositoryPublicationLock(exec, "/repo", {
+			realpath: (path) => path,
+			acquireLock: (deps) => acquirePublicationLock({ ...deps, locksDir, pid: 100 }),
+		});
+		assert.equal(first.ok, true);
+
+		const second = await acquireRepositoryPublicationLock(exec, "/worktrees/task", {
+			realpath: (path) => path,
+			acquireLock: (deps) => acquirePublicationLock({ ...deps, locksDir, pid: 200, isPidAlive: () => true }),
+		});
+		assert.equal(second.ok, false);
+		assert.equal(second.ok ? "" : second.kind, "busy");
+		if (first.ok) first.lock.release();
 	});
 });

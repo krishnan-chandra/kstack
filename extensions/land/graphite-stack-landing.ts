@@ -5,9 +5,9 @@ import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequest, waitForMerge } from "../shared/github.ts";
 import { asRecord } from "../shared/narrow.ts";
-import { acquirePublicationLock } from "../shared/publication-lock.ts";
+import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
-import type { LandOptions, LandResult } from "./types.ts";
+import type { FrontierResult, LandOptions, LandResult } from "./types.ts";
 
 const MAX_REFS = 50;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -45,6 +45,7 @@ interface GraphiteLandingDeps {
 	now(): number;
 	sleep(ms: number, signal: AbortSignal): Promise<void>;
 	acquireLock?: typeof acquirePublicationLock;
+	realpath?: (path: string) => string;
 	waitForMerge?: typeof waitForMerge;
 }
 
@@ -364,9 +365,16 @@ export async function requestGraphiteStackLanding(
 		};
 	}
 
-	const lock = (deps.acquireLock ?? acquirePublicationLock)({ repositoryPath: plan.repositoryRoot });
-	if (!lock.ok)
-		return { status: "stack", outcome: blocked("Another stack publication or landing is active for this repository.") };
+	const lock = await acquireRepositoryPublicationLock(deps.exec, plan.repositoryRoot, {
+		acquireLock: deps.acquireLock,
+		realpath: deps.realpath,
+		signal: deps.signal,
+	});
+	if (!lock.ok) {
+		const reason =
+			lock.kind === "busy" ? "Another Graphite publication or landing is active for this repository." : lock.error;
+		return { status: "stack", outcome: blocked(reason) };
+	}
 	try {
 		const final = await inspectPlan(deps.cwd, options.target.prNumber, deps.exec, deps.signal);
 		if (!final.ok || !final.plan || final.plan.planId !== plan.planId) {
@@ -412,55 +420,52 @@ export async function requestGraphiteStackLanding(
 		}
 
 		const waiter = deps.waitForMerge ?? waitForMerge;
-		let results: Array<{ pr: GraphitePullRequest; verified: Awaited<ReturnType<typeof waitForMerge>> }>;
-		try {
-			results = await Promise.all(
-				finalPlan.pullRequests.map(async (pr) => ({
-					pr,
-					verified: await waiter(deps.exec, finalPlan.repositoryRoot, pr.number, pr.ref, pr.headSha, deps, deps.signal),
-				})),
-			);
-		} catch (error) {
-			return {
-				status: "stack",
-				outcome: {
-					status: "partially-landed",
-					frontiers: finalPlan.pullRequests.map((pr) => ({
-						prNumber: pr.number,
-						url: pr.url,
-						expectedHeadSha: pr.headSha,
-						method: "graphite",
-						state: "queued",
-					})),
-					autopilotRan: true,
-					remainingBookmarks: [],
-					completedMutations: [
-						`Graphite accepted the native merge for ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")}`,
-					],
-					blockers: [
-						`Remote verification failed after Graphite accepted the merge: ${error instanceof Error ? error.message : String(error)}. Inspect the listed PRs; do not blindly retry.`,
-					],
-				},
-			};
-		}
-		const frontiers = results.map(({ pr, verified }) => {
-			const unchangedOpen =
-				verified.snapshot.state === "OPEN" &&
-				verified.snapshot.headRef === pr.ref &&
-				verified.snapshot.headOid === pr.headSha;
-			let state: "landed" | "queued" | "blocked";
-			if (verified.merged) state = "landed";
-			else if (unchangedOpen) state = "queued";
-			else state = "blocked";
-			return {
+		const settlements = await Promise.allSettled(
+			finalPlan.pullRequests.map((pr) =>
+				waiter(deps.exec, finalPlan.repositoryRoot, pr.number, pr.ref, pr.headSha, deps, deps.signal),
+			),
+		);
+		const frontiers: FrontierResult[] = [];
+		const completedMutations = [
+			`Graphite accepted the native merge for ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")}`,
+		];
+		const blockers: string[] = [];
+		let allMerged = true;
+		for (let index = 0; index < settlements.length; index++) {
+			const pr = finalPlan.pullRequests[index];
+			const settlement = settlements[index];
+			let state: FrontierResult["state"];
+			if (settlement.status === "rejected") {
+				allMerged = false;
+				state = "blocked";
+				const error = settlement.reason instanceof Error ? settlement.reason.message : String(settlement.reason);
+				blockers.push(`PR #${pr.number} remote verification failed: ${error}. Inspect it before retrying.`);
+			} else if (settlement.value.merged) {
+				state = "landed";
+				completedMutations.push(`Verified PR #${pr.number} merged remotely`);
+			} else {
+				allMerged = false;
+				const snapshot = settlement.value.snapshot;
+				const unchangedOpen =
+					snapshot.state === "OPEN" && snapshot.headRef === pr.ref && snapshot.headOid === pr.headSha;
+				if (unchangedOpen) {
+					state = "queued";
+					blockers.push(`PR #${pr.number} remains open at the expected head and may be queued.`);
+				} else {
+					state = "blocked";
+					blockers.push(
+						`PR #${pr.number} verification stopped at ${snapshot.state} ${snapshot.headRef}@${snapshot.headOid.slice(0, 12)}; expected OPEN or MERGED ${pr.ref}@${pr.headSha.slice(0, 12)}.`,
+					);
+				}
+			}
+			frontiers.push({
 				prNumber: pr.number,
 				url: pr.url,
 				expectedHeadSha: pr.headSha,
-				method: "graphite" as const,
+				method: "graphite",
 				state,
-			};
-		});
-		const allMerged = results.every((item) => item.verified.merged);
+			});
+		}
 		return {
 			status: "stack",
 			outcome: {
@@ -468,23 +473,8 @@ export async function requestGraphiteStackLanding(
 				frontiers,
 				autopilotRan: true,
 				remainingBookmarks: [],
-				completedMutations: [
-					`Graphite accepted the native merge for ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")}`,
-					...results
-						.filter((item) => item.verified.merged)
-						.map((item) => `Verified PR #${item.pr.number} merged remotely`),
-				],
-				blockers: allMerged
-					? []
-					: results
-							.filter((item) => !item.verified.merged)
-							.map(({ pr, verified }) => {
-								const snapshot = verified.snapshot;
-								if (snapshot.state === "OPEN" && snapshot.headRef === pr.ref && snapshot.headOid === pr.headSha) {
-									return `PR #${pr.number} remains open at the expected head and may be queued.`;
-								}
-								return `PR #${pr.number} verification stopped at ${snapshot.state} ${snapshot.headRef}@${snapshot.headOid.slice(0, 12)}; expected OPEN or MERGED ${pr.ref}@${pr.headSha.slice(0, 12)}.`;
-							}),
+				completedMutations,
+				blockers,
 			},
 		};
 	} finally {

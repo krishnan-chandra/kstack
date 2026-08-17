@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
-import { acquirePublicationLock } from "../shared/publication-lock.ts";
+import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 
 const MAX_SLICES = 50;
@@ -359,10 +359,14 @@ export async function planGraphitePublication(
 export async function submitGraphiteStack(
 	plan: GraphitePublicationPlan,
 	exec: ExecFn,
-	deps: { acquireLock?: typeof acquirePublicationLock } = {},
+	deps: { acquireLock?: typeof acquirePublicationLock; realpath?: (path: string) => string } = {},
 ): Promise<GraphiteStackPublishResult> {
-	const lock = (deps.acquireLock ?? acquirePublicationLock)({ repositoryPath: plan.repositoryRoot });
-	if (!lock.ok) return { status: "busy", error: "Another stack publication is active for this repository." };
+	const lock = await acquireRepositoryPublicationLock(exec, plan.repositoryRoot, deps);
+	if (!lock.ok) {
+		return lock.kind === "busy"
+			? { status: "busy", error: "Another Graphite publication or landing is active for this repository." }
+			: { status: "failed", error: lock.error };
+	}
 	try {
 		const verified = await verifyGraphiteStack(plan.repositoryRoot, plan.manifest, exec);
 		if (!verified.ok) return { status: "blocked", error: verified.error };

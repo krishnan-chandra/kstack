@@ -6,7 +6,7 @@ import type { VcsBackendId } from "./config.ts";
 
 const MIN_JJ_MAJOR = 0;
 const MIN_JJ_MINOR = 44;
-const MIN_GRAPHITE: readonly [number, number, number] = [1, 8, 4];
+const MIN_GRAPHITE: readonly [number, number, number] = [1, 8, 5];
 const MIN_GIT: readonly [number, number, number] = [2, 38, 0];
 
 interface PreflightDeps {

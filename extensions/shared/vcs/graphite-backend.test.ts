@@ -16,6 +16,13 @@ function scripted(responses: Record<string, { code?: number; stdout?: string; st
 	return { exec, calls };
 }
 
+function publicationDeps(onRelease: () => void = () => {}) {
+	return {
+		realpath: (path: string) => path,
+		acquireLock: () => ({ ok: true as const, lock: { release: onRelease } }),
+	};
+}
+
 describe("GraphiteBackend", () => {
 	it("creates a collision-safe workstream with native gt", async () => {
 		const { exec, calls } = scripted({
@@ -38,6 +45,7 @@ describe("GraphiteBackend", () => {
 		let headReads = 0;
 		const { exec, calls } = scripted({
 			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
 			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --dry-run": {
 				stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/fix (Create)\n✅ Dry run complete.\n",
 			},
@@ -50,7 +58,7 @@ describe("GraphiteBackend", () => {
 			}
 			return exec(command, args, options);
 		};
-		const backend = new GraphiteBackend(wrapped);
+		const backend = new GraphiteBackend(wrapped, publicationDeps());
 		assert.deepEqual(await backend.recordPaths("/repo", ["src/file.ts"], "Record change"), { ok: true });
 		assert.deepEqual(await backend.publishRecordedChanges("/repo", "kstack/fix"), { ok: true });
 		assert.ok(calls.includes("gt --no-interactive add -- src/file.ts"));
@@ -66,6 +74,7 @@ describe("GraphiteBackend", () => {
 	it("uses update-only Graphite submission for an existing autopilot PR", async () => {
 		const { exec, calls } = scripted({
 			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
 			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --update-only --dry-run": {
 				stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/fix (Update)\n✅ Dry run complete.\n",
 			},
@@ -74,7 +83,9 @@ describe("GraphiteBackend", () => {
 			"git rev-parse origin/kstack/fix": { stdout: `${sha}\n` },
 		});
 		assert.deepEqual(
-			await new GraphiteBackend(exec).publishRecordedChanges("/repo", "kstack/fix", { existingOnly: true }),
+			await new GraphiteBackend(exec, publicationDeps()).publishRecordedChanges("/repo", "kstack/fix", {
+				existingOnly: true,
+			}),
 			{ ok: true },
 		);
 		assert.ok(
@@ -95,7 +106,52 @@ describe("GraphiteBackend", () => {
 			kind: "clean",
 			headSha: "b".repeat(40),
 		});
-		assert.ok(calls.includes("gt --no-interactive restack"));
+		assert.ok(calls.includes("gt --no-interactive get main --downstack --no-checkout --no-restack"));
+		assert.ok(calls.includes("gt --no-interactive restack --only"));
+	});
+
+	it("reconciles a nonzero submit when the exact remote head was published", async () => {
+		let released = false;
+		const { exec } = scripted({
+			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"git rev-parse HEAD": { stdout: `${sha}\n` },
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --update-only --dry-run": {
+				stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/fix (Update)\n✅ Dry run complete.\n",
+			},
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --update-only": {
+				code: 1,
+				stderr: "connection lost",
+			},
+			"git fetch origin kstack/fix": {},
+			"git rev-parse origin/kstack/fix": { stdout: `${sha}\n` },
+		});
+		const result = await new GraphiteBackend(exec, {
+			realpath: (path) => path,
+			acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+		}).publishRecordedChanges("/repo", "kstack/fix", { existingOnly: true });
+		assert.deepEqual(result, { ok: true });
+		assert.equal(released, true);
+	});
+
+	it("reports an indeterminate submit when remote reconciliation fails", async () => {
+		const { exec } = scripted({
+			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"git rev-parse HEAD": { stdout: `${sha}\n` },
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --dry-run": {
+				stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/fix (Update)\n✅ Dry run complete.\n",
+			},
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit": {
+				code: 1,
+				stderr: "connection lost",
+			},
+			"git fetch origin kstack/fix": { code: 1, stderr: "offline" },
+		});
+		const result = await new GraphiteBackend(exec, publicationDeps()).publishRecordedChanges("/repo", "kstack/fix");
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /may have started/);
+		assert.match(result.ok ? "" : result.error, /do not retry/i);
 	});
 
 	it("fails closed when an autopilot rewrite could affect descendants", async () => {
@@ -141,12 +197,13 @@ describe("GraphiteBackend", () => {
 		const { exec, calls } = scripted({
 			"git branch --show-current": { stdout: "kstack/top\n" },
 			"git rev-parse HEAD": { stdout: `${sha}\n` },
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
 			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --dry-run": {
 				stdout:
 					"Preparing to submit PRs for the following branches...\n▸ kstack/base (Update)\n▸ kstack/top (Update)\n✅ Dry run complete.\n",
 			},
 		});
-		const result = await new GraphiteBackend(exec).publishRecordedChanges("/repo", "kstack/top");
+		const result = await new GraphiteBackend(exec, publicationDeps()).publishRecordedChanges("/repo", "kstack/top");
 		assert.equal(result.ok, false);
 		assert.match(result.ok ? "" : result.error, /kstack\/base/);
 		assert.equal(calls.includes("gt --no-interactive --no-ai submit --no-stack --draft --no-edit"), false);

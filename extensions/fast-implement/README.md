@@ -54,7 +54,7 @@ the mutation model:
   worktree.
 - `"jj"` creates a `trunk()`-based change and task bookmark in the current
   colocated jj and Git workspace. `--worktree` is not supported.
-- `"graphite"` requires gt 1.8.4+, Git 2.38+, and an initialized Graphite
+- `"graphite"` requires gt 1.8.5+, Git 2.38+, and an initialized Graphite
   repository. It creates and records branches with native `gt`; `--worktree`
   allocates Git storage and tracks the isolated branch with Graphite.
 
