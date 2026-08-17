@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";

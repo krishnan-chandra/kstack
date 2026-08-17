@@ -146,8 +146,7 @@ rows stay unnamed.
 ## Requirements
 
 - Pi 0.84.1 or newer
-- [Bun](https://bun.sh) 1.3.14 or newer for local tooling. Install it with `curl -fsSL https://bun.sh/install | bash`.
-- Node.js 22 or newer for Pi's runtime and the `node:sqlite` test carve-out
+- Node.js 22.18 or newer for Pi's runtime and local tooling
 - A local filesystem for Pi's agent directory
 - `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
@@ -305,56 +304,52 @@ Agents should read [`AGENTS.md`](AGENTS.md) before making changes.
 Run the full JavaScript and TypeScript test suite from the repository root:
 
 ```bash
-bun install
-bun run test
+npm ci
+npm test
 ```
 
-The suite runs under [Bun](https://bun.sh), with one exception. The
-`session-archive` extension uses `node:sqlite` (Node 22+) because it runs
-inside Pi's Node runtime. Its tests and the handoff tests that transitively
-import it run under Node through `bun run test:sqlite`. `bunfig.toml` excludes
-those files from Bun, and `bun run test` automatically chains the Node step.
-`bun run check:test-split` verifies that the Bun exclusions and Node test
-scripts list the same SQLite tests.
+The suite runs under Node's built-in test runner. The `session-archive`
+extension and the handoff tests use the same native `node:sqlite` implementation
+as Pi's runtime, so no separate SQLite test phase is needed.
 
 `skills/tdd/evals/` contains prompt fixtures for skill evaluations, not project
-tests. `bunfig.toml` excludes those fixtures from the test suite.
+tests. The package test globs deliberately select only Kstack's `.test.ts` and
+`.test.mjs` files, leaving fixture `.test.js` files untouched.
 
 Check TypeScript types before submitting changes:
 
 ```bash
-bun run typecheck
+npm run typecheck
 ```
 
 For focused runs, use the individual test commands:
 
 ```bash
-bun test install.test.mjs
-bun test check-exports.test.mjs
-bun run test:handoff
-bun run test:session-archive
-bun test extensions/panel-review/
-bun test extensions/plan-implement/
-bun test extensions/kstack-router/
-bun test extensions/land/
-bun test extensions/pr-autopilot/
-bun test extensions/jj-stacked-prs/
-bun test extensions/fast-implement/
-bun test extensions/shared/
-bun test skills/reflect/
-bun test skills/architect/
-bun test skills/decision-trail/
-bun test skills/recall/
-bun test skills/setup-kstack/
-bun test skills/personalize/skill.test.mjs
-bun test skills/investigation-model.test.mjs
-bun run test:sqlite
+node --test install.test.mjs
+node --test check-exports.test.mjs
+npm run test:handoff
+npm run test:session-archive
+node --test extensions/panel-review/
+node --test extensions/plan-implement/
+node --test extensions/kstack-router/
+node --test extensions/land/
+node --test extensions/pr-autopilot/
+node --test extensions/jj-stacked-prs/
+node --test extensions/fast-implement/
+node --test extensions/shared/
+node --test skills/reflect/
+node --test skills/architect/
+node --test skills/decision-trail/
+node --test skills/recall/
+node --test skills/setup-kstack/
+node --test skills/personalize/skill.test.mjs
+node --test skills/investigation-model.test.mjs
 ```
 
 The `git-worktrees` planner and inspector are Node TypeScript CLIs:
 
 ```bash
-bun test skills/git-worktrees/
+node --test skills/git-worktrees/
 ```
 
 The package also includes the skills listed in the table above. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.

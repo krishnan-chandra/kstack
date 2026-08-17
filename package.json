@@ -3,8 +3,7 @@
 	"private": true,
 	"type": "module",
 	"engines": {
-		"bun": ">=1.3.14",
-		"node": ">=22"
+		"node": ">=22.18"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
@@ -15,18 +14,15 @@
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
-		"check:exports": "bun check-exports.mjs",
-		"check:imports": "bun check-imports.mjs",
-		"check:test-split": "bun test-split-check.mjs",
-		"format": "bunx biome check --write .",
-		"lint": "bunx biome check .",
-		"test": "bun run check:test-split && bun test --dots install.test.mjs check-exports.test.mjs check-imports.test.mjs test-split-check.test.mjs extensions/ skills/ && bun run test:sqlite",
-		"test:extensions": "bun run check:test-split && bun test --dots extensions/ && bun run test:sqlite",
-		"test:handoff": "bun test --dots extensions/handoff/ && bun run test:sqlite:handoff",
-		"test:session-archive": "bun test --dots extensions/session-archive/ && bun run test:sqlite:session-archive",
-		"test:sqlite": "bun run test:sqlite:session-archive && bun run test:sqlite:handoff",
-		"test:sqlite:handoff": "node --test extensions/handoff/history-reader.test.ts extensions/handoff/index.test.ts",
-		"test:sqlite:session-archive": "node --test extensions/session-archive/archive-store.test.ts extensions/session-archive/archive-ops.test.ts extensions/session-archive/reconcile.test.ts",
-		"typecheck": "bunx tsc -p tsconfig.json"
+		"check:exports": "node check-exports.mjs",
+		"check:imports": "node check-imports.mjs",
+		"format": "biome check --write .",
+		"lint": "biome check .",
+		"lint:ci": "biome ci .",
+		"test": "node --test --test-reporter=dot \"*.test.mjs\" \"extensions/**/*.test.ts\" \"skills/**/*.test.ts\" \"skills/**/*.test.mjs\"",
+		"test:extensions": "node --test --test-reporter=dot \"extensions/**/*.test.ts\"",
+		"test:handoff": "node --test --test-reporter=dot \"extensions/handoff/**/*.test.ts\"",
+		"test:session-archive": "node --test --test-reporter=dot \"extensions/session-archive/**/*.test.ts\"",
+		"typecheck": "tsc -p tsconfig.json"
 	}
 }

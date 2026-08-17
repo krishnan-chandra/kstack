@@ -133,8 +133,8 @@ head pin, revalidation, and `--match-head-commit` checks.
 ## Development
 
 ```bash
-bun test extensions/land/
-bun run typecheck
+node --test extensions/land/
+npm run typecheck
 ```
 
 The tests use injected command results. They do not mutate GitHub repositories.

@@ -1,9 +1,0 @@
-[test]
-pathIgnorePatterns = [
-  "extensions/session-archive/archive-store.test.ts",
-  "extensions/session-archive/archive-ops.test.ts",
-  "extensions/session-archive/reconcile.test.ts",
-  "extensions/handoff/history-reader.test.ts",
-  "extensions/handoff/index.test.ts",
-  "skills/tdd/evals",
-]

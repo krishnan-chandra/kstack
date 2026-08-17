@@ -149,9 +149,8 @@ cross-process session-liveness detection described above.
 ## Development
 
 ```bash
-# Unit + integration tests. The command runs Bun-compatible tests and the
-# node:sqlite tests under Node 22:
-bun run test:session-archive
+# Unit + integration tests under Node, including node:sqlite coverage:
+npm run test:session-archive
 ```
 
 Structure:

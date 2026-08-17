@@ -5,12 +5,12 @@ import "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Builtin
 local linters = new Mapping<String, Step> {
     ["biome"] {
         glob = "*.ts"
-        check = "bunx biome check --no-errors-on-unmatched --diagnostic-level=error {{ files }}"
-        fix = "bunx biome check --no-errors-on-unmatched --write --unsafe {{ files }}"
+        check = "npm exec -- biome check --no-errors-on-unmatched --diagnostic-level=error {{ files }}"
+        fix = "npm exec -- biome check --no-errors-on-unmatched --write --unsafe {{ files }}"
     }
-    ["typecheck"] { check = "bun run typecheck" }
-    ["check-exports"] { check = "bun run check:exports" }
-    ["check-imports"] { check = "bun run check:imports" }
+    ["typecheck"] { check = "npm run typecheck" }
+    ["check-exports"] { check = "npm run check:exports" }
+    ["check-imports"] { check = "npm run check:imports" }
 }
 
 hooks {

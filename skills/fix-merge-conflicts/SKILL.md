@@ -16,7 +16,7 @@ Branch has unresolved merge or rebase conflicts (git conflict markers, stopped r
    - jj: `jj status` shows conflicted commits; conflicts appear inline in files with `<<<<<<<`/`>>>>>>>` markers (jj uses 7+ marker lines with `+++++++` and `%%%%%%%` sections for multi-way diffs).
 2. Resolve each conflict with minimal, correctness-first edits.
 3. Prefer preserving both sides when safe. Otherwise, choose the variant that compiles and keeps public behavior stable.
-4. Regenerate lockfiles with package manager tools instead of hand-editing (`npm install`, `pnpm install`, `bun install`, etc.).
+4. Regenerate lockfiles with package manager tools instead of hand-editing (`npm install`, `pnpm install`, etc.).
 5. Run compile, lint, and relevant tests.
 6. Finalize:
    - git: `git add` resolved files; continue a stopped rebase with `git rebase --continue` only when asked.

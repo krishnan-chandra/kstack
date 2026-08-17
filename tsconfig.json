@@ -7,6 +7,7 @@
 		"moduleResolution": "nodenext",
 		"allowImportingTsExtensions": true,
 		"rewriteRelativeImportExtensions": false,
+		"erasableSyntaxOnly": true,
 		"skipLibCheck": true,
 		"lib": ["es2023"],
 		"types": ["node"]

@@ -198,5 +198,5 @@ discovered. Ensure this repository is installed as a Pi package: `pi install
 
 ```bash
 # Unit tests (pure modules: args, catalog, classification, config, runner, lifecycle, dispatch)
-bun test extensions/kstack-router/
+node --test extensions/kstack-router/
 ```
