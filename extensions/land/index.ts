@@ -11,6 +11,7 @@ import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
 import { parseLandArgs } from "./command.ts";
 import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
+import { requestGraphiteStackLanding } from "./graphite-stack-landing.ts";
 import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { resolveImplicitPr } from "./pr-resolution.ts";
@@ -92,6 +93,25 @@ export default function landExtension(pi: ExtensionAPI): void {
 					},
 					ctx,
 				);
+			},
+			requestGraphiteStackLanding: async () => {
+				const token = lifecycle.begin();
+				if (!token) return { status: "stack", outcome: blocked("Another landing run is active.") };
+				ctx.ui.setStatus("land", "land: validating Graphite stack");
+				try {
+					return await requestGraphiteStackLanding(options, {
+						exec,
+						cwd,
+						signal: token.signal,
+						runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd, options.autopilotConfirmation),
+						confirmMerge: (body) => ctx.ui.confirm("Confirm exact Graphite stack merge?", body),
+						now: Date.now,
+						sleep: abortableSleep,
+					});
+				} finally {
+					lifecycle.end(token);
+					ctx.ui.setStatus("land", undefined);
+				}
 			},
 			runSingle: async () => {
 				const token = lifecycle.begin();

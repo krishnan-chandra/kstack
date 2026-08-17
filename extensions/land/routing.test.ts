@@ -128,4 +128,49 @@ describe("routeLand", () => {
 		assert.equal(result.status, "blocked");
 		assert.match(result.blockers.join("\n"), /jj-stacked-prs extension is unavailable/i);
 	});
+
+	it("routes Graphite stacks natively and preserves standalone Graphite landing", async () => {
+		let singles = 0;
+		const native = await routeLand(
+			{ ...options, method: undefined },
+			{
+				backend: "graphite",
+				requestStackLanding: async () => ({ handled: false }),
+				requestGraphiteStackLanding: async () => ({ status: "stack", outcome: singleResult() }),
+				runSingle: async () => {
+					singles++;
+					return singleResult();
+				},
+			},
+		);
+		assert.equal(native.status, "landed");
+		assert.equal(singles, 0);
+
+		const standalone = await routeLand(options, {
+			backend: "graphite",
+			requestStackLanding: async () => ({ handled: false }),
+			requestGraphiteStackLanding: async () => ({ status: "not-stack" }),
+			runSingle: async () => {
+				singles++;
+				return singleResult();
+			},
+		});
+		assert.equal(standalone.status, "landed");
+		assert.equal(singles, 1);
+
+		let inspected = false;
+		await routeLand(
+			{ ...options, confirmation: issueLandConfirmation() },
+			{
+				backend: "graphite",
+				requestStackLanding: async () => ({ handled: false }),
+				requestGraphiteStackLanding: async () => {
+					inspected = true;
+					return { status: "not-stack" };
+				},
+				runSingle: async () => singleResult(),
+			},
+		);
+		assert.equal(inspected, true, "a confirmation capability must not bypass Graphite topology detection");
+	});
 });
