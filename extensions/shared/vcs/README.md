@@ -6,17 +6,17 @@ do not read `kstack.json` themselves.
 
 ## Command boundary
 
-Read-only Git plumbing remains valid for both backends in a colocated jj
-workspace. Callers may use commands such as `git diff`, `git log`, and
-`git rev-parse` when those commands do not change the working copy, index, or
-refs.
+Read-only Git plumbing remains valid for all three backends. In jj mode this
+requires a colocated workspace. Callers may use commands such as `git diff`,
+`git log`, and `git rev-parse` when those commands do not change the working
+copy, index, or refs.
 
 Every parent-side repository write must use the configured backend. The shared
 `VcsBackend` contract covers branches and bookmarks, commits, path restoration,
-merges, and pushes. Git-only worktree isolation stays on `GitBackend`; jj does
-not expose worktree methods. Delegated implementation children receive an
-explicit backend policy and may invoke only that backend's CLI. Do not mix Git
-mutations with jj mutations in the same workspace.
+merges, and pushes. Git and Graphite expose managed-worktree isolation; jj does
+not. Delegated implementation children receive an explicit backend policy and
+may invoke only that backend's CLI. Do not mix mutations from different
+backends in the same workspace.
 
 `preflightVcs` enforces the selected backend before a workflow mutates the
 repository. Git mode refuses a workspace whose root contains `.jj`. The jj
@@ -27,16 +27,20 @@ Git inspection continue to address the same repository.
 ## Workstream semantics
 
 `worktree-plan.ts` owns read-only managed-worktree allocation: base-ref
-resolution and collision-safe `kstack/<task-slug>` paths. `GitBackend.planIsolation`
-delegates to it and still returns only the `IsolationPlan`. Create and remove
-stay on `GitBackend`.
+resolution and collision-safe `kstack/<task-slug>` paths. Git and Graphite
+delegate planning to it and still return only the `IsolationPlan`.
 
 The Git backend creates a clean `kstack/<task-slug>` branch and can create a
-managed linked worktree. The jj backend creates a `trunk()`-based change with a
-collision-safe `kstack/<task-slug>` bookmark. A completed jj workstream keeps
-the bookmark on an ancestor of the current change, contains at least one
-non-empty change above its checkpoint, and leaves an empty working-copy change.
-Git worktree isolation is unavailable in jj mode.
+managed linked worktree. Graphite uses that Git isolation seam, then tracks and
+mutates the branch through native `gt` commands. The jj backend creates a
+`trunk()`-based change with a collision-safe `kstack/<task-slug>` bookmark. A
+completed jj workstream keeps the bookmark on an ancestor of the current
+change, contains at least one non-empty change above its checkpoint, and leaves
+an empty working-copy change. Git worktree isolation is unavailable in jj mode.
+
+Graphite publication and landing resolve `git rev-parse --git-common-dir` and
+lock its canonical path. All linked worktrees for one repository therefore
+share a single mutation lock.
 
 Path-scoped commit and restore operations, fetch, push, and base merges have
 backend-native implementations. PR Autopilot fetches the remote PR head without

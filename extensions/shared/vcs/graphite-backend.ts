@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
+import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../publication-lock.ts";
 import { extractSlug } from "../slug.ts";
 import type {
 	CurrentRef,
@@ -26,6 +27,7 @@ interface GraphiteBackendDeps {
 	mkdir?: (path: string) => void;
 	unlink?: (path: string) => void;
 	managedRoot?: string;
+	acquireLock?: typeof acquirePublicationLock;
 }
 
 function failure(error: unknown): ExecFnResult {
@@ -260,29 +262,49 @@ export class GraphiteBackend implements VcsBackend {
 	}
 
 	async publishRecordedChanges(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult> {
-		const current = await this.currentRef(cwd);
-		if (!current.ok || current.ref.kind !== "branch" || current.ref.name !== ref) {
-			return { ok: false, error: `Refusing to submit: the checked-out Graphite branch is not ${ref}.` };
+		const lock = await acquireRepositoryPublicationLock(this.exec, cwd, {
+			acquireLock: this.deps.acquireLock,
+			realpath: this.deps.realpath,
+		});
+		if (!lock.ok) {
+			return {
+				ok: false,
+				error:
+					lock.kind === "busy" ? "Another Graphite publication or landing is active for this repository." : lock.error,
+			};
 		}
-		const head = await this.headSha(cwd);
-		if (!head.ok) return head;
-		const submitArgs = ["--no-ai", "submit", "--no-stack", "--draft", "--no-edit"];
-		if (options?.existingOnly) submitArgs.push("--update-only");
-		const dryRun = await this.gt(cwd, [...submitArgs, "--dry-run"], 60_000);
-		if (dryRun.code !== 0) return { ok: false, error: `gt submit --dry-run failed: ${diagnostic(dryRun)}` };
-		const scope = verifyGraphiteDryRunAffectedRefs(`${dryRun.stdout}\n${dryRun.stderr}`, "submit", [ref]);
-		if (!scope.ok) return { ok: false, error: `Refusing Graphite submission: ${scope.error}` };
-		const submitted = await this.gt(cwd, submitArgs, 60_000);
-		if (submitted.code !== 0) return { ok: false, error: `gt submit failed: ${diagnostic(submitted)}` };
-		const remote = await this.fetchRemoteHead(cwd, ref);
-		return remote.ok && remote.sha === head.sha
-			? { ok: true }
-			: {
+		try {
+			const current = await this.currentRef(cwd);
+			if (!current.ok || current.ref.kind !== "branch" || current.ref.name !== ref) {
+				return { ok: false, error: `Refusing to submit: the checked-out Graphite branch is not ${ref}.` };
+			}
+			const head = await this.headSha(cwd);
+			if (!head.ok) return head;
+			const submitArgs = ["--no-ai", "submit", "--no-stack", "--draft", "--no-edit"];
+			if (options?.existingOnly) submitArgs.push("--update-only");
+			const dryRun = await this.gt(cwd, [...submitArgs, "--dry-run"], 60_000);
+			if (dryRun.code !== 0) return { ok: false, error: `gt submit --dry-run failed: ${diagnostic(dryRun)}` };
+			const scope = verifyGraphiteDryRunAffectedRefs(`${dryRun.stdout}\n${dryRun.stderr}`, "submit", [ref]);
+			if (!scope.ok) return { ok: false, error: `Refusing Graphite submission: ${scope.error}` };
+			const submitted = await this.gt(cwd, submitArgs, 60_000);
+			const remote = await this.fetchRemoteHead(cwd, ref);
+			if (remote.ok && remote.sha === head.sha) return { ok: true };
+			if (submitted.code !== 0) {
+				const observed = remote.ok ? `origin/${ref} resolved to ${remote.sha}` : remote.error;
+				return {
 					ok: false,
-					error: remote.ok
-						? `Graphite submitted ${ref}, but origin resolved to ${remote.sha} instead of ${head.sha}.`
-						: remote.error,
+					error: `gt submit may have started before it returned ${diagnostic(submitted)}; ${observed}. Remote publication is indeterminate; inspect the PR and branch before retrying, and do not retry blindly.`,
 				};
+			}
+			return {
+				ok: false,
+				error: remote.ok
+					? `Graphite submitted ${ref}, but origin resolved to ${remote.sha} instead of ${head.sha}. Inspect the PR and branch before retrying.`
+					: `Graphite submitted ${ref}, but remote verification failed: ${remote.error}. Inspect the PR and branch before retrying.`,
+			};
+		} finally {
+			lock.lock.release();
+		}
 	}
 
 	async fetchRemoteHead(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>> {
@@ -298,9 +320,9 @@ export class GraphiteBackend implements VcsBackend {
 	async updateBase(cwd: string, _baseRef: string): Promise<MergeBaseResult> {
 		const before = await this.headSha(cwd);
 		if (!before.ok) return { kind: "failed", error: before.error };
-		const synced = await this.gt(cwd, ["get", _baseRef, "--downstack", "--no-checkout"], 60_000);
+		const synced = await this.gt(cwd, ["get", _baseRef, "--downstack", "--no-checkout", "--no-restack"], 60_000);
 		if (synced.code !== 0) return { kind: "failed", error: `gt get ${_baseRef} failed: ${diagnostic(synced)}` };
-		const restacked = await this.gt(cwd, ["restack"], 60_000);
+		const restacked = await this.gt(cwd, ["restack", "--only"], 60_000);
 		if (restacked.code !== 0) return { kind: "failed", error: `gt restack failed: ${diagnostic(restacked)}` };
 		const after = await this.headSha(cwd);
 		if (!after.ok) return { kind: "failed", error: after.error };

@@ -121,10 +121,10 @@ describe("VCS preflight", () => {
 		const result = await preflightVcs(
 			"/repo",
 			"graphite",
-			fakeExec({ ...validGraphiteResponses, "gt --version": { stdout: "1.8.3\n" } }),
+			fakeExec({ ...validGraphiteResponses, "gt --version": { stdout: "1.8.4\n" } }),
 		);
 		assert.equal(result.ok, false);
-		assert.match(result.ok ? "" : result.error, /gt >= 1\.8\.4/);
+		assert.match(result.ok ? "" : result.error, /gt >= 1\.8\.5/);
 	});
 
 	it("requires initialized Graphite trunk metadata", async () => {

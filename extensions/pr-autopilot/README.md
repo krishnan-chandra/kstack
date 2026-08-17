@@ -66,9 +66,10 @@ Config lives in the `"pr-autopilot"` section of
 | `maxRuntimeMinutes` | no | 15 | Absolute per-child ceiling in minutes (2–60, ≥ `timeoutMinutes`). |
 
 See [`kstack.example.json`](../../kstack.example.json) for the full schema. The
-shared `vcs.backend` setting selects `"git"` or `"jj"` for checkout validation,
-base integration, path-scoped fixes, restore, and push. Mutating modes run the
-selected backend's preflight before confirmation.
+shared `vcs.backend` setting selects `"git"`, `"graphite"`, or `"jj"` for
+checkout validation, base integration, path-scoped fixes, restore, and
+publication. Mutating modes run the selected backend's preflight before
+confirmation.
 
 The local checkout is validated lazily, immediately before a mutation (a base
 merge or a fixer edit). Readiness-only passes — merge-ready checks, CI

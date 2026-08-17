@@ -44,7 +44,7 @@ test("setup-kstack covers every unified configuration section and its critical i
 	assert.match(skill, /jj workspace root/);
 	assert.match(skill, /Git mode refuses a jj-managed workspace/);
 	assert.match(skill, /gt --no-interactive trunk/);
-	assert.match(skill, /gt >= 1\.8\.4/);
+	assert.match(skill, /gt >= 1\.8\.5/);
 	assert.match(skill, /2–5/);
 	assert.match(skill, /cross-judge from a different model family/i);
 	assert.match(skill, /at least `medium` thinking/);

@@ -90,7 +90,7 @@ a separate follow-up change.
 
 The backends are exclusive for each run. Git mode requires a plain Git working
 tree and supports current-checkout or managed-worktree single delivery. Graphite
-mode requires gt 1.8.4+, Git 2.38+, and initialized Graphite metadata, and uses
+mode requires gt 1.8.5+, Git 2.38+, and initialized Graphite metadata, and uses
 native `gt` mutation in current or managed-worktree single delivery. jj mode
 requires jj 0.44 or newer, a configured jj user name and email, and a colocated
 jj/Git workspace. It supports current-workspace single delivery and stacked
@@ -150,7 +150,7 @@ rows stay unnamed.
 - A local filesystem for Pi's agent directory
 - `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
-- `gt` — [Graphite CLI](https://graphite.dev/docs/cli-quick-start) 1.8.4 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
+- `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
 
 The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
 

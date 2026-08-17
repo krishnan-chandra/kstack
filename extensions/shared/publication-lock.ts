@@ -1,4 +1,4 @@
-/** Advisory per-repository file lock for stack publication.
+/** Advisory per-repository file lock for publication and landing.
  *
  * The lock payload is written to a unique candidate before an atomic hard-link
  * creates the public lock path. Contenders therefore never observe a
@@ -7,8 +7,9 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 import { getAgentDir } from "./kstack-config.ts";
 
 const DEFAULT_CORRUPT_STALE_AFTER_MS = 60 * 60 * 1000;
@@ -29,6 +30,17 @@ interface LockDeps {
 	now?: () => Date;
 	staleAfterMs?: number;
 }
+
+interface RepositoryPublicationLockDeps {
+	acquireLock?: typeof acquirePublicationLock;
+	realpath?: (path: string) => string;
+	signal?: AbortSignal;
+}
+
+type RepositoryPublicationLockAttempt =
+	| ({ repositoryPath: string } & Extract<LockAttempt, { ok: true }>)
+	| { ok: false; kind: "busy"; holder: Extract<LockAttempt, { ok: false }>["holder"] }
+	| { ok: false; kind: "failed"; error: string };
 
 interface OwnerPayload {
 	pid: number;
@@ -199,4 +211,57 @@ export function acquirePublicationLock(deps: LockDeps): LockAttempt {
 	} finally {
 		reaper.release();
 	}
+}
+
+/** Resolve a worktree-independent repository identity and acquire its publication lock. */
+export async function acquireRepositoryPublicationLock(
+	exec: ExecFn,
+	cwd: string,
+	deps: RepositoryPublicationLockDeps = {},
+): Promise<RepositoryPublicationLockAttempt> {
+	let common: ExecFnResult;
+	try {
+		common = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+			cwd,
+			timeout: 8_000,
+			signal: deps.signal,
+		});
+	} catch (error) {
+		return {
+			ok: false,
+			kind: "failed",
+			error: `Could not resolve the repository publication identity: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	const commonGitDir = common.stdout.trim();
+	if (common.code !== 0 || !commonGitDir) {
+		return {
+			ok: false,
+			kind: "failed",
+			error: `Could not resolve the repository publication identity: ${common.stderr.trim() || common.stdout.trim() || `exit ${common.code}`}`,
+		};
+	}
+
+	let repositoryPath: string;
+	try {
+		repositoryPath = (deps.realpath ?? realpathSync)(commonGitDir);
+	} catch (error) {
+		return {
+			ok: false,
+			kind: "failed",
+			error: `Could not canonicalize the repository publication identity: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+
+	let acquired: LockAttempt;
+	try {
+		acquired = (deps.acquireLock ?? acquirePublicationLock)({ repositoryPath });
+	} catch (error) {
+		return {
+			ok: false,
+			kind: "failed",
+			error: `Could not acquire the repository publication lock: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	return acquired.ok ? { ...acquired, repositoryPath } : { ok: false, kind: "busy", holder: acquired.holder };
 }

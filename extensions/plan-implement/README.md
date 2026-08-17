@@ -135,10 +135,11 @@ worktree necessarily shares Git metadata and branch refs. The worktree is
 retained on success, failure, abort, and publication. Use the `git-worktrees`
 skill to inspect and clean it up explicitly.
 
-`--worktree` requires the Git backend and supports single-PR delivery only.
-The jj backend rejects it before model calls; jj single delivery runs in the
-current workspace. Combining `--worktree` with `--stack` also fails before
-model calls.
+`--worktree` requires the Git or Graphite backend and supports single-PR
+delivery only. Graphite creates the linked worktree through Git, tracks the
+branch with Graphite, and keeps later mutations native to `gt`. The jj backend
+rejects worktree mode before model calls; jj single delivery runs in the current
+workspace. Combining `--worktree` with `--stack` also fails before model calls.
 
 ### Stacked-PR mode (`--stack`)
 

@@ -21,6 +21,7 @@ function scripted(overrides: Record<string, { code?: number; stdout?: string; st
 	const calls: string[] = [];
 	const defaults: Record<string, { code?: number; stdout?: string; stderr?: string }> = {
 		"git rev-parse --show-toplevel": { stdout: "/repo\n" },
+		"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
 		"git status --porcelain=v1 --untracked-files=all": {},
 		"git branch --show-current": { stdout: "kstack/one\n" },
 		"git rev-parse --verify refs/heads/main^{commit}": { stdout: `${trunkSha}\n` },
@@ -125,6 +126,7 @@ describe("Graphite stack delivery", () => {
 		let released = false;
 		const result = await submitGraphiteStack(planned.plan, exec, {
 			acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+			realpath: (path) => path,
 		});
 		assert.equal(result.status, "completed");
 		assert.equal(result.status === "completed" ? result.pullRequests[0].prNumber : undefined, 12);
@@ -174,6 +176,7 @@ describe("Graphite stack delivery", () => {
 		if (!planned.ok) return;
 		const result = await submitGraphiteStack(planned.plan, exec, {
 			acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+			realpath: (path) => path,
 		});
 		assert.equal(result.status, "partial");
 		assert.equal(result.status === "partial" ? result.pullRequests.length : 0, 1);
