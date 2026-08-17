@@ -393,7 +393,7 @@ export function beginRestore(db: DatabaseSync, sessionId: string): RestoreJourna
 export function finishRestore(db: DatabaseSync, sessionId: string): void {
 	db.exec("BEGIN IMMEDIATE");
 	try {
-		db.prepare("DELETE FROM archive_sessions WHERE session_id = ? AND state = 'archived'").run(sessionId);
+		db.prepare("DELETE FROM archive_sessions WHERE session_id = ?").run(sessionId);
 		db.prepare("DELETE FROM archive_restore_journal WHERE session_id = ?").run(sessionId);
 		db.exec("COMMIT");
 	} catch (err) {

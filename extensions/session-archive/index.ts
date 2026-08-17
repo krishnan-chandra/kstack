@@ -44,10 +44,8 @@ export default async function (pi: ExtensionAPI) {
 	}
 
 	const {
-		getArchiveStats,
 		getSessionRow,
 		countEntries,
-		listSessionRows,
 		listArchivedSessionSummaries,
 		openArchiveDb,
 		openArchiveDbReadOnly,
@@ -66,8 +64,6 @@ export default async function (pi: ExtensionAPI) {
 		reconcileArchive,
 		listArchivedSessionSummaries,
 		inspectArchiveIntegrity,
-		getArchiveStats,
-		listSessionRows,
 		openArchiveDb,
 	});
 	const tools = createArchiveTools({

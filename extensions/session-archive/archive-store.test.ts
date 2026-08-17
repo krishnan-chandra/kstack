@@ -6,13 +6,16 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import {
 	ArchiveStoreError,
+	beginRestore,
 	countEntries,
 	FtsQueryError,
 	finalizeArchived,
+	finishRestore,
 	getArchiveStats,
 	getSessionRow,
 	importSessionPending,
 	listArchivedForIntegrity,
+	listRestoreJournals,
 	listSessionRows,
 	markError,
 	markVerified,
@@ -53,6 +56,21 @@ function archiveContent(db: DatabaseSync, content: string, overrides: Partial<Pe
 }
 
 describe("archive-store", () => {
+	it("removes an error-state archive and its journal when a recovered restore finishes", () => {
+		const tree = makeTempTree();
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			archiveContent(db, richSessionJsonl());
+			beginRestore(db, TEST_SESSION_ID);
+			markError(db, TEST_SESSION_ID, "interrupted restore");
+			finishRestore(db, TEST_SESSION_ID);
+			assert.equal(getSessionRow(db, TEST_SESSION_ID), undefined);
+			assert.deepEqual(listRestoreJournals(db), []);
+		} finally {
+			db.close();
+		}
+	});
+
 	it("initializes an empty database and reopens it", () => {
 		const tree = makeTempTree();
 		const db = openArchiveDb(tree.dbPath);

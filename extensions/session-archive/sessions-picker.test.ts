@@ -15,9 +15,35 @@ describe("selectSessionToggle", () => {
 			label: "Task",
 		};
 		const result = await selectSessionToggle(
-			{ hasUI: true, mode: "rpc", ui: { select: async () => "[active] Task — /repo", notify() {} } } as never,
+			{
+				hasUI: true,
+				mode: "rpc",
+				ui: { select: async (_title: string, options: string[]) => options[0], notify() {} },
+			} as never,
 			[row],
 		);
 		assert.deepEqual(result, { id: "id", kind: "active", current: false });
+	});
+
+	it("uses a disambiguated RPC option when session labels collide", async () => {
+		const rows = ["first", "second"].map((id) => ({
+			kind: "active" as const,
+			id,
+			path: `/sessions/${id}.jsonl`,
+			cwd: "/repo",
+			modified: new Date("2026-01-01"),
+			created: new Date("2026-01-01"),
+			current: false,
+			label: "Same label",
+		}));
+		const result = await selectSessionToggle(
+			{
+				hasUI: true,
+				mode: "rpc",
+				ui: { select: async (_title: string, options: string[]) => options[1], notify() {} },
+			} as never,
+			rows,
+		);
+		assert.deepEqual(result, { id: "second", kind: "active", current: false });
 	});
 });

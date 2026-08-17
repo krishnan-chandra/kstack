@@ -57,4 +57,22 @@ describe("buildSessionRows", () => {
 		assert.equal(rows[2]?.current, true);
 		assert.equal(rows.filter((row) => row.id === "shared").length, 1);
 	});
+
+	it("strips terminal control sequences from session labels and directories", () => {
+		const [row] = buildSessionRows(
+			[
+				{
+					id: "active",
+					path: "/sessions/a.jsonl",
+					cwd: "/repo/\u001b]8;;https://evil.example\u0007link\u001b]8;;\u0007",
+					name: "safe\u001b[31m label\u0000",
+					created: new Date("2026-01-01"),
+					modified: new Date("2026-01-01"),
+				},
+			],
+			[],
+		);
+		assert.equal(row?.label, "safe label");
+		assert.equal(row?.cwd, "/repo/link");
+	});
 });

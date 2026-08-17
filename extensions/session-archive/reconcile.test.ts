@@ -12,7 +12,14 @@ import {
 import { basename, dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { archiveDestination, fileStat, hashFile } from "./archive-files.ts";
-import { finalizeArchived, getSessionRow, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import {
+	beginRestore,
+	finalizeArchived,
+	getSessionRow,
+	importSessionPending,
+	listRestoreJournals,
+	openArchiveDb,
+} from "./archive-store.ts";
 import { inspectArchiveIntegrity, reconcileArchive } from "./reconcile.ts";
 import { parseSessionJsonl, sha256Hex } from "./session-jsonl.ts";
 import { makeTempTree, richSessionJsonl, TEST_SESSION_ID } from "./test-helpers.ts";
@@ -37,6 +44,34 @@ function setupPending(tree: ReturnType<typeof makeTempTree>, content: string) {
 }
 
 describe("reconcileArchive", () => {
+	it("recovers a restore journal after an earlier recovery marked its catalog row as error", () => {
+		const tree = makeTempTree();
+		const content = richSessionJsonl();
+		const { source, dest } = setupPending(tree, content);
+		mkdirSync(dirname(dest), { recursive: true });
+		writeFileSync(dest, content);
+		unlinkSync(source);
+		const db = openArchiveDb(tree.dbPath);
+		finalizeArchived(db, TEST_SESSION_ID, dest, content.length, sha256Hex(content));
+		beginRestore(db, TEST_SESSION_ID);
+		db.close();
+		unlinkSync(dest);
+
+		const failed = reconcileArchive({ dbPath: tree.dbPath });
+		assert.equal(failed.errors.length, 1);
+		writeFileSync(dest, content);
+		const recovered = reconcileArchive({ dbPath: tree.dbPath });
+		assert.deepEqual(recovered.restored, [TEST_SESSION_ID]);
+		assert.equal(readFileSync(source, "utf8"), content);
+		const recoveredDb = openArchiveDb(tree.dbPath);
+		try {
+			assert.equal(getSessionRow(recoveredDb, TEST_SESSION_ID), undefined);
+			assert.deepEqual(listRestoreJournals(recoveredDb), []);
+		} finally {
+			recoveredDb.close();
+		}
+	});
+
 	it("leaves pending rows alone when only the source exists", () => {
 		const tree = makeTempTree();
 		const content = richSessionJsonl();

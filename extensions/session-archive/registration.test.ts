@@ -63,13 +63,6 @@ describe("createArchiveCommands", () => {
 			reconcileArchive: () => ({ finalized: [], leftPending: [], errors: [], restored: [] }),
 			listArchivedSessionSummaries: () => [],
 			inspectArchiveIntegrity: () => [],
-			getArchiveStats: () => ({
-				sessionsArchived: 0,
-				sessionsPending: 0,
-				sessionsError: 0,
-				entriesTotal: 0,
-			}),
-			listSessionRows: () => [],
 			openArchiveDb: () => ({ close() {} }) as never,
 		});
 		const ctx = {

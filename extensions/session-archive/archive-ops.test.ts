@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { archiveDestination, hashFile } from "./archive-files.ts";
@@ -8,8 +8,9 @@ import {
 	archiveInactiveSession,
 	archiveInactiveSessions,
 	type FreshSessionHandle,
+	restoreArchivedSession,
 } from "./archive-ops.ts";
-import { getSessionRow, openArchiveDb, searchArchive } from "./archive-store.ts";
+import { getSessionRow, listRestoreJournals, openArchiveDb, searchArchive } from "./archive-store.ts";
 import { sha256Hex } from "./session-jsonl.ts";
 import {
 	makeTempTree,
@@ -293,6 +294,64 @@ describe("archiveCurrentSession lifecycle", () => {
 		});
 		assert.equal(result.status, "rejected");
 		assert.match(result.message, /mismatch/);
+	});
+});
+
+describe("restoreArchivedSession", () => {
+	it("restores a finalized archive and removes its catalog row", async () => {
+		const tree = makeTempTree();
+		const content = richSessionJsonl();
+		const source = tree.writeSession(TEST_SESSION_ID, content);
+		await archiveInactiveSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sourcePath: source,
+			sessionDir: tree.sessionDir,
+		});
+
+		const result = await restoreArchivedSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sessionId: TEST_SESSION_ID,
+		});
+
+		assert.equal(result.status, "archived");
+		assert.equal(readFileSync(source, "utf8"), content);
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			assert.equal(getSessionRow(db, TEST_SESSION_ID), undefined);
+		} finally {
+			db.close();
+		}
+	});
+
+	it("keeps the restore journal for startup recovery when moving bytes fails", async () => {
+		const tree = makeTempTree();
+		const content = richSessionJsonl();
+		const source = tree.writeSession(TEST_SESSION_ID, content);
+		await archiveInactiveSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sourcePath: source,
+			sessionDir: tree.sessionDir,
+		});
+		const db = openArchiveDb(tree.dbPath);
+		const row = getSessionRow(db, TEST_SESSION_ID);
+		assert.ok(row?.archive_path);
+		db.close();
+		// A conflicting active file makes restore reject its move after journaling.
+		writeFileSync(source, "conflicting bytes");
+		const result = await restoreArchivedSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			sessionId: TEST_SESSION_ID,
+		});
+		assert.equal(result.status, "failed");
+		const recoveredDb = openArchiveDb(tree.dbPath);
+		try {
+			assert.deepEqual(
+				listRestoreJournals(recoveredDb).map((journal) => journal.session_id),
+				[TEST_SESSION_ID],
+			);
+		} finally {
+			recoveredDb.close();
+		}
 	});
 });
 

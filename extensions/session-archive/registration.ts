@@ -1,6 +1,7 @@
+import { dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
-import { fileExists, fileSize, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
+import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
 import type { BulkArchiveOutcome } from "./archive-ops.ts";
 import { buildSessionChoices } from "./session-choices.ts";
 import { selectSessionChoices } from "./session-picker.ts";
@@ -59,8 +60,6 @@ export function createArchiveCommands(deps: {
 	reconcileArchive: typeof import("./reconcile.ts").reconcileArchive;
 	listArchivedSessionSummaries: typeof import("./archive-store.ts").listArchivedSessionSummaries;
 	inspectArchiveIntegrity: typeof import("./reconcile.ts").inspectArchiveIntegrity;
-	getArchiveStats: typeof import("./archive-store.ts").getArchiveStats;
-	listSessionRows: typeof import("./archive-store.ts").listSessionRows;
 	openArchiveDb: typeof import("./archive-store.ts").openArchiveDb;
 }) {
 	const sessionArchive = async (_args: string, ctx: CommandContext) => {
@@ -94,6 +93,13 @@ export function createArchiveCommands(deps: {
 		if (!ctx.hasUI) {
 			ctx.ui.notify("/sessions requires TUI or RPC interactive selection.", "error");
 			return;
+		}
+		const integrity = deps.inspectArchiveIntegrity(deps.dbPath);
+		if (integrity.length > 0) {
+			ctx.ui.notify(
+				`Session archive integrity found ${integrity.length} issue(s); affected archives cannot be restored safely.`,
+				"warning",
+			);
 		}
 		while (true) {
 			const report = deps.reconcileArchive({
@@ -148,66 +154,21 @@ export function createArchiveCommands(deps: {
 				});
 				return;
 			}
+			const selected = rows.find((row) => row.id === action.id && row.kind === "active");
+			if (!selected) {
+				ctx.ui.notify("Selected session is no longer available.", "warning");
+				continue;
+			}
 			const result = await deps.archiveInactiveSessions({
 				deps: { dbPath: deps.dbPath, archiveRoot: deps.archiveRoot },
-				sourcePaths: [rows.find((row) => row.id === action.id)!.path],
+				sourcePaths: [selected.path],
 				currentSessionFile: ctx.sessionManager.getSessionFile(),
-				sessionDir: ctx.sessionManager.getSessionDir(),
+				sessionDir: dirname(selected.path),
 			});
 			ctx.ui.notify(
 				result[0]?.result.message ?? "Session toggle failed.",
 				result[0]?.result.status === "archived" ? "info" : "error",
 			);
-		}
-	};
-
-	const sessionArchives = async (args: string, ctx: CommandContext) => {
-		const integrity = deps.inspectArchiveIntegrity(deps.dbPath);
-		const db = deps.openArchiveDb(deps.dbPath);
-		try {
-			const stats = deps.getArchiveStats(db);
-			const lines: string[] = [
-				`Archive: ${stats.sessionsArchived} archived, ${stats.sessionsPending} pending, ${stats.sessionsError} error, ${stats.entriesTotal} entries indexed`,
-			];
-			if (integrity.length > 0) {
-				lines.push("", `Integrity problems (${integrity.length}):`);
-				for (const issue of integrity) {
-					lines.push(`  ${issue.sessionId}: ${issue.message}`);
-				}
-			}
-			try {
-				lines.push(`Database size: ${(fileSize(deps.dbPath) / 1024).toFixed(0)} KiB`);
-			} catch {
-				// DB file may not exist yet.
-			}
-
-			const filter = args?.trim() ? args.trim().toLowerCase() : undefined;
-			const rows = deps
-				.listSessionRows(db, { limit: 50 })
-				.filter(
-					(row) =>
-						!filter ||
-						row.session_id.toLowerCase().includes(filter) ||
-						(row.name ?? "").toLowerCase().includes(filter) ||
-						row.cwd.toLowerCase().includes(filter),
-				);
-			if (rows.length === 0) {
-				lines.push(filter ? `No archived sessions match "${filter}".` : "No archived sessions yet.");
-			} else {
-				lines.push("");
-				for (const row of rows) {
-					const when = row.archived_at ?? row.created_at;
-					lines.push(
-						`[${row.state}] ${row.name ?? row.session_id.slice(0, 8)} — ${row.cwd} — ${row.entry_count} entries — ${when}`,
-					);
-					if (row.state === "error" && row.last_error) {
-						lines.push(`    error: ${row.last_error}`);
-					}
-				}
-			}
-			ctx.ui.notify(lines.join("\n"), "info");
-		} finally {
-			db.close();
 		}
 	};
 
@@ -273,7 +234,7 @@ export function createArchiveCommands(deps: {
 		reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
 	};
 
-	return { sessionArchive, sessions, sessionArchives, sessionArchiveOther, sessionArchiveAll };
+	return { sessionArchive, sessions, sessionArchiveOther, sessionArchiveAll };
 }
 
 export function createArchiveTools(deps: {
