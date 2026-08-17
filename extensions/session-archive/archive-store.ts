@@ -20,6 +20,10 @@ export class ArchiveStoreError extends Error {
 }
 
 const SCHEMA_VERSION = 2;
+const SQLITE_BUSY = 5;
+const SQLITE_BUSY_TIMEOUT_MS = 5000;
+const JOURNAL_MODE_RETRY_MS = 10;
+const RETRY_SIGNAL = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 const SCHEMA_SQL = `
 CREATE TABLE archive_sessions (
@@ -75,8 +79,8 @@ export function openArchiveDb(dbPath: string): DatabaseSync {
 	}
 	const db = new DatabaseSync(dbPath);
 	try {
-		db.exec("PRAGMA busy_timeout=5000");
-		db.exec("PRAGMA journal_mode=WAL");
+		db.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}`);
+		ensureWalJournalMode(db, dbPath);
 		db.exec("PRAGMA foreign_keys=ON");
 		initializeSchema(db);
 		if (dbPath !== ":memory:") {
@@ -90,6 +94,31 @@ export function openArchiveDb(dbPath: string): DatabaseSync {
 	} catch (err) {
 		db.close();
 		throw err;
+	}
+}
+
+/**
+ * WAL mode persists in the database, so established archives need only read
+ * the pragma. Two first-time openers can still race while changing it; SQLite
+ * may report BUSY there before the connection's busy timeout takes effect.
+ */
+function ensureWalJournalMode(db: DatabaseSync, dbPath: string): void {
+	if (dbPath === ":memory:") return;
+
+	const deadline = Date.now() + SQLITE_BUSY_TIMEOUT_MS;
+	while (true) {
+		try {
+			const current = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
+			if (current.journal_mode === "wal") return;
+
+			const changed = db.prepare("PRAGMA journal_mode=WAL").get() as { journal_mode: string };
+			if (changed.journal_mode === "wal") return;
+			throw new ArchiveStoreError(`failed to enable WAL journal mode (SQLite reported ${changed.journal_mode})`);
+		} catch (err) {
+			const sqliteError = asRecord(err);
+			if (sqliteError?.errcode !== SQLITE_BUSY || Date.now() >= deadline) throw err;
+			Atomics.wait(RETRY_SIGNAL, 0, 0, JOURNAL_MODE_RETRY_MS);
+		}
 	}
 }
 

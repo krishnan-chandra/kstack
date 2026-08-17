@@ -454,7 +454,7 @@ describe("archive-store", () => {
 		}
 	});
 
-	it("serializes concurrent imports from two processes without duplicates", { timeout: 30000 }, async () => {
+	it("serializes concurrent initialization and imports from two processes", { timeout: 30000 }, async () => {
 		const tree = makeTempTree();
 		const content = richSessionJsonl();
 		const worker = `
