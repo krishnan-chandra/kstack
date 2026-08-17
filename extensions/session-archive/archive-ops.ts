@@ -12,8 +12,16 @@ import {
 	chmodReadOnly,
 	moveToArchive,
 	pathsReferToSameFile,
+	restoreFromArchive,
 } from "./archive-files.ts";
-import { discardPendingImport, finalizeArchived, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import {
+	beginRestore,
+	discardPendingImport,
+	finalizeArchived,
+	finishRestore,
+	importSessionPending,
+	openArchiveDb,
+} from "./archive-store.ts";
 import { type ParsedSession, parseSessionJsonlBytes, sha256Hex } from "./session-jsonl.ts";
 
 interface ArchiveDeps {
@@ -57,7 +65,7 @@ interface ArchiveCurrentOptions {
 	deps: ArchiveDeps;
 	snapshot: ActiveSessionSnapshot;
 	waitForIdle: () => Promise<void>;
-	confirm: (title: string, message: string) => Promise<boolean>;
+	confirm?: (title: string, message: string) => Promise<boolean>;
 	/** Skip the archive dialog when the invoking command already expressed explicit archive intent. */
 	skipConfirmation?: boolean;
 	notify: (message: string, level: "info" | "warning" | "error") => void;
@@ -166,9 +174,10 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 	}
 	const staged = stagedOrRejected.staged;
 
-	const confirmed =
-		options.skipConfirmation === true ||
-		(await options.confirm(
+	let confirmed = options.skipConfirmation === true;
+	if (!confirmed) {
+		if (!options.confirm) throw new Error("archive confirmation callback is required");
+		confirmed = await options.confirm(
 			"Archive current session?",
 			[
 				`Session: ${staged.displayName}`,
@@ -177,7 +186,8 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 				"",
 				"The session becomes read-only and leaves the /resume list. Pi will continue in a new empty session.",
 			].join("\n"),
-		));
+		);
+	}
 	if (!confirmed) {
 		const cancelled: ArchiveResult = { status: "cancelled", message: "Archive cancelled." };
 		options.notify(cancelled.message, "info");
@@ -317,6 +327,32 @@ export async function archiveInactiveSessions(options: ArchiveInactiveBulkOption
  * Archive a session that is not currently loaded in Pi. Revalidates the
  * selected path immediately before mutation because picker metadata is stale.
  */
+export async function restoreArchivedSession(options: {
+	deps: ArchiveDeps;
+	sessionId: string;
+}): Promise<ArchiveResult> {
+	return withMutationLock(async () => {
+		const db = openArchiveDb(options.deps.dbPath);
+		try {
+			const restore = beginRestore(db, options.sessionId);
+			try {
+				restoreFromArchive(restore.archive_path, restore.original_path, restore.sha256, restore.file_size);
+				finishRestore(db, restore.session_id);
+				return { status: "archived", message: `Restored ${restore.session_id} to ${restore.original_path}` };
+			} catch (err) {
+				return {
+					status: "failed",
+					message: `Restore failed: ${(err as Error).message}. A complete copy was preserved.`,
+				};
+			}
+		} catch (err) {
+			return { status: "rejected", message: (err as Error).message };
+		} finally {
+			db.close();
+		}
+	});
+}
+
 export async function archiveInactiveSession(options: ArchiveInactiveOptions): Promise<ArchiveResult> {
 	const { deps } = options;
 

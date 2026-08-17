@@ -5,11 +5,20 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { chmodReadOnly, fileStat, hashFile, pathsReferToSameFile } from "./archive-files.ts";
+import {
+	chmodOwnerWritable,
+	chmodReadOnly,
+	fileStat,
+	hashFile,
+	pathsReferToSameFile,
+	restoreFromArchive,
+} from "./archive-files.ts";
 import {
 	type ArchivedIntegrityRow,
 	finalizeArchived,
+	finishRestore,
 	listArchivedForIntegrity,
+	listRestoreJournals,
 	listSessionRows,
 	markError,
 	markVerified,
@@ -28,6 +37,8 @@ interface ReconcileReport {
 	leftPending: ReconcileIssue[];
 	/** Pending rows marked 'error' (unrecoverable without user action). */
 	errors: ReconcileIssue[];
+	/** Restore journals completed after an interrupted restore. */
+	restored: string[];
 }
 
 interface ReconcileOptions {
@@ -44,9 +55,29 @@ interface ReconcileOptions {
  * are hash-identical, and never for the live session file.
  */
 export function reconcileArchive(options: ReconcileOptions): ReconcileReport {
-	const report: ReconcileReport = { finalized: [], leftPending: [], errors: [] };
+	const report: ReconcileReport = { finalized: [], leftPending: [], errors: [], restored: [] };
 	const db = openArchiveDb(options.dbPath);
 	try {
+		for (const restore of listRestoreJournals(db)) {
+			try {
+				if (existsSync(restore.archive_path)) {
+					restoreFromArchive(restore.archive_path, restore.original_path, restore.sha256, restore.file_size);
+				} else if (existsSync(restore.original_path)) {
+					const active = hashFile(restore.original_path);
+					if (active.sha256 !== restore.sha256 || active.size !== restore.file_size)
+						throw new Error("restored copy hash mismatch");
+					chmodOwnerWritable(restore.original_path);
+				} else throw new Error("both archive and restored copies are missing");
+				finishRestore(db, restore.session_id);
+				report.restored.push(restore.session_id);
+			} catch (err) {
+				markError(db, restore.session_id, `restore recovery failed: ${(err as Error).message}`);
+				report.errors.push({
+					sessionId: restore.session_id,
+					message: `restore recovery failed: ${(err as Error).message}`,
+				});
+			}
+		}
 		const pending = listSessionRows(db, { state: "pending", limit: options.pendingLimit ?? 50 });
 		for (const row of pending) {
 			reconcilePending(db, row, options.currentSessionFile, report);
@@ -184,13 +215,14 @@ function checkArchivedIntegrity(
 
 interface InspectIntegrityOptions {
 	limit?: number;
+	sessionId?: string;
 	fileStat?: (path: string) => { size: number; mtimeMs: number };
 	hashFile?: (path: string) => { sha256: string; size: number };
 	now?: () => number;
 }
 
 /**
- * Inspect integrity of archived sessions for /session-archives.
+ * Inspect integrity of archived sessions for /sessions.
  * Uses a size-and-mtime fast path and records verified status for matching files.
  */
 export function inspectArchiveIntegrity(dbPath: string, options: InspectIntegrityOptions = {}): ReconcileIssue[] {
@@ -202,7 +234,7 @@ export function inspectArchiveIntegrity(dbPath: string, options: InspectIntegrit
 	const integrity: ReconcileIssue[] = [];
 	const db = openArchiveDb(dbPath);
 	try {
-		for (const row of listArchivedForIntegrity(db, limit)) {
+		for (const row of listArchivedForIntegrity(db, limit, options.sessionId)) {
 			checkArchivedIntegrity(db, row, integrity, {
 				fileStat: statImpl,
 				hashFile: hashImpl,

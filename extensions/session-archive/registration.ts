@@ -1,13 +1,14 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
-import { fileExists, fileSize, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
+import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
 import type { BulkArchiveOutcome } from "./archive-ops.ts";
 import { buildSessionChoices } from "./session-choices.ts";
 import { selectSessionChoices } from "./session-picker.ts";
+import { createSessionsCommand } from "./sessions-command.ts";
 import { splitUtf8Chunks } from "./tool-output.ts";
 
 type Notify = (message: string, level: "info" | "warning" | "error") => void;
-type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
+export type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
 
 const READ_BODY_CHUNK_BYTES = DEFAULT_MAX_BYTES - 8192;
 
@@ -50,12 +51,14 @@ export function createWriteGuard(archiveRoot: string) {
 
 export function createArchiveCommands(deps: {
 	archiveRoot: string;
+	activeSessionsRoot: string;
 	dbPath: string;
 	archiveCurrentSession: typeof import("./archive-ops.ts").archiveCurrentSession;
 	archiveInactiveSessions: typeof import("./archive-ops.ts").archiveInactiveSessions;
+	restoreArchivedSession: typeof import("./archive-ops.ts").restoreArchivedSession;
+	reconcileArchive: typeof import("./reconcile.ts").reconcileArchive;
+	listArchivedSessionSummaries: typeof import("./archive-store.ts").listArchivedSessionSummaries;
 	inspectArchiveIntegrity: typeof import("./reconcile.ts").inspectArchiveIntegrity;
-	getArchiveStats: typeof import("./archive-store.ts").getArchiveStats;
-	listSessionRows: typeof import("./archive-store.ts").listSessionRows;
 	openArchiveDb: typeof import("./archive-store.ts").openArchiveDb;
 }) {
 	const sessionArchive = async (_args: string, ctx: CommandContext) => {
@@ -85,55 +88,7 @@ export function createArchiveCommands(deps: {
 		});
 	};
 
-	const sessionArchives = async (args: string, ctx: CommandContext) => {
-		const integrity = deps.inspectArchiveIntegrity(deps.dbPath);
-		const db = deps.openArchiveDb(deps.dbPath);
-		try {
-			const stats = deps.getArchiveStats(db);
-			const lines: string[] = [
-				`Archive: ${stats.sessionsArchived} archived, ${stats.sessionsPending} pending, ${stats.sessionsError} error, ${stats.entriesTotal} entries indexed`,
-			];
-			if (integrity.length > 0) {
-				lines.push("", `Integrity problems (${integrity.length}):`);
-				for (const issue of integrity) {
-					lines.push(`  ${issue.sessionId}: ${issue.message}`);
-				}
-			}
-			try {
-				lines.push(`Database size: ${(fileSize(deps.dbPath) / 1024).toFixed(0)} KiB`);
-			} catch {
-				// DB file may not exist yet.
-			}
-
-			const filter = args?.trim() ? args.trim().toLowerCase() : undefined;
-			const rows = deps
-				.listSessionRows(db, { limit: 50 })
-				.filter(
-					(row) =>
-						!filter ||
-						row.session_id.toLowerCase().includes(filter) ||
-						(row.name ?? "").toLowerCase().includes(filter) ||
-						row.cwd.toLowerCase().includes(filter),
-				);
-			if (rows.length === 0) {
-				lines.push(filter ? `No archived sessions match "${filter}".` : "No archived sessions yet.");
-			} else {
-				lines.push("");
-				for (const row of rows) {
-					const when = row.archived_at ?? row.created_at;
-					lines.push(
-						`[${row.state}] ${row.name ?? row.session_id.slice(0, 8)} — ${row.cwd} — ${row.entry_count} entries — ${when}`,
-					);
-					if (row.state === "error" && row.last_error) {
-						lines.push(`    error: ${row.last_error}`);
-					}
-				}
-			}
-			ctx.ui.notify(lines.join("\n"), "info");
-		} finally {
-			db.close();
-		}
-	};
+	const sessions = createSessionsCommand(deps);
 
 	const sessionArchiveOther = async (_args: string, ctx: CommandContext) => {
 		if (!ctx.hasUI) {
@@ -197,7 +152,7 @@ export function createArchiveCommands(deps: {
 		reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
 	};
 
-	return { sessionArchive, sessionArchives, sessionArchiveOther, sessionArchiveAll };
+	return { sessionArchive, sessions, sessionArchiveOther, sessionArchiveAll };
 }
 
 export function createArchiveTools(deps: {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createHandoffHandler } from "./command.ts";
+import { createHandoffHandler as createHandler } from "./command.ts";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
 
@@ -17,6 +17,10 @@ const MODELS: HandoffModel[] = [
 
 const PARENT_MODEL: HandoffModel = { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus 4.6" };
 const ALL_EFFORTS: HandoffEffortLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function createHandoffHandler(api: Parameters<typeof createHandler>[0]) {
+	return createHandler(api, () => true);
+}
 
 interface FakeApiOptions {
 	setModelResult?: boolean;
@@ -183,6 +187,17 @@ describe("handoff command guards", () => {
 		assert.deepEqual(order, ["waitForIdle", "getSessionFile"]);
 		assert.ok(notifications[0].message.includes("persisted session"));
 		assert.ok(notifications[0].message.includes("--no-session"));
+		assert.equal(calls.newSession, 0);
+	});
+
+	it("rejects a persisted source that disappeared before handoff", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const { ctx, notifications, calls } = makeFakeCtx(order);
+		await createHandler(api, () => false)("goal", ctx as never);
+		assert.deepEqual(order, ["waitForIdle", "getSessionFile"]);
+		assert.match(notifications[0].message, /no longer exists.*cannot create a durable handoff/i);
+		assert.equal(calls.editorDrafts.length, 0);
 		assert.equal(calls.newSession, 0);
 	});
 });

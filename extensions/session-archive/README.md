@@ -45,9 +45,9 @@ JSONL artifacts, although an automated reindex command is future work.
 | `/session-archive` | Confirm, then archive the current session and continue in a new empty session. Named sessions keep their name; unnamed sessions stay unnamed. |
 | `/session-archive-other` | Select any number of inactive sessions, confirm once, and archive the selection as one batch. In TUI mode, use arrows to navigate, Space to toggle, Enter to accept, and Escape to cancel. If nothing is checked, Enter accepts the focused session. RPC mode uses repeated selection with an explicit completion choice. Named sessions use their compact name; unnamed sessions use a bounded first-message summary. |
 | `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch, including unnamed sessions. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
-| `/session-archives [filter]` | Read-only stats and archived-session listing; optional text filter. |
+| `/sessions` | Searchable unified browser for active, archived, and recovery-error sessions across all projects. Enter immediately archives/restores a healthy selected row; error rows show the session ID, failure, and preserved-copy paths without mutating them. Active rows are ordered by Pi's latest user/assistant message timestamp; archived rows use their indexed equivalent. |
 
-Archiving is always explicit and confirmed. Nothing is archived automatically
+Archiving is explicit. The existing archive commands remain confirmed; `/sessions` is the deliberate no-confirmation exception. Nothing is archived automatically
 on shutdown, reload, or session switch. Current and inactive sessions may be
 archived without names; their archive rows remain unnamed. A selected batch is
 processed in picker order. One malformed, stale, or failed session does not
@@ -68,7 +68,7 @@ roll back the sessions archived successfully before or after it.
   entry offset.
 
 There is deliberately **no** agent-callable archive/restore/delete/SQL tool.
-Mutation is a confirmed user command; agents can only search and read through
+Mutation is a user command; agents can only search and read through
 SQLite connections opened with `readOnly` and `query_only` enabled.
 
 ## Threat model
@@ -91,7 +91,7 @@ policed. Treat these as accident guards, not a security boundary.
 
 The extension can identify only the session active in the current Pi process.
 It cannot determine whether another Pi process has the same JSONL open. Before
-using `/session-archive-other` or `/session-archive-all`, ensure the selected
+using `/sessions`, `/session-archive-other`, or `/session-archive-all`, ensure the selected
 sessions are not open in any other Pi process. The same caution applies if multiple Pi processes were
 explicitly started on one session file.
 
@@ -123,9 +123,7 @@ archive tools serve requests:
 - destination absent + source present → left active for an explicit retry;
 - both missing, or any hash mismatch → marked `error`, nothing deleted.
 
-Finalized archive files are not hashed during routine startup. The explicit
-`/session-archives` command checks finalized rows and reports missing or drifted
-files. Integrity checks use a size-and-mtime fast path: files whose byte size
+Finalized archive files are not hashed during routine startup or before `/sessions` presents its picker. `/sessions` reconciles interrupted work before presenting rows and shows terminal recovery errors as details-only rows. When the user selects an archived row, that exact file must pass an integrity check before restore. Integrity checks use a size-and-mtime fast path: files whose byte size
 and modification time match their last successful verification are skipped
 without re-reading disk content. Any mtime bump, size difference, or initial
 inspection triggers a full SHA-256 re-hash. In-place rewrites that preserve both
@@ -137,14 +135,14 @@ complete the operation, different bytes are a hard collision error and are
 never overwritten. Conflicting pending imports for one session id are also
 rejected, and finalization must match the exact staged path and hash.
 Cross-process archive-operation safety comes from `BEGIN IMMEDIATE`,
-`busy_timeout=5000`, and SQLite uniqueness constraints; this does not imply
+`busy_timeout=5000`, and SQLite uniqueness constraints. This does not imply
 cross-process session-liveness detection described above.
 
-## Deferred work
+## Restore behavior and deferred work
 
-- Add explicit rebuild/reindex, full verification, export, retention/deletion,
-  and "continue from archive" maintenance flows. A continuation must create a
-  new active session rather than reopen an archived JSONL.
+Selecting an archived row in `/sessions` restores its byte-identical JSONL to its recorded original path, makes it owner-writable (including recovery when the bytes had moved before chmod completed), removes its SQLite/FTS catalog entries, and returns it to `/resume`; it does not switch the current session. A restore journal lets startup reconciliation complete archive-only, active-only, or matching-duplicate interruptions while refusing collisions or mismatched bytes. Selecting the current active row first creates Pi's replacement session, then archives the old file; the browser does not reuse its stale context.
+
+Deferred: rebuild/reindex, retention/deletion, export, and bulk toggles.
 
 ## Development
 
@@ -164,5 +162,6 @@ Structure:
 - `session-jsonl.ts` — strict v3 parsing, text extraction, hashes, byte offsets
 - `archive-files.ts` — path validation, rename/copy fallback, chmod, guard
 - `reconcile.ts` — startup pending-operation recovery and explicit integrity checks
+- `sessions-command.ts` — testable unified-browser orchestration and exact-selection integrity gating
 - `tool-output.ts` — UTF-8-safe bounded output chunking
 - `*.test.ts` — Node test files beside the modules they cover

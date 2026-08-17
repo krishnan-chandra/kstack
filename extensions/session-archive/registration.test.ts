@@ -53,20 +53,17 @@ describe("createArchiveCommands", () => {
 		const calls: unknown[] = [];
 		const commands = createArchiveCommands({
 			archiveRoot: "/archive",
+			activeSessionsRoot: "/sessions",
 			dbPath: "/archive/index.db",
 			archiveCurrentSession: async (options) => {
 				calls.push(options);
 				return { status: "archived", message: "ok" };
 			},
 			archiveInactiveSessions: async () => [],
+			restoreArchivedSession: async () => ({ status: "archived", message: "restored" }),
+			reconcileArchive: () => ({ finalized: [], leftPending: [], errors: [], restored: [] }),
+			listArchivedSessionSummaries: () => [],
 			inspectArchiveIntegrity: () => [],
-			getArchiveStats: () => ({
-				sessionsArchived: 0,
-				sessionsPending: 0,
-				sessionsError: 0,
-				entriesTotal: 0,
-			}),
-			listSessionRows: () => [],
 			openArchiveDb: () => ({ close() {} }) as never,
 		});
 		const ctx = {

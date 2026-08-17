@@ -12,6 +12,7 @@
  * success.
  */
 
+import { existsSync } from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
 import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
@@ -36,7 +37,7 @@ type HandoffApi = Pick<ExtensionAPI, "setModel"> & {
 	setThinkingLevel(level: string): void;
 };
 
-export function createHandoffHandler(api: HandoffApi) {
+export function createHandoffHandler(api: HandoffApi, sourceExists: (path: string) => boolean = existsSync) {
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("handoff requires interactive mode", "error");
@@ -96,6 +97,10 @@ export function createHandoffHandler(api: HandoffApi) {
 		const oldFile = ctx.sessionManager.getSessionFile();
 		if (oldFile === undefined) {
 			ctx.ui.notify("handoff requires a persisted session and is unavailable with --no-session", "error");
+			return;
+		}
+		if (!sourceExists(oldFile)) {
+			ctx.ui.notify(`The source session no longer exists at ${oldFile}; cannot create a durable handoff.`, "error");
 			return;
 		}
 

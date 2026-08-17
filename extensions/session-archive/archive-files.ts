@@ -149,52 +149,60 @@ function assertExpectedFile(path: string, expectedSha256: string, expectedSize: 
  * exists it is only accepted when its hash matches; a hash mismatch is a hard
  * collision error and nothing is overwritten.
  */
-export function moveToArchive(
+interface VerifiedMoveOptions {
+	tempPrefix: string;
+	existingMismatchMessage: string;
+	renameImpl: (source: string, dest: string) => void;
+}
+
+/** Move verified bytes, using an atomic rename or a crash-safe EXDEV copy fallback. */
+function moveVerifiedFile(
 	sourcePath: string,
 	destPath: string,
 	expectedSha256: string,
 	expectedSize: number,
-	renameImpl: (source: string, dest: string) => void = renameSync,
+	options: VerifiedMoveOptions,
 ): void {
 	mkdirSync(dirname(destPath), { recursive: true, mode: 0o700 });
 	assertExpectedFile(sourcePath, expectedSha256, expectedSize);
-
 	if (existsSync(destPath)) {
 		const dest = hashFile(destPath);
 		if (dest.sha256 !== expectedSha256 || dest.size !== expectedSize) {
-			throw new ArchiveFileError(
-				`archive destination ${destPath} already exists with different content; refusing to overwrite`,
-			);
+			throw new ArchiveFileError(options.existingMismatchMessage);
 		}
-		// Recheck before deletion: session shutdown or another Pi process may
-		// have appended after the initial staging read.
 		assertExpectedFile(sourcePath, expectedSha256, expectedSize);
 		unlinkSync(sourcePath);
 		return;
 	}
 
 	try {
-		renameImpl(sourcePath, destPath);
-		try {
-			assertExpectedFile(destPath, expectedSha256, expectedSize);
-		} catch (err) {
-			// Best effort rollback keeps a changed session discoverable in its
-			// active directory. If rollback fails, the complete copy remains at
-			// the destination and the pending row allows manual recovery.
-			try {
-				renameSync(destPath, sourcePath);
-			} catch {
-				// Preserve the destination rather than risking deletion.
-			}
-			throw err;
-		}
-		return;
+		options.renameImpl(sourcePath, destPath);
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+		moveVerifiedAcrossDevices(sourcePath, destPath, expectedSha256, expectedSize, options.tempPrefix);
+		return;
 	}
+	try {
+		assertExpectedFile(destPath, expectedSha256, expectedSize);
+	} catch (err) {
+		// Preserve the complete copy if rollback fails; the journal/catalog can recover it.
+		try {
+			renameSync(destPath, sourcePath);
+		} catch {
+			// Best effort rollback.
+		}
+		throw err;
+	}
+}
 
-	// Cross-filesystem fallback: verified copy, then unlink.
-	const tempPath = join(dirname(destPath), `.session-${randomBytes(6).toString("hex")}.tmp`);
+function moveVerifiedAcrossDevices(
+	sourcePath: string,
+	destPath: string,
+	expectedSha256: string,
+	expectedSize: number,
+	tempPrefix: string,
+): void {
+	const tempPath = join(dirname(destPath), `.${tempPrefix}-${randomBytes(6).toString("hex")}.tmp`);
 	try {
 		copyFileSync(sourcePath, tempPath);
 		const fd = openSync(tempPath, "r");
@@ -204,7 +212,6 @@ export function moveToArchive(
 			closeSync(fd);
 		}
 		assertExpectedFile(tempPath, expectedSha256, expectedSize);
-		// Never unlink a source that changed while it was being copied.
 		assertExpectedFile(sourcePath, expectedSha256, expectedSize);
 		renameSync(tempPath, destPath);
 		unlinkSync(sourcePath);
@@ -218,7 +225,45 @@ export function moveToArchive(
 	}
 }
 
-/** Set the archived JSONL read-only where POSIX permissions exist. */
+export function moveToArchive(
+	sourcePath: string,
+	destPath: string,
+	expectedSha256: string,
+	expectedSize: number,
+	renameImpl: (source: string, dest: string) => void = renameSync,
+): void {
+	moveVerifiedFile(sourcePath, destPath, expectedSha256, expectedSize, {
+		tempPrefix: "session",
+		existingMismatchMessage: `archive destination ${destPath} already exists with different content; refusing to overwrite`,
+		renameImpl,
+	});
+}
+
+/** Move an archived file back to its recorded active location without overwriting different bytes. */
+export function restoreFromArchive(
+	sourcePath: string,
+	destPath: string,
+	expectedSha256: string,
+	expectedSize: number,
+	renameImpl: (source: string, dest: string) => void = renameSync,
+): void {
+	moveVerifiedFile(sourcePath, destPath, expectedSha256, expectedSize, {
+		tempPrefix: "restore",
+		existingMismatchMessage: `restore destination ${destPath} already exists with different content; refusing to overwrite`,
+		renameImpl,
+	});
+	chmodOwnerWritable(destPath);
+}
+
+export function chmodOwnerWritable(path: string): void {
+	try {
+		chmodSync(path, 0o600);
+	} catch (err) {
+		if (process.platform !== "win32")
+			throw new ArchiveFileError(`failed to make restored session writable: ${(err as Error).message}`);
+	}
+}
+
 export function chmodReadOnly(path: string): void {
 	try {
 		chmodSync(path, 0o444);

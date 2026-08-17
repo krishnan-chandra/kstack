@@ -19,7 +19,7 @@ export class ArchiveStoreError extends Error {
 	}
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const SQLITE_BUSY = 5;
 const SQLITE_BUSY_TIMEOUT_MS = 5000;
 const JOURNAL_MODE_RETRY_MS = 10;
@@ -57,6 +57,12 @@ CREATE TABLE archive_entries (
   raw_length INTEGER NOT NULL,
   UNIQUE(session_id, entry_id),
   UNIQUE(session_id, ordinal)
+);
+
+CREATE TABLE archive_restore_journal (
+  session_id TEXT PRIMARY KEY REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
+  original_path TEXT NOT NULL, archive_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, started_at TEXT NOT NULL
 );
 
 CREATE VIRTUAL TABLE archive_entries_fts USING fts5(
@@ -145,26 +151,18 @@ function initializeSchema(db: DatabaseSync): void {
 	if (fast.user_version === SCHEMA_VERSION) return;
 	db.exec("BEGIN IMMEDIATE");
 	try {
-		// Another process may have initialized the schema while this process waited for the lock.
 		const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
 		if (row.user_version === SCHEMA_VERSION) {
 			db.exec("COMMIT");
 			return;
 		}
-		if (row.user_version === 0) {
-			db.exec(SCHEMA_SQL);
-			db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
-		} else if (row.user_version === 1) {
-			db.exec(`
-				ALTER TABLE archive_sessions ADD COLUMN verified_at INTEGER;
-				ALTER TABLE archive_sessions ADD COLUMN verified_mtime_ms REAL;
-				PRAGMA user_version=${SCHEMA_VERSION};
-			`);
-		} else {
+		if (row.user_version !== 0) {
 			throw new ArchiveStoreError(
 				`unsupported archive schema version ${row.user_version} (expected ${SCHEMA_VERSION})`,
 			);
 		}
+		db.exec(SCHEMA_SQL);
+		db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
 		db.exec("COMMIT");
 	} catch (err) {
 		db.exec("ROLLBACK");
@@ -321,6 +319,135 @@ export function finalizeArchived(
 	}
 }
 
+interface RestoreJournalRow {
+	session_id: string;
+	original_path: string;
+	archive_path: string;
+	sha256: string;
+	file_size: number;
+}
+
+/** Record a restore before moving bytes, making interrupted restores recoverable. */
+export function beginRestore(db: DatabaseSync, sessionId: string): RestoreJournalRow {
+	db.exec("BEGIN IMMEDIATE");
+	try {
+		const row = db
+			.prepare(`SELECT session_id, original_path, archive_path, sha256, file_size, state
+			FROM archive_sessions WHERE session_id = ?`)
+			.get(sessionId);
+		if (!row) throw new ArchiveStoreError(`cannot restore unknown session ${sessionId}`);
+		const stateRow = asRecord(row);
+		if (!stateRow) throw new ArchiveStoreError(`invalid archived session ${sessionId}`);
+		const state = decodeString(stateRow, "archive_sessions", "state");
+		if (state !== "archived") throw new ArchiveStoreError(`cannot restore session ${sessionId} from state ${state}`);
+		const archivePath = decodeNullableString(stateRow, "archive_sessions", "archive_path");
+		if (!archivePath) throw new ArchiveStoreError(`archived session ${sessionId} has no archive path`);
+		const journal: RestoreJournalRow = {
+			session_id: decodeString(stateRow, "archive_sessions", "session_id"),
+			original_path: decodeString(stateRow, "archive_sessions", "original_path"),
+			archive_path: archivePath,
+			sha256: decodeString(stateRow, "archive_sessions", "sha256"),
+			file_size: decodeFiniteNumber(stateRow, "archive_sessions", "file_size"),
+		};
+		db.prepare(`INSERT INTO archive_restore_journal (session_id, original_path, archive_path, sha256, file_size, started_at)
+			VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`).run(
+			journal.session_id,
+			journal.original_path,
+			journal.archive_path,
+			journal.sha256,
+			journal.file_size,
+			new Date().toISOString(),
+		);
+		db.exec("COMMIT");
+		return journal;
+	} catch (err) {
+		db.exec("ROLLBACK");
+		throw err;
+	}
+}
+
+/** Remove restored catalog content and its journal atomically, including FTS trigger cleanup. */
+export function finishRestore(db: DatabaseSync, sessionId: string): void {
+	db.exec("BEGIN IMMEDIATE");
+	try {
+		// Delete explicitly so FTS cleanup never depends on cascade-trigger behavior.
+		db.prepare("DELETE FROM archive_entries WHERE session_id = ?").run(sessionId);
+		db.prepare("DELETE FROM archive_sessions WHERE session_id = ?").run(sessionId);
+		db.exec("COMMIT");
+	} catch (err) {
+		db.exec("ROLLBACK");
+		throw err;
+	}
+}
+
+export function listRestoreJournals(db: DatabaseSync): RestoreJournalRow[] {
+	return decodeRows(
+		db.prepare("SELECT session_id, original_path, archive_path, sha256, file_size FROM archive_restore_journal").all(),
+		(value) => {
+			const row = asRecord(value);
+			if (!row) throw new ArchiveStoreError("archive_restore_journal returned a non-object row");
+			return {
+				session_id: decodeString(row, "archive_restore_journal", "session_id"),
+				original_path: decodeString(row, "archive_restore_journal", "original_path"),
+				archive_path: decodeString(row, "archive_restore_journal", "archive_path"),
+				sha256: decodeString(row, "archive_restore_journal", "sha256"),
+				file_size: decodeFiniteNumber(row, "archive_restore_journal", "file_size"),
+			};
+		},
+	);
+}
+
+export interface ArchivedSessionSummary {
+	state: "archived" | "error";
+	sessionId: string;
+	cwd: string;
+	name: string | null;
+	firstUserText: string | null;
+	messageCount: number;
+	originalPath: string;
+	archivePath: string | null;
+	lastError: string | null;
+	createdAt: string;
+	lastMessageAt: string | null;
+}
+
+/** Archived and recovery-error rows needed by the unified session browser. */
+export function listArchivedSessionSummaries(db: DatabaseSync): ArchivedSessionSummary[] {
+	return decodeRows(
+		db
+			.prepare(`SELECT s.session_id, s.cwd, s.name, s.original_path, s.archive_path, s.created_at, s.state, s.last_error,
+		(SELECT e.text_content FROM archive_entries e WHERE e.session_id=s.session_id AND e.role='user' ORDER BY e.ordinal LIMIT 1) AS first_user_text,
+		(SELECT COUNT(*) FROM archive_entries e WHERE e.session_id=s.session_id AND e.entry_type='message') AS message_count,
+		(SELECT MAX(e.timestamp) FROM archive_entries e WHERE e.session_id=s.session_id AND e.role IN ('user', 'assistant')) AS last_message_at
+		FROM archive_sessions s WHERE s.state IN ('archived', 'error')`)
+			.all(),
+		(value) => {
+			const row = asRecord(value);
+			if (!row) throw new ArchiveStoreError("archive summary returned a non-object row");
+			const state = decodeString(row, "archive summary", "state");
+			const common = {
+				sessionId: decodeString(row, "archive summary", "session_id"),
+				cwd: decodeString(row, "archive summary", "cwd"),
+				name: decodeNullableString(row, "archive summary", "name"),
+				firstUserText: decodeNullableString(row, "archive summary", "first_user_text"),
+				messageCount: decodeFiniteNumber(row, "archive summary", "message_count"),
+				originalPath: decodeString(row, "archive summary", "original_path"),
+				createdAt: decodeString(row, "archive summary", "created_at"),
+				lastMessageAt: decodeNullableString(row, "archive summary", "last_message_at"),
+			};
+			if (state !== "archived" && state !== "error") {
+				throw new ArchiveStoreError(`archive summary returned invalid state ${JSON.stringify(state)}`);
+			}
+			return {
+				...common,
+				state,
+				archivePath: decodeNullableString(row, "archive summary", "archive_path"),
+				lastError: decodeNullableString(row, "archive summary", "last_error"),
+			};
+		},
+	);
+}
+
 export function discardPendingImport(db: DatabaseSync, sessionId: string, archivePath: string, sha256: string): void {
 	db.prepare(
 		"DELETE FROM archive_sessions WHERE session_id = ? AND state = 'pending' AND archive_path = ? AND sha256 = ?",
@@ -457,13 +584,19 @@ function decodeArchivedIntegrityRow(value: unknown): ArchivedIntegrityRow {
 	};
 }
 
-export function listArchivedForIntegrity(db: DatabaseSync, limit?: number): ArchivedIntegrityRow[] {
+export function listArchivedForIntegrity(db: DatabaseSync, limit?: number, sessionId?: string): ArchivedIntegrityRow[] {
+	const columns = "session_id, archive_path, sha256, file_size, verified_at, verified_mtime_ms";
+	if (sessionId !== undefined) {
+		return decodeRows(
+			db.prepare(`SELECT ${columns} FROM archive_sessions WHERE session_id = ? AND state = 'archived'`).all(sessionId),
+			decodeArchivedIntegrityRow,
+		);
+	}
 	const safeLimit = boundedInteger(limit, 200, 1, 1000);
 	return decodeRows(
 		db
 			.prepare(
-				`SELECT session_id, archive_path, sha256, file_size, verified_at, verified_mtime_ms
-				   FROM archive_sessions
+				`SELECT ${columns} FROM archive_sessions
 				  WHERE state = 'archived' AND archive_path IS NOT NULL
 				  ORDER BY created_at DESC
 				  LIMIT ?`,
