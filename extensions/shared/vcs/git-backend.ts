@@ -338,7 +338,7 @@ export class GitBackend implements GitVcsBackend {
 		return errors.length === 0 ? { ok: true } : { ok: false, error: errors.join("; ") };
 	}
 
-	async publishRecordedChanges(cwd: string, ref: string): Promise<VcsResult> {
+	async publishRecordedChanges(cwd: string, ref: string, _options?: { existingOnly?: boolean }): Promise<VcsResult> {
 		const result = await this.git(cwd, ["push", "origin", `HEAD:${ref}`], 30_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `git push failed: ${result.stderr.trim()}` };
 	}

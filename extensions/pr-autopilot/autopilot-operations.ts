@@ -307,6 +307,8 @@ export async function doCommitAndPush(
 		};
 	}
 	if (allowed.length === 0) return { kind: "unchanged" };
+	const rewriteScope = await backend.rewriteScope?.assertSingleRef(cwd, headRef);
+	if (rewriteScope && !rewriteScope.ok) return { kind: "failed", error: rewriteScope.error };
 
 	const committed = await backend.recordPaths(
 		cwd,
@@ -314,7 +316,7 @@ export async function doCommitAndPush(
 		`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
 	);
 	if (!committed.ok) return { kind: "failed", error: committed.error };
-	const pushed = await backend.publishRecordedChanges(cwd, headRef);
+	const pushed = await backend.publishRecordedChanges(cwd, headRef, { existingOnly: true });
 	if (!pushed.ok) return { kind: "failed", error: pushed.error };
 	const committedHead = await backend.headSha(cwd);
 	return committedHead.ok ? { kind: "pushed", headSha: committedHead.sha } : { kind: "pushed" };

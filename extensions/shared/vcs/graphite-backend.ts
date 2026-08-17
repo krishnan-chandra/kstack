@@ -80,6 +80,9 @@ export class GraphiteBackend implements VcsBackend {
 		create: (plan: IsolationPlan) => this.createIsolation(plan),
 		remove: (cwd: string, ref: string) => this.removeIsolation(cwd, ref),
 	};
+	readonly rewriteScope = {
+		assertSingleRef: (cwd: string, ref: string) => this.assertSingleRefRewrite(cwd, ref),
+	};
 
 	constructor(
 		private readonly exec: ExecFn,
@@ -245,16 +248,18 @@ export class GraphiteBackend implements VcsBackend {
 		return { ok: true };
 	}
 
-	async publishRecordedChanges(cwd: string, ref: string): Promise<VcsResult> {
+	async publishRecordedChanges(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult> {
 		const current = await this.currentRef(cwd);
 		if (!current.ok || current.ref.kind !== "branch" || current.ref.name !== ref) {
 			return { ok: false, error: `Refusing to submit: the checked-out Graphite branch is not ${ref}.` };
 		}
 		const head = await this.headSha(cwd);
 		if (!head.ok) return head;
-		const dryRun = await this.gt(cwd, ["--no-ai", "submit", "--no-stack", "--draft", "--no-edit", "--dry-run"], 60_000);
+		const submitArgs = ["--no-ai", "submit", "--no-stack", "--draft", "--no-edit"];
+		if (options?.existingOnly) submitArgs.push("--update-only");
+		const dryRun = await this.gt(cwd, [...submitArgs, "--dry-run"], 60_000);
 		if (dryRun.code !== 0) return { ok: false, error: `gt submit --dry-run failed: ${diagnostic(dryRun)}` };
-		const submitted = await this.gt(cwd, ["--no-ai", "submit", "--no-stack", "--draft", "--no-edit"], 60_000);
+		const submitted = await this.gt(cwd, submitArgs, 60_000);
 		if (submitted.code !== 0) return { ok: false, error: `gt submit failed: ${diagnostic(submitted)}` };
 		const remote = await this.fetchRemoteHead(cwd, ref);
 		return remote.ok && remote.sha === head.sha
@@ -287,6 +292,29 @@ export class GraphiteBackend implements VcsBackend {
 		const after = await this.headSha(cwd);
 		if (!after.ok) return { kind: "failed", error: after.error };
 		return after.sha === before.sha ? { kind: "already-current" } : { kind: "clean", headSha: after.sha };
+	}
+
+	private async assertSingleRefRewrite(
+		cwd: string,
+		ref: string,
+	): Promise<VcsResult<{ affectedRefs: readonly string[] }>> {
+		const current = await this.currentRef(cwd);
+		if (!current.ok || current.ref.kind !== "branch" || current.ref.name !== ref) {
+			return { ok: false, error: `Graphite mutation requires ${ref} to be checked out.` };
+		}
+		const children = await this.gt(cwd, ["children"], 8_000);
+		if (children.code !== 0) {
+			return { ok: false, error: `Could not prove the Graphite rewrite scope: ${diagnostic(children)}` };
+		}
+		if (output(children)) {
+			return {
+				ok: false,
+				error:
+					`Graphite branch ${ref} has local descendants. Kstack cannot safely account for their rewrites without verified stack evidence; ` +
+					"run the repair from the top branch or use native Graphite.",
+			};
+		}
+		return { ok: true, affectedRefs: [ref] };
 	}
 
 	private async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
