@@ -355,9 +355,25 @@ export async function runAutopilot(
 					usage,
 				};
 			}
+			const rewriteScope = await backend.rewriteScope?.assertSingleRef(cwd, state.headRef);
+			if (rewriteScope && !rewriteScope.ok) {
+				notify(rewriteScope.error, "error");
+				return {
+					status: "blocked",
+					prState: state,
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: [rewriteScope.error],
+					usage,
+				};
+			}
 			const remoteBase = backend.id === "jj" ? `${state.baseRef}@origin` : `origin/${state.baseRef}`;
+			const updateDisclosure =
+				backend.descriptor.baseUpdateVerb === "restack"
+					? "A restack can rewrite this branch; Kstack proved it currently has no local descendants."
+					: "No rebase is performed.";
 			notify(
-				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging ${remoteBase} with ${backend.id} (no rebase).`,
+				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Applying the backend's ${backend.descriptor.baseUpdateVerb} update from ${remoteBase}. ${updateDisclosure}`,
 				"info",
 			);
 			const merged = await backend.updateBase(cwd, state.baseRef);
@@ -367,12 +383,20 @@ export async function runAutopilot(
 					cycle++;
 					continue;
 				case "clean": {
-					const push = await backend.publishRecordedChanges(cwd, state.headRef);
-					if (!push.ok) {
-						blockedReasons.push(`Could not push merged base: ${push.error}`);
+					const scopeAfterUpdate = await backend.rewriteScope?.assertSingleRef(cwd, state.headRef);
+					if (scopeAfterUpdate && !scopeAfterUpdate.ok) {
+						blockedReasons.push(scopeAfterUpdate.error);
 						break;
 					}
-					notify(`Merged ${remoteBase} and pushed ${merged.headSha.slice(0, 8)}.`, "info");
+					const push = await backend.publishRecordedChanges(cwd, state.headRef, { existingOnly: true });
+					if (!push.ok) {
+						blockedReasons.push(`Could not publish the updated base: ${push.error}`);
+						break;
+					}
+					notify(
+						`Applied the ${backend.descriptor.baseUpdateVerb} update from ${remoteBase} and published ${merged.headSha.slice(0, 8)}.`,
+						"info",
+					);
 					verifiedHeadSha = null;
 					persisted = { ...persisted, headSha: merged.headSha };
 					await ops.savePersistedState(persisted);
@@ -536,6 +560,18 @@ export async function runAutopilot(
 					usage,
 				};
 			}
+			const rewriteScope = await backend.rewriteScope?.assertSingleRef(cwd, state.headRef);
+			if (rewriteScope && !rewriteScope.ok) {
+				notify(rewriteScope.error, "error");
+				return {
+					status: "blocked",
+					prState: state,
+					mergeReady: false,
+					cyclesCompleted: cycle,
+					blockedReasons: [rewriteScope.error],
+					usage,
+				};
+			}
 			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
 			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode, backend.id), {
 				mode: 0o600,
@@ -565,8 +601,10 @@ export async function runAutopilot(
 			const confirmed = await confirm(
 				`Push fixes to PR #${prNumber}?`,
 				`Cycle ${cycle + 1} fixer (${selected.label}) completed.\n` +
-					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then pushing.\n` +
-					"The autopilot will NOT rebase, restack, merge the PR, or touch merge settings.",
+					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then publishing ${rewriteScope?.affectedRefs.join(", ") ?? state.headRef}.\n` +
+					(backend.descriptor.baseUpdateVerb === "restack"
+						? "Graphite may rewrite the selected branch; Kstack rechecks that it has no descendants immediately before recording. It will not merge the PR or change merge settings."
+						: "The autopilot will NOT rebase, restack, merge the PR, or touch merge settings."),
 			);
 			if (!confirmed) {
 				notify("Push not confirmed. Stopping.", "info");

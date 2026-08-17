@@ -184,7 +184,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
 					"Bounded invariants:\n" +
 					"- Works the lowest unmerged PR first\n" +
-					`- Conflicts/behind: merge the remote base with ${backend.id} (never rebase)\n` +
+					`- Conflicts/behind: ${backend.descriptor.baseUpdateVerb} from the remote base with ${backend.id}${backend.descriptor.baseUpdateVerb === "restack" ? "; Graphite mutations proceed only when no local descendants exist" : " (never rebase)"}\n` +
 					"- Comments before CI; watch pending checks instead of inventing work\n" +
 					"- Stops at merge-ready (never auto-merges)\n" +
 					"- One tiny model per run, chosen at random from the configured pool",

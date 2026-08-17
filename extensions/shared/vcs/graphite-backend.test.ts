@@ -60,6 +60,23 @@ describe("GraphiteBackend", () => {
 		);
 	});
 
+	it("uses update-only Graphite submission for an existing autopilot PR", async () => {
+		const { exec, calls } = scripted({
+			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"git rev-parse HEAD": { stdout: `${sha}\n` },
+			"git fetch origin kstack/fix": {},
+			"git rev-parse origin/kstack/fix": { stdout: `${sha}\n` },
+		});
+		assert.deepEqual(
+			await new GraphiteBackend(exec).publishRecordedChanges("/repo", "kstack/fix", { existingOnly: true }),
+			{ ok: true },
+		);
+		assert.ok(
+			calls.includes("gt --no-interactive --no-ai submit --no-stack --draft --no-edit --update-only --dry-run"),
+		);
+		assert.ok(calls.includes("gt --no-interactive --no-ai submit --no-stack --draft --no-edit --update-only"));
+	});
+
 	it("restacks through Graphite and reports whether HEAD changed", async () => {
 		let head = sha;
 		const { exec, calls } = scripted({});
@@ -73,6 +90,28 @@ describe("GraphiteBackend", () => {
 			headSha: "b".repeat(40),
 		});
 		assert.ok(calls.includes("gt --no-interactive restack"));
+	});
+
+	it("fails closed when an autopilot rewrite could affect descendants", async () => {
+		const { exec, calls } = scripted({
+			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"gt --no-interactive children": { stdout: "kstack/child\n" },
+		});
+		const result = await new GraphiteBackend(exec).rewriteScope.assertSingleRef("/repo", "kstack/fix");
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /local descendants/);
+		assert.ok(calls.includes("gt --no-interactive children"));
+	});
+
+	it("permits a bounded single-ref rewrite when Graphite reports no children", async () => {
+		const { exec } = scripted({
+			"git branch --show-current": { stdout: "kstack/top\n" },
+			"gt --no-interactive children": {},
+		});
+		assert.deepEqual(await new GraphiteBackend(exec).rewriteScope.assertSingleRef("/repo", "kstack/top"), {
+			ok: true,
+			affectedRefs: ["kstack/top"],
+		});
 	});
 
 	it("parses rename records and removes only enumerated untracked paths", async () => {

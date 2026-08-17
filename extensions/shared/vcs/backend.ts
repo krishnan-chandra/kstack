@@ -47,10 +47,17 @@ export interface IsolationBackend {
 	remove(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>>;
 }
 
+/** Optional guard for backends whose local record/update can rewrite other refs. */
+/* exported: VCS backend contract */
+export interface RewriteScopeGuard {
+	assertSingleRef(cwd: string, ref: string): Promise<VcsResult<{ affectedRefs: readonly string[] }>>;
+}
+
 export interface VcsBackend {
 	readonly id: VcsBackendId;
 	readonly descriptor: VcsDescriptor;
 	readonly isolation?: IsolationBackend;
+	readonly rewriteScope?: RewriteScopeGuard;
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>>;
 	headSha(cwd: string): Promise<VcsResult<{ sha: string }>>;
 	currentRef(cwd: string): Promise<VcsResult<{ ref: CurrentRef }>>;
@@ -65,7 +72,7 @@ export interface VcsBackend {
 	): Promise<VcsResult<{ headSha: string }>>;
 	recordPaths(cwd: string, paths: string[], message: string): Promise<VcsResult>;
 	restorePaths(cwd: string, paths: string[]): Promise<VcsResult>;
-	publishRecordedChanges(cwd: string, ref: string): Promise<VcsResult>;
+	publishRecordedChanges(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult>;
 	fetchRemoteHead(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>>;
 	updateBase(cwd: string, baseRef: string): Promise<MergeBaseResult>;
 	childGuidance(): string;

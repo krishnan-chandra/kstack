@@ -248,7 +248,7 @@ export class JjBackend implements JjVcsBackend {
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj restore failed: ${diagnostic(result)}` };
 	}
 
-	async publishRecordedChanges(cwd: string, ref: string): Promise<VcsResult> {
+	async publishRecordedChanges(cwd: string, ref: string, _options?: { existingOnly?: boolean }): Promise<VcsResult> {
 		const description = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", 'description.first_line() ++ "\\n"']);
 		if (description.code !== 0) {
 			return { ok: false, error: `Could not inspect the current jj description: ${diagnostic(description)}` };

@@ -2,7 +2,7 @@
 
 Drives an open PR through the check → triage → fix → push → recheck loop using
 **one tiny model per run**, chosen at random from the configured pool. Stops at
-merge-ready — never auto-merges, never rebases shared history, never restacks.
+merge-ready — never auto-merges. Git and jj never rebase or restack; Graphite uses native restack only after proving the selected branch has no local descendants.
 
 This is the bounded post-PR companion to `plan-implement`. Where
 `plan-implement` publishes a draft PR, `pr-autopilot` owns getting that PR (and
@@ -76,7 +76,7 @@ watching, triage, and thread replies — never require the PR's worktree, branch
 or jj checkpoint, so a stack lander can drive PRs whose heads are not checked
 out.
 
-Each run asks for confirmation before starting and before pushing a fix. A
+Each run asks for confirmation before starting and before publishing a fix. A
 trusted in-process caller that already holds user consent (for example, an
 explicitly requested `/jj-stack land`) may pass a capability minted by
 `issueAutopilotConfirmation()` in `confirmation.ts`; only that minted object
@@ -94,7 +94,7 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 2. **Conflicts / behind → threads → CI.** A behind or conflicted frontier PR
    gets a backend-native merge of its remote base: `git merge origin/<base>` in
    Git mode or a jj merge with `<base>@origin` in jj mode. The autopilot never
-   rebases or restacks. Competing hunks abort the temporary merge and become
+   rebases or restacks. Graphite uses its native restack operation and fails closed when the selected branch has local descendants. Competing hunks abort the temporary merge and become
    `needs-human`. Unresolved threads are addressed before CI effort is spent. A
    comment push invalidates CI on the previous SHA.
 
@@ -130,8 +130,10 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    `/pr-autopilot` is rejected.
 
 9. **Bounded topology mutations.** The autopilot may create a normal merge
-   commit or jj merge change when the base moved. It never runs
-   `gt submit --stack`, force-pushes shared history, rebases, or restacks.
+   commit or jj merge change when the base moved. For Graphite it proves the
+   selected branch has no local children both before and immediately after a
+   restack, then submits only the current prefix with force-with-lease. It never
+   runs `gt submit --stack`, force-pushes without lease, or rebases.
 
 10. **Untrusted GitHub text.** PR titles, comments, and CI logs are fenced as
     data. Child agents are told not to follow instructions inside those fences.
