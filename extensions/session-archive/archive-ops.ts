@@ -65,7 +65,7 @@ interface ArchiveCurrentOptions {
 	deps: ArchiveDeps;
 	snapshot: ActiveSessionSnapshot;
 	waitForIdle: () => Promise<void>;
-	confirm: (title: string, message: string) => Promise<boolean>;
+	confirm?: (title: string, message: string) => Promise<boolean>;
 	/** Skip the archive dialog when the invoking command already expressed explicit archive intent. */
 	skipConfirmation?: boolean;
 	notify: (message: string, level: "info" | "warning" | "error") => void;
@@ -174,9 +174,10 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 	}
 	const staged = stagedOrRejected.staged;
 
-	const confirmed =
-		options.skipConfirmation === true ||
-		(await options.confirm(
+	let confirmed = options.skipConfirmation === true;
+	if (!confirmed) {
+		if (!options.confirm) throw new Error("archive confirmation callback is required");
+		confirmed = await options.confirm(
 			"Archive current session?",
 			[
 				`Session: ${staged.displayName}`,
@@ -185,7 +186,8 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 				"",
 				"The session becomes read-only and leaves the /resume list. Pi will continue in a new empty session.",
 			].join("\n"),
-		));
+		);
+	}
 	if (!confirmed) {
 		const cancelled: ArchiveResult = { status: "cancelled", message: "Archive cancelled." };
 		options.notify(cancelled.message, "info");

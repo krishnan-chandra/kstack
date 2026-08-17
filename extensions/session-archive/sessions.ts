@@ -1,4 +1,4 @@
-import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { sanitizeDisplayText } from "../shared/terminal-text.ts";
 import { pathsReferToSameFile } from "./archive-files.ts";
 import type { ArchivedSessionSummary } from "./archive-store.ts";
 
@@ -36,22 +36,24 @@ export type SessionRow =
 			created: Date;
 			current: false;
 			label: string;
+	  }
+	| {
+			kind: "error";
+			id: string;
+			path: string;
+			cwd: string;
+			name?: string;
+			firstMessage?: string;
+			modified: Date;
+			created: Date;
+			current: false;
+			label: string;
+			detail: string;
 	  };
-
-function sanitizeSessionText(value: string): string {
-	return stripTerminalSequences(value)
-		.replace(
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: remove terminal control characters
-			/[\x00-\x1f\x7f-\x9f]+/g,
-			" ",
-		)
-		.replace(/\s+/g, " ")
-		.trim();
-}
 
 function boundedLabel(name: string | undefined, firstMessage: string | undefined, id: string): string {
 	const source = name ?? firstMessage ?? id.slice(0, 8);
-	const value = sanitizeSessionText(source);
+	const value = sanitizeDisplayText(source);
 	return value.length > 72 ? `${value.slice(0, 71)}…` : value;
 }
 
@@ -60,7 +62,7 @@ function dateOrFallback(value: string | null, fallback: string): Date {
 	return new Date(Number.isFinite(parsed) ? parsed : 0);
 }
 
-/** Merge current Pi session metadata and finalized archive summaries by session id. */
+/** Merge current Pi session metadata with archived and recovery-error catalog summaries. */
 export function buildSessionRows(
 	active: ActiveSessionInfo[],
 	archived: ArchivedSessionSummary[],
@@ -68,13 +70,13 @@ export function buildSessionRows(
 ): SessionRow[] {
 	const rows = new Map<string, SessionRow>();
 	for (const session of active) {
-		const name = session.name ? sanitizeSessionText(session.name) : undefined;
-		const firstMessage = session.firstMessage ? sanitizeSessionText(session.firstMessage) : undefined;
+		const name = session.name ? sanitizeDisplayText(session.name) : undefined;
+		const firstMessage = session.firstMessage ? sanitizeDisplayText(session.firstMessage) : undefined;
 		rows.set(session.id, {
 			kind: "active",
 			id: session.id,
 			path: session.path,
-			cwd: sanitizeSessionText(session.cwd),
+			cwd: sanitizeDisplayText(session.cwd),
 			name,
 			firstMessage,
 			modified: session.modified,
@@ -85,23 +87,39 @@ export function buildSessionRows(
 		});
 	}
 	for (const session of archived) {
-		if (rows.has(session.sessionId)) continue;
+		if (rows.has(session.sessionId) && session.state === "archived") continue;
 		const created = dateOrFallback(session.createdAt, session.createdAt);
 		const modified = dateOrFallback(session.lastMessageAt, session.createdAt);
-		const name = session.name ? sanitizeSessionText(session.name) : undefined;
-		const firstMessage = session.firstUserText ? sanitizeSessionText(session.firstUserText) : undefined;
-		rows.set(session.sessionId, {
-			kind: "archived",
+		const name = session.name ? sanitizeDisplayText(session.name) : undefined;
+		const firstMessage = session.firstUserText ? sanitizeDisplayText(session.firstUserText) : undefined;
+		const common = {
 			id: session.sessionId,
 			path: session.originalPath,
-			cwd: sanitizeSessionText(session.cwd),
+			cwd: sanitizeDisplayText(session.cwd),
 			name,
 			firstMessage,
 			modified,
 			created,
-			current: false,
+			current: false as const,
 			label: boundedLabel(name, firstMessage, session.sessionId),
-		});
+		};
+		if (session.state === "archived") {
+			rows.set(session.sessionId, { ...common, kind: "archived" });
+		} else {
+			const error = sanitizeDisplayText(session.lastError ?? "unknown archive recovery error");
+			const archivePath = session.archivePath ? sanitizeDisplayText(session.archivePath) : "(none recorded)";
+			rows.set(session.sessionId, {
+				...common,
+				kind: "error",
+				detail: [
+					`Session: ${session.sessionId}`,
+					`Error: ${error}`,
+					`Original path: ${sanitizeDisplayText(session.originalPath)}`,
+					`Archive path: ${archivePath}`,
+					"Both paths are preserved when present. Resolve the file mismatch, then restart Pi or reopen /sessions.",
+				].join("\n"),
+			});
+		}
 	}
 	return [...rows.values()].sort(
 		(left, right) =>

@@ -5,7 +5,14 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { chmodReadOnly, fileStat, hashFile, pathsReferToSameFile, restoreFromArchive } from "./archive-files.ts";
+import {
+	chmodOwnerWritable,
+	chmodReadOnly,
+	fileStat,
+	hashFile,
+	pathsReferToSameFile,
+	restoreFromArchive,
+} from "./archive-files.ts";
 import {
 	type ArchivedIntegrityRow,
 	finalizeArchived,
@@ -59,6 +66,7 @@ export function reconcileArchive(options: ReconcileOptions): ReconcileReport {
 					const active = hashFile(restore.original_path);
 					if (active.sha256 !== restore.sha256 || active.size !== restore.file_size)
 						throw new Error("restored copy hash mismatch");
+					chmodOwnerWritable(restore.original_path);
 				} else throw new Error("both archive and restored copies are missing");
 				finishRestore(db, restore.session_id);
 				report.restored.push(restore.session_id);
@@ -207,6 +215,7 @@ function checkArchivedIntegrity(
 
 interface InspectIntegrityOptions {
 	limit?: number;
+	sessionId?: string;
 	fileStat?: (path: string) => { size: number; mtimeMs: number };
 	hashFile?: (path: string) => { sha256: string; size: number };
 	now?: () => number;
@@ -225,7 +234,7 @@ export function inspectArchiveIntegrity(dbPath: string, options: InspectIntegrit
 	const integrity: ReconcileIssue[] = [];
 	const db = openArchiveDb(dbPath);
 	try {
-		for (const row of listArchivedForIntegrity(db, limit)) {
+		for (const row of listArchivedForIntegrity(db, limit, options.sessionId)) {
 			checkArchivedIntegrity(db, row, integrity, {
 				fileStat: statImpl,
 				hashFile: hashImpl,

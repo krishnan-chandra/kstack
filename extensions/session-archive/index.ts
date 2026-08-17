@@ -8,9 +8,11 @@
  * tool can archive, restore, edit, or delete a session. The /sessions browser is the only immediate-toggle surface.
  */
 
+import { join } from "node:path";
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
+import { getAgentDir } from "../shared/kstack-config.ts";
 import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-files.ts";
 import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
 
@@ -24,6 +26,7 @@ export default async function (pi: ExtensionAPI) {
 	}
 
 	const archiveRoot = getArchiveRoot();
+	const activeSessionsRoot = join(getAgentDir(), "sessions");
 	const dbPath = getArchiveDbPath(archiveRoot);
 
 	if (!sqliteAvailable) {
@@ -57,6 +60,7 @@ export default async function (pi: ExtensionAPI) {
 
 	const commands = createArchiveCommands({
 		archiveRoot,
+		activeSessionsRoot,
 		dbPath,
 		archiveCurrentSession,
 		archiveInactiveSessions,

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import {
 	ArchiveStoreError,
@@ -14,11 +14,10 @@ import {
 	getArchiveStats,
 	getSessionRow,
 	importSessionPending,
-	listArchivedForIntegrity,
+	listArchivedSessionSummaries,
 	listRestoreJournals,
 	listSessionRows,
 	markError,
-	markVerified,
 	openArchiveDb,
 	openArchiveDbReadOnly,
 	type PendingImport,
@@ -66,6 +65,10 @@ describe("archive-store", () => {
 			finishRestore(db, TEST_SESSION_ID);
 			assert.equal(getSessionRow(db, TEST_SESSION_ID), undefined);
 			assert.deepEqual(listRestoreJournals(db), []);
+			assert.equal(
+				(db.prepare("SELECT COUNT(*) AS count FROM archive_entries_fts_docsize").get() as { count: number }).count,
+				0,
+			);
 		} finally {
 			db.close();
 		}
@@ -97,89 +100,16 @@ describe("archive-store", () => {
 		}
 	});
 
-	it("migrates schema from version 1 to version 2 adding verification columns", () => {
+	it("rejects obsolete schema versions instead of carrying migration code", () => {
 		const tree = makeTempTree();
-		mkdirSync(tree.archiveRoot, { recursive: true });
-		const v1Db = new DatabaseSync(tree.dbPath);
-		v1Db.exec(`
-			CREATE TABLE archive_sessions (
-			  session_id TEXT PRIMARY KEY,
-			  cwd TEXT NOT NULL,
-			  name TEXT,
-			  created_at TEXT NOT NULL,
-			  archived_at TEXT,
-			  original_path TEXT NOT NULL,
-			  archive_path TEXT UNIQUE,
-			  state TEXT NOT NULL CHECK (state IN ('pending', 'archived', 'error')),
-			  file_size INTEGER NOT NULL,
-			  sha256 TEXT NOT NULL,
-			  entry_count INTEGER NOT NULL,
-			  last_error TEXT
-			);
-			CREATE TABLE archive_entries (
-			  rowid INTEGER PRIMARY KEY,
-			  session_id TEXT NOT NULL REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
-			  entry_id TEXT NOT NULL,
-			  parent_id TEXT,
-			  entry_type TEXT NOT NULL,
-			  timestamp TEXT NOT NULL,
-			  ordinal INTEGER NOT NULL,
-			  role TEXT,
-			  text_content TEXT,
-			  raw_offset INTEGER NOT NULL,
-			  raw_length INTEGER NOT NULL,
-			  UNIQUE(session_id, entry_id),
-			  UNIQUE(session_id, ordinal)
-			);
-			PRAGMA user_version = 1;
-		`);
-		v1Db
-			.prepare(`
-			INSERT INTO archive_sessions (
-			  session_id, cwd, name, created_at, archived_at, original_path,
-			  archive_path, state, file_size, sha256, entry_count, last_error
-			) VALUES ('test-v1-session', '/tmp', 'v1 name', '2026-08-16T12:00:00.000Z', '2026-08-16T12:05:00.000Z',
-			          '/active/session.jsonl', '/archive/session.jsonl', 'archived', 100, 'sha123', 5, NULL)
-		`)
-			.run();
-		v1Db.close();
-
 		const db = openArchiveDb(tree.dbPath);
-		try {
-			const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-			assert.equal(version.user_version, 3);
-
-			const sessionColumns = db.prepare("PRAGMA table_info(archive_sessions)").all() as unknown as {
-				name: string;
-			}[];
-			assert.ok(sessionColumns.some((column) => column.name === "verified_at"));
-			assert.ok(sessionColumns.some((column) => column.name === "verified_mtime_ms"));
-
-			const row = getSessionRow(db, "test-v1-session");
-			assert.ok(row);
-			assert.equal(row.session_id, "test-v1-session");
-			assert.equal(row.name, "v1 name");
-			assert.equal(row.state, "archived");
-			assert.equal(row.verified_at, null);
-			assert.equal(row.verified_mtime_ms, null);
-
-			const integrityRows = listArchivedForIntegrity(db);
-			assert.equal(integrityRows.length, 1);
-			assert.equal(integrityRows[0].session_id, "test-v1-session");
-			assert.equal(integrityRows[0].verified_at, null);
-			assert.equal(integrityRows[0].verified_mtime_ms, null);
-
-			assert.equal(markVerified(db, "test-v1-session", 1700000000000, 1699999999000.5), true);
-			assert.equal(markVerified(db, "nonexistent-session", 1700000000000, 1699999999000.5), false);
-			const updated = getSessionRow(db, "test-v1-session");
-			assert.equal(updated?.verified_at, 1700000000000);
-			assert.equal(updated?.verified_mtime_ms, 1699999999000.5);
-		} finally {
-			db.close();
-		}
+		db.exec("PRAGMA user_version=2");
+		db.close();
+		assert.throws(() => openArchiveDb(tree.dbPath), /unsupported archive schema version 2/);
+		assert.throws(() => openArchiveDbReadOnly(tree.dbPath), /unsupported archive schema version 2/);
 	});
 
-	it("rejects unsupported schema versions", () => {
+	it("rejects unsupported future schema versions", () => {
 		const tree = makeTempTree();
 		const db = openArchiveDb(tree.dbPath);
 		db.exec("PRAGMA user_version=99");
@@ -345,6 +275,21 @@ describe("archive-store", () => {
 		}
 	});
 
+	it("lists archived and error rows for the unified session browser", () => {
+		const db = openArchiveDb(":memory:");
+		try {
+			archiveContent(db, richSessionJsonl());
+			markError(db, TEST_SESSION_ID, "restore recovery failed: hash mismatch");
+			const rows = listArchivedSessionSummaries(db);
+			assert.equal(rows.length, 1);
+			assert.equal(rows[0]?.state, "error");
+			assert.equal(rows[0]?.lastError, "restore recovery failed: hash mismatch");
+			assert.equal(rows[0]?.archivePath, "/archive/sessions/2026/08/x/session.jsonl");
+		} finally {
+			db.close();
+		}
+	});
+
 	it("is idempotent: re-importing replaces rather than duplicates", () => {
 		const db = openArchiveDb(":memory:");
 		try {
@@ -398,6 +343,17 @@ describe("archive-store", () => {
 				finalizeArchived(db, TEST_SESSION_ID, pendingA.archivePath, contentA.length, sha256Hex(contentA)),
 				"finalized",
 			);
+		} finally {
+			db.close();
+		}
+	});
+
+	it("reports the actual state when restore is requested for a known non-archived session", () => {
+		const db = openArchiveDb(":memory:");
+		try {
+			archiveContent(db, richSessionJsonl());
+			markError(db, TEST_SESSION_ID, "broken");
+			assert.throws(() => beginRestore(db, TEST_SESSION_ID), /cannot restore session .* from state error/);
 		} finally {
 			db.close();
 		}

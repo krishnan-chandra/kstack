@@ -1,16 +1,14 @@
-import { dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
 import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
 import type { BulkArchiveOutcome } from "./archive-ops.ts";
 import { buildSessionChoices } from "./session-choices.ts";
 import { selectSessionChoices } from "./session-picker.ts";
-import { type ActiveSessionInfo, buildSessionRows } from "./sessions.ts";
-import { selectSessionToggle } from "./sessions-picker.ts";
+import { createSessionsCommand } from "./sessions-command.ts";
 import { splitUtf8Chunks } from "./tool-output.ts";
 
 type Notify = (message: string, level: "info" | "warning" | "error") => void;
-type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
+export type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
 
 const READ_BODY_CHUNK_BYTES = DEFAULT_MAX_BYTES - 8192;
 
@@ -53,6 +51,7 @@ export function createWriteGuard(archiveRoot: string) {
 
 export function createArchiveCommands(deps: {
 	archiveRoot: string;
+	activeSessionsRoot: string;
 	dbPath: string;
 	archiveCurrentSession: typeof import("./archive-ops.ts").archiveCurrentSession;
 	archiveInactiveSessions: typeof import("./archive-ops.ts").archiveInactiveSessions;
@@ -89,88 +88,7 @@ export function createArchiveCommands(deps: {
 		});
 	};
 
-	const sessions = async (_args: string, ctx: CommandContext) => {
-		if (!ctx.hasUI) {
-			ctx.ui.notify("/sessions requires TUI or RPC interactive selection.", "error");
-			return;
-		}
-		const integrity = deps.inspectArchiveIntegrity(deps.dbPath);
-		if (integrity.length > 0) {
-			ctx.ui.notify(
-				`Session archive integrity found ${integrity.length} issue(s); affected archives cannot be restored safely.`,
-				"warning",
-			);
-		}
-		while (true) {
-			const report = deps.reconcileArchive({
-				dbPath: deps.dbPath,
-				currentSessionFile: ctx.sessionManager.getSessionFile(),
-			});
-			if (report.errors.length > 0)
-				ctx.ui.notify(
-					`Session archive recovery found ${report.errors.length} issue(s); toggles may be unavailable.`,
-					"warning",
-				);
-			const db = deps.openArchiveDb(deps.dbPath);
-			let rows: ReturnType<typeof buildSessionRows>;
-			try {
-				const active = (await SessionManager.listAll()) as ActiveSessionInfo[];
-				rows = buildSessionRows(active, deps.listArchivedSessionSummaries(db), ctx.sessionManager.getSessionFile());
-			} finally {
-				db.close();
-			}
-			if (rows.length === 0) {
-				ctx.ui.notify("No persisted sessions found.", "info");
-				return;
-			}
-			const action = await selectSessionToggle(ctx, rows);
-			if (!action) return;
-			if (action.kind === "archived") {
-				const result = await deps.restoreArchivedSession({
-					deps: { dbPath: deps.dbPath, archiveRoot: deps.archiveRoot },
-					sessionId: action.id,
-				});
-				ctx.ui.notify(result.message, result.status === "archived" ? "info" : "error");
-				continue;
-			}
-			if (action.current) {
-				await deps.archiveCurrentSession({
-					deps: { dbPath: deps.dbPath, archiveRoot: deps.archiveRoot },
-					snapshot: {
-						sourcePath: ctx.sessionManager.getSessionFile(),
-						sessionId: ctx.sessionManager.getSessionId(),
-						sessionDir: ctx.sessionManager.getSessionDir(),
-						sessionName: ctx.sessionManager.getSessionName()?.trim() || undefined,
-					},
-					waitForIdle: () => ctx.waitForIdle(),
-					confirm: () => Promise.resolve(true),
-					skipConfirmation: true,
-					notify: (message, level) => ctx.ui.notify(message, level),
-					startNewSession: (withSession) =>
-						ctx.newSession({
-							withSession: async (fresh) =>
-								withSession({ notify: (message, level) => fresh.ui.notify(message, level) }),
-						}),
-				});
-				return;
-			}
-			const selected = rows.find((row) => row.id === action.id && row.kind === "active");
-			if (!selected) {
-				ctx.ui.notify("Selected session is no longer available.", "warning");
-				continue;
-			}
-			const result = await deps.archiveInactiveSessions({
-				deps: { dbPath: deps.dbPath, archiveRoot: deps.archiveRoot },
-				sourcePaths: [selected.path],
-				currentSessionFile: ctx.sessionManager.getSessionFile(),
-				sessionDir: dirname(selected.path),
-			});
-			ctx.ui.notify(
-				result[0]?.result.message ?? "Session toggle failed.",
-				result[0]?.result.status === "archived" ? "info" : "error",
-			);
-		}
-	};
+	const sessions = createSessionsCommand(deps);
 
 	const sessionArchiveOther = async (_args: string, ctx: CommandContext) => {
 		if (!ctx.hasUI) {

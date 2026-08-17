@@ -22,7 +22,7 @@ describe("selectSessionToggle", () => {
 			} as never,
 			[row],
 		);
-		assert.deepEqual(result, { id: "id", kind: "active", current: false });
+		assert.equal(result, row);
 	});
 
 	it("uses a disambiguated RPC option when session labels collide", async () => {
@@ -44,6 +44,6 @@ describe("selectSessionToggle", () => {
 			} as never,
 			rows,
 		);
-		assert.deepEqual(result, { id: "second", kind: "active", current: false });
+		assert.equal(result, rows[1]);
 	});
 });

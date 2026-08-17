@@ -25,6 +25,7 @@ describe("buildSessionRows", () => {
 			],
 			[
 				{
+					state: "archived" as const,
 					sessionId: "archive",
 					cwd: "/b",
 					name: "Archived",
@@ -32,10 +33,12 @@ describe("buildSessionRows", () => {
 					messageCount: 2,
 					originalPath: "/sessions/b.jsonl",
 					archivePath: "/archive/b.jsonl",
+					lastError: null,
 					createdAt: "2026-01-01T00:00:00.000Z",
 					lastMessageAt: "2026-01-05T00:00:00.000Z",
 				},
 				{
+					state: "archived" as const,
 					sessionId: "shared",
 					cwd: "/b",
 					name: null,
@@ -43,6 +46,7 @@ describe("buildSessionRows", () => {
 					messageCount: 1,
 					originalPath: "/x",
 					archivePath: "/y",
+					lastError: null,
 					createdAt: "2026-01-10T00:00:00.000Z",
 					lastMessageAt: "2026-01-10T00:00:00.000Z",
 				},
@@ -56,6 +60,33 @@ describe("buildSessionRows", () => {
 		assert.equal(rows[2]?.kind, "active");
 		assert.equal(rows[2]?.current, true);
 		assert.equal(rows.filter((row) => row.id === "shared").length, 1);
+	});
+
+	it("surfaces error-state rows with actionable preserved-copy details", () => {
+		const [row] = buildSessionRows(
+			[],
+			[
+				{
+					state: "error",
+					sessionId: "broken-session",
+					cwd: "/repo",
+					name: "Broken restore",
+					firstUserText: null,
+					messageCount: 1,
+					originalPath: "/sessions/broken.jsonl",
+					archivePath: "/archive/broken.jsonl",
+					lastError: "restore recovery failed: hash mismatch",
+					createdAt: "2026-01-01T00:00:00.000Z",
+					lastMessageAt: null,
+				},
+			],
+		);
+		assert.equal(row?.kind, "error");
+		if (row?.kind !== "error") assert.fail("expected error row");
+		assert.match(row.detail, /broken-session/);
+		assert.match(row.detail, /hash mismatch/);
+		assert.match(row.detail, /\/sessions\/broken.jsonl/);
+		assert.match(row.detail, /\/archive\/broken.jsonl/);
 	});
 
 	it("strips terminal control sequences from session labels and directories", () => {

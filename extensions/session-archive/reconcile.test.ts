@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+	chmodSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -59,10 +60,12 @@ describe("reconcileArchive", () => {
 
 		const failed = reconcileArchive({ dbPath: tree.dbPath });
 		assert.equal(failed.errors.length, 1);
-		writeFileSync(dest, content);
+		writeFileSync(source, content);
+		if (process.platform !== "win32") chmodSync(source, 0o444);
 		const recovered = reconcileArchive({ dbPath: tree.dbPath });
 		assert.deepEqual(recovered.restored, [TEST_SESSION_ID]);
 		assert.equal(readFileSync(source, "utf8"), content);
+		if (process.platform !== "win32") assert.equal(lstatSync(source).mode & 0o777, 0o600);
 		const recoveredDb = openArchiveDb(tree.dbPath);
 		try {
 			assert.equal(getSessionRow(recoveredDb, TEST_SESSION_ID), undefined);

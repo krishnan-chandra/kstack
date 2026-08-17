@@ -1,38 +1,27 @@
 import { type ExtensionCommandContext, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, stripTerminalSequences, Text } from "@earendil-works/pi-tui";
+import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import { buildSessionChoices } from "./session-choices.ts";
 import type { SessionRow } from "./sessions.ts";
-
-interface SessionToggle {
-	id: string;
-	kind: "active" | "archived";
-	current: boolean;
-}
 
 function timestamp(value: Date): string {
 	return value.toISOString().replace("T", " ").slice(0, 16);
 }
 
-function sanitizeText(value: string): string {
-	return stripTerminalSequences(value)
-		.replace(
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: remove terminal control characters
-			/[\x00-\x1f\x7f-\x9f]+/g,
-			" ",
-		)
-		.replace(/\s+/g, " ")
-		.trim();
+function optionLabel(row: SessionRow, label: string): string {
+	return `[${row.kind}] ${label} — ${row.cwd}`;
 }
 
-function optionLabel(row: SessionRow, label: string): string {
-	return `[${row.kind}] ${sanitizeText(label)} — ${sanitizeText(row.cwd)}`;
+function targetValue(row: SessionRow): string {
+	if (row.kind === "active") return "archived";
+	if (row.kind === "archived") return "active";
+	return "details";
 }
 
 /** Pick exactly one session toggle. SettingsList keeps navigation and search consistent with Pi. */
 export async function selectSessionToggle(
 	ctx: ExtensionCommandContext,
 	rows: readonly SessionRow[],
-): Promise<SessionToggle | undefined> {
+): Promise<SessionRow | undefined> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("/sessions requires TUI or RPC interactive selection.", "error");
 		return undefined;
@@ -45,17 +34,16 @@ export async function selectSessionToggle(
 			choices.map(({ label, session }) => optionLabel(session, label)),
 		);
 		const choice = choices.find(({ label, session }) => optionLabel(session, label) === selected);
-		const row = choice?.session;
-		return row ? { id: row.id, kind: row.kind, current: row.kind === "active" && row.current } : undefined;
+		return choice?.session;
 	}
-	return ctx.ui.custom<SessionToggle | undefined>((_tui, theme, _keybindings, done) => {
+	return ctx.ui.custom<SessionRow | undefined>((_tui, theme, _keybindings, done) => {
 		const container = new Container();
 		container.addChild(new Text(theme.fg("accent", theme.bold("Sessions — Enter toggles archive status")), 1, 0));
 		const items: SettingItem[] = rows.map((row) => ({
 			id: row.id,
-			label: `${timestamp(row.modified)}  ${sanitizeText(row.label)} — ${sanitizeText(row.cwd)}${row.kind === "active" && row.current ? " (current)" : ""}`,
+			label: `${timestamp(row.modified)}  ${row.label} — ${row.cwd}${row.kind === "active" && row.current ? " (current)" : ""}`,
 			currentValue: row.kind,
-			values: [row.kind === "active" ? "archived" : "active"],
+			values: [targetValue(row)],
 		}));
 		const list = new SettingsList(
 			items,
@@ -63,13 +51,13 @@ export async function selectSessionToggle(
 			getSettingsListTheme(),
 			(id) => {
 				const row = byId.get(id);
-				if (row) done({ id: row.id, kind: row.kind, current: row.kind === "active" && row.current });
+				if (row) done(row);
 			},
 			() => done(undefined),
 			{ enableSearch: true },
 		);
 		container.addChild(list);
-		container.addChild(new Text(theme.fg("dim", "Search · ↑↓ navigate · Enter archive/restore · Esc cancel"), 1, 0));
+		container.addChild(new Text(theme.fg("dim", "Search · ↑↓ navigate · Enter toggle/details · Esc cancel"), 1, 0));
 		return {
 			render: (width) => container.render(width),
 			invalidate: () => container.invalidate(),

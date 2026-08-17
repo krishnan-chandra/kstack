@@ -252,8 +252,12 @@ export function restoreFromArchive(
 		existingMismatchMessage: `restore destination ${destPath} already exists with different content; refusing to overwrite`,
 		renameImpl,
 	});
+	chmodOwnerWritable(destPath);
+}
+
+export function chmodOwnerWritable(path: string): void {
 	try {
-		chmodSync(destPath, 0o600);
+		chmodSync(path, 0o600);
 	} catch (err) {
 		if (process.platform !== "win32")
 			throw new ArchiveFileError(`failed to make restored session writable: ${(err as Error).message}`);

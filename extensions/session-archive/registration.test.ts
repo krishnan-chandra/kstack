@@ -53,6 +53,7 @@ describe("createArchiveCommands", () => {
 		const calls: unknown[] = [];
 		const commands = createArchiveCommands({
 			archiveRoot: "/archive",
+			activeSessionsRoot: "/sessions",
 			dbPath: "/archive/index.db",
 			archiveCurrentSession: async (options) => {
 				calls.push(options);
