@@ -35,7 +35,7 @@ export async function selectSessionToggle(
 		container.addChild(new Text(theme.fg("accent", theme.bold("Sessions — Enter toggles archive status")), 1, 0));
 		const items: SettingItem[] = rows.map((row) => ({
 			id: row.id,
-			label: `${timestamp(row.modified)}  ${row.label}${row.kind === "active" && row.current ? " (current)" : ""}`,
+			label: `${timestamp(row.modified)}  ${row.label} — ${row.cwd}${row.kind === "active" && row.current ? " (current)" : ""}`,
 			currentValue: row.kind,
 			values: [row.kind === "active" ? "archived" : "active"],
 		}));
