@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import type { RunAgentOptions } from "./agent-runner.ts";
@@ -187,6 +187,39 @@ describe("plan-implement phases", () => {
 		});
 		await runPostReviewPhases("nothing", { ...options(), mode: "single" }, { workflowCwd: "/repo" }, fx);
 		assert.equal(agentRan, false);
+	});
+
+	it("uses parent-owned single publication before launching the metadata publisher", async () => {
+		let confirms = 0;
+		let published = false;
+		let publisherSawPublication = false;
+		const backend = Object.assign(new GitBackend(async () => ({ code: 1, stdout: "", stderr: "unused" })), {
+			parentOwnedPublication: {
+				publish: async () => {
+					published = true;
+					return { ok: true } as const;
+				},
+			},
+		});
+		const { fx } = effects({
+			backend,
+			confirm: async () => ++confirms === 2,
+			resolvePublishedPr: async () => ({ ok: true, prNumber: 42 }),
+			runAgent: async (input) => {
+				if (input.role === "publisher") {
+					publisherSawPublication = published;
+					assert.match(input.taskFile ? readFileSync(input.taskFile, "utf8") : "", /Parent-published PR: #42/);
+				}
+				return { status: "completed", role: input.role, model: input.model, output: "done", usage };
+			},
+		});
+		await runPostReviewPhases(
+			"nothing",
+			{ ...options(), mode: "single" },
+			{ workflowCwd: "/repo", workstreamCheckpoint: { ref: "kstack/fix", baseSha: "a".repeat(40) } },
+			fx,
+		);
+		assert.equal(publisherSawPublication, true);
 	});
 
 	it("does not launch the stack publisher child when structural publication is not completed", async () => {

@@ -28,7 +28,9 @@ function scripted(overrides: Record<string, { code?: number; stdout?: string; st
 		"git rev-parse --verify refs/heads/kstack/one^{commit}": { stdout: `${headSha}\n` },
 		[`git merge-base --is-ancestor ${trunkSha} ${headSha}`]: {},
 		[`git diff --quiet ${trunkSha} ${headSha} --`]: { code: 1 },
-		"gt --no-interactive --no-ai submit --stack --draft --no-edit --dry-run": {},
+		"gt --no-interactive --no-ai submit --stack --draft --no-edit --dry-run": {
+			stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/one (Create)\n✅ Dry run complete.\n",
+		},
 		"gh pr list --state open --head kstack/one --json number,url,headRefName,baseRefName,headRefOid,isDraft": {
 			stdout: "[]\n",
 		},
@@ -68,6 +70,21 @@ describe("Graphite stack delivery", () => {
 		assert.equal(planned.ok, true);
 		assert.ok(calls.includes("gt --no-interactive --no-ai submit --stack --draft --no-edit --dry-run"));
 		assert.match(planned.ok ? planned.plan.preview : "", /create draft PR: kstack\/one -> main/);
+	});
+
+	it("rejects a dry run whose affected branches differ from the manifest", async () => {
+		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		assert.equal(parsed.ok, true);
+		if (!parsed.ok) return;
+		const { exec } = scripted({
+			"gt --no-interactive --no-ai submit --stack --draft --no-edit --dry-run": {
+				stdout:
+					"Preparing to submit PRs for the following branches...\n▸ kstack/unexpected (Update)\n▸ kstack/one (Create)\n✅ Dry run complete.\n",
+			},
+		});
+		const verified = await verifyGraphiteStack("/repo", parsed.manifest, exec);
+		assert.equal(verified.ok, false);
+		assert.match(verified.ok ? "" : verified.error, /unexpected/);
 	});
 
 	it("revalidates under lock, submits once, and verifies the exact draft PR", async () => {
@@ -116,5 +133,49 @@ describe("Graphite stack delivery", () => {
 			1,
 		);
 		assert.equal(released, true);
+	});
+
+	it("treats a nonzero submit as partial when exact PRs are visible", async () => {
+		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		assert.equal(parsed.ok, true);
+		if (!parsed.ok) return;
+		let ghReads = 0;
+		const base = scripted({
+			"gt --no-interactive --no-ai submit --stack --draft --no-edit": { code: 1, stderr: "connection lost" },
+		});
+		const exec: ExecFn = async (command, args, options) => {
+			if (command === "gh") {
+				ghReads++;
+				return {
+					code: 0,
+					stdout:
+						ghReads >= 3
+							? JSON.stringify([
+									{
+										number: 12,
+										url: "https://example.test/pr/12",
+										headRefName: "kstack/one",
+										baseRefName: "main",
+										headRefOid: headSha,
+										isDraft: true,
+									},
+								])
+							: "[]",
+					stderr: "",
+				};
+			}
+			return base.exec(command, args, options);
+		};
+		const verified = await verifyGraphiteStack("/repo", parsed.manifest, exec);
+		assert.equal(verified.ok, true);
+		if (!verified.ok) return;
+		const planned = await planGraphitePublication(verified.stack, exec);
+		assert.equal(planned.ok, true);
+		if (!planned.ok) return;
+		const result = await submitGraphiteStack(planned.plan, exec, {
+			acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+		});
+		assert.equal(result.status, "partial");
+		assert.equal(result.status === "partial" ? result.pullRequests.length : 0, 1);
 	});
 });

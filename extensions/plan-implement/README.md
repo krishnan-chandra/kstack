@@ -47,11 +47,13 @@ another option. Put `--` before a task that starts with dashes.
    verdict passed through mode-`0600` temp files. The fixer addresses Act On
    findings, verifies each against the repository, re-runs focused tests, and
    records verified fixes on the existing branch or bookmark.
-9. Asks whether to publish, then runs the publisher (implementer model): it
-   follows `write-pr` to push the configured backend's branch or bookmark and
-   create a draft PR (or update an existing PR's title/body), then follows
-   `find-reviewers` to recommend 2–5
-   reviewers with evidence and a review order. Its final report — PR URL,
+9. Asks whether to publish, then runs the publisher (implementer model). For
+   Graphite, the parent first verifies the exact dry-run scope, submits through
+   `gt`, and resolves the exact PR; the publisher may then edit only that PR's
+   metadata. For other backends, the publisher follows `write-pr` to push the
+   configured branch or bookmark and create a draft PR (or update an existing
+   PR's title/body), then follows `find-reviewers` to recommend 2–5 reviewers
+   with evidence and a review order. Its final report — PR URL,
    title, and the full reviewer recommendation — is displayed as the run's
    terminal output. The publisher never marks PRs ready, merges, or
    force-pushes.
@@ -102,6 +104,9 @@ The shared `vcs.backend` setting selects the single-PR workstream:
 - jj mode requires a colocated jj/Git workspace. It creates a `trunk()`-based
   change with a collision-safe `kstack/<task-slug>` bookmark. jj's automatic
   snapshot model replaces Git dirty-tree and staging assumptions.
+- Graphite mode creates and records a tracked `kstack/<task-slug>` branch with
+  `gt`. The parent owns submission so a publisher child never bypasses
+  Graphite with a raw Git push.
 
 The parent injects backend-specific guidance into every child. The implementer
 and review fixer stay on the prepared workstream, record coherent verified

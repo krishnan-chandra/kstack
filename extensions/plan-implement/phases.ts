@@ -252,14 +252,43 @@ export async function runPostReviewPhases(
 				return;
 			}
 		} else {
+			const parentPublishes = fx.backend.parentOwnedPublication !== undefined;
 			const publishConfirmed = await fx.confirm(
 				"Create a draft PR and find reviewers?",
 				`Publisher: ${implementerModel}\nTimeout: ${timeoutMinutes} min\n\n` +
-					"The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's title/body), then find-reviewers for 2–5 reviewer recommendations. " +
+					(parentPublishes
+						? "The parent publishes the branch through the selected VCS backend, then the publisher edits only the verified draft PR's metadata and finds 2–5 reviewer recommendations. "
+						: "The publisher consults write-pr to push the branch and create a DRAFT PR (or update an existing PR's title/body), then find-reviewers for 2–5 reviewer recommendations. ") +
 					"After publishing, you will be offered PR-autopilot (watch CI, address threads, push fixes) and then landing. " +
 					"It never marks PRs ready, merges, or force-pushes; creating a PR grants the necessary push. Reviewer recommendations are printed to the session as the run's final output.",
 			);
 			if (!fx.isCurrent() || !publishConfirmed) return;
+			if (fx.backend.parentOwnedPublication) {
+				if (!state.workstreamCheckpoint) {
+					fx.notify("Parent-owned publication requires a recorded workstream checkpoint.", "error");
+					return;
+				}
+				fx.setStatus(`plan-implement: publishing ${state.workstreamCheckpoint.ref}…`);
+				const published = await fx.backend.parentOwnedPublication.publish(
+					state.workflowCwd,
+					state.workstreamCheckpoint.ref,
+				);
+				if (!fx.isCurrent()) return;
+				if (!published.ok) {
+					fx.notify(`Parent-owned publication failed: ${published.error}`, "error");
+					return;
+				}
+				const resolved = await fx.resolvePublishedPr(state.workflowCwd);
+				if (!resolved.ok) {
+					fx.notify(`Publication completed, but the exact PR could not be resolved: ${resolved.error}`, "error");
+					return;
+				}
+				writeFileSync(
+					taskFile,
+					`${readFileSync(taskFile, "utf8")}\nParent-published PR: #${resolved.prNumber}. Do not push or create a PR; edit only this PR's metadata.\n`,
+					{ encoding: "utf8", mode: 0o600 },
+				);
+			}
 		}
 		const controller = fx.beginChild("publishing");
 		if (!controller) return;

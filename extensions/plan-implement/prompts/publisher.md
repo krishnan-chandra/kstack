@@ -19,6 +19,8 @@ Consult the `write-pr` skill and follow it exactly:
 
 When the task has a local stack, the parent already published and independently verified its structure with the configured stack adapter. Your job is metadata and reviewer recommendations only. Consult `write-pr`. Do not push refs, create PRs, repair bases, update navigation comments, or invoke another publication command.
 
+When the task names a `Parent-published PR`, the parent already published and resolved that exact single PR through the selected VCS backend. Do not push or create a PR. Edit metadata only for the named PR, then recommend reviewers.
+
 The parent passes a trusted PR map file in the task message. Edit only the PR numbers and refs listed there.
 
 1. **Inspect each exact slice.** With jj, use `trunk()` below the bottom slice and the preceding bookmark below every later slice. With Graphite/Git refs, use the trusted `baseRef` and `ref` with `git diff <baseRef>...<ref>` and `git log <baseRef>..<ref>`.

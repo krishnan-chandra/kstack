@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { acquirePublicationLock } from "../shared/publication-lock.ts";
+import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 
 const MAX_SLICES = 50;
 const MAX_REF_CHARS = 240;
@@ -231,6 +232,12 @@ export async function verifyGraphiteStack(
 		60_000,
 	);
 	if (dryRun.code !== 0) return { ok: false, error: `gt submit --stack --dry-run failed: ${diagnostic(dryRun)}` };
+	const scope = verifyGraphiteDryRunAffectedRefs(
+		`${dryRun.stdout}\n${dryRun.stderr}`,
+		"submit",
+		manifest.slices.map((slice) => slice.branch),
+	);
+	if (!scope.ok) return { ok: false, error: `Refusing Graphite stack publication: ${scope.error}` };
 	return { ok: true, stack: { repositoryRoot, manifest } };
 }
 
@@ -285,6 +292,28 @@ async function existingForRef(
 	if (parsed.length > 1)
 		return { ok: false, error: `Expected at most one open PR for ${ref}; found ${parsed.length}.` };
 	return { ok: true, ...(parsed[0] ? { pr: parsed[0] } : {}) };
+}
+
+async function inspectPublishedStack(
+	exec: ExecFn,
+	plan: GraphitePublicationPlan,
+): Promise<{ pullRequests: GraphitePublishedPullRequest[]; errors: string[] }> {
+	const pullRequests: GraphitePublishedPullRequest[] = [];
+	const errors: string[] = [];
+	for (const slice of plan.manifest.slices) {
+		const found = await existingForRef(exec, plan.repositoryRoot, slice.branch);
+		if (!found.ok || !found.pr) {
+			errors.push(found.ok ? `Graphite submitted ${slice.branch}, but its PR is not visible.` : found.error);
+			continue;
+		}
+		const pr = found.pr;
+		if (pr.headSha !== slice.headSha || pr.baseRef !== slice.baseBranch || !pr.draft) {
+			errors.push(`PR #${pr.prNumber} does not match expected head/base/draft state after Graphite submission.`);
+			continue;
+		}
+		pullRequests.push(pr);
+	}
+	return { pullRequests, errors };
 }
 
 /** Build the exact plan shown before the one multi-ref submit. */
@@ -349,34 +378,31 @@ export async function submitGraphiteStack(
 				timeout: 60_000,
 			});
 		} catch (error) {
-			return {
-				status: "indeterminate",
-				error: `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)}`,
-			};
+			const inspected = await inspectPublishedStack(exec, plan);
+			const message = `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)}`;
+			return inspected.pullRequests.length > 0
+				? {
+						status: "partial",
+						error: `${message} ${inspected.errors.join(" ")}`.trim(),
+						pullRequests: inspected.pullRequests,
+					}
+				: { status: "indeterminate", error: `${message} ${inspected.errors.join(" ")}`.trim() };
 		}
-		if (submitted.code !== 0) return { status: "failed", error: `gt submit --stack failed: ${diagnostic(submitted)}` };
-
-		const pullRequests: GraphitePublishedPullRequest[] = [];
-		for (const slice of plan.manifest.slices) {
-			const found = await existingForRef(exec, plan.repositoryRoot, slice.branch);
-			if (!found.ok || !found.pr) {
-				return {
-					status: "partial",
-					error: found.ok ? `Graphite submitted ${slice.branch}, but its PR is not visible.` : found.error,
-					pullRequests,
-				};
-			}
-			const pr = found.pr;
-			if (pr.headSha !== slice.headSha || pr.baseRef !== slice.baseBranch || !pr.draft) {
-				return {
-					status: "partial",
-					error: `PR #${pr.prNumber} does not match expected head/base/draft state after Graphite submission.`,
-					pullRequests,
-				};
-			}
-			pullRequests.push(pr);
+		const inspected = await inspectPublishedStack(exec, plan);
+		if (submitted.code !== 0) {
+			const message = `gt submit --stack returned ${diagnostic(submitted)} after publication began.`;
+			return inspected.pullRequests.length > 0
+				? {
+						status: "partial",
+						error: `${message} ${inspected.errors.join(" ")}`.trim(),
+						pullRequests: inspected.pullRequests,
+					}
+				: { status: "indeterminate", error: `${message} ${inspected.errors.join(" ")}`.trim() };
 		}
-		return { status: "completed", planId: plan.planId, pullRequests };
+		if (inspected.errors.length > 0) {
+			return { status: "partial", error: inspected.errors.join(" "), pullRequests: inspected.pullRequests };
+		}
+		return { status: "completed", planId: plan.planId, pullRequests: inspected.pullRequests };
 	} finally {
 		lock.lock.release();
 	}
