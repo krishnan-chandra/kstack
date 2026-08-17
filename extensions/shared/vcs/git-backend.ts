@@ -11,6 +11,7 @@ import type {
 	MergeBaseResult,
 	VcsResult,
 	WorkstreamCheckpoint,
+	WorkstreamSnapshot,
 } from "./backend.ts";
 import { preflightVcs } from "./preflight.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
@@ -89,6 +90,12 @@ function parsePorcelainPaths(stdout: string): string[] {
 
 export class GitBackend implements GitVcsBackend {
 	readonly id = "git" as const;
+	readonly descriptor = { refNoun: "branch", workstreamNoun: "Git checkout", baseUpdateVerb: "merge" } as const;
+	readonly isolation = {
+		plan: (cwd: string, task: string) => this.planIsolation(cwd, task),
+		create: (plan: IsolationPlan) => this.createIsolation(plan),
+		remove: (cwd: string, ref: string) => this.removeIsolation(cwd, ref),
+	};
 	private readonly exec: ExecFn;
 	private readonly deps: GitBackendDeps;
 
@@ -109,6 +116,14 @@ export class GitBackend implements GitVcsBackend {
 		return preflightVcs(cwd, this.id, this.exec, { exists: this.deps.exists });
 	}
 
+	childGuidance(): string {
+		return [
+			"VCS backend: git.",
+			"Use Git for all version-control state and mutations. Do not run jj commands.",
+			"Work only on the branch or worktree prepared by the parent, make incremental Git commits, and leave the working tree clean.",
+		].join(" ");
+	}
+
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {
 		const result = await this.git(cwd, ["rev-parse", "HEAD"], 5_000);
 		const sha = output(result);
@@ -126,16 +141,33 @@ export class GitBackend implements GitVcsBackend {
 		return { ok: true, ref: name ? { kind: "branch", name } : { kind: "detached" } };
 	}
 
-	async workstreamIdentity(
-		cwd: string,
-	): Promise<VcsResult<{ identity: { kind: "git"; ref: string; headSha: string } }>> {
+	async captureWorkstream(cwd: string): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>> {
 		const [current, head] = await Promise.all([this.currentRef(cwd), this.headSha(cwd)]);
 		if (!current.ok) return current;
 		if (current.ref.kind !== "branch") {
 			return { ok: false, error: "The Git workstream has no current branch." };
 		}
 		if (!head.ok) return head;
+		return { ok: true, snapshot: { ref: current.ref.name, token: `${current.ref.name}@${head.sha}` } };
+	}
+
+	/** @deprecated Use captureWorkstream. */
+	async workstreamIdentity(
+		cwd: string,
+	): Promise<VcsResult<{ identity: { kind: "git"; ref: string; headSha: string } }>> {
+		const [current, head] = await Promise.all([this.currentRef(cwd), this.headSha(cwd)]);
+		if (!current.ok) return current;
+		if (current.ref.kind !== "branch") return { ok: false, error: "The Git workstream has no current branch." };
+		if (!head.ok) return head;
 		return { ok: true, identity: { kind: "git", ref: current.ref.name, headSha: head.sha } };
+	}
+
+	async assertWorkstreamUnchanged(cwd: string, expected: WorkstreamSnapshot): Promise<VcsResult> {
+		const actual = await this.captureWorkstream(cwd);
+		if (!actual.ok) return actual;
+		return actual.snapshot.token === expected.token
+			? { ok: true }
+			: { ok: false, error: `The current workstream changed (expected ${expected.ref}). Refusing to publish.` };
 	}
 
 	async changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>> {
@@ -180,7 +212,7 @@ export class GitBackend implements GitVcsBackend {
 		return { ok: false, error: `Could not allocate a unique task branch after ${MAX_COLLISION_ATTEMPTS} attempts.` };
 	}
 
-	async verifyCommittedWorkstream(
+	async verifyRecordedWorkstream(
 		cwd: string,
 		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
 	): Promise<VcsResult<{ headSha: string }>> {
@@ -283,11 +315,16 @@ export class GitBackend implements GitVcsBackend {
 			: { ok: true, warning: `Branch deletion warning: ${deleted.stderr.trim()}` };
 	}
 
-	async commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
+	async recordPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
 		const add = await this.git(cwd, ["add", "--", ...paths]);
 		if (add.code !== 0) return { ok: false, error: `git add failed: ${add.stderr.trim()}` };
 		const commit = await this.git(cwd, ["commit", "-m", message]);
 		return commit.code === 0 ? { ok: true } : { ok: false, error: `git commit failed: ${commit.stderr.trim()}` };
+	}
+
+	/** @deprecated Use recordPaths. */
+	commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
+		return this.recordPaths(cwd, paths, message);
 	}
 
 	async restorePaths(cwd: string, paths: string[]): Promise<VcsResult> {
@@ -301,9 +338,14 @@ export class GitBackend implements GitVcsBackend {
 		return errors.length === 0 ? { ok: true } : { ok: false, error: errors.join("; ") };
 	}
 
-	async push(cwd: string, ref: string): Promise<VcsResult> {
+	async publishRecordedChanges(cwd: string, ref: string): Promise<VcsResult> {
 		const result = await this.git(cwd, ["push", "origin", `HEAD:${ref}`], 30_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `git push failed: ${result.stderr.trim()}` };
+	}
+
+	/** @deprecated Use publishRecordedChanges. */
+	push(cwd: string, ref: string): Promise<VcsResult> {
+		return this.publishRecordedChanges(cwd, ref);
 	}
 
 	private async fetch(cwd: string, ref?: string): Promise<VcsResult> {
@@ -326,7 +368,7 @@ export class GitBackend implements GitVcsBackend {
 				};
 	}
 
-	async mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {
+	async updateBase(cwd: string, baseRef: string): Promise<MergeBaseResult> {
 		const fetched = await this.fetch(cwd, baseRef);
 		if (!fetched.ok) return { kind: "failed", error: fetched.error };
 		const before = await this.headSha(cwd);
@@ -356,5 +398,18 @@ export class GitBackend implements GitVcsBackend {
 			kind: "failed",
 			error: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
 		};
+	}
+
+	/** @deprecated Use updateBase. */
+	mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {
+		return this.updateBase(cwd, baseRef);
+	}
+
+	/** @deprecated Use verifyRecordedWorkstream. */
+	verifyCommittedWorkstream(
+		cwd: string,
+		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
+	): Promise<VcsResult<{ headSha: string }>> {
+		return this.verifyRecordedWorkstream(cwd, expected);
 	}
 }

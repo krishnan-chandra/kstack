@@ -194,7 +194,7 @@ export async function runPostReviewPhases(
 							return;
 						}
 						if (mode === "single" && state.workstreamCheckpoint) {
-							const verified = await fx.backend.verifyCommittedWorkstream(state.workflowCwd, {
+							const verified = await fx.backend.verifyRecordedWorkstream(state.workflowCwd, {
 								...state.workstreamCheckpoint,
 								requireNewCommit: false,
 							});
@@ -537,15 +537,15 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					try {
 						if (worktreePlan && state.workflowCwd === initialCwd) {
 							fx.setStatus("plan-implement: creating managed worktree…");
-							if (fx.backend.id !== "git") {
+							if (!fx.backend.isolation) {
 								return completeEarly({
 									status: "failed",
 									role: "implementer",
 									model: implementerModel,
-									error: "A Git worktree plan cannot run with the jj backend.",
+									error: "The configured VCS backend does not support managed worktrees.",
 								});
 							}
-							const created = await fx.backend.createIsolation(worktreePlan);
+							const created = await fx.backend.isolation.create(worktreePlan);
 							if (!created.ok)
 								return completeEarly({
 									status: "failed",
@@ -558,7 +558,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
 							fx.notify(`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.ref}).`, "info");
 						} else if (mode === "single" && !state.workstreamCheckpoint) {
-							fx.setStatus(`plan-implement: creating task ${fx.backend.id === "jj" ? "bookmark" : "branch"}…`);
+							fx.setStatus(`plan-implement: creating task ${fx.backend.descriptor.refNoun}…`);
 							const created = await fx.backend.createWorkstream(state.workflowCwd, task);
 							if (!created.ok)
 								return completeEarly({
@@ -568,7 +568,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 									error: created.error,
 								});
 							state.workstreamCheckpoint = created;
-							fx.notify(`Task ${fx.backend.id === "jj" ? "bookmark" : "branch"} created: ${created.ref}.`, "info");
+							fx.notify(`Task ${fx.backend.descriptor.refNoun} created: ${created.ref}.`, "info");
 						}
 						if (state.workstreamCheckpoint) {
 							writeFileSync(
@@ -633,7 +633,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						writeFileSync(ledgerFile, ledger, { encoding: "utf8", mode: 0o600 });
 						const withLedger = { ...result, executionLedger: ledger };
 						if (mode !== "single" || !state.workstreamCheckpoint) return withLedger;
-						const verified = await fx.backend.verifyCommittedWorkstream(state.workflowCwd, {
+						const verified = await fx.backend.verifyRecordedWorkstream(state.workflowCwd, {
 							...state.workstreamCheckpoint,
 							requireNewCommit: true,
 						});

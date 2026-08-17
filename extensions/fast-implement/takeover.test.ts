@@ -112,7 +112,7 @@ describe("takeover settlement", () => {
 	it("requires and reports a new committed revision", async () => {
 		let expected: unknown;
 		const result = await verifyTakeoverRun(run, {
-			verifyCommittedWorkstream: async (_cwd, value) => {
+			verifyRecordedWorkstream: async (_cwd, value) => {
 				expected = value;
 				return { ok: true, headSha: "new-head" };
 			},
@@ -123,14 +123,14 @@ describe("takeover settlement", () => {
 
 	it("keeps the run pending after a settle without a commit", async () => {
 		const settlement = await checkTakeoverSettlement(run, {
-			verifyCommittedWorkstream: async () => ({ ok: false, error: "no commit" }),
+			verifyRecordedWorkstream: async () => ({ ok: false, error: "no commit" }),
 		});
 		assert.deepEqual(settlement, { kind: "pending", reason: "no commit" });
 	});
 
 	it("keeps the run pending after a verification exception", async () => {
 		const settlement = await checkTakeoverSettlement(run, {
-			verifyCommittedWorkstream: async () => {
+			verifyRecordedWorkstream: async () => {
 				throw new Error("temporary failure");
 			},
 		});
@@ -140,7 +140,7 @@ describe("takeover settlement", () => {
 	it("completes only after verification succeeds on a later settle", async () => {
 		let attempts = 0;
 		const backend = {
-			verifyCommittedWorkstream: async () => {
+			verifyRecordedWorkstream: async () => {
 				attempts++;
 				return attempts === 1 ? { ok: false as const, error: "no commit" } : { ok: true as const, headSha: "new-head" };
 			},

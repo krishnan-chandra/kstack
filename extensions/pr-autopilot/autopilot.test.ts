@@ -226,7 +226,7 @@ describe("pr-autopilot state machine", () => {
 			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
 			assert.deepEqual(result, {
 				ok: true,
-				identity: { kind: "jj", ref: pr.headRefName, changeId: pr.headSha, parentCommitIds: [pr.headSha] },
+				snapshot: { ref: pr.headRefName, token: `${pr.headRefName}@${pr.headSha}/parents:${pr.headSha}` },
 			});
 		});
 
@@ -272,7 +272,7 @@ describe("pr-autopilot state machine", () => {
 			};
 			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
 			assert.equal(result.ok, false);
-			if (!result.ok) assert.match(result.error, /empty working-copy checkpoint/);
+			if (!result.ok) assert.match(result.error, /must be clean/);
 		});
 
 		it("rejects a dirty selected checkout before running a fixer", async () => {
@@ -286,7 +286,7 @@ describe("pr-autopilot state machine", () => {
 			const result = await prepareMutationCheckout(new GitBackend(exec), "/repo", buildPRState(pr, [], [], null));
 			assert.deepEqual(result, {
 				ok: false,
-				error: "The PR worktree must be clean before pr-autopilot can mutate it.",
+				error: "The Git checkout must be clean before pr-autopilot can mutate it.",
 			});
 		});
 	});
@@ -322,7 +322,7 @@ describe("pr-autopilot state machine", () => {
 			const result = await doCommitAndPush(
 				new JjBackend(exec),
 				"/repo",
-				{ kind: "jj", ref: "feature", changeId: expectedChangeId, parentCommitIds: [edited] },
+				{ ref: "feature", token: `feature@${expectedChangeId}/parents:${edited}` },
 				42,
 				"VERIFY_OK",
 			);
@@ -345,7 +345,7 @@ describe("pr-autopilot state machine", () => {
 			const result = await doCommitAndPush(
 				new JjBackend(exec),
 				"/repo",
-				{ kind: "jj", ref: "feature", changeId: "stable-change-id", parentCommitIds: ["1".repeat(40)] },
+				{ ref: "feature", token: `feature@stable-change-id/parents:${"1".repeat(40)}` },
 				42,
 				"VERIFY_OK",
 			);
@@ -356,7 +356,7 @@ describe("pr-autopilot state machine", () => {
 
 	describe("forbidden path restoration", () => {
 		const sha = makePr().headSha;
-		const identity = { kind: "git" as const, ref: "kstack/fix-thing", headSha: sha };
+		const identity = { ref: "kstack/fix-thing", token: `kstack/fix-thing@${sha}` };
 
 		function gitResponses(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {
 			const calls: string[] = [];
@@ -445,7 +445,7 @@ describe("pr-autopilot state machine", () => {
 			);
 			assert.equal(cleaned, true);
 			assert.equal(confirmed, false);
-			assert.match(notices.join("\n"), /no-op with the jj backend/);
+			assert.match(notices.join("\n"), /no managed worktrees/);
 		});
 
 		it("does not confirm or remove a non-kstack Git branch", async () => {

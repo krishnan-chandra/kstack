@@ -28,7 +28,7 @@ import type { FastImplementOutcome, FastImplementRequest, ResolvedRole } from ".
 export default function fastImplementExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "fast-implement");
 	const lifecycle = new SessionRunLifecycle();
-	const backendFor = (id: "git" | "jj"): VcsBackend => createVcsBackend(id, makeExec(pi));
+	const backendFor = (id: VcsBackend["id"]): VcsBackend => createVcsBackend(id, makeExec(pi));
 	const settlementController = new TakeoverSettlementController();
 	lifecycle.startSession();
 	pi.on("session_start", () => {
@@ -147,7 +147,7 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 		};
 		let kickoff: string;
 		try {
-			kickoff = buildTakeoverKickoff(pending, buildImplementerGuidance(request.changeKind, backend.id));
+			kickoff = buildTakeoverKickoff(pending, buildImplementerGuidance(request.changeKind, backend));
 		} catch (error) {
 			postOutcome(
 				{

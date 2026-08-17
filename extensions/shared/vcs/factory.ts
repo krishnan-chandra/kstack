@@ -6,5 +6,14 @@ import { JjBackend } from "./jj-backend.ts";
 
 /** Build the one configured backend used for every repository mutation in a run. */
 export function createVcsBackend(id: VcsBackendId, exec: ExecFn): VcsBackend {
-	return id === "jj" ? new JjBackend(exec) : new GitBackend(exec);
+	switch (id) {
+		case "git":
+			return new GitBackend(exec);
+		case "jj":
+			return new JjBackend(exec);
+		default: {
+			const neverId: never = id;
+			throw new Error(`Unsupported VCS backend: ${neverId}`);
+		}
+	}
 }

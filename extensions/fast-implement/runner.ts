@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
 import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
-import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { type FastImplementOutcome, type FastImplementRequest, LIMITS, type ResolvedRole } from "./types.ts";
 
 const extensionDir = new URL(".", import.meta.url);
@@ -27,13 +26,13 @@ interface FastRunEffects {
 	signal?: AbortSignal;
 }
 
-export function buildImplementerGuidance(changeKind: ChangeKind, backend: VcsBackend["id"]): string {
+export function buildImplementerGuidance(changeKind: ChangeKind, backend: Pick<VcsBackend, "childGuidance">): string {
 	const playbook = changeKindPlaybookFile(changeKind);
 	return [
 		readFileSync(new URL("implementer.md", new URL("prompts/", extensionDir)), "utf8"),
 		readFileSync(new URL("engineering-principles.md", sharedPlaybooks), "utf8"),
 		...(playbook ? [readFileSync(new URL(playbook, sharedPlaybooks), "utf8")] : []),
-		vcsChildGuidance(backend),
+		backend.childGuidance(),
 	].join("\n\n---\n\n");
 }
 
@@ -43,14 +42,14 @@ export async function runWorktreeFastImplement(
 	initialCwd: string,
 	fx: FastRunEffects,
 ): Promise<FastImplementOutcome> {
-	if (request.workLocation !== "worktree" || fx.backend.id !== "git") {
-		return { status: "failed", error: "The child runner requires a Git worktree." };
+	if (request.workLocation !== "worktree" || !fx.backend.isolation) {
+		return { status: "failed", error: "The configured VCS backend does not support managed worktrees." };
 	}
 	const preflight = await fx.backend.preflight(initialCwd);
 	if (!preflight.ok) return { status: "failed", error: preflight.error };
-	const planned = await fx.backend.planIsolation(initialCwd, request.task);
+	const planned = await fx.backend.isolation.plan(initialCwd, request.task);
 	if (!planned.ok) return { status: "failed", error: planned.error };
-	const created = await fx.backend.createIsolation(planned.plan);
+	const created = await fx.backend.isolation.create(planned.plan);
 	if (!created.ok) return { status: "failed", error: created.error };
 	const cwd = created.plan.path;
 	const branch = created.plan.ref;
@@ -67,7 +66,7 @@ export async function runWorktreeFastImplement(
 			`# User task\n\n${request.task}\n\nVCS backend: ${fx.backend.id}\nWorkstream: ${checkpoint.ref}\n`,
 			{ mode: 0o600 },
 		);
-		writeFileSync(promptFile, buildImplementerGuidance(request.changeKind, fx.backend.id), { mode: 0o600 });
+		writeFileSync(promptFile, buildImplementerGuidance(request.changeKind, fx.backend), { mode: 0o600 });
 		chmodSync(taskFile, 0o600);
 		chmodSync(promptFile, 0o600);
 		const child = await (fx.runChild ?? runChildAgent)({
@@ -94,7 +93,7 @@ export async function runWorktreeFastImplement(
 				branch,
 				cwd,
 			};
-		const verified = await fx.backend.verifyCommittedWorkstream(cwd, {
+		const verified = await fx.backend.verifyRecordedWorkstream(cwd, {
 			...checkpoint,
 			requireNewCommit: true,
 		});

@@ -266,11 +266,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			skillPaths = buildStackSkillPolicy(discoveredSkills).map((skill) => skill.baseDir);
 			mutationPrompts = [readPromptAsset(PROMPTS_DIR, "jj-stack-local.md")];
 		} else if (workLocation === "worktree") {
-			if (backend.id !== "git") {
-				notify("--worktree requires the git backend.", "error");
+			if (!backend.isolation) {
+				notify("--worktree requires a backend with managed-worktree support.", "error");
 				return;
 			}
-			const planned = await backend.planIsolation(ctx.cwd, task);
+			const planned = await backend.isolation.plan(ctx.cwd, task);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!planned.ok) {
 				notify(planned.error, "error");

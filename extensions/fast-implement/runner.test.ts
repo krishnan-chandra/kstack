@@ -37,7 +37,9 @@ function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend &
 	const calls: string[] = [];
 	return {
 		id: "git",
+		descriptor: { refNoun: "branch", workstreamNoun: "Git checkout", baseUpdateVerb: "merge" },
 		calls,
+		childGuidance: () => "VCS backend: git.",
 		preflight: async (cwd) => {
 			calls.push(`preflight:${cwd}`);
 			return { ok: true, workspaceRoot: cwd };
@@ -48,6 +50,8 @@ function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend &
 			ok: true,
 			identity: { kind: "git", ref: "main", headSha: isolationPlan.baseSha },
 		}),
+		captureWorkstream: async () => ({ ok: true, snapshot: { ref: "main", token: `main@${isolationPlan.baseSha}` } }),
+		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
 		createWorkstream: async () => ({ ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha }),
@@ -55,11 +59,18 @@ function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend &
 			calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
 			return { ok: true, headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
 		},
+		verifyRecordedWorkstream: async (cwd, expected) => {
+			calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
+			return { ok: true, headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
+		},
 		commitPaths: async () => ({ ok: true }),
+		recordPaths: async () => ({ ok: true }),
 		restorePaths: async () => ({ ok: true }),
 		push: async () => ({ ok: true }),
+		publishRecordedChanges: async () => ({ ok: true }),
 		fetchRemoteHead: async () => ({ ok: true, sha: isolationPlan.baseSha }),
 		mergeBaseIntoHead: async () => ({ kind: "already-current" }),
+		updateBase: async () => ({ kind: "already-current" }),
 		planIsolation: async (cwd, task) => {
 			calls.push(`plan:${cwd}:${task}`);
 			return { ok: true, plan: isolationPlan };
@@ -72,6 +83,20 @@ function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend &
 			calls.push(`remove:${cwd}:${ref}`);
 			return { ok: true };
 		},
+		isolation: {
+			plan: async (cwd, task) => {
+				calls.push(`plan:${cwd}:${task}`);
+				return { ok: true, plan: isolationPlan };
+			},
+			create: async (plan) => {
+				calls.push(`create:${plan.path}:${plan.ref}`);
+				return { ok: true, plan };
+			},
+			remove: async (cwd, ref) => {
+				calls.push(`remove:${cwd}:${ref}`);
+				return { ok: true };
+			},
+		},
 		...overrides,
 	};
 }
@@ -80,7 +105,9 @@ function fakeJjBackend(overrides: Partial<JjVcsBackend> = {}): JjVcsBackend & { 
 	const calls: string[] = [];
 	return {
 		id: "jj",
+		descriptor: { refNoun: "bookmark", workstreamNoun: "jj workspace", baseUpdateVerb: "merge" },
 		calls,
+		childGuidance: () => "VCS backend: jj.",
 		preflight: async (cwd) => {
 			calls.push(`preflight:${cwd}`);
 			return { ok: true, workspaceRoot: cwd };
@@ -91,15 +118,21 @@ function fakeJjBackend(overrides: Partial<JjVcsBackend> = {}): JjVcsBackend & { 
 			ok: true,
 			identity: { kind: "jj", ref: "main", changeId: "change", parentCommitIds: ["trunk"] },
 		}),
+		captureWorkstream: async () => ({ ok: true, snapshot: { ref: "main", token: "main@change" } }),
+		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
 		createWorkstream: async () => ({ ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha }),
 		verifyCommittedWorkstream: async () => ({ ok: true, headSha: isolationPlan.baseSha }),
+		verifyRecordedWorkstream: async () => ({ ok: true, headSha: isolationPlan.baseSha }),
 		commitPaths: async () => ({ ok: true }),
+		recordPaths: async () => ({ ok: true }),
 		restorePaths: async () => ({ ok: true }),
 		push: async () => ({ ok: true }),
+		publishRecordedChanges: async () => ({ ok: true }),
 		fetchRemoteHead: async () => ({ ok: true, sha: isolationPlan.baseSha }),
 		mergeBaseIntoHead: async () => ({ kind: "already-current" }),
+		updateBase: async () => ({ kind: "already-current" }),
 		...overrides,
 	};
 }
@@ -133,7 +166,10 @@ describe("request and backend validation", () => {
 				return completedChild();
 			},
 		});
-		assert.deepEqual(result, { status: "failed", error: "The child runner requires a Git worktree." });
+		assert.deepEqual(result, {
+			status: "failed",
+			error: "The configured VCS backend does not support managed worktrees.",
+		});
 		assert.deepEqual(backend.calls, []);
 		assert.equal(ranChild, false);
 	});
@@ -148,7 +184,10 @@ describe("request and backend validation", () => {
 				return completedChild();
 			},
 		});
-		assert.deepEqual(result, { status: "failed", error: "The child runner requires a Git worktree." });
+		assert.deepEqual(result, {
+			status: "failed",
+			error: "The configured VCS backend does not support managed worktrees.",
+		});
 		assert.deepEqual(backend.calls, []);
 		assert.equal(ranChild, false);
 	});
@@ -177,9 +216,13 @@ describe("worktree setup short-circuits", () => {
 
 	it("returns a failed plan and does not create or run the child", async () => {
 		const backend = fakeGitBackend({
-			planIsolation: async (cwd, task) => {
-				backend.calls.push(`plan:${cwd}:${task}`);
-				return { ok: false, error: "no unused branch" };
+			isolation: {
+				plan: async (cwd, task) => {
+					backend.calls.push(`plan:${cwd}:${task}`);
+					return { ok: false, error: "no unused branch" };
+				},
+				create: async () => ({ ok: false, error: "unused" }),
+				remove: async () => ({ ok: true }),
 			},
 		});
 		let ranChild = false;
@@ -197,9 +240,16 @@ describe("worktree setup short-circuits", () => {
 
 	it("returns a failed create and does not run the child", async () => {
 		const backend = fakeGitBackend({
-			createIsolation: async (plan) => {
-				backend.calls.push(`create:${plan.path}:${plan.ref}`);
-				return { ok: false, error: "worktree add failed" };
+			isolation: {
+				plan: async (cwd, task) => {
+					backend.calls.push(`plan:${cwd}:${task}`);
+					return { ok: true, plan: isolationPlan };
+				},
+				create: async (plan) => {
+					backend.calls.push(`create:${plan.path}:${plan.ref}`);
+					return { ok: false, error: "worktree add failed" };
+				},
+				remove: async () => ({ ok: true }),
 			},
 		});
 		let ranChild = false;
@@ -288,7 +338,7 @@ describe("completed child and verification", () => {
 		assert.ok(taskContents.includes(request.task));
 		assert.ok(taskContents.includes("VCS backend: git"));
 		assert.ok(taskContents.includes(`Workstream: ${isolationPlan.ref}`));
-		assert.equal(promptContents, buildImplementerGuidance(request.changeKind, "git"));
+		assert.equal(promptContents, buildImplementerGuidance(request.changeKind, backend));
 		if (process.platform !== "win32") {
 			assert.equal(taskMode, 0o600);
 			assert.equal(promptMode, 0o600);
@@ -368,7 +418,7 @@ describe("retained outcomes after worktree creation", () => {
 
 	it("returns a failed verification with child output, branch, and cwd", async () => {
 		const backend = fakeGitBackend({
-			verifyCommittedWorkstream: async (cwd, expected) => {
+			verifyRecordedWorkstream: async (cwd, expected) => {
 				backend.calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
 				return { ok: false, error: "no new commit" };
 			},
