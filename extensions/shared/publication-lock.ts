@@ -1,4 +1,4 @@
-/** Advisory per-repository file lock for jj stack publication.
+/** Advisory per-repository file lock for stack publication.
  *
  * The lock payload is written to a unique candidate before an atomic hard-link
  * creates the public lock path. Contenders therefore never observe a
@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir } from "../shared/kstack-config.ts";
+import { getAgentDir } from "./kstack-config.ts";
 
 const DEFAULT_CORRUPT_STALE_AFTER_MS = 60 * 60 * 1000;
 

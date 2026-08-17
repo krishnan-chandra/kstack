@@ -1,7 +1,7 @@
 import type { LandResult } from "../land/types.ts";
+import type { LockAttempt } from "../shared/publication-lock.ts";
 import type { GitHubAdapter } from "./github.ts";
 import type { JjAdapter } from "./jj.ts";
-import type { LockAttempt } from "./publication-lock.ts";
 import type { OpenPullRequest, RemoteInfo, StackCommit } from "./types.ts";
 
 export function commit(changeId: string, bookmark: string, parent = "trunk"): StackCommit {
