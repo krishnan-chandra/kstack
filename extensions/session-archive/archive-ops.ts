@@ -14,7 +14,14 @@ import {
 	pathsReferToSameFile,
 	restoreFromArchive,
 } from "./archive-files.ts";
-import { beginRestore, discardPendingImport, finalizeArchived, finishRestore, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import {
+	beginRestore,
+	discardPendingImport,
+	finalizeArchived,
+	finishRestore,
+	importSessionPending,
+	openArchiveDb,
+} from "./archive-store.ts";
 import { type ParsedSession, parseSessionJsonlBytes, sha256Hex } from "./session-jsonl.ts";
 
 interface ArchiveDeps {
@@ -318,7 +325,10 @@ export async function archiveInactiveSessions(options: ArchiveInactiveBulkOption
  * Archive a session that is not currently loaded in Pi. Revalidates the
  * selected path immediately before mutation because picker metadata is stale.
  */
-export async function restoreArchivedSession(options: { deps: ArchiveDeps; sessionId: string }): Promise<ArchiveResult> {
+export async function restoreArchivedSession(options: {
+	deps: ArchiveDeps;
+	sessionId: string;
+}): Promise<ArchiveResult> {
 	return withMutationLock(async () => {
 		const db = openArchiveDb(options.deps.dbPath);
 		try {
@@ -328,11 +338,16 @@ export async function restoreArchivedSession(options: { deps: ArchiveDeps; sessi
 				finishRestore(db, restore.session_id);
 				return { status: "archived", message: `Restored ${restore.session_id} to ${restore.original_path}` };
 			} catch (err) {
-				return { status: "failed", message: `Restore failed: ${(err as Error).message}. A complete copy was preserved.` };
+				return {
+					status: "failed",
+					message: `Restore failed: ${(err as Error).message}. A complete copy was preserved.`,
+				};
 			}
 		} catch (err) {
 			return { status: "rejected", message: (err as Error).message };
-		} finally { db.close(); }
+		} finally {
+			db.close();
+		}
 	});
 }
 

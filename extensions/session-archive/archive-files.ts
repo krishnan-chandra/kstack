@@ -244,19 +244,30 @@ export function restoreFromArchive(
 			try {
 				copyFileSync(sourcePath, tempPath);
 				const fd = openSync(tempPath, "r");
-				try { fsyncSync(fd); } finally { closeSync(fd); }
+				try {
+					fsyncSync(fd);
+				} finally {
+					closeSync(fd);
+				}
 				assertExpectedFile(tempPath, expectedSha256, expectedSize);
 				assertExpectedFile(sourcePath, expectedSha256, expectedSize);
 				renameSync(tempPath, destPath);
 				unlinkSync(sourcePath);
 			} catch (copyError) {
-				try { unlinkSync(tempPath); } catch { /* best effort */ }
+				try {
+					unlinkSync(tempPath);
+				} catch {
+					/* best effort */
+				}
 				throw copyError;
 			}
 		}
 	}
-	try { chmodSync(destPath, 0o600); } catch (err) {
-		if (process.platform !== "win32") throw new ArchiveFileError(`failed to make restored session writable: ${(err as Error).message}`);
+	try {
+		chmodSync(destPath, 0o600);
+	} catch (err) {
+		if (process.platform !== "win32")
+			throw new ArchiveFileError(`failed to make restored session writable: ${(err as Error).message}`);
 	}
 }
 

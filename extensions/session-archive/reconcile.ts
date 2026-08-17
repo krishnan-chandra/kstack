@@ -9,13 +9,13 @@ import { chmodReadOnly, fileStat, hashFile, pathsReferToSameFile, restoreFromArc
 import {
 	type ArchivedIntegrityRow,
 	finalizeArchived,
+	finishRestore,
 	listArchivedForIntegrity,
 	listRestoreJournals,
 	listSessionRows,
 	markError,
 	markVerified,
 	openArchiveDb,
-	finishRestore,
 } from "./archive-store.ts";
 
 interface ReconcileIssue {
@@ -57,13 +57,17 @@ export function reconcileArchive(options: ReconcileOptions): ReconcileReport {
 					restoreFromArchive(restore.archive_path, restore.original_path, restore.sha256, restore.file_size);
 				} else if (existsSync(restore.original_path)) {
 					const active = hashFile(restore.original_path);
-					if (active.sha256 !== restore.sha256 || active.size !== restore.file_size) throw new Error("restored copy hash mismatch");
+					if (active.sha256 !== restore.sha256 || active.size !== restore.file_size)
+						throw new Error("restored copy hash mismatch");
 				} else throw new Error("both archive and restored copies are missing");
 				finishRestore(db, restore.session_id);
 				report.restored.push(restore.session_id);
 			} catch (err) {
 				markError(db, restore.session_id, `restore recovery failed: ${(err as Error).message}`);
-				report.errors.push({ sessionId: restore.session_id, message: `restore recovery failed: ${(err as Error).message}` });
+				report.errors.push({
+					sessionId: restore.session_id,
+					message: `restore recovery failed: ${(err as Error).message}`,
+				});
 			}
 		}
 		const pending = listSessionRows(db, { state: "pending", limit: options.pendingLimit ?? 50 });

@@ -30,8 +30,14 @@ export default async function (pi: ExtensionAPI) {
 		const message =
 			"session-archive requires Node 22 or newer (node:sqlite is unavailable). " +
 			"Upgrade Node or run Pi with a newer runtime to enable session archiving.";
-		for (const [name, description] of [["session-archive", "Archive the current session"], ["sessions", "Browse and toggle session archive status"]] as const) {
-			pi.registerCommand(name, { description: `${description} (unavailable: Node 22+ required)`, handler: async (_args, ctx) => ctx.ui.notify(message, "error") });
+		for (const [name, description] of [
+			["session-archive", "Archive the current session"],
+			["sessions", "Browse and toggle session archive status"],
+		] as const) {
+			pi.registerCommand(name, {
+				description: `${description} (unavailable: Node 22+ required)`,
+				handler: async (_args, ctx) => ctx.ui.notify(message, "error"),
+			});
 		}
 		pi.on("session_start", async (_event, ctx) => ctx.ui.notify(message, "warning"));
 		return;
