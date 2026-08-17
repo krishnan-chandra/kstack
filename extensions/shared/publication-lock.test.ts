@@ -21,7 +21,7 @@ function lockFile(locksDir: string): string {
 	return join(locksDir, name);
 }
 
-describe("publication lock", () => {
+describe("shared publication lock", () => {
 	const dirs: string[] = [];
 	function tempLocksDir(): string {
 		const dir = mkdtempSync(join(tmpdir(), "pub-lock-test-"));

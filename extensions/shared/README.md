@@ -19,6 +19,7 @@
 | `narrow.ts` | Narrows untrusted JSON and event payloads to records. |
 | `pi-json-lines.ts` | Parses and bounds Pi JSONL output. |
 | `prompt-assets.ts` | Reads bundled prompt and playbook Markdown assets. |
+| `publication-lock.ts` | Serializes stack publication and landing mutations per repository across VCS backends. |
 | `request-channel.ts` | Implements synchronous claim-once invocation between loaded extensions. |
 | `session-lifecycle.ts` | Provides generation-counted session and abortable-run lifecycle guards. |
 | `session-name.ts` | Derives and assigns workflow session names. |

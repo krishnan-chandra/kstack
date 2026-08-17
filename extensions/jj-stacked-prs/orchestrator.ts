@@ -3,6 +3,7 @@
 import { realpathSync } from "node:fs";
 import type { LandResult } from "../land/types.ts";
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
+import { acquirePublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import {
 	buildNavigationComment,
 	createGitHubAdapter,
@@ -19,7 +20,6 @@ import { renderPrDocument } from "./pr-document.ts";
 import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
 import type { ProcessRunner } from "./process.ts";
 import { buildPublicationPlan, type PublicationSnapshot, slicesForPublication } from "./publication.ts";
-import { acquirePublicationLock, type LockAttempt } from "./publication-lock.ts";
 import { renderConfirmation } from "./render.ts";
 import { detectBlockers, inferUniqueTop, truncateStack } from "./stack.ts";
 import {
