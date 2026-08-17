@@ -73,7 +73,7 @@ describe("guard registration", () => {
 	it("covers every guarded session-archive command before its runtime gate", () => {
 		const source = readFileSync(join(import.meta.dirname, "..", "session-archive", "index.ts"), "utf8");
 		const guard = source.search(
-			/guardCommandFallthrough\s*\(\s*pi,\s*"session-archive",\s*"session-archives",\s*"session-archive-other",\s*"session-archive-all",?\s*\)/,
+			/guardCommandFallthrough\s*\(\s*pi,\s*"session-archive",\s*"sessions",\s*"session-archive-other",\s*"session-archive-all",?\s*\)/,
 		);
 		assert.notEqual(guard, -1);
 		assert.ok(guard < source.indexOf('await import("node:sqlite")'));

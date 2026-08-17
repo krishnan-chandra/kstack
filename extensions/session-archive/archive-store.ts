@@ -19,7 +19,7 @@ export class ArchiveStoreError extends Error {
 	}
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const SQLITE_BUSY = 5;
 const SQLITE_BUSY_TIMEOUT_MS = 5000;
 const JOURNAL_MODE_RETRY_MS = 10;
@@ -57,6 +57,15 @@ CREATE TABLE archive_entries (
   raw_length INTEGER NOT NULL,
   UNIQUE(session_id, entry_id),
   UNIQUE(session_id, ordinal)
+);
+
+CREATE TABLE archive_restore_journal (
+  session_id TEXT PRIMARY KEY REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
+  original_path TEXT NOT NULL,
+  archive_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  file_size INTEGER NOT NULL,
+  started_at TEXT NOT NULL
 );
 
 CREATE VIRTUAL TABLE archive_entries_fts USING fts5(
@@ -158,6 +167,20 @@ function initializeSchema(db: DatabaseSync): void {
 			db.exec(`
 				ALTER TABLE archive_sessions ADD COLUMN verified_at INTEGER;
 				ALTER TABLE archive_sessions ADD COLUMN verified_mtime_ms REAL;
+				CREATE TABLE archive_restore_journal (
+				  session_id TEXT PRIMARY KEY REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
+				  original_path TEXT NOT NULL, archive_path TEXT NOT NULL,
+				  sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, started_at TEXT NOT NULL
+				);
+				PRAGMA user_version=${SCHEMA_VERSION};
+			`);
+		} else if (row.user_version === 2) {
+			db.exec(`
+				CREATE TABLE archive_restore_journal (
+				  session_id TEXT PRIMARY KEY REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
+				  original_path TEXT NOT NULL, archive_path TEXT NOT NULL,
+				  sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, started_at TEXT NOT NULL
+				);
 				PRAGMA user_version=${SCHEMA_VERSION};
 			`);
 		} else {
@@ -319,6 +342,75 @@ export function finalizeArchived(
 		db.exec("ROLLBACK");
 		throw err;
 	}
+}
+
+export interface RestoreJournalRow {
+	session_id: string;
+	original_path: string;
+	archive_path: string;
+	sha256: string;
+	file_size: number;
+}
+
+/** Record a restore before moving bytes, making interrupted restores recoverable. */
+export function beginRestore(db: DatabaseSync, sessionId: string): RestoreJournalRow {
+	db.exec("BEGIN IMMEDIATE");
+	try {
+		const row = db.prepare(`SELECT session_id, original_path, archive_path, sha256, file_size
+			FROM archive_sessions WHERE session_id = ? AND state = 'archived'`).get(sessionId);
+		if (!row) throw new ArchiveStoreError(`cannot restore unknown archived session ${sessionId}`);
+		const decoded = asRecord(row);
+		if (!decoded) throw new ArchiveStoreError(`invalid archived session ${sessionId}`);
+		const archivePath = decodeNullableString(decoded, "archive_sessions", "archive_path");
+		if (!archivePath) throw new ArchiveStoreError(`archived session ${sessionId} has no archive path`);
+		const journal: RestoreJournalRow = {
+			session_id: decodeString(decoded, "archive_sessions", "session_id"),
+			original_path: decodeString(decoded, "archive_sessions", "original_path"),
+			archive_path: archivePath,
+			sha256: decodeString(decoded, "archive_sessions", "sha256"),
+			file_size: decodeFiniteNumber(decoded, "archive_sessions", "file_size"),
+		};
+		db.prepare(`INSERT INTO archive_restore_journal (session_id, original_path, archive_path, sha256, file_size, started_at)
+			VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`).run(
+			journal.session_id, journal.original_path, journal.archive_path, journal.sha256, journal.file_size, new Date().toISOString());
+		db.exec("COMMIT");
+		return journal;
+	} catch (err) { db.exec("ROLLBACK"); throw err; }
+}
+
+/** Remove restored catalog content and its journal atomically, including FTS trigger cleanup. */
+export function finishRestore(db: DatabaseSync, sessionId: string): void {
+	db.exec("BEGIN IMMEDIATE");
+	try {
+		db.prepare("DELETE FROM archive_sessions WHERE session_id = ? AND state = 'archived'").run(sessionId);
+		db.prepare("DELETE FROM archive_restore_journal WHERE session_id = ?").run(sessionId);
+		db.exec("COMMIT");
+	} catch (err) { db.exec("ROLLBACK"); throw err; }
+}
+
+export function listRestoreJournals(db: DatabaseSync): RestoreJournalRow[] {
+	return decodeRows(db.prepare("SELECT session_id, original_path, archive_path, sha256, file_size FROM archive_restore_journal").all(), (value) => {
+		const row = asRecord(value);
+		if (!row) throw new ArchiveStoreError("archive_restore_journal returned a non-object row");
+		return { session_id: decodeString(row, "archive_restore_journal", "session_id"), original_path: decodeString(row, "archive_restore_journal", "original_path"), archive_path: decodeString(row, "archive_restore_journal", "archive_path"), sha256: decodeString(row, "archive_restore_journal", "sha256"), file_size: decodeFiniteNumber(row, "archive_restore_journal", "file_size") };
+	});
+}
+
+export interface ArchivedSessionSummary {
+	sessionId: string; cwd: string; name: string | null; firstUserText: string | null; messageCount: number;
+	originalPath: string; archivePath: string; createdAt: string; lastMessageAt: string | null;
+}
+
+/** Finalized archive rows with the metadata needed by the unified session browser. */
+export function listArchivedSessionSummaries(db: DatabaseSync): ArchivedSessionSummary[] {
+	return decodeRows(db.prepare(`SELECT s.session_id, s.cwd, s.name, s.original_path, s.archive_path, s.created_at,
+		(SELECT e.text_content FROM archive_entries e WHERE e.session_id=s.session_id AND e.role='user' ORDER BY e.ordinal LIMIT 1) AS first_user_text,
+		(SELECT COUNT(*) FROM archive_entries e WHERE e.session_id=s.session_id AND e.entry_type='message') AS message_count,
+		(SELECT MAX(e.timestamp) FROM archive_entries e WHERE e.session_id=s.session_id AND e.role IN ('user', 'assistant')) AS last_message_at
+		FROM archive_sessions s WHERE s.state='archived' AND s.archive_path IS NOT NULL`).all(), (value) => {
+		const row = asRecord(value); if (!row) throw new ArchiveStoreError("archive summary returned a non-object row");
+		return { sessionId: decodeString(row, "archive summary", "session_id"), cwd: decodeString(row, "archive summary", "cwd"), name: decodeNullableString(row, "archive summary", "name"), firstUserText: decodeNullableString(row, "archive summary", "first_user_text"), messageCount: decodeFiniteNumber(row, "archive summary", "message_count"), originalPath: decodeString(row, "archive summary", "original_path"), archivePath: decodeString(row, "archive summary", "archive_path"), createdAt: decodeString(row, "archive summary", "created_at"), lastMessageAt: decodeNullableString(row, "archive summary", "last_message_at") };
+	});
 }
 
 export function discardPendingImport(db: DatabaseSync, sessionId: string, archivePath: string, sha256: string): void {

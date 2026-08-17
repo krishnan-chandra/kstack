@@ -219,6 +219,47 @@ export function moveToArchive(
 }
 
 /** Set the archived JSONL read-only where POSIX permissions exist. */
+/** Move an archived file back to its recorded active location without overwriting different bytes. */
+export function restoreFromArchive(
+	sourcePath: string,
+	destPath: string,
+	expectedSha256: string,
+	expectedSize: number,
+	renameImpl: (source: string, dest: string) => void = renameSync,
+): void {
+	assertExpectedFile(sourcePath, expectedSha256, expectedSize);
+	mkdirSync(dirname(destPath), { recursive: true, mode: 0o700 });
+	if (existsSync(destPath)) {
+		assertExpectedFile(destPath, expectedSha256, expectedSize);
+		// A verified duplicate means a previous restore completed its file move.
+		assertExpectedFile(sourcePath, expectedSha256, expectedSize);
+		unlinkSync(sourcePath);
+	} else {
+		try {
+			renameImpl(sourcePath, destPath);
+			assertExpectedFile(destPath, expectedSha256, expectedSize);
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+			const tempPath = join(dirname(destPath), `.restore-${randomBytes(6).toString("hex")}.tmp`);
+			try {
+				copyFileSync(sourcePath, tempPath);
+				const fd = openSync(tempPath, "r");
+				try { fsyncSync(fd); } finally { closeSync(fd); }
+				assertExpectedFile(tempPath, expectedSha256, expectedSize);
+				assertExpectedFile(sourcePath, expectedSha256, expectedSize);
+				renameSync(tempPath, destPath);
+				unlinkSync(sourcePath);
+			} catch (copyError) {
+				try { unlinkSync(tempPath); } catch { /* best effort */ }
+				throw copyError;
+			}
+		}
+	}
+	try { chmodSync(destPath, 0o600); } catch (err) {
+		if (process.platform !== "win32") throw new ArchiveFileError(`failed to make restored session writable: ${(err as Error).message}`);
+	}
+}
+
 export function chmodReadOnly(path: string): void {
 	try {
 		chmodSync(path, 0o444);

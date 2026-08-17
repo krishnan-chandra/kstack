@@ -5,7 +5,7 @@
  * read-only archive under `$PI_CODING_AGENT_DIR/archive/`, indexes them in a
  * local SQLite/FTS5 database, and exposes SELECT-only search/read tools to
  * agents. Mutation is an explicit, confirmed user command — no agent-callable
- * tool can archive, restore, edit, or delete a session.
+ * tool can archive, restore, edit, or delete a session. The /sessions browser is the only immediate-toggle surface.
  */
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
@@ -15,7 +15,7 @@ import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-f
 import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
 
 export default async function (pi: ExtensionAPI) {
-	guardCommandFallthrough(pi, "session-archive", "session-archives", "session-archive-other", "session-archive-all");
+	guardCommandFallthrough(pi, "session-archive", "sessions", "session-archive-other", "session-archive-all");
 	let sqliteAvailable = true;
 	try {
 		await import("node:sqlite");
@@ -30,10 +30,9 @@ export default async function (pi: ExtensionAPI) {
 		const message =
 			"session-archive requires Node 22 or newer (node:sqlite is unavailable). " +
 			"Upgrade Node or run Pi with a newer runtime to enable session archiving.";
-		pi.registerCommand("session-archive", {
-			description: "Archive the current session (unavailable: Node 22+ required)",
-			handler: async (_args, ctx) => ctx.ui.notify(message, "error"),
-		});
+		for (const [name, description] of [["session-archive", "Archive the current session"], ["sessions", "Browse and toggle session archive status"]] as const) {
+			pi.registerCommand(name, { description: `${description} (unavailable: Node 22+ required)`, handler: async (_args, ctx) => ctx.ui.notify(message, "error") });
+		}
 		pi.on("session_start", async (_event, ctx) => ctx.ui.notify(message, "warning"));
 		return;
 	}
@@ -43,12 +42,13 @@ export default async function (pi: ExtensionAPI) {
 		getSessionRow,
 		countEntries,
 		listSessionRows,
+		listArchivedSessionSummaries,
 		openArchiveDb,
 		openArchiveDbReadOnly,
 		readEntries,
 		searchArchive,
 	} = await import("./archive-store.ts");
-	const { archiveCurrentSession, archiveInactiveSessions } = await import("./archive-ops.ts");
+	const { archiveCurrentSession, archiveInactiveSessions, restoreArchivedSession } = await import("./archive-ops.ts");
 	const { inspectArchiveIntegrity, reconcileArchive } = await import("./reconcile.ts");
 
 	const commands = createArchiveCommands({
@@ -56,6 +56,9 @@ export default async function (pi: ExtensionAPI) {
 		dbPath,
 		archiveCurrentSession,
 		archiveInactiveSessions,
+		restoreArchivedSession,
+		reconcileArchive,
+		listArchivedSessionSummaries,
 		inspectArchiveIntegrity,
 		getArchiveStats,
 		listSessionRows,
@@ -86,7 +89,7 @@ export default async function (pi: ExtensionAPI) {
 			}
 			if (problems > 0) {
 				ctx.ui.notify(
-					`session-archive: ${problems} archive integrity problem(s); run /session-archives for details.`,
+					`session-archive: ${problems} archive integrity problem(s); run /sessions for details.`,
 					"warning",
 				);
 			}
@@ -100,9 +103,9 @@ export default async function (pi: ExtensionAPI) {
 		handler: commands.sessionArchive,
 	});
 
-	pi.registerCommand("session-archives", {
-		description: "List archive stats and archived sessions (read-only)",
-		handler: commands.sessionArchives,
+	pi.registerCommand("sessions", {
+		description: "Browse all persisted sessions and archive or restore one immediately",
+		handler: commands.sessions,
 	});
 
 	pi.registerCommand("session-archive-other", {

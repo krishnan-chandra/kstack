@@ -59,6 +59,9 @@ describe("createArchiveCommands", () => {
 				return { status: "archived", message: "ok" };
 			},
 			archiveInactiveSessions: async () => [],
+			restoreArchivedSession: async () => ({ status: "archived", message: "restored" }),
+			reconcileArchive: () => ({ finalized: [], leftPending: [], errors: [], restored: [] }),
+			listArchivedSessionSummaries: () => [],
 			inspectArchiveIntegrity: () => [],
 			getArchiveStats: () => ({
 				sessionsArchived: 0,

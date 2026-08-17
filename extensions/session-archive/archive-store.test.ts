@@ -57,7 +57,7 @@ describe("archive-store", () => {
 		const tree = makeTempTree();
 		const db = openArchiveDb(tree.dbPath);
 		const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-		assert.equal(version.user_version, 2);
+		assert.equal(version.user_version, 3);
 		db.exec("PRAGMA foreign_keys=ON");
 		assert.ok(existsSync(tree.dbPath));
 		db.close();
@@ -129,7 +129,7 @@ describe("archive-store", () => {
 		const db = openArchiveDb(tree.dbPath);
 		try {
 			const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-			assert.equal(version.user_version, 2);
+			assert.equal(version.user_version, 3);
 
 			const sessionColumns = db.prepare("PRAGMA table_info(archive_sessions)").all() as unknown as {
 				name: string;
