@@ -52,7 +52,7 @@ function readPendingRun(value: unknown): PendingFastImplementRun | undefined {
 		Buffer.byteLength(value.task, "utf8") > LIMITS.maxTaskBytes ||
 		typeof value.changeKind !== "string" ||
 		!isChangeKind(value.changeKind) ||
-		(value.backend !== "git" && value.backend !== "jj") ||
+		(value.backend !== "git" && value.backend !== "jj" && value.backend !== "graphite") ||
 		typeof value.cwd !== "string" ||
 		value.cwd.length === 0 ||
 		typeof value.checkpoint.ref !== "string" ||

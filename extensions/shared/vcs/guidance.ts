@@ -10,6 +10,13 @@ export function vcsChildGuidance(backend: VcsBackendId): string {
 			"Do not create Git branches or worktrees. Leave an empty jj working-copy commit after recording the implementation.",
 		].join(" ");
 	}
+	if (backend === "graphite") {
+		return [
+			"VCS backend: Graphite.",
+			"Use gt for branch, staging, commit, restore, checkout, and restack mutations. Do not run git commit, branch, rebase, or push.",
+			"Use read-only Git inspection when needed. The parent alone submits or lands work unless a later prompt explicitly authorizes publication.",
+		].join(" ");
+	}
 	return [
 		"VCS backend: git.",
 		"Use Git for all version-control state and mutations. Do not run jj commands.",

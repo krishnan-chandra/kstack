@@ -15,7 +15,7 @@ Without `--worktree`, the command:
 
 1. validates the configured model and VCS backend;
 2. asks for confirmation;
-3. creates a local Git branch or jj change and bookmark;
+3. creates a local Git/Graphite branch or jj change and bookmark;
 4. starts the configured implementer in the current session, preserving its plan and discussion in context; and
 5. verifies the committed workstream after the implementation agent settles.
 
@@ -54,9 +54,12 @@ the mutation model:
   worktree.
 - `"jj"` creates a `trunk()`-based change and task bookmark in the current
   colocated jj and Git workspace. `--worktree` is not supported.
+- `"graphite"` requires gt 1.8.4+, Git 2.38+, and an initialized Graphite
+  repository. It creates and records branches with native `gt`; `--worktree`
+  allocates Git storage and tracks the isolated branch with Graphite.
 
 The selected backend runs its preflight before it creates a workstream. Git
-mode refuses jj-managed workspaces. jj mode requires jj 0.44 or newer, a
+and Graphite modes refuse jj-managed workspaces. jj mode requires jj 0.44 or newer, a
 configured identity, and a colocated workspace.
 
 ## Model configuration

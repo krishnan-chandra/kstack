@@ -1,8 +1,8 @@
 ---
 name: setup-kstack
-description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git or jj", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
-compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); jj 0.44+ when selecting the jj backend.
+compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); jj 0.44+ for jj; gt 1.8.4+ and Git 2.38+ for Graphite.
 ---
 
 # Set up K-Stack
@@ -75,16 +75,21 @@ Read the existing `vcs.backend` value. If it is missing, the runtime default is
    workspace.
 2. Run `jj workspace root`. A successful result that resolves to the same real
    path as the Git root indicates a colocated jj workspace. Suggest `jj` in that
-   case and `git` otherwise.
+   case. Otherwise run `gt --no-interactive trunk` from the Git root. Suggest
+   `graphite` only when that command succeeds and names a local branch; suggest
+   `git` when it does not.
 3. If the user selects `jj`, run `jj --version` and require version 0.44 or
    newer. Do not initialize or migrate a repository.
-4. Store exactly `{ "backend": "git" }` or `{ "backend": "jj" }` in the
-   top-level `vcs` section.
+4. If the user selects `graphite`, require `gt >= 1.8.4`, Git >= 2.38, and a
+   successful `gt --no-interactive trunk`. Do not install, authenticate, or run
+   `gt init`; show `gt init --trunk <branch>` as recovery guidance.
+5. Store exactly `git`, `jj`, or `graphite` in the top-level `vcs.backend`.
 
 Explain the exclusivity rule before approval: K-Stack sends every repository
 mutation through the selected backend. Git mode refuses a jj-managed workspace,
-and jj mode requires a colocated workspace. Stack delivery requires jj. Managed
-Git worktrees are unavailable in jj mode. PR-autopilot uses the selected backend
+and jj mode requires a colocated workspace. Graphite mode requires an initialized
+plain Git repository and uses native `gt` mutations. Managed worktrees are
+unavailable only in jj mode. PR-autopilot uses the selected backend
 for commits, merges, restores, and pushes; `gh` remains the forge client.
 
 ## 4. Choose the roles
@@ -100,7 +105,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 
 | Workflow | Roles to configure | Constraints |
 | --- | --- | --- |
-| `vcs` | `backend` | Use exactly `"git"` or `"jj"`; jj requires a colocated workspace and jj 0.44 or newer. |
+| `vcs` | `backend` | Use exactly `"git"`, `"jj"`, or `"graphite"`; jj requires a colocated workspace and jj 0.44+, Graphite requires initialized gt 1.8.4+ and Git 2.38+. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. |
 | `fast-implement` | `implementer`, `timeoutMinutes` | The implementer must be one of the bounded pairs `openai/gpt-5.6-sol:low`, `openrouter/deepseek/deepseek-v4-flash:high`, or `openrouter/moonshotai/kimi-k3:medium`; timeout is 1–60 minutes. This low-assurance single-PR workflow is independent of the plan-implement roles. |
 | `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
@@ -135,8 +140,9 @@ list or select from the list above.
 
 Before showing the preview, check all of these conditions:
 
-- `vcs.backend` is exactly `"git"` or `"jj"`. If it is `"jj"`, jj 0.44 or
-  newer is available. Warn when the selected backend does not match the current
+- `vcs.backend` is exactly `"git"`, `"jj"`, or `"graphite"`. If it is `"jj"`,
+  jj 0.44 or newer is available. If it is `"graphite"`, gt 1.8.4+ and Git 2.38+
+  are available and `gt trunk` succeeds. Warn when the selected backend does not match the current
   repository shape; the runtime preflight will refuse mutation there.
 - Every selected `provider/model` either appears in `pi --list-models` or is an
   exact user-requested provider ID that passed the catalog-lag exception above.

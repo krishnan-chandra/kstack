@@ -1,7 +1,7 @@
 import { loadKstackSection } from "../kstack-config.ts";
 
 /* exported: shared VCS backend contract */
-export type VcsBackendId = "git" | "jj";
+export type VcsBackendId = "git" | "jj" | "graphite";
 
 /* exported: shared VCS backend contract */
 export interface VcsBackendConfig {
@@ -14,7 +14,7 @@ const DEFAULT_BACKEND: VcsBackendId = "git";
 function parseBackend(value: unknown): VcsBackendId | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
 	const backend = (value as Record<string, unknown>).backend;
-	return backend === "git" || backend === "jj" ? backend : undefined;
+	return backend === "git" || backend === "jj" || backend === "graphite" ? backend : undefined;
 }
 
 /**
@@ -37,7 +37,9 @@ export function loadVcsBackend(env: NodeJS.ProcessEnv = process.env): VcsBackend
 	if (!backend) {
 		return {
 			backend: DEFAULT_BACKEND,
-			warnings: [`Invalid ${section.path}: "vcs.backend" must be "git" or "jj". Defaulting to the git backend.`],
+			warnings: [
+				`Invalid ${section.path}: "vcs.backend" must be "git", "jj", or "graphite". Defaulting to the git backend.`,
+			],
 		};
 	}
 	return { backend, warnings: [] };

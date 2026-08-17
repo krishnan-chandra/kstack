@@ -234,11 +234,11 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 		}
 		const vcsConfig = loadVcsBackend();
 		for (const warning of vcsConfig.warnings) ctx.ui.notify(warning, "warning");
-		if (request.workLocation === "worktree" && vcsConfig.backend !== "git") {
-			ctx.ui.notify("--worktree requires the git backend. The jj backend runs in the current workspace.", "error");
+		const backend = backendFor(vcsConfig.backend);
+		if (request.workLocation === "worktree" && !backend.isolation) {
+			ctx.ui.notify("--worktree requires a backend with managed-worktree support.", "error");
 			return;
 		}
-		const backend = backendFor(vcsConfig.backend);
 		const role = resolveRole(config.status === "loaded" ? config.config : null, (provider, model) =>
 			isChildModelAvailable(ctx.modelRegistry, provider, model),
 		);

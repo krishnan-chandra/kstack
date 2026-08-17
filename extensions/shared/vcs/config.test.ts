@@ -20,8 +20,8 @@ describe("VCS backend config", () => {
 		});
 	});
 
-	it("loads git and jj", () => {
-		for (const backend of ["git", "jj"] as const) {
+	it("loads git, jj, and graphite", () => {
+		for (const backend of ["git", "jj", "graphite"] as const) {
 			const dir = configDir(JSON.stringify({ vcs: { backend } }));
 			assert.equal(loadVcsBackend({ PI_CODING_AGENT_DIR: dir }).backend, backend);
 		}

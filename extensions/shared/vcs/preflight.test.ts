@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../git-exec.ts";
-import { parseJjVersion, preflightVcs } from "./preflight.ts";
+import { parseJjVersion, parseSemver, preflightVcs } from "./preflight.ts";
 
 const gitRoot: ExecFn = async (command, args) => {
 	assert.equal(command, "git");
@@ -22,6 +22,14 @@ const validJjResponses = {
 	"git rev-parse --show-toplevel": { stdout: "/repo\n" },
 	"jj config get user.name": { stdout: "Example User\n" },
 	"jj config get user.email": { stdout: "user@example.com\n" },
+};
+
+const validGraphiteResponses = {
+	"gt --version": { stdout: "1.8.6\n" },
+	"git --version": { stdout: "git version 2.48.0\n" },
+	"git rev-parse --show-toplevel": { stdout: "/repo\n" },
+	"gt --no-interactive trunk": { stdout: "main\n" },
+	"git rev-parse --verify refs/heads/main^{commit}": { stdout: `${"a".repeat(40)}\n` },
 };
 
 describe("VCS preflight", () => {
@@ -98,6 +106,36 @@ describe("VCS preflight", () => {
 		assert.equal(result.ok, false);
 		assert.match(result.ok ? "" : result.error, /EACCES/);
 	});
+
+	it("accepts an initialized supported Graphite repository", async () => {
+		assert.deepEqual(
+			await preflightVcs("/repo/src", "graphite", fakeExec(validGraphiteResponses), { exists: () => false }),
+			{
+				ok: true,
+				workspaceRoot: "/repo",
+			},
+		);
+	});
+
+	it("rejects Graphite below the supported CLI floor", async () => {
+		const result = await preflightVcs(
+			"/repo",
+			"graphite",
+			fakeExec({ ...validGraphiteResponses, "gt --version": { stdout: "1.8.3\n" } }),
+		);
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /gt >= 1\.8\.4/);
+	});
+
+	it("requires initialized Graphite trunk metadata", async () => {
+		const result = await preflightVcs(
+			"/repo",
+			"graphite",
+			fakeExec({ ...validGraphiteResponses, "gt --no-interactive trunk": { code: 1, stderr: "not initialized" } }),
+		);
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /gt init --trunk/);
+	});
 });
 
 describe("parseJjVersion", () => {
@@ -107,5 +145,12 @@ describe("parseJjVersion", () => {
 
 	it("rejects output without a dotted numeric version", () => {
 		assert.equal(parseJjVersion("Jujutsu nightly"), null);
+	});
+});
+
+describe("parseSemver", () => {
+	it("parses stable Graphite and Git version output", () => {
+		assert.deepEqual(parseSemver("graphite 1.8.6"), [1, 8, 6]);
+		assert.deepEqual(parseSemver("git version 2.38.0"), [2, 38, 0]);
 	});
 });
