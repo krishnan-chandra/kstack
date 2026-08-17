@@ -142,9 +142,9 @@ export async function createTakeoverWorkstream(
 
 export async function verifyTakeoverRun(
 	run: PendingFastImplementRun,
-	backend: Pick<VcsBackend, "verifyCommittedWorkstream">,
+	backend: Pick<VcsBackend, "verifyRecordedWorkstream">,
 ): Promise<FastImplementOutcome> {
-	const verified = await backend.verifyCommittedWorkstream(run.cwd, {
+	const verified = await backend.verifyRecordedWorkstream(run.cwd, {
 		...run.checkpoint,
 		requireNewCommit: true,
 	});
@@ -171,7 +171,7 @@ type TakeoverSettlement =
 /** A failed settle is provisional: later user turns may still commit the run. */
 export async function checkTakeoverSettlement(
 	run: PendingFastImplementRun,
-	backend: Pick<VcsBackend, "verifyCommittedWorkstream">,
+	backend: Pick<VcsBackend, "verifyRecordedWorkstream">,
 ): Promise<TakeoverSettlement> {
 	try {
 		const outcome = await verifyTakeoverRun(run, backend);

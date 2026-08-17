@@ -360,14 +360,14 @@ export async function runAutopilot(
 				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Merging ${remoteBase} with ${backend.id} (no rebase).`,
 				"info",
 			);
-			const merged = await backend.mergeBaseIntoHead(cwd, state.baseRef);
+			const merged = await backend.updateBase(cwd, state.baseRef);
 			switch (merged.kind) {
 				case "already-current":
 					notify(`${remoteBase} is already in the current workstream; refreshing GitHub state.`, "info");
 					cycle++;
 					continue;
 				case "clean": {
-					const push = await backend.push(cwd, state.headRef);
+					const push = await backend.publishRecordedChanges(cwd, state.headRef);
 					if (!push.ok) {
 						blockedReasons.push(`Could not push merged base: ${push.error}`);
 						break;
@@ -578,7 +578,7 @@ export async function runAutopilot(
 					usage,
 				};
 			}
-			const pushResult = await doCommitAndPush(backend, cwd, checkout.identity, prNumber, fixerOutput);
+			const pushResult = await doCommitAndPush(backend, cwd, checkout.snapshot, prNumber, fixerOutput);
 			switch (pushResult.kind) {
 				case "unchanged":
 					notify("Fixer found nothing to commit. Skipping push.", "warning");

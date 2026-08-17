@@ -23,7 +23,7 @@ import { constants, realpathSync } from "node:fs";
 import { lstat, mkdir, open, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../shared/kstack-config.ts";
-import type { VcsBackend, VcsResult, WorkstreamIdentity } from "../shared/vcs/backend.ts";
+import type { VcsBackend, VcsResult, WorkstreamSnapshot } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
@@ -225,7 +225,7 @@ export async function prepareMutationCheckout(
 	backend: VcsBackend,
 	cwd: string,
 	state: PRState,
-): Promise<VcsResult<{ identity: WorkstreamIdentity }>> {
+): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>> {
 	const [current, head, clean] = await Promise.all([
 		backend.currentRef(cwd),
 		backend.headSha(cwd),
@@ -240,7 +240,7 @@ export async function prepareMutationCheckout(
 				: (refName ?? "a detached HEAD");
 		return {
 			ok: false,
-			error: `Selected PR #${state.number} uses ${state.headRef}, but the current workstream is ${actual}. ${backend.id === "jj" ? `Move bookmark ${state.headRef} to @ or select its workspace before retrying.` : "Open its managed worktree first."}`,
+			error: `Selected PR #${state.number} uses ${state.headRef}, but the current workstream is ${actual}. Open the matching ${backend.descriptor.workstreamNoun} before retrying.`,
 		};
 	}
 	if (!head.ok || head.sha !== state.headSha) {
@@ -253,10 +253,7 @@ export async function prepareMutationCheckout(
 	if (!clean.empty) {
 		return {
 			ok: false,
-			error:
-				backend.id === "jj"
-					? `The jj PR head ${state.headRef} must target an empty working-copy checkpoint before pr-autopilot can add a fix. Record the current change, run jj new, move ${state.headRef} to @, and push it before retrying.`
-					: "The PR worktree must be clean before pr-autopilot can mutate it.",
+			error: `The ${backend.descriptor.workstreamNoun} must be clean before pr-autopilot can mutate it.`,
 		};
 	}
 	const remoteHead = await backend.fetchRemoteHead(cwd, state.headRef);
@@ -267,34 +264,17 @@ export async function prepareMutationCheckout(
 			error: `The remote PR head advanced to ${remoteHead.sha}; refresh GitHub state before editing.`,
 		};
 	}
-	const identity = await backend.workstreamIdentity(cwd);
-	if (!identity.ok) return identity;
-	return identity.identity.ref === state.headRef
-		? identity
+	const captured = await backend.captureWorkstream(cwd);
+	if (!captured.ok) return captured;
+	return captured.snapshot.ref === state.headRef
+		? captured
 		: { ok: false, error: `The current workstream identity no longer names ${state.headRef}.` };
-}
-
-function sameWorkstreamIdentity(expected: WorkstreamIdentity, actual: WorkstreamIdentity): boolean {
-	if (expected.kind !== actual.kind || expected.ref !== actual.ref) return false;
-	return expected.kind === "git" && actual.kind === "git"
-		? expected.headSha === actual.headSha
-		: expected.kind === "jj" &&
-				actual.kind === "jj" &&
-				expected.changeId === actual.changeId &&
-				expected.parentCommitIds.length === actual.parentCommitIds.length &&
-				expected.parentCommitIds.every((sha, index) => sha === actual.parentCommitIds[index]);
-}
-
-function describeWorkstreamIdentity(identity: WorkstreamIdentity): string {
-	return identity.kind === "git"
-		? `${identity.ref}@${identity.headSha}`
-		: `${identity.ref}@change:${identity.changeId}/parents:${identity.parentCommitIds.join(",")}`;
 }
 
 export async function doCommitAndPush(
 	backend: VcsBackend,
 	cwd: string,
-	expectedIdentity: WorkstreamIdentity,
+	expectedSnapshot: WorkstreamSnapshot,
 	prNumber: number,
 	fixerOutput: string,
 ): Promise<PushResult> {
@@ -302,15 +282,18 @@ export async function doCommitAndPush(
 		return { kind: "failed", error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks." };
 	}
 
-	const [identity, changed] = await Promise.all([backend.workstreamIdentity(cwd), backend.changedPaths(cwd)]);
-	if (!identity.ok || !sameWorkstreamIdentity(expectedIdentity, identity.identity)) {
+	const [unchanged, changed] = await Promise.all([
+		backend.assertWorkstreamUnchanged(cwd, expectedSnapshot),
+		backend.changedPaths(cwd),
+	]);
+	if (!unchanged.ok) {
 		return {
 			kind: "failed",
-			error: `The fixer changed workstream identity (expected ${describeWorkstreamIdentity(expectedIdentity)}, found ${identity.ok ? describeWorkstreamIdentity(identity.identity) : identity.error}). Refusing to publish.`,
+			error: `The fixer changed workstream identity: ${unchanged.error}`,
 		};
 	}
 	if (!changed.ok) return { kind: "failed", error: `Could not inspect fixer changes: ${changed.error}` };
-	const headRef = expectedIdentity.ref;
+	const headRef = expectedSnapshot.ref;
 	const paths = changed.paths;
 	if (paths.length === 0) return { kind: "unchanged" };
 
@@ -325,24 +308,13 @@ export async function doCommitAndPush(
 	}
 	if (allowed.length === 0) return { kind: "unchanged" };
 
-	const committed = await backend.commitPaths(
+	const committed = await backend.recordPaths(
 		cwd,
 		allowed,
 		`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
 	);
 	if (!committed.ok) return { kind: "failed", error: committed.error };
-	if (backend.id === "jj") {
-		const empty = await backend.isWorkingCopyEmpty(cwd);
-		if (!empty.ok || !empty.empty) {
-			return {
-				kind: "failed",
-				error: empty.ok
-					? "jj commit did not leave an empty working-copy change; refusing to push an ambiguous fix."
-					: empty.error,
-			};
-		}
-	}
-	const pushed = await backend.push(cwd, headRef);
+	const pushed = await backend.publishRecordedChanges(cwd, headRef);
 	if (!pushed.ok) return { kind: "failed", error: pushed.error };
 	const committedHead = await backend.headSha(cwd);
 	return committedHead.ok ? { kind: "pushed", headSha: committedHead.sha } : { kind: "pushed" };
@@ -354,8 +326,8 @@ export async function runCleanup(
 	confirm: (label: string, body: string) => Promise<boolean>,
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 ): Promise<boolean> {
-	if (backend.id === "jj") {
-		notify("Cleanup is a no-op with the jj backend; no Git worktree or branch was removed.", "info");
+	if (!backend.isolation) {
+		notify("Cleanup is not supported by this backend because it has no managed worktrees.", "info");
 		return true;
 	}
 	const current = await backend.currentRef(cwd);
@@ -380,7 +352,7 @@ export async function runCleanup(
 	);
 	if (!confirmed) return false;
 
-	const removed = await backend.removeIsolation(cwd, branch);
+	const removed = await backend.isolation.remove(cwd, branch);
 	if (!removed.ok) {
 		notify(removed.error, "error");
 		return false;
