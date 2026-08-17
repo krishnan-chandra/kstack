@@ -13,6 +13,7 @@ import type {
 	WorkstreamCheckpoint,
 	WorkstreamSnapshot,
 } from "./backend.ts";
+import { verifyGraphiteDryRunAffectedRefs } from "./graphite-dry-run.ts";
 import { preflightVcs } from "./preflight.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
 
@@ -82,6 +83,10 @@ export class GraphiteBackend implements VcsBackend {
 	};
 	readonly rewriteScope = {
 		assertSingleRef: (cwd: string, ref: string) => this.assertSingleRefRewrite(cwd, ref),
+	};
+	readonly parentOwnedPublication = {
+		publish: (cwd: string, ref: string, options?: { existingOnly?: boolean }) =>
+			this.publishRecordedChanges(cwd, ref, options),
 	};
 
 	constructor(
@@ -236,9 +241,13 @@ export class GraphiteBackend implements VcsBackend {
 				if (restored.code !== 0) return { ok: false, error: `gt restore ${path} failed: ${diagnostic(restored)}` };
 				continue;
 			}
+			if (tracked.code !== 1) {
+				return { ok: false, error: `Could not determine whether ${path} is tracked: ${diagnostic(tracked)}` };
+			}
 			try {
 				(this.deps.unlink ?? unlinkSync)(join(cwd, path));
 			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
 				return {
 					ok: false,
 					error: `Could not remove untracked path ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -259,6 +268,8 @@ export class GraphiteBackend implements VcsBackend {
 		if (options?.existingOnly) submitArgs.push("--update-only");
 		const dryRun = await this.gt(cwd, [...submitArgs, "--dry-run"], 60_000);
 		if (dryRun.code !== 0) return { ok: false, error: `gt submit --dry-run failed: ${diagnostic(dryRun)}` };
+		const scope = verifyGraphiteDryRunAffectedRefs(`${dryRun.stdout}\n${dryRun.stderr}`, "submit", [ref]);
+		if (!scope.ok) return { ok: false, error: `Refusing Graphite submission: ${scope.error}` };
 		const submitted = await this.gt(cwd, submitArgs, 60_000);
 		if (submitted.code !== 0) return { ok: false, error: `gt submit failed: ${diagnostic(submitted)}` };
 		const remote = await this.fetchRemoteHead(cwd, ref);

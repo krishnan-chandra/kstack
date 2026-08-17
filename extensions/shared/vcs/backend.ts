@@ -53,11 +53,18 @@ export interface RewriteScopeGuard {
 	assertSingleRef(cwd: string, ref: string): Promise<VcsResult<{ affectedRefs: readonly string[] }>>;
 }
 
+/** Optional parent-owned publication path for backends that prohibit generic pushes. */
+/* exported: VCS backend contract */
+export interface ParentOwnedPublication {
+	publish(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult>;
+}
+
 export interface VcsBackend {
 	readonly id: VcsBackendId;
 	readonly descriptor: VcsDescriptor;
 	readonly isolation?: IsolationBackend;
 	readonly rewriteScope?: RewriteScopeGuard;
+	readonly parentOwnedPublication?: ParentOwnedPublication;
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>>;
 	headSha(cwd: string): Promise<VcsResult<{ sha: string }>>;
 	currentRef(cwd: string): Promise<VcsResult<{ ref: CurrentRef }>>;

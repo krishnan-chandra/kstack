@@ -38,6 +38,9 @@ describe("GraphiteBackend", () => {
 		let headReads = 0;
 		const { exec, calls } = scripted({
 			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --dry-run": {
+				stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/fix (Create)\n✅ Dry run complete.\n",
+			},
 			"git fetch origin kstack/fix": {},
 			"git rev-parse origin/kstack/fix": { stdout: `${nextSha}\n` },
 		});
@@ -63,6 +66,9 @@ describe("GraphiteBackend", () => {
 	it("uses update-only Graphite submission for an existing autopilot PR", async () => {
 		const { exec, calls } = scripted({
 			"git branch --show-current": { stdout: "kstack/fix\n" },
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --update-only --dry-run": {
+				stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/fix (Update)\n✅ Dry run complete.\n",
+			},
 			"git rev-parse HEAD": { stdout: `${sha}\n` },
 			"git fetch origin kstack/fix": {},
 			"git rev-parse origin/kstack/fix": { stdout: `${sha}\n` },
@@ -129,6 +135,34 @@ describe("GraphiteBackend", () => {
 		});
 		assert.deepEqual(await backend.restorePaths("/repo", ["scratch.txt"]), { ok: true });
 		assert.deepEqual(removed, ["/repo/scratch.txt"]);
+	});
+
+	it("does not submit when Graphite's dry run includes a downstack branch", async () => {
+		const { exec, calls } = scripted({
+			"git branch --show-current": { stdout: "kstack/top\n" },
+			"git rev-parse HEAD": { stdout: `${sha}\n` },
+			"gt --no-interactive --no-ai submit --no-stack --draft --no-edit --dry-run": {
+				stdout:
+					"Preparing to submit PRs for the following branches...\n▸ kstack/base (Update)\n▸ kstack/top (Update)\n✅ Dry run complete.\n",
+			},
+		});
+		const result = await new GraphiteBackend(exec).publishRecordedChanges("/repo", "kstack/top");
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /kstack\/base/);
+		assert.equal(calls.includes("gt --no-interactive --no-ai submit --no-stack --draft --no-edit"), false);
+	});
+
+	it("does not unlink when tracked-state inspection fails", async () => {
+		const removed: string[] = [];
+		const { exec } = scripted({
+			"git ls-files --error-unmatch -- scratch.txt": { code: 128, stderr: "index unavailable" },
+		});
+		const result = await new GraphiteBackend(exec, { unlink: (path) => removed.push(path) }).restorePaths("/repo", [
+			"scratch.txt",
+		]);
+		assert.equal(result.ok, false);
+		assert.match(result.ok ? "" : result.error, /index unavailable/);
+		assert.deepEqual(removed, []);
 	});
 
 	it("allocates a Git worktree and tracks it with Graphite metadata", async () => {
