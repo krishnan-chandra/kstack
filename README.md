@@ -152,12 +152,17 @@ rows stay unnamed.
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
 
-The extensions use TypeScript directly through Pi's loader. No build or dependency installation is required.
+Pi loads one TypeScript entry, `kstack.ts`, plus the `skills/` tree. The
+aggregator registers every factory under `extensions/` in a fixed order. Pi
+treats the set as one extension: `pi config` cannot toggle an individual Kstack
+extension, and a factory startup failure rejects the whole set instead of leaving
+a partially registered package.
 
 ## Install for the current user
 
-This repository follows Pi's conventional package layout: extensions live under
-`extensions/` and skills live under `skills/`. Pi packages cannot provide
+This repository is a Pi package. The `pi` manifest loads `kstack.ts` and the
+`skills/` tree. Individual factories remain under `extensions/` for tests and
+one-off `-e` loads. Pi packages cannot provide
 `settings.json` or `keybindings.json`, so the recommended installer both
 registers the checkout as a user-level Pi package and applies kstack's tracked
 Pi defaults:
@@ -189,11 +194,11 @@ installer intentionally does not pass `-l`, which would create a project-local
 installation instead. To register only the package without applying kstack's Pi
 preferences, use `pi install "$PWD"` directly.
 
-Pi records a reference to the checkout rather than copying it. Pulling or editing
-the repository updates the installed resources; use `/reload` in a running Pi
-process, or restart Pi, after changes.
+Pi records a reference to the checkout rather than copying it. Pulling or
+editing the repository updates the installed resources; use `/reload` in a
+running Pi process, or restart Pi, after changes.
 
-Inspect or enable the installed extensions and skills with:
+Inspect or enable the installed aggregator and skills with:
 
 ```bash
 pi list
@@ -273,22 +278,10 @@ wanted.
 
 ### Manual copy installation
 
-Package installation is preferred because it keeps extensions and skills tied to
-the checkout. To copy all resources into Pi's global user directories instead,
-run this from the repository root:
-
-```bash
-PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-mkdir -p "$PI_AGENT_DIR/extensions" "$PI_AGENT_DIR/skills"
-cp -R extensions/. "$PI_AGENT_DIR/extensions/"
-cp -R skills/. "$PI_AGENT_DIR/skills/"
-```
-
-Review existing destination directories before copying so that local changes are
-not overwritten. A copied installation is a snapshot; repeat the copy after
-repository updates. Pi discovers extension entry points under the global
-`extensions/` directory and skill `SKILL.md` files under the global `skills/`
-directory.
+Package installation is preferred because it keeps the aggregator and skills
+tied to the checkout. Copying `extensions/` into Pi's global user directory is
+no longer the supported install path: Pi would discover ten source factories
+instead of `kstack.ts`. Use `./install.mjs` or `pi install`.
 
 For a one-off extension test without installing anything, run from the repository
 root:
@@ -327,9 +320,9 @@ npm run typecheck
 Measure startup from Pi process spawn to the correlated RPC `get_commands` response:
 
 ```bash
-bun run benchmark:startup
+npm run benchmark:startup
 # One measured round with no warmups.
-bun run benchmark:startup -- --runs 1 --warmups 0
+npm run benchmark:startup -- --runs 1 --warmups 0
 ```
 
 The harness runs `empty`, `package-disabled`, `skills-only`, `extensions-only`, and `full` profiles. Each profile verifies the complete Kstack command and skill inventory that its filter should load.

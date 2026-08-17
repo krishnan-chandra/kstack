@@ -20,10 +20,18 @@
 		"format": "biome check --write .",
 		"lint": "biome check .",
 		"lint:ci": "biome ci .",
-		"test": "node --test --test-reporter=dot \"*.test.mjs\" \"extensions/**/*.test.ts\" \"skills/**/*.test.ts\" \"skills/**/*.test.mjs\"",
+		"test": "node --test --test-reporter=dot \"*.test.mjs\" \"*.test.ts\" \"extensions/**/*.test.ts\" \"skills/**/*.test.ts\" \"skills/**/*.test.mjs\"",
 		"test:extensions": "node --test --test-reporter=dot \"extensions/**/*.test.ts\"",
 		"test:handoff": "node --test --test-reporter=dot \"extensions/handoff/**/*.test.ts\"",
 		"test:session-archive": "node --test --test-reporter=dot \"extensions/session-archive/**/*.test.ts\"",
 		"typecheck": "tsc -p tsconfig.json"
+	},
+	"pi": {
+		"extensions": [
+			"./kstack.ts"
+		],
+		"skills": [
+			"./skills"
+		]
 	}
 }

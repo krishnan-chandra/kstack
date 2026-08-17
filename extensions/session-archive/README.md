@@ -17,8 +17,8 @@ and stay searchable by agents through two SELECT-only tools.
 
 ## Layout
 
-The extension lives at `~/.pi/agent/extensions/session-archive/` and is
-auto-discovered by Pi (no build step; jiti loads the TypeScript directly).
+The package installer loads this factory through the `kstack.ts` aggregator.
+For a one-off source test, run `pi -e extensions/session-archive/index.ts`.
 
 All archive state lives under the Pi agent directory — `$PI_CODING_AGENT_DIR`
 when set, otherwise `~/.pi/agent`:

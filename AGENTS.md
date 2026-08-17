@@ -17,11 +17,13 @@ npm test
 npm run typecheck
 npm run lint
 npm run check:exports
+npm run check:imports
 ```
 
 The suite runs directly under Node, including the `session-archive` and handoff
 tests that use `node:sqlite`. The package requires Node 22.18 or newer so native
 TypeScript type stripping and the SQLite API are available without a loader.
+Pi loads the package through `kstack.ts`; source factories stay under `extensions/`.
 
 Use a colocated test file for a focused iteration, such as
 `npm run test:handoff` or `node --test check-exports.test.mjs`.
@@ -35,9 +37,10 @@ node --test skills/git-worktrees/
 
 ## Conventions
 
-- Write TypeScript ESM for the extension runtime (Pi runs Node 22.18+; Node runs
-  `.ts` files through type stripping without a build step). Keep runtime syntax
-  erasable: do not use enums, parameter properties, or runtime namespaces.
+- Write TypeScript ESM for the extension runtime (Pi and Node load `.ts` files
+  through type stripping). The installed package loads one aggregate entry,
+  `kstack.ts`. Keep runtime syntax erasable: do not use enums, parameter
+  properties, or runtime namespaces.
 - Colocate tests in `*.test.ts` using `node:test` so production and tests use the
   same runtime.
 - Keep extension `index.ts` files as thin Pi adapters. Put domain behavior in

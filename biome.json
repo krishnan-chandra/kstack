@@ -2,6 +2,9 @@
 	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
 	"files": {
 		"includes": [
+			"kstack.ts",
+			"kstack.test.ts",
+			"kstack.manifest.test.mjs",
 			"extensions/**",
 			"install.mjs",
 			"install.test.mjs",

@@ -119,7 +119,7 @@ export async function createScenarioProfiles(packageRoot) {
 			profile({
 				id: "extensions-only",
 				purpose: "Kstack extension loading cost.",
-				packages: [packageFilter(source, { extensions: ["extensions/**"] })],
+				packages: [packageFilter(source, { extensions: ["kstack.ts"] })],
 				inventory,
 				loadExtensions: true,
 				loadSkills: false,

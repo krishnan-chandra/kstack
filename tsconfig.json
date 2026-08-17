@@ -12,5 +12,5 @@
 		"lib": ["es2023"],
 		"types": ["node"]
 	},
-	"include": ["extensions/**/*.ts", "skills/**/*.ts"]
+	"include": ["kstack.ts", "kstack.test.ts", "extensions/**/*.ts", "skills/**/*.ts"]
 }
