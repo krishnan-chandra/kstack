@@ -59,9 +59,6 @@ describe("kstack-router config loading", () => {
 
 	beforeEach(() => {
 		mkdirSync(tempDir, { recursive: true });
-		const _env = { PI_CODING_AGENT_DIR: tempDir };
-		// Override getKstackPath to use our temp dir.
-		// Use the original function via the module.
 	});
 
 	afterEach(() => {

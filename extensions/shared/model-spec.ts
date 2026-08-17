@@ -7,10 +7,8 @@ export interface ModelSpec {
 	thinking?: ModelThinkingLevel;
 }
 
-type ModelSpecLike = ModelSpec;
-
 /** Format a spec as a Pi CLI id (provider/model[:thinking]). */
-export function modelCliId(spec: ModelSpecLike): string {
+export function modelCliId(spec: ModelSpec): string {
 	return spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
 }
 
