@@ -1,5 +1,5 @@
 import { type ExtensionCommandContext, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
+import { Container, Key, matchesKey, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import { buildSessionChoices } from "./session-choices.ts";
 import type { SessionRow } from "./sessions.ts";
 
@@ -17,7 +17,13 @@ function targetValue(row: SessionRow): string {
 	return "details";
 }
 
-/** Pick exactly one session toggle. SettingsList keeps navigation and search consistent with Pi. */
+/** Forward picker input except Enter, which has no action in the sessions browser. */
+export function handleSessionPickerInput(data: string, handleInput: ((data: string) => void) | undefined): void {
+	if (matchesKey(data, Key.enter)) return;
+	handleInput?.(data);
+}
+
+/** Pick exactly one session toggle. Space toggles while SettingsList preserves navigation and search. */
 export async function selectSessionToggle(
 	ctx: ExtensionCommandContext,
 	rows: readonly SessionRow[],
@@ -38,7 +44,7 @@ export async function selectSessionToggle(
 	}
 	return ctx.ui.custom<SessionRow | undefined>((_tui, theme, _keybindings, done) => {
 		const container = new Container();
-		container.addChild(new Text(theme.fg("accent", theme.bold("Sessions — Enter toggles archive status")), 1, 0));
+		container.addChild(new Text(theme.fg("accent", theme.bold("Sessions")), 1, 0));
 		const items: SettingItem[] = rows.map((row) => ({
 			id: row.id,
 			label: `${timestamp(row.modified)}  ${row.label} — ${row.cwd}${row.kind === "active" && row.current ? " (current)" : ""}`,
@@ -57,11 +63,11 @@ export async function selectSessionToggle(
 			{ enableSearch: true },
 		);
 		container.addChild(list);
-		container.addChild(new Text(theme.fg("dim", "Search · ↑↓ navigate · Enter toggle/details · Esc cancel"), 1, 0));
+		container.addChild(new Text(theme.fg("dim", "Search · ↑↓ navigate · Space toggle/details · Esc cancel"), 1, 0));
 		return {
 			render: (width) => container.render(width),
 			invalidate: () => container.invalidate(),
-			handleInput: (data) => list.handleInput?.(data),
+			handleInput: (data) => handleSessionPickerInput(data, list.handleInput?.bind(list)),
 		};
 	});
 }

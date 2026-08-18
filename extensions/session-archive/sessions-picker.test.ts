@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { selectSessionToggle } from "./sessions-picker.ts";
+import { handleSessionPickerInput, selectSessionToggle } from "./sessions-picker.ts";
+
+describe("handleSessionPickerInput", () => {
+	it("leaves Enter unbound", () => {
+		const forwarded: string[] = [];
+		handleSessionPickerInput("\r", (data) => forwarded.push(data));
+		assert.deepEqual(forwarded, []);
+	});
+
+	it("forwards Space to the settings list", () => {
+		const forwarded: string[] = [];
+		handleSessionPickerInput(" ", (data) => forwarded.push(data));
+		assert.deepEqual(forwarded, [" "]);
+	});
+});
 
 describe("selectSessionToggle", () => {
 	it("uses one RPC selection and returns a typed action", async () => {
