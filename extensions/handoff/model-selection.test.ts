@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ModelAlias } from "../shared/model-aliases.ts";
 import {
+	completeHandoffArgs,
 	formatModelEffort,
 	formatModelRef,
 	type HandoffEffortLevel,
@@ -23,6 +24,34 @@ const MODELS: HandoffModel[] = [
 ];
 
 const ALL_EFFORTS: HandoffEffortLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+describe("completeHandoffArgs", () => {
+	it("completes handoff flags at the start of the arguments", () => {
+		assert.deepEqual(completeHandoffArgs(""), [
+			{ value: "--archive", label: "--archive" },
+			{ value: "--model", label: "--model" },
+			{ value: "--model=", label: "--model=" },
+			{ value: "-m", label: "-m" },
+		]);
+		assert.deepEqual(completeHandoffArgs("--"), [
+			{ value: "--archive", label: "--archive" },
+			{ value: "--model", label: "--model" },
+			{ value: "--model=", label: "--model=" },
+		]);
+		assert.ok(completeHandoffArgs("-")?.some((item) => item.value === "-m"));
+	});
+
+	it("preserves a goal while completing a later flag", () => {
+		assert.deepEqual(completeHandoffArgs("continue the work --a"), [
+			{ value: "continue the work --archive", label: "--archive" },
+		]);
+	});
+
+	it("does not suggest flags while entering a model value", () => {
+		assert.equal(completeHandoffArgs("--model "), null);
+		assert.equal(completeHandoffArgs("--model anthropic/claude"), null);
+	});
+});
 
 describe("parseHandoffArgs", () => {
 	it("returns the goal untouched when no model flag is present", () => {

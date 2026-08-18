@@ -20,6 +20,7 @@ import { type ModelAlias, matchModelAliases } from "../shared/model-aliases.ts";
 
 /** Canonical Pi thinking/effort levels accepted by `/handoff --model <ref>:<effort>`. */
 const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
+const HANDOFF_ARGUMENT_FLAGS = ["--archive", "--model", "--model=", "-m"] as const;
 
 export type HandoffEffortLevel = (typeof HANDOFF_EFFORT_LEVELS)[number];
 
@@ -46,6 +47,32 @@ type ModelMatch =
 
 export function isHandoffEffortLevel(value: string): value is HandoffEffortLevel {
 	return (HANDOFF_EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * Complete the finite part of `/handoff` arguments. Model references and goals
+ * remain free-form, so Pi can safely complete flags but not their values.
+ */
+export function completeHandoffArgs(prefix: string): Array<{ value: string; label: string }> | null {
+	let tokenStart = prefix.length;
+	while (tokenStart > 0) {
+		const character = prefix[tokenStart - 1];
+		if (character === undefined || /\s/.test(character)) break;
+		tokenStart--;
+	}
+	const base = prefix.slice(0, tokenStart);
+	const token = prefix.slice(tokenStart);
+	const previousToken = base.trimEnd().split(/\s+/).at(-1);
+
+	// The model value is intentionally free-form. Do not offer flags while the
+	// cursor is waiting for that value or while it is being entered.
+	if (previousToken === "--model" || previousToken === "-m" || token.startsWith("--model=")) return null;
+
+	const items = HANDOFF_ARGUMENT_FLAGS.filter((value) => value.startsWith(token)).map((value) => ({
+		value: `${base}${value}`,
+		label: value,
+	}));
+	return items.length > 0 ? items : null;
 }
 
 const MODEL_VALUE_HINT =

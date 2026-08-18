@@ -27,6 +27,7 @@ History explains intent but can be stale. This repository uses the `@earendil-wo
 
 - Start with the smallest command/tool/event surface that fulfills the contract.
 - Commands are appropriate for explicit user intent, confirmation, editors, and session replacement.
+- Commands with finite or discoverable arguments should register Pi's `getArgumentCompletions` by default. Complete flags and safe values where possible; keep free-form goals and model references editable instead of guessing them.
 - Tools are appropriate for narrow model-callable operations with schemas and bounded results.
 - Events are appropriate for behavior that must happen consistently across turns or lifecycle transitions.
 - Skills are preferable when instructions plus existing tools are sufficient.

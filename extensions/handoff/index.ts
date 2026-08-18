@@ -28,6 +28,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { createHandoffHandler, requireHandoffSource } from "./command.ts";
 import { readHandoffHistory, searchHandoffHistory } from "./history-reader.ts";
+import { completeHandoffArgs } from "./model-selection.ts";
 
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "handoff");
@@ -36,6 +37,7 @@ export default async function (pi: ExtensionAPI) {
 	pi.registerCommand("handoff", {
 		description:
 			"Continue in a lean session linked to current history (optional --archive, --model provider/model-id[:effort])",
+		getArgumentCompletions: completeHandoffArgs,
 		handler: createHandoffHandler(pi),
 	});
 
