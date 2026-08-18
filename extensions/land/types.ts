@@ -36,6 +36,8 @@ export interface LandResult {
 	autopilotStatus?: AutopilotResult["status"];
 	remainingBookmarks: string[];
 	completedMutations: string[];
+	/** Non-fatal problems that occurred after the primary outcome was established. */
+	warnings?: string[];
 	recoveryOperationId?: string;
 	blockers: string[];
 }

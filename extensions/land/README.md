@@ -94,8 +94,11 @@ Git directory, so linked worktrees cannot publish or land concurrently.
 It invokes `gt merge` once, then waits for every pinned PR verification to
 settle and preserves each successful merge result even if another verifier
 fails. A lost or nonzero merge process is treated as indeterminate/partial and
-is never retried automatically. Land never runs `gt sync` or removes local
-Graphite branches.
+is never retried automatically. After every pinned PR is verified merged, Land
+runs `gt sync` under the same publication lock so Graphite can update trunk,
+restack descendants, and clean up merged local branches. A sync failure is a
+post-merge warning: the verified landing remains successful and Land asks you
+to run `gt sync` manually.
 
 Press Ctrl+Shift+L to abort an active subprocess or polling wait. Cancellation
 cannot undo a merge or remove a request from a merge queue.

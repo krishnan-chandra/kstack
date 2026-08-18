@@ -256,6 +256,8 @@ interface StackLandProgress {
 	frontiers: readonly StackLandFrontier[];
 	remainingBookmarks: readonly string[];
 	completedMutations: readonly string[];
+	/** Non-fatal cleanup or reconciliation problems. */
+	warnings?: readonly string[];
 	recoveryOperationIds: readonly string[];
 }
 
@@ -269,6 +271,7 @@ export type StackLandOutcome =
 			status: "cancelled";
 			frontiers?: readonly StackLandFrontier[];
 			completedMutations?: readonly string[];
+			warnings?: readonly string[];
 			recoveryOperationIds?: readonly string[];
 	  }
 	| ({ status: "indeterminate"; inFlight: string; recovery?: string } & StackLandProgress)
@@ -277,6 +280,7 @@ export type StackLandOutcome =
 			error: string;
 			frontiers?: readonly StackLandFrontier[];
 			completedMutations?: readonly string[];
+			warnings?: readonly string[];
 			recoveryOperationIds?: readonly string[];
 	  };
 

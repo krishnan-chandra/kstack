@@ -15,6 +15,7 @@ import { requestGraphiteStackLanding } from "./graphite-stack-landing.ts";
 import { LandLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { resolveImplicitPr } from "./pr-resolution.ts";
+import { blockedLandResult } from "./result.ts";
 import { routeLand } from "./routing.ts";
 import { abortableSleep } from "./sleep.ts";
 import { summarizeLandResult } from "./summary.ts";
@@ -22,17 +23,6 @@ import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 
 function selectedMethod(value: string | undefined): MergeMethod | undefined {
 	return isMergeMethod(value) ? value : undefined;
-}
-
-function blocked(reason: string): LandResult {
-	return {
-		status: "blocked",
-		frontiers: [],
-		autopilotRan: false,
-		remainingBookmarks: [],
-		completedMutations: [],
-		blockers: [reason],
-	};
 }
 
 export default function landExtension(pi: ExtensionAPI): void {
@@ -71,12 +61,12 @@ export default function landExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		preparedBackend?: VcsBackend,
 	): Promise<LandResult> {
-		if (!ctx.hasUI) return blocked("Land requires interactive TUI/RPC mode.");
+		if (!ctx.hasUI) return blockedLandResult("Land requires interactive TUI/RPC mode.");
 		const cwd = options.cwd ?? ctx.cwd;
 		const resolved: VcsResult<{ backend: VcsBackend }> = preparedBackend
 			? { ok: true, backend: preparedBackend }
 			: await configuredBackend(ctx, cwd);
-		if (!resolved.ok) return blocked(resolved.error);
+		if (!resolved.ok) return blockedLandResult(resolved.error);
 		const exec = makeExec(pi);
 		const result = await routeLand(options, {
 			backend: resolved.backend.id,
@@ -96,7 +86,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 			},
 			requestGraphiteStackLanding: async () => {
 				const token = lifecycle.begin();
-				if (!token) return { status: "stack", outcome: blocked("Another landing run is active.") };
+				if (!token) return { status: "stack", outcome: blockedLandResult("Another landing run is active.") };
 				ctx.ui.setStatus("land", "land: validating Graphite stack");
 				try {
 					return await requestGraphiteStackLanding(options, {
@@ -115,7 +105,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 			},
 			runSingle: async () => {
 				const token = lifecycle.begin();
-				if (!token) return blocked("Another landing run is active.");
+				if (!token) return blockedLandResult("Another landing run is active.");
 				ctx.ui.setStatus("land", "land: resolving target");
 				const configLoad = loadLandConfig();
 				if (configLoad.status === "invalid") {
@@ -145,7 +135,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		});
 		pi.sendMessage({
 			customType: "land",
-			content: [...result.blockers, ...result.completedMutations].join("\n"),
+			content: [...result.blockers, ...(result.warnings ?? []), ...result.completedMutations].join("\n"),
 			display: true,
 			details: result,
 		});

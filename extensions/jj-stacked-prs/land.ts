@@ -440,6 +440,7 @@ async function runLandLoop(
 	}
 	const frontiers: StackLandFrontier[] = [];
 	const completedMutations: string[] = [];
+	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
 	let remainingBookmarks: string[] = [];
 	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, completedMutations);
@@ -448,11 +449,13 @@ async function runLandLoop(
 		frontiers: StackLandFrontier[];
 		remainingBookmarks: string[];
 		completedMutations: string[];
+		warnings: string[];
 		recoveryOperationIds: string[];
 	} => ({
 		frontiers: [...frontiers],
 		remainingBookmarks,
 		completedMutations: [...completedMutations],
+		warnings: [...warnings],
 		recoveryOperationIds: [...recoveryOperationIds],
 	});
 
@@ -659,7 +662,7 @@ async function runLandLoop(
 			if (remoteSha === undefined) {
 				completedMutations.push(`Remote branch ${current.bookmark} already deleted`);
 			} else if (remoteSha !== frontier.expectedHeadSha) {
-				completedMutations.push(
+				warnings.push(
 					`Skipped deleting ${current.bookmark}: remote SHA ${remoteSha} does not match landed head ${frontier.expectedHeadSha}`,
 				);
 			} else {
@@ -671,7 +674,7 @@ async function runLandLoop(
 				);
 			}
 		} catch (error) {
-			completedMutations.push(`Failed to delete remote branch ${current.bookmark}: ${errorMessage(error)}`);
+			warnings.push(`Failed to delete remote branch ${current.bookmark}: ${errorMessage(error)}`);
 		}
 
 		frontiers.push(frontier);

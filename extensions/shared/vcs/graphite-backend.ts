@@ -14,6 +14,7 @@ import type {
 	WorkstreamCheckpoint,
 	WorkstreamSnapshot,
 } from "./backend.ts";
+import { removeManagedGitWorktree } from "./git-backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "./graphite-dry-run.ts";
 import { preflightVcs } from "./preflight.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
@@ -418,14 +419,15 @@ export class GraphiteBackend implements VcsBackend {
 	}
 
 	private async removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
-		const common = await this.git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], 5_000);
-		const commonDir = output(common);
-		if (common.code !== 0 || !commonDir)
-			return { ok: false, error: `Could not locate the owning repository: ${diagnostic(common)}` };
-		const ownerRoot = join(commonDir, "..");
-		const removed = await this.git(ownerRoot, ["worktree", "remove", cwd, "--force"], 30_000);
-		if (removed.code !== 0) return { ok: false, error: `Worktree removal failed: ${diagnostic(removed)}` };
-		const deleted = await this.gt(ownerRoot, ["delete", ref], 30_000);
+		const removed = await removeManagedGitWorktree({
+			cwd,
+			ref,
+			managedRoot: this.deps.managedRoot,
+			realpath: this.deps.realpath,
+			git: (gitCwd, args, timeout) => this.git(gitCwd, args, timeout),
+		});
+		if (!removed.ok) return removed;
+		const deleted = await this.gt(removed.ownerRoot, ["delete", ref], 30_000);
 		return deleted.code === 0
 			? { ok: true }
 			: {

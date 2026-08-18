@@ -89,53 +89,107 @@ describe("GitBackend restorePaths", () => {
 });
 
 describe("GitBackend removeIsolation", () => {
+	const cwd = "/managed/task";
+	const deps = { managedRoot: "/managed", realpath: (path: string) => path };
+	const listed = `worktree ${cwd}\0HEAD ${HEAD}\0branch refs/heads/kstack/task\0\0`;
+	const preflight: Step[] = [
+		{
+			command: "git",
+			args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+			result: { stdout: "/repo/.git\n" },
+		},
+		{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: listed } },
+		{ command: "git", args: ["status", "--porcelain=v1", "--untracked-files=all"] },
+	];
+
+	it("rejects a worktree outside the managed root without running Git", async () => {
+		assert.deepEqual(await new GitBackend(scriptedExec([]), deps).removeIsolation("/other/task", "kstack/task"), {
+			ok: false,
+			error: "Refusing to remove a worktree outside the managed root /managed.",
+		});
+	});
+
+	it("rejects a path that is not registered as a Git worktree", async () => {
+		const exec = scriptedExec([
+			preflight[0],
+			{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: "" } },
+		]);
+		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
+			ok: false,
+			error: `Git does not list ${cwd} as an authoritative worktree.`,
+		});
+	});
+
+	it("rejects a worktree whose branch no longer matches", async () => {
+		const mismatch = `worktree ${cwd}\0HEAD ${HEAD}\0branch refs/heads/kstack/other\0\0`;
+		const exec = scriptedExec([
+			preflight[0],
+			{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: mismatch } },
+		]);
+		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
+			ok: false,
+			error: "Worktree branch changed: expected kstack/task, found kstack/other.",
+		});
+	});
+
+	it("preserves a dirty managed worktree", async () => {
+		const steps = [...preflight];
+		steps[2] = { ...steps[2], result: { stdout: "?? notes.txt\n" } };
+		assert.deepEqual(await new GitBackend(scriptedExec(steps), deps).removeIsolation(cwd, "kstack/task"), {
+			ok: false,
+			error: `Worktree ${cwd} has uncommitted or untracked files; cleanup preserved it.`,
+		});
+	});
+
+	it("rejects a locked authoritative worktree before inspecting files", async () => {
+		const locked = `worktree ${cwd}\0HEAD ${HEAD}\0branch refs/heads/kstack/task\0locked reason\0\0`;
+		assert.deepEqual(
+			await new GitBackend(
+				scriptedExec([
+					preflight[0],
+					{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: locked } },
+				]),
+				deps,
+			).removeIsolation(cwd, "kstack/task"),
+			{ ok: false, error: `Worktree ${cwd} is locked; unlock it before cleanup.` },
+		);
+	});
+
 	it("does not delete the branch when worktree removal fails", async () => {
 		const exec = scriptedExec([
+			...preflight,
 			{
 				command: "git",
-				args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-				result: { stdout: "/repo/.git\n" },
-			},
-			{
-				command: "git",
-				args: ["worktree", "remove", "/worktree", "--force"],
+				args: ["worktree", "remove", cwd],
 				result: { code: 1, stderr: "worktree locked\n" },
 			},
 		]);
-		assert.deepEqual(await new GitBackend(exec).removeIsolation("/worktree", "kstack/task"), {
+		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
 			ok: false,
 			error: "Worktree removal failed: worktree locked. You may need to remove it manually.",
 		});
 	});
 
-	it("removes the worktree and then deletes the branch", async () => {
+	it("removes a clean authoritative worktree without force and then deletes the branch", async () => {
 		const exec = scriptedExec([
-			{
-				command: "git",
-				args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-				result: { stdout: "/repo/.git\n" },
-			},
-			{ command: "git", args: ["worktree", "remove", "/worktree", "--force"] },
+			...preflight,
+			{ command: "git", args: ["worktree", "remove", cwd] },
 			{ command: "git", args: ["branch", "-d", "kstack/task"] },
 		]);
-		assert.deepEqual(await new GitBackend(exec).removeIsolation("/worktree", "kstack/task"), { ok: true });
+		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), { ok: true });
 	});
 
 	it("returns ok with a warning when branch deletion fails", async () => {
 		const exec = scriptedExec([
-			{
-				command: "git",
-				args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-				result: { stdout: "/repo/.git\n" },
-			},
-			{ command: "git", args: ["worktree", "remove", "/worktree", "--force"] },
+			...preflight,
+			{ command: "git", args: ["worktree", "remove", cwd] },
 			{
 				command: "git",
 				args: ["branch", "-d", "kstack/task"],
 				result: { code: 1, stderr: "not fully merged\n" },
 			},
 		]);
-		assert.deepEqual(await new GitBackend(exec).removeIsolation("/worktree", "kstack/task"), {
+		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
 			ok: true,
 			warning: "Branch deletion warning: not fully merged",
 		});

@@ -76,6 +76,7 @@ function harness() {
 				stderr: "",
 			};
 		}
+		if (key === "gt --no-interactive sync") return { code: 0, stdout: "synced\n", stderr: "" };
 		return { code: 1, stdout: "", stderr: `unexpected ${key}` };
 	};
 	return { calls, exec };
@@ -108,7 +109,7 @@ function ready(prNumber: number): AutopilotResult {
 }
 
 describe("Graphite stack landing", () => {
-	it("verifies the exact prefix, dry-runs twice, merges once, and never syncs", async () => {
+	it("verifies the exact prefix, dry-runs twice, merges once, and syncs after verification", async () => {
 		const { calls, exec } = harness();
 		const readiness: number[] = [];
 		let released = false;
@@ -144,11 +145,40 @@ describe("Graphite stack landing", () => {
 		assert.match(preview, /PR #12: kstack\/top -> kstack\/bottom/);
 		assert.equal(calls.filter((call) => call === "gt --no-interactive merge --dry-run").length, 2);
 		assert.equal(calls.filter((call) => call === "gt --no-interactive merge").length, 1);
-		assert.equal(
-			calls.some((call) => call.includes("gt sync")),
-			false,
+		assert.equal(calls.filter((call) => call === "gt --no-interactive sync").length, 1);
+		assert.match(
+			response.status === "stack" ? response.outcome.completedMutations.join("\n") : "",
+			/Synchronized Graphite/,
 		);
 		assert.equal(released, true);
+	});
+
+	it("keeps a verified landing successful when post-merge sync fails", async () => {
+		const base = harness();
+		const exec: ExecFn = async (command, args, options) => {
+			if (command === "gt" && args.join(" ") === "--no-interactive sync") {
+				return { code: 1, stdout: "", stderr: "network unavailable" };
+			}
+			return base.exec(command, args, options);
+		};
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
+				confirmMerge: async () => true,
+				now: () => 0,
+				sleep: async () => {},
+				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				realpath: (path) => path,
+				waitForMerge: async (_exec, _cwd, number) => ({ merged: true, snapshot: { number } as never }),
+			},
+		);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "landed");
+		assert.match(response.status === "stack" ? (response.outcome.warnings?.join("\n") ?? "") : "", /gt sync failed/);
+		assert.deepEqual(response.status === "stack" ? response.outcome.blockers : undefined, []);
 	});
 
 	it("rejects an explicit merge method before readiness or mutation", async () => {
@@ -352,7 +382,7 @@ describe("Graphite stack landing", () => {
 	});
 
 	it("marks closed or head-changed remote results blocked rather than queued", async () => {
-		const { exec } = harness();
+		const { calls, exec } = harness();
 		const response = await requestGraphiteStackLanding(
 			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
 			{
@@ -387,6 +417,10 @@ describe("Graphite stack landing", () => {
 		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partially-landed");
 		assert.equal(response.status === "stack" ? response.outcome.frontiers[1].state : undefined, "blocked");
 		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /CLOSED/);
+		assert.equal(
+			calls.some((call) => call === "gt --no-interactive sync"),
+			false,
+		);
 	});
 
 	it("preserves fulfilled merge evidence when another remote verifier rejects", async () => {

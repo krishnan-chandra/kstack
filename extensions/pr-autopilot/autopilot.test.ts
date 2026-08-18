@@ -57,6 +57,19 @@ function makeThread(id: string, body = "Looks good to me"): ReviewThread {
 	return { id, commenter: "reviewer", body, path: "src/index.ts", line: 10, source: "review-thread", replyToId: 1 };
 }
 
+/**
+ * Build a mock `git worktree list --porcelain -z` record for one worktree.
+ *
+ * The porcelain null-delimited format is:
+ *   worktree <path>\0HEAD <sha>\0branch refs/heads/<name>\0\0
+ *
+ * The double null at the end terminates the record. The SHA must be exactly
+ * 40 hex characters (the test helper uses `"a".repeat(40)` as the dummy value).
+ */
+function makePorcelainRecord(path: string, branch: string, head: string = "a".repeat(40)): string {
+	return `worktree ${path}\0HEAD ${head}\0branch refs/heads/${branch}\0\0`;
+}
+
 describe("pr-autopilot state machine", () => {
 	describe("buildPRState", () => {
 		it("maps GitHub JSON to PRState", () => {
@@ -494,10 +507,14 @@ describe("pr-autopilot state machine", () => {
 			const { exec, calls } = gitResponses({
 				"branch --show-current": { stdout: "kstack/fix-thing\n" },
 				"rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
-				"worktree remove /repo --force": { code: 1, stderr: "worktree locked\n" },
+				"worktree list --porcelain -z": {
+					stdout: makePorcelainRecord("/repo", "kstack/fix-thing"),
+				},
+				"status --porcelain=v1 --untracked-files=all": {},
+				"worktree remove /repo": { code: 1, stderr: "worktree locked\n" },
 			});
 			const cleaned = await runCleanup(
-				new GitBackend(exec),
+				new GitBackend(exec, { managedRoot: "/", realpath: (path) => path }),
 				"/repo",
 				async () => true,
 				(message, level) => notices.push({ message, level }),
@@ -517,11 +534,15 @@ describe("pr-autopilot state machine", () => {
 			const { exec } = gitResponses({
 				"branch --show-current": { stdout: "kstack/fix-thing\n" },
 				"rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
-				"worktree remove /repo --force": {},
+				"worktree list --porcelain -z": {
+					stdout: makePorcelainRecord("/repo", "kstack/fix-thing"),
+				},
+				"status --porcelain=v1 --untracked-files=all": {},
+				"worktree remove /repo": {},
 				"branch -d kstack/fix-thing": { code: 1, stderr: "not fully merged\n" },
 			});
 			const cleaned = await runCleanup(
-				new GitBackend(exec),
+				new GitBackend(exec, { managedRoot: "/", realpath: (path) => path }),
 				"/repo",
 				async () => true,
 				(message, level) => notices.push({ message, level }),
