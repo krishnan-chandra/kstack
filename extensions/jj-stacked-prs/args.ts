@@ -117,16 +117,63 @@ export function parseJjStackArgs(text: string): { ok: true; command: JjStackComm
 	return { ok: true, command: { action, top, remote, trunk, maxStack } };
 }
 
-export function completeJjStackArgs(prefix: string): Array<{ value: string; label: string }> {
-	const tokens = prefix.trim() ? prefix.trim().split(/\s+/) : [];
-	const last = prefix.endsWith(" ") ? "" : (tokens.at(-1) ?? "");
-	if (tokens.length === 0 || (tokens.length === 1 && !prefix.endsWith(" ") && !ACTIONS.has(tokens[0]))) {
-		return [...ACTIONS].filter((value) => value.startsWith(last)).map((value) => ({ value, label: value }));
+const METHOD_VALUES = ["squash", "rebase"] as const;
+const READINESS_VALUES = ["check", "watch"] as const;
+
+/**
+ * Complete `/jj-stack` actions, flags, and the finite `--method` /
+ * `--readiness` values. Bookmark, remote, trunk, and max-stack values stay
+ * free-form. Earlier tokens stay in the replacement `value` because Pi
+ * replaces the whole argument prefix.
+ */
+export function completeJjStackArgs(prefix: string): Array<{ value: string; label: string }> | null {
+	let tokenStart = prefix.length;
+	while (tokenStart > 0) {
+		const character = prefix[tokenStart - 1];
+		if (character === undefined || /\s/.test(character)) break;
+		tokenStart--;
 	}
-	const action = tokens[0];
-	return completionFlags(action)
-		.filter((value) => value.startsWith(last))
-		.map((value) => ({ value: value.trim(), label: value.trim() }));
+	const base = prefix.slice(0, tokenStart);
+	const token = prefix.slice(tokenStart);
+	const priorTokens = base.trim().length > 0 ? base.trim().split(/\s+/) : [];
+
+	if (priorTokens.length === 0) {
+		const items = [...ACTIONS]
+			.filter((value) => value.startsWith(token))
+			.map((value) => ({
+				value: `${base}${value}`,
+				label: value,
+			}));
+		return items.length > 0 ? items : null;
+	}
+
+	const action = priorTokens[0];
+	if (!ACTIONS.has(action)) return null;
+
+	const previousToken = priorTokens.at(-1);
+	if (previousToken === "--method") {
+		const items = METHOD_VALUES.filter((value) => value.startsWith(token)).map((value) => ({
+			value: `${base}${value}`,
+			label: value,
+		}));
+		return items.length > 0 ? items : null;
+	}
+	if (previousToken === "--readiness") {
+		const items = READINESS_VALUES.filter((value) => value.startsWith(token)).map((value) => ({
+			value: `${base}${value}`,
+			label: value,
+		}));
+		return items.length > 0 ? items : null;
+	}
+	if (previousToken?.startsWith("--") && !BOOLEAN_FLAGS.has(previousToken)) {
+		return null;
+	}
+
+	if (token !== "" && !token.startsWith("--")) return null;
+	const items = completionFlags(action)
+		.filter((flag) => flag.startsWith(token))
+		.map((flag) => ({ value: `${base}${flag}`, label: flag }));
+	return items.length > 0 ? items : null;
 }
 
 function allowedFlags(action: string): Set<string> {
@@ -138,11 +185,11 @@ function allowedFlags(action: string): Set<string> {
 }
 
 function completionFlags(action: string): string[] {
-	if (action === "inspect") return ["--top ", "--trunk ", "--max-stack "];
-	if (action === "advance") return ["--merged ", "--top ", "--remote ", "--trunk ", "--max-stack "];
-	if (action === "land") return ["--top ", "--remote ", "--trunk ", "--method ", "--readiness ", "--max-stack "];
-	if (action === "publish") return ["--top ", "--remote ", "--trunk ", "--max-stack ", "--ready"];
-	return ["--top ", "--remote ", "--trunk ", "--max-stack "];
+	if (action === "inspect") return ["--top", "--trunk", "--max-stack"];
+	if (action === "advance") return ["--merged", "--top", "--remote", "--trunk", "--max-stack"];
+	if (action === "land") return ["--top", "--remote", "--trunk", "--method", "--readiness", "--max-stack"];
+	if (action === "publish") return ["--top", "--remote", "--trunk", "--max-stack", "--ready"];
+	return ["--top", "--remote", "--trunk", "--max-stack"];
 }
 
 function isReadiness(value: string): value is StackReadinessMode {

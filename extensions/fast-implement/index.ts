@@ -11,6 +11,7 @@ import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimFastImplementRequest, FAST_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { parseFastImplementArgs, validateTask } from "./command.ts";
+import { getArgumentCompletions } from "./completions.ts";
 import { loadConfig, modelCliId, resolveRole } from "./config.ts";
 import { buildImplementerGuidance, runWorktreeFastImplement } from "./runner.ts";
 import {
@@ -288,6 +289,7 @@ export default function fastImplementExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("fast-implement", {
 		description: "Implement a bounded change in this session with local commits",
+		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const parsed = parseFastImplementArgs(args ?? "");
 			if (!parsed.ok) {

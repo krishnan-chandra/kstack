@@ -15,6 +15,42 @@ import type { PanelArgs } from "./types.ts";
 
 export type ArgsParse = { ok: true; args: PanelArgs } | { ok: false; error: string };
 
+const PANEL_REVIEW_ARGUMENT_FLAGS = ["--base", "--base="] as const;
+
+/**
+ * Complete the finite part of `/panel-review` arguments. `parseArgs` only
+ * recognizes `--base` while it precedes any positional token, so once a
+ * non-flag token has appeared the remaining text is free-form intent and no
+ * flag completions are offered. The `--base` value (a Git ref) and the intent
+ * itself stay free-form.
+ */
+export function getArgumentCompletions(prefix: string): Array<{ value: string; label: string }> | null {
+	let tokenStart = prefix.length;
+	while (tokenStart > 0) {
+		const character = prefix[tokenStart - 1];
+		if (character === undefined || /\s/.test(character)) break;
+		tokenStart--;
+	}
+	const base = prefix.slice(0, tokenStart);
+	const token = prefix.slice(tokenStart);
+	const priorTokens = base.trim().length > 0 ? base.trim().split(/\s+/) : [];
+	const previousToken = priorTokens.at(-1);
+
+	// The --base value is a free-form Git ref; don't offer flags while the
+	// cursor is waiting for that value or while it is being entered.
+	if (previousToken === "--base" || token.startsWith("--base=")) return null;
+
+	// --base is only recognized before the positional intent begins. Once any
+	// prior token isn't a flag, the intent has started and stays free-form.
+	if (priorTokens.some((prior) => !prior.startsWith("--"))) return null;
+
+	const items = PANEL_REVIEW_ARGUMENT_FLAGS.filter((flag) => flag.startsWith(token)).map((value) => ({
+		value: `${base}${value}`,
+		label: value,
+	}));
+	return items.length > 0 ? items : null;
+}
+
 /** Split a command argument string into tokens, honoring single/double quotes. */
 export function tokenize(input: string): string[] | { error: string } {
 	const tokens: string[] = [];

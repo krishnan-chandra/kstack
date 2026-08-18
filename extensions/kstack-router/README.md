@@ -45,6 +45,17 @@ session name.
 /kstack --route session-pickup -- "What was I working on?"
 ```
 
+## Argument autocomplete
+
+Typing `/kstack` in the TUI offers Tab-completion for leading flag names and,
+right after a flag with a finite value set, that flag's valid values:
+`--route` (route IDs), `--change-kind` (change kinds), `--mode` (`check`,
+`threads`, `drive`, `watch`, `cleanup`), `--method` (`squash`, `rebase`), and
+`--readiness` (`check`, `watch`). `--single`, `--stack`, `--worktree`, and
+`--` complete as flags with no further value. `--pr` completes only as a
+flag; its numeric value is never guessed. Completion stops once the task or a
+bare `--` has started, because `/kstack` only accepts flags before the task.
+
 ## Post-PR flags
 
 `--mode`, `--pr`, `--method`, and `--readiness` apply only after the final

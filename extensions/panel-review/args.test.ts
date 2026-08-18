@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseArgs, tokenize } from "./args.ts";
+import { getArgumentCompletions, parseArgs, tokenize } from "./args.ts";
 
 describe("tokenize", () => {
 	it("splits on whitespace and honors quotes", () => {
@@ -45,5 +45,36 @@ describe("parseArgs", () => {
 	it("rejects missing and empty flag values", () => {
 		assert.ok(!parseArgs("--base").ok);
 		assert.ok(!parseArgs("--base=").ok);
+	});
+});
+
+describe("getArgumentCompletions", () => {
+	it("offers --base at the start", () => {
+		const expected = [
+			{ value: "--base", label: "--base" },
+			{ value: "--base=", label: "--base=" },
+		];
+		assert.deepEqual(getArgumentCompletions(""), expected);
+		assert.deepEqual(getArgumentCompletions("--"), expected);
+	});
+	it("filters by the partial flag being typed", () => {
+		assert.deepEqual(getArgumentCompletions("--b"), [
+			{ value: "--base", label: "--base" },
+			{ value: "--base=", label: "--base=" },
+		]);
+		assert.equal(getArgumentCompletions("--x"), null);
+	});
+	it("does not complete the free-form --base value", () => {
+		assert.equal(getArgumentCompletions("--base "), null);
+		assert.equal(getArgumentCompletions("--base main"), null);
+		assert.equal(getArgumentCompletions("--base="), null);
+		assert.equal(getArgumentCompletions("--base=main"), null);
+	});
+	it("stops offering flags once the positional intent has started", () => {
+		assert.equal(getArgumentCompletions("Add safe archival --"), null);
+		assert.equal(getArgumentCompletions("--base main Add safe archival --"), null);
+	});
+	it("leaves the free-form intent untouched with no --base present", () => {
+		assert.equal(getArgumentCompletions("Add safe archival"), null);
 	});
 });

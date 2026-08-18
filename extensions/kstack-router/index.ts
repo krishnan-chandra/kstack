@@ -9,6 +9,7 @@ import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import { parseArgs } from "./args.ts";
 import { checkDependencies, getRouteDescription, getRouteLabel, validateCatalog } from "./catalog.ts";
 import { runClassifier } from "./classifier-runner.ts";
+import { getArgumentCompletions } from "./completion.ts";
 import { loadConfig, resolveClassifierModel } from "./config.ts";
 import { dispatchRoute, getPlaybookForRoute, getRestrictedTools } from "./dispatch.ts";
 import { type DispatchToken, RouterLifecycle } from "./lifecycle.ts";
@@ -116,6 +117,7 @@ export default function (pi: ExtensionAPI): void {
 			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] " +
 			"[--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>. " +
 			"Prompts for classification when no --route is given.",
+		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {

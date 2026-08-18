@@ -82,6 +82,13 @@ for that model. Missing configuration selects the first authenticated model in
 the list. `timeoutMinutes` accepts 1 through 60 and applies only to worktree
 mode.
 
+## Argument autocomplete
+
+Typing `/fast-implement ` in an interactive session offers completions for the
+finite flags `--worktree` and `--change-kind <kind>` (one of `bug-fix`,
+`feature`, `refactor`, `performance`, `prototype`, `generic`). Completion
+stops once free-form task text begins; the task itself is never guessed at.
+
 ## Development
 
 Run the focused tests and typecheck from the repository root:

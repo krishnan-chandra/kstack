@@ -14,6 +14,10 @@ Model-callable tools treat the user's explicit request as authorization.
 /jj-stack land --top <bookmark> [--remote <name>] [--trunk <revset>] [--method squash|rebase] [--readiness check|watch] [--max-stack <1..50>]
 ```
 
+Tab-completion covers the action names, each action's flags, and the finite
+`--method` / `--readiness` values. Bookmark, remote, trunk, and `--max-stack`
+values stay free-form.
+
 Model tools:
 
 ```text
