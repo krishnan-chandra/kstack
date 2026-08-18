@@ -177,6 +177,7 @@ async function landStackWithAuthorization(
 	if (prepared.status !== "ok") return prepared;
 	if (authorization === "interactive-confirmation") {
 		const confirmation = renderLandConfirmation({
+			changeCount: prepared.model.stack.length,
 			slices: prepared.mapped,
 			method: prepared.method,
 			readiness: options.readiness,
@@ -317,26 +318,39 @@ async function mapStackPullRequests(
 			continue;
 		}
 		const all = await github.listPrsForHead(remote.github, slice.bookmark, options.cwd, deps.signal);
-		if (all.length !== 1) {
+		const pr = all[0];
+		if (!pr) {
 			return {
 				status: "blocked",
 				blockers: [
 					{
-						code: "ambiguous-pr",
-						message: `Could not resolve exactly one PR for bookmark ${JSON.stringify(slice.bookmark)}.`,
+						code: "publish-required",
+						message: `No pull request exists for bookmark ${JSON.stringify(slice.bookmark)}. Publish the stack before landing.`,
 						bookmark: slice.bookmark,
 					},
 				],
 			};
 		}
-		const status = await github.getPrStatus(remote.github, all[0].number, options.cwd, deps.signal);
-		if (status === "merged" && index === 0 && all[0].headCommitId === local.commitId) {
+		if (all.length > 1) {
+			return {
+				status: "blocked",
+				blockers: [
+					{
+						code: "ambiguous-pr-history",
+						message: `Multiple pull requests in repository history use bookmark ${JSON.stringify(slice.bookmark)}.`,
+						bookmark: slice.bookmark,
+					},
+				],
+			};
+		}
+		const status = await github.getPrStatus(remote.github, pr.number, options.cwd, deps.signal);
+		if (status === "merged" && index === 0 && pr.headCommitId === local.commitId) {
 			mapped.push({
 				bookmark: slice.bookmark,
-				prNumber: all[0].number,
-				url: all[0].url,
-				headCommitId: all[0].headCommitId,
-				baseRef: all[0].baseRef,
+				prNumber: pr.number,
+				url: pr.url,
+				headCommitId: pr.headCommitId,
+				baseRef: pr.baseRef,
 				draft: false,
 				alreadyMerged: true,
 			});
@@ -348,7 +362,7 @@ async function mapStackPullRequests(
 				blockers: [
 					{
 						code: "out-of-order-merge",
-						message: `PR #${all[0].number} for ${JSON.stringify(slice.bookmark)} is merged before its stack predecessors.`,
+						message: `PR #${pr.number} for ${JSON.stringify(slice.bookmark)} is merged before its stack predecessors.`,
 						bookmark: slice.bookmark,
 					},
 				],

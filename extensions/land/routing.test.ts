@@ -77,6 +77,39 @@ describe("routeLand", () => {
 		);
 	});
 
+	it("keeps a pre-mutation jj frontier blocked so its recovery is visible", async () => {
+		const recovery = "Watch is bounded. Inspect PR #11, then retry /land after CI settles.";
+		const result = await routeLand(options, {
+			backend: "jj",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: {
+					status: "stack",
+					outcome: {
+						status: "partial",
+						error: recovery,
+						frontiers: [
+							{
+								bookmark: "feat1",
+								prNumber: 11,
+								url: "https://example/11",
+								expectedHeadSha: "aaa",
+								method: "squash",
+								state: "blocked",
+							},
+						],
+						remainingBookmarks: ["feat1", "feat2"],
+						completedMutations: [],
+						recoveryOperationIds: [],
+					},
+				},
+			}),
+			runSingle: async () => singleResult(),
+		});
+		assert.equal(result.status, "blocked");
+		assert.equal(result.blockers[0], recovery);
+	});
+
 	it("preserves single-PR behavior for Git, non-stacks, and internal stack frontiers", async () => {
 		let requests = 0;
 		const git = await routeLand(options, {

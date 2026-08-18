@@ -116,6 +116,7 @@ export async function runAutopilot(
 	const { setPhase, notify, confirm } = handlers;
 	let usage = emptyUsage();
 	const blockedReasons: string[] = [];
+	const blockedCodes: NonNullable<AutopilotResult["blockedCodes"]> = [];
 
 	const accumulateUsage = (u: Partial<UsageSummary>) => {
 		usage = {
@@ -446,6 +447,7 @@ export async function runAutopilot(
 			state = afterWatch;
 			if (hasPendingChecks(state) && !hasFailingChecks(state) && !state.hasUnresolvedThreads) {
 				blockedReasons.push("CI still pending after watch");
+				blockedCodes.push("ci-pending-after-watch");
 				break;
 			}
 			continue;
@@ -699,6 +701,7 @@ export async function runAutopilot(
 		mergeReady: state ? isMergeReady(state) : false,
 		cyclesCompleted: cycle,
 		blockedReasons,
+		blockedCodes,
 		usage,
 	};
 }

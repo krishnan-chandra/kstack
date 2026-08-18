@@ -44,8 +44,9 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 	}
 	if (outcome.status === "partial" || outcome.status === "indeterminate") {
 		const blocker = outcome.status === "partial" ? outcome.error : outcome.inFlight;
+		const mutationAccepted = frontiers.some((frontier) => frontier.state === "landed" || frontier.state === "queued");
 		return {
-			status: "partially-landed",
+			status: mutationAccepted ? "partially-landed" : "blocked",
 			frontiers,
 			autopilotRan,
 			remainingBookmarks,

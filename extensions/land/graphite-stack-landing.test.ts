@@ -153,6 +153,35 @@ describe("Graphite stack landing", () => {
 		assert.equal(released, true);
 	});
 
+	it("reports bounded-watch recovery when Graphite readiness stops on pending CI", async () => {
+		const { exec } = harness();
+		const pending: AutopilotResult = {
+			status: "blocked",
+			mergeReady: false,
+			cyclesCompleted: 1,
+			blockedReasons: ["Checks remain pending"],
+			blockedCodes: ["ci-pending-after-watch"],
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+		};
+		const response = await requestGraphiteStackLanding(
+			{ target: { kind: "single", prNumber: 12 }, readiness: "watch" },
+			{
+				exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async () => ({ handled: true, outcome: pending }),
+				confirmMerge: async () => true,
+				now: () => 0,
+				sleep: async () => {},
+			},
+		);
+		assert.equal(response.status, "stack");
+		assert.match(
+			response.status === "stack" ? response.outcome.blockers.join("\n") : "",
+			/Watch is bounded.*Inspect PR #11.*retry \/land after CI settles/i,
+		);
+	});
+
 	it("keeps a verified landing successful when post-merge sync fails", async () => {
 		const base = harness();
 		const exec: ExecFn = async (command, args, options) => {

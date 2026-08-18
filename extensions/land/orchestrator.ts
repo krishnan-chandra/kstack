@@ -19,6 +19,20 @@ interface LandDeps {
 	configuredMethodFor?: (nameWithOwner: string) => MergeMethod | undefined;
 }
 
+/* exported: shared readiness guidance for Graphite stack landing */
+export function readinessBlockers(
+	input: { readiness: LandOptions["readiness"]; prNumber: number },
+	autopilot: AutopilotResult,
+): string[] {
+	if (input.readiness === "watch" && autopilot.blockedCodes?.includes("ci-pending-after-watch")) {
+		return [
+			`Watch is bounded. Inspect PR #${input.prNumber}, then retry /land after CI settles. Do not rebase or republish unless the PR head or base changed.`,
+			...autopilot.blockedReasons,
+		];
+	}
+	return autopilot.blockedReasons;
+}
+
 function empty(status: LandResult["status"], blocker: string): LandResult {
 	return {
 		status,
@@ -62,7 +76,7 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 				...base,
 				status: "blocked",
 				blockers: autopilot.blockedReasons.length
-					? autopilot.blockedReasons
+					? readinessBlockers({ readiness: options.readiness, prNumber: initial.number }, autopilot)
 					: ["Autopilot did not produce exact-head merge-ready evidence."],
 			};
 		}

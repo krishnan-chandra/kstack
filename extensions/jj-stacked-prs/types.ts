@@ -64,10 +64,12 @@ export type StackBlocker =
 				| "ambiguous-local-bookmark"
 				| "remote-bookmark-conflict"
 				| "ambiguous-pr"
+				| "ambiguous-pr-history"
 				| "ambiguous-top"
 				| "base-chain-mismatch"
 				| "head-mismatch"
 				| "out-of-order-merge"
+				| "publish-required"
 				| "land-unavailable";
 			message: string;
 			bookmark?: string;
@@ -133,6 +135,7 @@ export interface PublicationSlice {
 
 export interface PublicationPlan {
 	planId: string;
+	changeCount: number;
 	repository: GitHubRepository;
 	remote: RemoteInfo;
 	defaultBranch: string;

@@ -12,10 +12,11 @@ const slices = [
 	},
 ];
 
-test("watch confirmation discloses pre-authorized autopilot mutations", () => {
-	const rendered = renderLandConfirmation({ slices, method: "squash", readiness: "watch" });
+test("watch confirmation reports change and PR slice counts and discloses autopilot mutations", () => {
+	const rendered = renderLandConfirmation({ changeCount: 2, slices, method: "squash", readiness: "watch" });
 	assert.equal(rendered.ok, true);
 	if (!rendered.ok) return;
+	assert.match(rendered.body, /2 jj changes → 1 PR slice/);
 	assert.match(
 		rendered.body,
 		/merge remote bases, rerun failed CI jobs, edit code, push fixes, and update review threads without more prompts/,
@@ -23,7 +24,7 @@ test("watch confirmation discloses pre-authorized autopilot mutations", () => {
 });
 
 test("check confirmation does not claim that readiness can mutate", () => {
-	const rendered = renderLandConfirmation({ slices, method: "squash", readiness: "check" });
+	const rendered = renderLandConfirmation({ changeCount: 1, slices, method: "squash", readiness: "check" });
 	assert.equal(rendered.ok, true);
 	if (!rendered.ok) return;
 	assert.doesNotMatch(rendered.body, /edit code/);

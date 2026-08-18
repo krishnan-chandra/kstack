@@ -7,6 +7,7 @@ import { getPullRequest, waitForMerge } from "../shared/github.ts";
 import { asRecord } from "../shared/narrow.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
+import { readinessBlockers } from "./orchestrator.ts";
 import { blockedLandResult } from "./result.ts";
 import type { FrontierResult, LandOptions, LandResult } from "./types.ts";
 
@@ -304,11 +305,12 @@ export async function requestGraphiteStackLanding(
 			result.prState.headRef !== pr.ref ||
 			result.prState.baseRef !== pr.baseRef
 		) {
+			const blockers = readinessBlockers({ readiness: options.readiness, prNumber: pr.number }, result);
 			return {
 				status: "stack",
 				outcome: {
 					...blockedLandResult(
-						`PR #${pr.number} is not exact-head merge-ready: ${result.blockedReasons.join("; ") || result.status}.`,
+						`PR #${pr.number} is not exact-head merge-ready: ${blockers.join("; ") || result.status}.`,
 					),
 					autopilotRan: true,
 					autopilotStatus: result.status,
