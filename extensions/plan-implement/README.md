@@ -25,6 +25,10 @@ The argument-less form also asks for the delivery mode before opening the task
 editor. `--single` remains the default when the command includes a task or
 another option. Put `--` before a task that starts with dashes.
 
+Tab-completion covers the leading `--single`, `--stack`, `--worktree`, and
+`--change-kind` flags (plus the finite kind values). Completion stops once the
+task or `--` starts. The task itself is never guessed.
+
 ## Behavior
 
 1. Requires TUI or RPC mode, a workspace accepted by the configured VCS

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
 	buildPanelReviewOptions,
 	buildStackPanelReviewOptions,
+	getArgumentCompletions,
 	parsePlanImplementArgs,
 	validateTask,
 } from "./command.ts";
@@ -123,5 +124,49 @@ describe("buildStackPanelReviewOptions", () => {
 	it("bounds the intent", () => {
 		const options = buildStackPanelReviewOptions("x".repeat(2000), "0123456789abcdef0123456789abcdef01234567");
 		assert.equal(options.intent?.length, "Plan/implement (stacked): ".length + 1000);
+	});
+});
+
+describe("getArgumentCompletions", () => {
+	it("completes all flags at the start of the arguments", () => {
+		assert.deepEqual(getArgumentCompletions(""), [
+			{ value: "--single", label: "--single" },
+			{ value: "--stack", label: "--stack" },
+			{ value: "--worktree", label: "--worktree" },
+			{ value: "--change-kind", label: "--change-kind" },
+		]);
+	});
+
+	it("filters flags by the partial token being typed", () => {
+		assert.deepEqual(getArgumentCompletions("--s"), [
+			{ value: "--single", label: "--single" },
+			{ value: "--stack", label: "--stack" },
+		]);
+		assert.deepEqual(getArgumentCompletions("--w"), [{ value: "--worktree", label: "--worktree" }]);
+	});
+
+	it("preserves earlier flags while completing a later flag", () => {
+		assert.deepEqual(getArgumentCompletions("--single --w"), [{ value: "--single --worktree", label: "--worktree" }]);
+	});
+
+	it("completes change kinds after --change-kind, preserving preceding text", () => {
+		assert.deepEqual(getArgumentCompletions("--change-kind "), [
+			{ value: "--change-kind bug-fix", label: "bug-fix" },
+			{ value: "--change-kind feature", label: "feature" },
+			{ value: "--change-kind refactor", label: "refactor" },
+			{ value: "--change-kind performance", label: "performance" },
+			{ value: "--change-kind prototype", label: "prototype" },
+			{ value: "--change-kind generic", label: "generic" },
+		]);
+		assert.deepEqual(getArgumentCompletions("--stack --change-kind bug"), [
+			{ value: "--stack --change-kind bug-fix", label: "bug-fix" },
+		]);
+	});
+
+	it("leaves free-form task text alone", () => {
+		assert.equal(getArgumentCompletions("fix the login bug"), null);
+		assert.equal(getArgumentCompletions("fix the bug --w"), null);
+		assert.equal(getArgumentCompletions("--single fix the login bug"), null);
+		assert.equal(getArgumentCompletions("--change-kind nonsense-kind"), null);
 	});
 });

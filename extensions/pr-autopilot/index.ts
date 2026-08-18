@@ -26,6 +26,7 @@ import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./command.ts";
+import { getArgumentCompletions } from "./completion.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import { type LifecyclePhase, runAutopilot } from "./driver.ts";
@@ -301,6 +302,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		description:
 			"Keep an open PR merge-ready with one randomly chosen tiny model: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]. " +
 			"Stops at merge-ready; never auto-merges or rebases shared history.",
+		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) {

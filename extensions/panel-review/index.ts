@@ -6,7 +6,7 @@ import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-wo
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
-import { parseArgs } from "./args.ts";
+import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
 import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
@@ -212,6 +212,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("panel-review", {
 		description:
 			"Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] <intent>",
+		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
 			if (!parsed.ok) return ctx.ui.notify(parsed.error, "error");

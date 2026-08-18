@@ -11,6 +11,10 @@ verdict.
 /panel-review --base origin/main "Implement handoff and panel review extensions"
 ```
 
+Typing `/panel-review --` in the TUI offers `--base` and `--base=` as
+completions; the `--base` ref value and the free-form review intent are not
+completed.
+
 Every reviewer independently runs the full
 [`thermo-nuclear-code-quality-review`](../../skills/thermo-nuclear-code-quality-review/)
 across the entire changeset. Reviewers do not split the diff or specialize by

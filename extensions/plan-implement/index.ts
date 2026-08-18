@@ -28,7 +28,7 @@ import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
-import { parsePlanImplementArgs, validateTask } from "./command.ts";
+import { getArgumentCompletions, parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
@@ -397,6 +397,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 	}
 	pi.registerCommand("plan-implement", {
 		description: "Plan, approve, implement here or in --worktree, panel-review, fix findings, then publish a draft PR",
+		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
 			if (!ctx.hasUI) {

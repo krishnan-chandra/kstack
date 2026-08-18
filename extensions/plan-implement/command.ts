@@ -1,10 +1,60 @@
 /** Pure task validation, command parsing, and panel-review options. */
 
 import type { PanelArgs } from "../panel-review/types.ts";
-import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
+import { CHANGE_KINDS, type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
 const DELIVERY_FLAGS = new Set(["--single", "--stack"]);
+const PLAN_IMPLEMENT_FLAGS = ["--single", "--stack", "--worktree", "--change-kind"] as const;
+
+const PLAN_IMPLEMENT_BOOLEAN_FLAGS = new Set(["--single", "--stack", "--worktree"]);
+
+/**
+ * Complete the finite leading flags of `/plan-implement` (`--single`,
+ * `--stack`, `--worktree`, `--change-kind <kind>`). The parser only accepts
+ * those flags before the task, so this stops once the task or `--` starts.
+ * Earlier flags stay in the replacement `value`.
+ */
+export function getArgumentCompletions(prefix: string): Array<{ value: string; label: string }> | null {
+	let tokenStart = prefix.length;
+	while (tokenStart > 0) {
+		const character = prefix[tokenStart - 1];
+		if (character === undefined || /\s/.test(character)) break;
+		tokenStart--;
+	}
+	const base = prefix.slice(0, tokenStart);
+	const token = prefix.slice(tokenStart);
+	const priorTokens = base.trim().length > 0 ? base.trim().split(/\s+/) : [];
+
+	for (let i = 0; i < priorTokens.length; i++) {
+		const prior = priorTokens[i];
+		if (prior === "--") return null;
+		if (PLAN_IMPLEMENT_BOOLEAN_FLAGS.has(prior)) continue;
+		if (prior === "--change-kind") {
+			const value = priorTokens[i + 1];
+			if (value !== undefined && !value.startsWith("--")) i++;
+			continue;
+		}
+		return null;
+	}
+
+	const previousToken = priorTokens.at(-1);
+	if (previousToken === "--change-kind") {
+		const items = CHANGE_KINDS.filter((kind) => kind.startsWith(token)).map((kind) => ({
+			value: `${base}${kind}`,
+			label: kind,
+		}));
+		return items.length > 0 ? items : null;
+	}
+
+	if (token !== "" && !token.startsWith("--")) return null;
+
+	const items = PLAN_IMPLEMENT_FLAGS.filter((flag) => flag.startsWith(token)).map((flag) => ({
+		value: `${base}${flag}`,
+		label: flag,
+	}));
+	return items.length > 0 ? items : null;
+}
 
 export function validateTask(task: string): { ok: true; task: string } | { ok: false; error: string } {
 	const trimmed = task.trim();

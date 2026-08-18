@@ -97,11 +97,25 @@ describe("parseJjStackArgs", () => {
 
 describe("completeJjStackArgs", () => {
 	it("completes actions and flags", () => {
-		assert.ok(completeJjStackArgs("").some((item) => item.value === "inspect"));
-		assert.ok(completeJjStackArgs("pub").some((item) => item.value === "publish"));
-		assert.ok(completeJjStackArgs("plan --").some((item) => item.value === "--top"));
-		assert.ok(completeJjStackArgs("").some((item) => item.value === "land"));
-		assert.ok(completeJjStackArgs("land --").some((item) => item.value === "--method"));
-		assert.ok(completeJjStackArgs("publish --").some((item) => item.value === "--ready"));
+		assert.ok(completeJjStackArgs("")?.some((item) => item.value === "inspect"));
+		assert.ok(completeJjStackArgs("pub")?.some((item) => item.value === "publish"));
+		assert.ok(completeJjStackArgs("plan --")?.some((item) => item.value === "plan --top"));
+		assert.ok(completeJjStackArgs("")?.some((item) => item.value === "land"));
+		assert.ok(completeJjStackArgs("land --")?.some((item) => item.value === "land --method"));
+		assert.ok(completeJjStackArgs("publish --")?.some((item) => item.value === "publish --ready"));
+	});
+
+	it("preserves earlier tokens and completes finite land values", () => {
+		assert.deepEqual(completeJjStackArgs("land --top feat --method "), [
+			{ value: "land --top feat --method squash", label: "squash" },
+			{ value: "land --top feat --method rebase", label: "rebase" },
+		]);
+		assert.deepEqual(completeJjStackArgs("land --readiness w"), [{ value: "land --readiness watch", label: "watch" }]);
+	});
+
+	it("does not guess bookmark or remote values", () => {
+		assert.equal(completeJjStackArgs("plan --top "), null);
+		assert.equal(completeJjStackArgs("plan --top fe"), null);
+		assert.equal(completeJjStackArgs("sync --remote "), null);
 	});
 });

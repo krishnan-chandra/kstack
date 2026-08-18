@@ -14,6 +14,9 @@ then revalidates each pull request before it asks GitHub or Graphite to merge it
 /kstack --route land --pr 42 --readiness watch --method squash
 ```
 
+Tab-completion offers `--pr`, `--method`, and `--readiness`. `--method` and
+`--readiness` then complete their finite values. `--pr` never suggests a number.
+
 If you omit `--pr`, Land resolves the one open PR whose head matches the current
 Git branch or jj bookmark, according to the shared `vcs.backend` setting. Land
 stops when Git is detached, when the current jj change has no unique bookmark,

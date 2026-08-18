@@ -9,7 +9,7 @@ import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
-import { parseLandArgs } from "./command.ts";
+import { completeLandArgs, parseLandArgs } from "./command.ts";
 import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
 import { requestGraphiteStackLanding } from "./graphite-stack-landing.ts";
 import { LandLifecycle } from "./lifecycle.ts";
@@ -145,10 +145,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, execute));
 	pi.registerCommand("land", {
 		description: "Land a merge-ready PR: /land [--pr N] [--method squash|rebase] [--readiness check|watch]",
-		getArgumentCompletions: (prefix) =>
-			["--method squash", "--method rebase", "--readiness check", "--readiness watch"]
-				.filter((value) => value.startsWith(prefix))
-				.map((value) => ({ value, label: value })),
+		getArgumentCompletions: completeLandArgs,
 		handler: async (text, ctx) => {
 			await ctx.waitForIdle();
 			const parsed = parseLandArgs(text ?? "");
