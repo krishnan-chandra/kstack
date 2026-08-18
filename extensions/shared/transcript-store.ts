@@ -27,6 +27,7 @@ interface ChildTranscriptState {
 	entries: TranscriptEntry[];
 	liveTail: string | undefined;
 	entriesBytes: number;
+	totalCost: number;
 	evicted: boolean;
 }
 
@@ -75,7 +76,7 @@ export class ChildTranscriptStore {
 
 	addChild(id: string): void {
 		if (this.children.has(id)) return;
-		this.children.set(id, { entries: [], liveTail: undefined, entriesBytes: 0, evicted: false });
+		this.children.set(id, { entries: [], liveTail: undefined, entriesBytes: 0, totalCost: 0, evicted: false });
 		this.flushAndEmit();
 	}
 
@@ -143,6 +144,7 @@ export class ChildTranscriptStore {
 				const text = event.text ? truncateHeadUtf8(event.text, MAX_ENTRY_TEXT_BYTES) : "";
 				if (text) this.addEntry(state, { kind: "text", text, turn: event.turn, at: event.at });
 				this.addEntry(state, { kind: "turn", turn: event.turn, usage: event.usage, at: event.at });
+				state.totalCost += event.usage.cost;
 				state.liveTail = undefined;
 				this.flushAndEmit();
 				break;
@@ -156,6 +158,10 @@ export class ChildTranscriptStore {
 
 	getLiveTail(id: string): string | undefined {
 		return this.children.get(id)?.liveTail;
+	}
+
+	getTotalCost(id: string): number {
+		return this.children.get(id)?.totalCost ?? 0;
 	}
 
 	wasEvicted(id: string): boolean {

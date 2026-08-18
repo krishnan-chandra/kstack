@@ -7,3 +7,4 @@ coverage/
 .workspace/
 __pycache__/
 local/
+.pi/

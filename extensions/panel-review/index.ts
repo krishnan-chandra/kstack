@@ -2,24 +2,24 @@
 
 import { rmSync } from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Box, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
-import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { PanelDashboardStore } from "./live-dashboard.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { type PipelineDashboard, resolvePanel, runReviewPipeline, type VerdictDetails } from "./run-phases.ts";
+import { type OpenSubagentConsoleResult, openSubagentConsole } from "./subagent-console.ts";
 import { PanelTranscriptStore } from "./transcript-store.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
 export default function (pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "panel-review");
 	const lifecycle = new PanelLifecycle();
-	let activeInspector: OpenInspectorResult | undefined;
+	let activeConsole: OpenSubagentConsoleResult | undefined;
 	let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscriptStore } | undefined;
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
@@ -32,20 +32,21 @@ export default function (pi: ExtensionAPI): void {
 				ctx.ui.notify("No panel review is running.", "info");
 				return;
 			}
-			if (activeInspector) return;
+			if (activeConsole) return;
 			const { dashboard, transcripts } = activeStores;
-			const inspector = openInspector(ctx, dashboard, transcripts, {
+			const subagentConsole = openSubagentConsole(ctx, dashboard, transcripts, {
 				text: {
 					stripTerminalSequences,
 					truncateToWidth: (text, width) => truncateToWidth(text, width),
+					visibleWidth,
 				},
 				onAbort: () => {
 					lifecycle.abortRun();
 				},
 			});
-			activeInspector = inspector;
-			inspector.closed.finally(() => {
-				if (activeInspector === inspector) activeInspector = undefined;
+			activeConsole = subagentConsole;
+			subagentConsole.closed.finally(() => {
+				if (activeConsole === subagentConsole) activeConsole = undefined;
 			});
 		},
 	});
@@ -222,8 +223,8 @@ export default function (pi: ExtensionAPI): void {
 	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => claimPanelReviewRequest(data, runPanelReview));
 	pi.on("session_start", () => lifecycle.startSession());
 	pi.on("session_shutdown", () => {
-		activeInspector?.close();
-		activeInspector = undefined;
+		activeConsole?.close();
+		activeConsole = undefined;
 		activeStores = undefined;
 		lifecycle.shutdownSession();
 	});
@@ -253,8 +254,8 @@ export default function (pi: ExtensionAPI): void {
 			note: (id, text) => transcriptStore.note(id, text),
 			tick: () => dashboardStore.tick(),
 			dispose: () => {
-				activeInspector?.close();
-				activeInspector = undefined;
+				activeConsole?.close();
+				activeConsole = undefined;
 				activeStores = undefined;
 				transcriptStore.dispose();
 				disposeWidget();

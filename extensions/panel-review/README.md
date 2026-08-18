@@ -79,7 +79,8 @@ ignores the outcome.
    distinct lead/synthesis row appears beneath them with the selected lead
    model. The header shows summary
    counts, elapsed time, and shortcuts: **Ctrl+Shift+V** (`^⇧V`) to open the
-   read-only inspector overlay, and **Ctrl+Shift+X** (`^⇧X`) to abort. On
+   full-screen read-only subagent console, and **Ctrl+Shift+X** (`^⇧X`) to
+   abort. On
    narrow terminals the model and activity columns drop first; labels and
    states always remain. All displayed child text is untrusted: ANSI/OSC/APC
    sequences and control characters are stripped before theming, and every line
@@ -88,16 +89,23 @@ ignores the outcome.
    written to the session.
 
    Press **Ctrl+Shift+V** during a running panel review in TUI mode to open
-   the interactive inspector overlay:
+   the interactive subagent console — a full-screen overlay (closed with
+   **Esc**) that replaces the chat until dismissed:
+   - **Layout**: On terminals ≥ 100 columns the console shows a bordered
+     title bar (run elapsed and total cost), a sidebar listing every child
+     with status icon, model, turns, and elapsed time, and a transcript pane
+     for the selected child. Below 100 columns it falls back to a compact
+     tab-bar layout.
    - **Tabs**: Switch between reviewers (and the lead once revealed) using
-     `Left`/`Right`/`Tab`/`Shift+Tab`.
+     `Left`/`Right`/`Tab`/`Shift+Tab`. Scroll position and follow mode are
+     remembered per child, so switching back restores where you were.
    - **Scrolling**: Scroll the selected child's transcript using `Up`/`Down`/
      `PageUp`/`PageDown`/`Home`/`End` (`g`/`G`).
    - **Follow Tail**: `f` toggles auto-scrolling to the live tail (default ON;
      scrolling up disables follow, scrolling to bottom or `f` re-enables it).
-   - **Esc**: Closes the inspector overlay.
+   - **Esc**: Closes the console and restores the chat.
    - **Strictly read-only**: Input never reaches child processes; abort
-     (**Ctrl+Shift+X**) remains functional while the overlay is open.
+     (**Ctrl+Shift+X**) remains functional while the console is open.
    - **Bounded & ephemeral**: Transcripts are capped at 128 KiB / 1,000 entries
      per child with an eviction notice when earlier lines are dropped; nothing
      is persisted to the session or disk.
@@ -192,8 +200,8 @@ the `"panel-review"` section:
 | Child idle timeout | 10 min without output (SIGTERM, then SIGKILL after a 5 s grace) |
 | Child max runtime | 30 min absolute ceiling |
 | Dashboard live text preview | 240-byte rolling UTF-8 tail per child |
-| Inspector transcript cap | 128 KiB / 1,000 entries per child (oldest evicted with notice) |
-| Inspector entry text cap | 8 KiB per entry (UTF-8 safe head/tail truncation) |
+| Console transcript cap | 128 KiB / 1,000 entries per child (oldest evicted with notice) |
+| Console entry text cap | 8 KiB per entry (UTF-8 safe head/tail truncation) |
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes
