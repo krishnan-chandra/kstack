@@ -45,3 +45,23 @@ test("says GitHub accepted a single unverified pull request", () => {
 test("describes a blocked run with no selected pull request", () => {
 	assert.equal(summarizeLandResult(result("blocked")), "Did not land a pull request.");
 });
+
+test("includes the first blocker when a blocked result has frontiers", () => {
+	const blocked = result("blocked", [{ ...pr105, state: "blocked" }]);
+	blocked.blockers = ["CI checks are still pending."];
+	assert.equal(summarizeLandResult(blocked), "Did not land PR #105. CI checks are still pending.");
+});
+
+test("includes the blocker for a partially landed blocked frontier", () => {
+	const partial = result("partially-landed", [{ ...pr105, state: "blocked" }]);
+	partial.blockers = ["Watch is bounded. Retry after CI settles."];
+	assert.equal(summarizeLandResult(partial), "#105 blocked. Watch is bounded. Retry after CI settles.");
+});
+
+test("keeps bounded-watch recovery visible in the collapsed result", () => {
+	const blocked = result("blocked");
+	blocked.blockers = [
+		"CI still pending after watch. Watch is bounded. Inspect PR #105, then retry /land after CI settles.",
+	];
+	assert.equal(summarizeLandResult(blocked), blocked.blockers[0]);
+});

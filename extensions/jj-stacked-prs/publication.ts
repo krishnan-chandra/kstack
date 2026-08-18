@@ -15,9 +15,10 @@ import type {
 	StackSlice,
 } from "./types.ts";
 
-const PLAN_HASH_VERSION = 1;
+const PLAN_HASH_VERSION = 2;
 
 export interface PublicationSnapshot {
+	changeCount: number;
 	repository: GitHubRepository;
 	remote: RemoteInfo;
 	defaultBranch: string;
@@ -127,6 +128,7 @@ export function buildPublicationPlan(snapshot: PublicationSnapshot): Publication
 
 	return {
 		planId: computePlanId(snapshot, slices, actions),
+		changeCount: snapshot.changeCount,
 		repository: snapshot.repository,
 		remote: snapshot.remote,
 		defaultBranch: snapshot.defaultBranch,
@@ -143,6 +145,7 @@ function computePlanId(
 ): string {
 	const canonical = {
 		version: PLAN_HASH_VERSION,
+		changeCount: snapshot.changeCount,
 		repository: {
 			owner: snapshot.repository.owner,
 			repo: snapshot.repository.repo,

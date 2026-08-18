@@ -273,6 +273,7 @@ test("watching pending checks does not require the PR workspace", async (t) => {
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
 	assert.ok(result.blockedReasons.includes("CI still pending after watch"));
+	assert.ok(result.blockedCodes?.includes("ci-pending-after-watch"));
 	assert.equal(
 		result.blockedReasons.some((reason) => reason.includes("kstack/other")),
 		false,
@@ -367,6 +368,7 @@ test("pending checks use the watch path without triage", async (t) => {
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
 	assert.ok(result.blockedReasons.includes("CI still pending after watch"));
+	assert.ok(result.blockedCodes?.includes("ci-pending-after-watch"));
 	assert.ok(harness.calls.some((call) => call.includes("gh pr checks 42 --watch")));
 	assert.deepEqual(harness.roles, []);
 });

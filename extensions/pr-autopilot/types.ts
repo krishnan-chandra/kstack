@@ -122,6 +122,9 @@ export interface PRState {
 	hasUnresolvedThreads: boolean;
 }
 
+/* exported: stable cross-extension blocker code */
+export type AutopilotBlockedCode = "ci-pending-after-watch";
+
 /** Outcome of a full autopilot run. */
 export interface AutopilotResult {
 	status: "merge-ready" | "blocked" | "declined" | "incomplete" | "cleaned" | "aborted" | "failed";
@@ -129,6 +132,8 @@ export interface AutopilotResult {
 	mergeReady: boolean;
 	cyclesCompleted: number;
 	blockedReasons: string[];
+	/** Stable codes for callers that need to branch on known blockers; absent means no recognized code was emitted. */
+	blockedCodes?: AutopilotBlockedCode[];
 	usage: UsageSummary;
 }
 

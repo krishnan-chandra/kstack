@@ -48,8 +48,12 @@ discovery requires a bookmark at `@`; otherwise Land reports the change ID and
 asks you to create a bookmark or pass `--pr`.
 
 `--readiness` defaults to `check`. Use `watch` to let `pr-autopilot` address
-confirmed fixes and wait for CI. If autopilot pushes a new head, Land pins that
-newly verified SHA before confirmation.
+confirmed fixes and wait for CI. A watch is bounded: each CI watch waits up to
+20 minutes, and the readiness run also has a cycle limit. If checks remain
+pending, Land stops before merging or advancing the local stack. Inspect the PR,
+then retry `/land` after CI settles. Do not rebase or republish unless the PR
+head or base changed. If autopilot pushes a new head, Land pins that newly
+verified SHA before confirmation.
 
 If you omit `--method`, Land asks you to select one of the repository's enabled
 merge methods (squash or rebase only — merge commits are never allowed by

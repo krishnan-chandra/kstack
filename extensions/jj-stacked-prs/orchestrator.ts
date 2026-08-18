@@ -831,6 +831,7 @@ async function snapshotPublication(
 	const remoteBookmarks = await jj.listRemoteBookmarks(options.cwd, options.remote, deps.signal);
 	return {
 		snapshot: {
+			changeCount: model.stack.length,
 			repository: remote.github,
 			remote,
 			defaultBranch,

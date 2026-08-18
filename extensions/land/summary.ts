@@ -31,6 +31,14 @@ function outcomePhrase(item: FrontierResult): string {
 export function summarizeLandResult(result: LandResult): string {
 	const items = result.frontiers;
 	const numbers = items.map((item) => item.prNumber);
+	if (result.status === "blocked") {
+		const blocker = result.blockers[0];
+		if (items.length > 0) {
+			const subject = `Did not land ${prPhrase(numbers)}.`;
+			return blocker ? `${subject} ${blocker}` : subject;
+		}
+		return blocker ?? "Did not land a pull request.";
+	}
 	const mixed = items.length > 1 && items.some((item) => item.state !== items[0].state);
 	if (mixed) return `${items.map(outcomePhrase).join(". ")}.`;
 
@@ -42,15 +50,13 @@ export function summarizeLandResult(result: LandResult): string {
 			if (items.every((item) => item.state === "queued")) {
 				return `GitHub accepted ${prPhrase(numbers)}. Waiting to verify the merge.`;
 			}
-			return `${items.map(outcomePhrase).join(". ")}.`;
+			return `${items.map(outcomePhrase).join(". ")}.${result.blockers[0] ? ` ${result.blockers[0]}` : ""}`;
 		case "declined":
 			return items.length === 0 ? "Declined landing." : `Declined landing ${prPhrase(numbers)}.`;
 		case "aborted":
 			return items.length === 0 ? "Aborted landing." : `Aborted landing ${prPhrase(numbers)}.`;
 		case "failed":
 			return items.length === 0 ? "Failed to land." : `Failed to land ${prPhrase(numbers)}.`;
-		case "blocked":
-			return items.length === 0 ? "Did not land a pull request." : `Did not land ${prPhrase(numbers)}.`;
 		default: {
 			const _exhaustive: never = result.status;
 			return _exhaustive;

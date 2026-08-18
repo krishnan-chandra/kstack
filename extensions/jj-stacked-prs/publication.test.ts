@@ -22,6 +22,7 @@ function slice(bookmark: string, base: string | null, changeIds: string[], subje
 
 function snapshot(overrides: Partial<Parameters<typeof buildPublicationPlan>[0]> = {}) {
 	return {
+		changeCount: 1,
 		repository: { owner: "o", repo: "r" },
 		remote: {
 			name: "origin",

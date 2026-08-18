@@ -12,6 +12,7 @@ import {
 	requestPublicationFromInput,
 	syncStack,
 } from "./orchestrator.ts";
+import { renderInspect, renderPlan } from "./render.ts";
 import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
 import type { BookmarkTarget, NavigationEntry, OpenPullRequest } from "./types.ts";
 
@@ -70,6 +71,33 @@ describe("inspect and plan", () => {
 		assert.equal(model.top, "feat2");
 		assert.equal(model.stack.length, 2);
 		assert.equal(model.blockers.length, 0);
+	});
+
+	it("reports one canonical change count when an empty working-copy change trails the top bookmark", async () => {
+		const bottom = { ...commit("aaa", "unused"), bookmarks: [] };
+		const top = commit("bbb", "feat2", "aaa-commit");
+		const workingCopy = {
+			...commit("ccc", "unused", "bbb-commit"),
+			bookmarks: [],
+			empty: true,
+		};
+		const jj = fakeJj({
+			fetchStack: async () => [bottom, top, workingCopy],
+			workingCopyChangeId: async () => "ccc",
+			listLocalBookmarks: async () => [{ name: "feat2", commitId: "bbb-commit" }],
+		});
+		const deps = {
+			run: async () => ({ kind: "ok" as const, code: 0, stdout: "", stderr: "" }),
+			ui: ui(),
+			jj,
+			github: fakeGithub(),
+		};
+		const model = await inspectStack({ cwd: "/repo", top: "feat2" }, deps);
+		assert.match(renderInspect(model), /3 jj changes → 1 PR slice/);
+
+		const planned = await planStack({ cwd: "/repo", top: "feat2", remote: "origin" }, deps);
+		assert.equal(planned.status, "ok");
+		if (planned.status === "ok") assert.match(renderPlan(planned.plan), /3 jj changes → 1 PR slice/);
 	});
 
 	it("blocks a truncated publication plan", async () => {

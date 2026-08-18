@@ -67,6 +67,27 @@ function deps(exec: ExecFn, outcome = ready(NEW)) {
 	};
 }
 
+test("pending CI after watch gives an actionable retry path", async () => {
+	const pending: AutopilotResult = {
+		status: "blocked",
+		mergeReady: false,
+		cyclesCompleted: 1,
+		blockedReasons: ["Checks remain pending after the bounded watch"],
+		blockedCodes: ["ci-pending-after-watch"],
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "watch", method: "squash" },
+		deps(
+			async (_command, args) =>
+				args[0] === "repo" ? { code: 0, stdout: repo, stderr: "" } : { code: 0, stdout: pr(OLD), stderr: "" },
+			pending,
+		),
+	);
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockers.join("\n"), /Watch is bounded.*inspect PR #7.*retry \/land after CI settles/i);
+});
+
 test("lets autopilot transition an initially draft PR to ready", async () => {
 	let views = 0;
 	let autopilotRan = false;

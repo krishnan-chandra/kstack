@@ -16,10 +16,16 @@ import {
 	TOOL_CONTENT_MAX_LINES,
 } from "./types.ts";
 
+function stackShape(changeCount: number, sliceCount: number): string {
+	const changes = `${changeCount} jj ${changeCount === 1 ? "change" : "changes"}`;
+	const slices = `${sliceCount} PR ${sliceCount === 1 ? "slice" : "slices"}`;
+	return `${changes} → ${slices}`;
+}
+
 export function renderInspect(model: InspectModel): string {
 	const lines = [
 		`Stack: ${model.trunk.revset} → ${model.top ?? "(none)"}`,
-		`jj ${model.jjVersion} · ${model.stack.length} change(s)${model.truncated ? " · truncated" : ""}`,
+		`jj ${model.jjVersion} · ${stackShape(model.stack.length, model.slices.length)}${model.truncated ? " · truncated" : ""}`,
 		"",
 		"  Bookmark           Change ID     Subject",
 	];
@@ -41,6 +47,7 @@ export function renderPlan(plan: PublicationPlan): string {
 		`Repository: ${plan.repository.owner}/${plan.repository.repo}`,
 		`Remote: ${plan.remote.name} (${plan.remote.redactedUrl})`,
 		`Default branch: ${plan.defaultBranch}`,
+		`Shape: ${stackShape(plan.changeCount, plan.slices.length)}`,
 		"",
 		"Actions (base → top):",
 	];
@@ -65,12 +72,14 @@ export function renderPlan(plan: PublicationPlan): string {
 }
 
 export function renderLandConfirmation(input: {
+	changeCount: number;
 	slices: readonly { bookmark: string; prNumber: number; url: string; draft: boolean; alreadyMerged: boolean }[];
 	method: StackMergeMethod;
 	readiness: StackReadinessMode;
 }): { ok: true; body: string } | { ok: false; reason: string } {
 	const lines = [
 		`Land ${input.slices.length} stacked PR(s) bottom-up.`,
+		`Shape: ${stackShape(input.changeCount, input.slices.length)}`,
 		`Method: ${input.method}`,
 		`Readiness: ${input.readiness}`,
 		...(input.readiness === "watch"

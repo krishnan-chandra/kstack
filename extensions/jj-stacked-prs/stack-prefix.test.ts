@@ -44,6 +44,65 @@ describe("stack-prefix landing", () => {
 		assert.deepEqual(calls, [11, 12]);
 	});
 
+	it("reports an unpublished slice as requiring publication", async () => {
+		const stack = [commit("aaa", "feat1"), commit("bbb", "feat2", "aaa-commit")];
+		const result = await landStackThroughPullRequest(
+			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+				}),
+				github: fakeGithub({
+					listOpenPrs: async () => [openPrs()[1]],
+					listPrsForHead: async () => [],
+				}),
+				landPr: async () => {
+					throw new Error("landing must not run before publication");
+				},
+			},
+		);
+		assert.equal(result.status, "stack");
+		if (result.status === "stack" && result.outcome.status === "blocked") {
+			assert.equal(result.outcome.blockers[0]?.code, "publish-required");
+			assert.equal(result.outcome.blockers[0]?.bookmark, "feat1");
+			assert.match(result.outcome.blockers[0]?.message ?? "", /publish.*before landing/i);
+		} else {
+			assert.fail("expected publication-required blocker");
+		}
+	});
+
+	it("distinguishes multiple historical PRs from multiple open PRs", async () => {
+		const stack = [commit("aaa", "feat1"), commit("bbb", "feat2", "aaa-commit")];
+		const historical = { ...openPrs()[0], number: 10 };
+		const result = await landStackThroughPullRequest(
+			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+				}),
+				github: fakeGithub({
+					listOpenPrs: async () => [openPrs()[1]],
+					listPrsForHead: async (_repo, head) => (head === "feat1" ? [historical, openPrs()[0]] : []),
+				}),
+				landPr: async () => {
+					throw new Error("landing must not run with ambiguous PR history");
+				},
+			},
+		);
+		assert.equal(result.status, "stack");
+		if (result.status === "stack" && result.outcome.status === "blocked") {
+			assert.equal(result.outcome.blockers[0]?.code, "ambiguous-pr-history");
+		} else {
+			assert.fail("expected ambiguous PR history blocker");
+		}
+	});
+
 	it("preserves single-PR landing when the selected PR closes only one local slice", async () => {
 		const one = commit("aaa", "feat1");
 		const result = await landStackThroughPullRequest(
