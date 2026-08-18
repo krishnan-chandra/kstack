@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
-import { Box, stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Box, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { requestJjStackCapabilities, requestStackPublication } from "../jj-stacked-prs/api.ts";
 import { requestLand } from "../land/api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
@@ -30,12 +30,12 @@ import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
-import { type OpenInspectorResult, openInspector } from "./inspector-overlay.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 import { PlanImplementDashboardStore, type PlanPipelineDashboard } from "./live-dashboard.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { createStackDeliveryAdapter } from "./stack-delivery.ts";
+import { type OpenSubagentConsoleResult, openSubagentConsole } from "./subagent-console.ts";
 import { PlanImplementTranscriptStore } from "./transcript-store.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
 import { validateVcsMode } from "./vcs-mode.ts";
@@ -76,15 +76,15 @@ function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[]
 export default function planImplementExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "plan-implement");
 	const lifecycle = new WorkflowLifecycle();
-	let activeInspector: OpenInspectorResult | undefined;
+	let activeConsole: OpenSubagentConsoleResult | undefined;
 	let activeStores: { dashboard: PlanImplementDashboardStore; transcripts: PlanImplementTranscriptStore } | undefined;
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());
 	pi.on("session_shutdown", () => {
-		activeInspector?.close();
-		activeInspector = undefined;
+		activeConsole?.close();
+		activeConsole = undefined;
 		activeStores = undefined;
 		lifecycle.shutdownSession();
 	});
@@ -95,12 +95,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("No plan/implement run is active.", "info");
 				return;
 			}
-			if (activeInspector) return;
+			if (activeConsole) return;
 			const { dashboard, transcripts } = activeStores;
-			const inspector = openInspector(ctx, dashboard, transcripts, {
+			const subagentConsole = openSubagentConsole(ctx, dashboard, transcripts, {
 				text: {
 					stripTerminalSequences,
 					truncateToWidth: (text, width) => truncateToWidth(text, width),
+					visibleWidth,
 				},
 				onAbort: () => {
 					if (!lifecycle.abortActiveChild()) {
@@ -110,9 +111,9 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					}
 				},
 			});
-			activeInspector = inspector;
-			inspector.closed.finally(() => {
-				if (activeInspector === inspector) activeInspector = undefined;
+			activeConsole = subagentConsole;
+			subagentConsole.closed.finally(() => {
+				if (activeConsole === subagentConsole) activeConsole = undefined;
 			});
 		},
 	});
@@ -487,8 +488,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			tick: () => dashboardStore.tick(),
 			dispose: () => {
 				clearInterval(ticker);
-				activeInspector?.close();
-				activeInspector = undefined;
+				activeConsole?.close();
+				activeConsole = undefined;
 				activeStores = undefined;
 				transcriptStore.dispose();
 				disposeWidget();

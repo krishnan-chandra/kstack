@@ -12,8 +12,8 @@ describe("stack-prefix landing", () => {
 		const jj = fakeJj({
 			fetchStack: async () => stack,
 			listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
-			abandonRange: async (_cwd, _trunk, merged) => {
-				stack = stack.filter((item) => !item.bookmarks.includes(merged));
+			abandonRange: async (_cwd, _trunk, mergedBookmark) => {
+				stack = stack.filter((item) => !item.bookmarks.includes(mergedBookmark));
 			},
 		});
 		const github = fakeGithub({

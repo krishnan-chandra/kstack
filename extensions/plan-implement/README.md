@@ -184,16 +184,16 @@ model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an active
 the plan-approval boundary the shortcut reports that no child is running and
 does not pre-abort the future implementer.
 
-## Live TUI Dashboard & Transcript Inspector
+## Live TUI Dashboard & Subagent Console
 
-In TUI mode, plan-implement mounts a live dashboard widget above the editor and provides an interactive read-only inspector overlay:
+In TUI mode, plan-implement mounts a live dashboard widget above the editor and provides an interactive read-only subagent console:
 
 - **Live Dashboard**: Mounted above the editor during the workflow. Displays status icons (`○` queued, `●` running, `✓` completed, `✗` failed, `⊘` aborted), turns, elapsed time, current tool activity, and a rolling single-line preview of streaming assistant text for each child phase (Planner, Implementer, and subsequent Review fixer / Publisher phases).
-- **Transcript Inspector Overlay (`Ctrl+Shift+P`)**: A strictly read-only popup overlay allowing the user to inspect the streaming and historical transcripts of each phase (Planner, Implementer, Review fixer, Publisher).
-  - Use `←` / `→` or `Tab` / `Shift+Tab` to switch between child tabs.
+- **Subagent Console (`Ctrl+Shift+P`)**: A strictly read-only full-screen overlay for inspecting the streaming and historical transcripts of each phase (Planner, Implementer, Review fixer, Publisher). On terminals ≥ 100 columns it shows a bordered title bar (run elapsed and total cost), a per-phase sidebar (status, model, turns, elapsed), and a transcript pane; narrower terminals get a compact tab-bar layout.
+  - Use `←` / `→` or `Tab` / `Shift+Tab` to switch between children. Scroll position and follow mode are remembered per child across switches.
   - Use `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End` / `g` / `G` to scroll.
   - Press `f` to toggle auto-follow tail.
-  - Press `Escape` to close the overlay.
+  - Press `Escape` to close the console and restore the chat.
   - Press `Ctrl+Shift+I` or `Ctrl+Shift+X` to abort the running child.
   - Displays lifecycle notes, tool calls with elapsed durations, turn boundaries with input/output token counts and costs, wrapped assistant text, and the real-time live streaming tail.
 

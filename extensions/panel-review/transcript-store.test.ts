@@ -189,6 +189,24 @@ describe("PanelTranscriptStore", () => {
 		}
 	});
 
+	it("preserves cumulative cost when older turn entries are evicted", () => {
+		const store = new PanelTranscriptStore(() => 0, 0);
+		store.addChild("r1");
+		for (let turn = 1; turn <= 20; turn++) {
+			store.push("r1", {
+				kind: "turn_end",
+				turn,
+				text: "x".repeat(MAX_ENTRY_TEXT_BYTES),
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 1, turns: 1 },
+				at: 0,
+			});
+		}
+
+		assert.equal(store.wasEvicted("r1"), true);
+		assert.ok(store.getEntries("r1").filter((entry) => entry.kind === "turn").length < 20);
+		assert.equal(store.getTotalCost("r1"), 20);
+	});
+
 	it("evicts oldest entries when byte capacity exceeds limit (including live tail)", () => {
 		const store = new PanelTranscriptStore(() => Date.now(), 0);
 		store.addChild("r1");

@@ -178,6 +178,8 @@ export function renderDashboard(
 
 export interface RenderRequester {
 	requestRender(): void;
+	/** Terminal geometry; full-screen overlays read the exact row count from here. */
+	terminal?: { rows?: number };
 }
 
 export class LiveDashboardComponent implements Component {

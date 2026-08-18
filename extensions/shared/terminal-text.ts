@@ -6,6 +6,8 @@
 export interface TerminalText {
 	stripTerminalSequences(text: string): string;
 	truncateToWidth(text: string, width: number): string;
+	/** Display width in cells, ignoring terminal sequences. Optional; see visibleWidthFallback. */
+	visibleWidth?(text: string): number;
 }
 
 const ANSI_PATTERN =
@@ -62,9 +64,25 @@ function fallbackTruncateToWidth(text: string, width: number): string {
 	return text;
 }
 
+export function visibleWidthFallback(input: string): number {
+	const stripped = stripTerminalSequencesFallback(input);
+	let width = 0;
+	for (const ch of stripped) {
+		width += codePointWidth(ch.codePointAt(0) ?? 0);
+	}
+	return width;
+}
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export function segmentGraphemesFallback(input: string): Iterable<string> {
+	return Array.from(graphemeSegmenter.segment(input), ({ segment }) => segment);
+}
+
 export const fallbackTerminalText: TerminalText = {
 	stripTerminalSequences: stripTerminalSequencesFallback,
 	truncateToWidth: fallbackTruncateToWidth,
+	visibleWidth: visibleWidthFallback,
 };
 
 export function sanitizeDisplayText(input: string, text: TerminalText = fallbackTerminalText): string {
