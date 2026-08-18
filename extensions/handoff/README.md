@@ -25,6 +25,10 @@ With `--archive`, the active parent path is moved, so the replacement omits the 
 
 `--archive` opts into archiving the current session before the confirmed handoff prompt is sent. The flag itself is explicit archive intent, so no separate archive confirmation appears. After the handoff prompt is saved, the old session becomes read-only and leaves `/resume`; the replacement session records that its predecessor is archived and reads it through the exact-ID archive fallback. If archiving fails, the continuation prompt is not sent.
 
+Pi provides argument completion for the finite handoff flags: `--archive`,
+`--model`, `--model=`, and `-m`. Model references and the continuation goal stay
+free-form, so the completion list does not guess their values.
+
 `--model` (also `-m` or `--model=provider/model-id[:effort]`) selects the model
 and optional effort for the replacement session. It accepts a canonical
 `provider/model-id`, a unique bare model id, an exact short name, or a unique
