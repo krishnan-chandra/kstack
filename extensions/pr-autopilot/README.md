@@ -23,7 +23,7 @@ model.
 | `threads` | Fetch state, spawn a tiny-model triager, then a fixer for threads marked `fix`. Dismiss/ask are handled by the parent. Commit and push. One cycle. |
 | `drive` | Loop: refresh → merge base if behind/conflicted → comments → watch pending CI → flake rerun → code CI, up to 3 fix cycles. |
 | `watch` | Same as `drive` with up to 15 fix cycles. Watches `gh pr checks --watch` when nothing is actionable and CI is still running. |
-| `cleanup` | In Git mode, remove the current managed worktree and safely delete its branch after confirmation. In jj mode, report a no-op. Session archival remains separate. |
+| `cleanup` | In Git mode, verify and remove the current clean, unlocked Kstack-managed worktree, then safely delete its branch after confirmation. Dirty, untracked, locked, unregistered, and out-of-root worktrees are preserved. In jj mode, report a no-op. Session archival remains separate. |
 
 If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR authored by the current GitHub user** in the repository (sorted by number, not GitHub's default list order). Before any mutation, the selected workstream must match the PR's exact head ref and GitHub head SHA. Git mode also requires a clean tree. jj mode requires the PR bookmark to target an empty `@` automation checkpoint; the implementation remains in its ancestors.
 

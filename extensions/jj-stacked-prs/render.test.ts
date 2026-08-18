@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderLandConfirmation } from "./render.ts";
+import { renderLandConfirmation, renderLandOutcome } from "./render.ts";
 
 const slices = [
 	{
@@ -27,4 +27,15 @@ test("check confirmation does not claim that readiness can mutate", () => {
 	assert.equal(rendered.ok, true);
 	if (!rendered.ok) return;
 	assert.doesNotMatch(rendered.body, /edit code/);
+});
+
+test("cancelled and failed outcomes retain accumulated warnings", () => {
+	assert.match(
+		renderLandOutcome({ status: "cancelled", warnings: ["remote branch cleanup failed"] }),
+		/Warnings:\n- remote branch cleanup failed/,
+	);
+	assert.match(
+		renderLandOutcome({ status: "failed", error: "landing failed", warnings: ["earlier cleanup warning"] }),
+		/Warnings:\n- earlier cleanup warning/,
+	);
 });

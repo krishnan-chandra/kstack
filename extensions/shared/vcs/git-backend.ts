@@ -1,7 +1,8 @@
 /** Git implementation of K-Stack's repository-mutation contract. */
 
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { extractSlug } from "../slug.ts";
 import type {
@@ -37,6 +38,92 @@ function output(result: ExecFnResult): string {
 function oneLine(result: ExecFnResult): string | undefined {
 	if (result.code !== 0) return undefined;
 	return output(result) || undefined;
+}
+
+interface WorktreeRecord {
+	path: string;
+	branch?: string;
+	locked: boolean;
+}
+
+function parseWorktreeRecords(stdout: string): WorktreeRecord[] {
+	const records: WorktreeRecord[] = [];
+	let current: WorktreeRecord | undefined;
+	for (const field of stdout.split("\0")) {
+		if (field.startsWith("worktree ")) {
+			if (current) records.push(current);
+			current = { path: field.slice("worktree ".length), locked: false };
+		} else if (current && field.startsWith("branch refs/heads/")) {
+			current.branch = field.slice("branch refs/heads/".length);
+		} else if (current && (field === "locked" || field.startsWith("locked "))) {
+			current.locked = true;
+		}
+	}
+	if (current) records.push(current);
+	return records;
+}
+
+function isContained(root: string, path: string): boolean {
+	const suffix = relative(root, path);
+	return suffix !== "" && !suffix.startsWith("..") && !isAbsolute(suffix);
+}
+
+/* exported: shared Git and Graphite managed-worktree cleanup preflight */
+export async function removeManagedGitWorktree(input: {
+	cwd: string;
+	ref: string;
+	managedRoot?: string;
+	realpath?: (path: string) => string;
+	git(cwd: string, args: string[], timeout?: number): Promise<ExecFnResult>;
+}): Promise<VcsResult<{ ownerRoot: string }>> {
+	const realpath = input.realpath ?? realpathSync;
+	let canonicalCwd: string;
+	let managedRoot: string;
+	try {
+		canonicalCwd = realpath(input.cwd);
+		managedRoot = realpath(resolve(input.managedRoot ?? join(homedir(), ".pi", "kstack", "worktrees")));
+	} catch (error) {
+		return { ok: false, error: `Could not verify the managed worktree path: ${failure(error).stderr}` };
+	}
+	if (!isContained(managedRoot, canonicalCwd)) {
+		return { ok: false, error: `Refusing to remove a worktree outside the managed root ${managedRoot}.` };
+	}
+	const common = await input.git(canonicalCwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], 5_000);
+	const commonDir = output(common);
+	if (common.code !== 0 || !commonDir) {
+		return { ok: false, error: `Could not locate the owning repository: ${common.stderr.trim()}` };
+	}
+	const ownerRoot = join(commonDir, "..");
+	const listed = await input.git(ownerRoot, ["worktree", "list", "--porcelain", "-z"], 5_000);
+	if (listed.code !== 0) return { ok: false, error: `Could not inspect Git worktrees: ${listed.stderr.trim()}` };
+	const record = parseWorktreeRecords(listed.stdout).find((item) => {
+		try {
+			return realpath(item.path) === canonicalCwd;
+		} catch {
+			return false;
+		}
+	});
+	if (!record) return { ok: false, error: `Git does not list ${canonicalCwd} as an authoritative worktree.` };
+	if (record.branch !== input.ref) {
+		return {
+			ok: false,
+			error: `Worktree branch changed: expected ${input.ref}, found ${record.branch ?? "detached HEAD"}.`,
+		};
+	}
+	if (record.locked) return { ok: false, error: `Worktree ${canonicalCwd} is locked; unlock it before cleanup.` };
+	const status = await input.git(canonicalCwd, ["status", "--porcelain=v1", "--untracked-files=all"], 5_000);
+	if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
+	if (output(status)) {
+		return { ok: false, error: `Worktree ${canonicalCwd} has uncommitted or untracked files; cleanup preserved it.` };
+	}
+	const removed = await input.git(ownerRoot, ["worktree", "remove", canonicalCwd], 15_000);
+	if (removed.code !== 0) {
+		return {
+			ok: false,
+			error: `Worktree removal failed: ${removed.stderr.trim()}. You may need to remove it manually.`,
+		};
+	}
+	return { ok: true, ownerRoot };
 }
 
 function parsePorcelainPaths(stdout: string): string[] {
@@ -296,20 +383,15 @@ export class GitBackend implements GitVcsBackend {
 	}
 
 	async removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
-		const common = await this.git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], 5_000);
-		const commonDir = output(common);
-		if (common.code !== 0 || !commonDir) {
-			return { ok: false, error: `Could not locate the owning repository: ${common.stderr.trim()}` };
-		}
-		const ownerRoot = join(commonDir, "..");
-		const remove = await this.git(ownerRoot, ["worktree", "remove", cwd, "--force"], 15_000);
-		if (remove.code !== 0) {
-			return {
-				ok: false,
-				error: `Worktree removal failed: ${remove.stderr.trim()}. You may need to remove it manually.`,
-			};
-		}
-		const deleted = await this.git(ownerRoot, ["branch", "-d", ref], 5_000);
+		const removed = await removeManagedGitWorktree({
+			cwd,
+			ref,
+			managedRoot: this.deps.managedRoot,
+			realpath: this.deps.realpath,
+			git: (gitCwd, args, timeout) => this.git(gitCwd, args, timeout),
+		});
+		if (!removed.ok) return removed;
+		const deleted = await this.git(removed.ownerRoot, ["branch", "-d", ref], 5_000);
 		return deleted.code === 0
 			? { ok: true }
 			: { ok: true, warning: `Branch deletion warning: ${deleted.stderr.trim()}` };

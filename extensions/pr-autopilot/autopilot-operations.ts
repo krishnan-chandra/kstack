@@ -350,6 +350,7 @@ export async function runCleanup(
 			"This will:\n" +
 			`1. Remove the Git worktree at ${cwd}\n` +
 			`2. Delete branch ${branch} (if safe)\n\n` +
+			"Cleanup stops if the worktree is dirty, untracked, locked, outside Kstack's managed root, or no longer registered by Git. " +
 			"Session archival is a separate manual step. This cleanup is irreversible. Continue?",
 	);
 	if (!confirmed) return false;

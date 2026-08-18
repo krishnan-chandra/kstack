@@ -95,6 +95,10 @@ export function renderLandConfirmation(input: {
 	return { ok: true, body };
 }
 
+function warningLines(warnings: readonly string[] | undefined): string[] {
+	return warnings && warnings.length > 0 ? ["Warnings:", ...warnings.map((warning) => `- ${warning}`)] : [];
+}
+
 export function renderLandOutcome(outcome: StackLandOutcome): string {
 	switch (outcome.status) {
 		case "completed":
@@ -103,6 +107,9 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 					`Landed ${outcome.frontiers.length} stacked PR(s).`,
 					...outcome.frontiers.map(renderFrontierLine),
 					...(outcome.completedMutations.length > 0 ? ["", ...outcome.completedMutations] : []),
+					...(outcome.warnings && outcome.warnings.length > 0
+						? ["", "Warnings:", ...outcome.warnings.map((warning) => `- ${warning}`)]
+						: []),
 				].join("\n"),
 			);
 		case "partial":
@@ -113,6 +120,9 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 					...(outcome.remainingBookmarks.length > 0 ? [`Remaining: ${outcome.remainingBookmarks.join(", ")}`] : []),
 					...(outcome.recoveryOperationIds.length > 0
 						? [`Recovery: jj op restore ${outcome.recoveryOperationIds.at(-1)}`]
+						: []),
+					...(outcome.warnings && outcome.warnings.length > 0
+						? ["Warnings:", ...outcome.warnings.map((warning) => `- ${warning}`)]
 						: []),
 				].join("\n"),
 			);
@@ -127,17 +137,40 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 		case "busy":
 			return outcome.message;
 		case "cancelled":
-			return "Stack landing cancelled.";
+			return boundText(
+				[
+					"Stack landing cancelled.",
+					...(outcome.frontiers ?? []).map(renderFrontierLine),
+					...(outcome.completedMutations ?? []),
+					...(outcome.recoveryOperationIds?.length
+						? [`Recovery: jj op restore ${outcome.recoveryOperationIds.at(-1)}`]
+						: []),
+					...warningLines(outcome.warnings),
+				].join("\n"),
+			);
 		case "indeterminate":
 			return boundText(
 				[
 					`Stack landing is indeterminate: ${outcome.inFlight}`,
 					...outcome.frontiers.map(renderFrontierLine),
 					outcome.recovery ?? "Inspect GitHub and local bookmarks before retrying.",
+					...(outcome.warnings && outcome.warnings.length > 0
+						? ["Warnings:", ...outcome.warnings.map((warning) => `- ${warning}`)]
+						: []),
 				].join("\n"),
 			);
 		case "failed":
-			return `Stack landing failed: ${outcome.error}`;
+			return boundText(
+				[
+					`Stack landing failed: ${outcome.error}`,
+					...(outcome.frontiers ?? []).map(renderFrontierLine),
+					...(outcome.completedMutations ?? []),
+					...(outcome.recoveryOperationIds?.length
+						? [`Recovery: jj op restore ${outcome.recoveryOperationIds.at(-1)}`]
+						: []),
+					...warningLines(outcome.warnings),
+				].join("\n"),
+			);
 		default: {
 			const _exhaustive: never = outcome;
 			return _exhaustive;

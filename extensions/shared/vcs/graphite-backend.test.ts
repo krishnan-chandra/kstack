@@ -252,4 +252,24 @@ describe("GraphiteBackend", () => {
 		);
 		assert.ok(calls.includes("gt --no-interactive track kstack/fix-search --parent main"));
 	});
+
+	it("preserves dirty managed worktrees during cleanup", async () => {
+		const cwd = "/managed/task";
+		const { exec, calls } = scripted({
+			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
+			"git worktree list --porcelain -z": {
+				stdout: `worktree ${cwd}\0HEAD ${sha}\0branch refs/heads/kstack/task\0\0`,
+			},
+			"git status --porcelain=v1 --untracked-files=all": { stdout: "?? notes.txt\n" },
+		});
+		const backend = new GraphiteBackend(exec, { managedRoot: "/managed", realpath: (path) => path });
+		assert.deepEqual(await backend.isolation.remove(cwd, "kstack/task"), {
+			ok: false,
+			error: `Worktree ${cwd} has uncommitted or untracked files; cleanup preserved it.`,
+		});
+		assert.equal(
+			calls.some((call) => call.includes("worktree remove") || call.includes("gt --no-interactive delete")),
+			false,
+		);
+	});
 });

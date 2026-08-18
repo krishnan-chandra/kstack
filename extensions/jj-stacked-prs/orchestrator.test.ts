@@ -1602,7 +1602,11 @@ describe("landStack", () => {
 		);
 		assert.equal(result.status, "completed");
 		if (result.status === "completed") {
-			assert.ok(result.completedMutations.some((line) => /Failed to delete remote branch feat1/.test(line)));
+			assert.ok(result.warnings?.some((line) => /Failed to delete remote branch feat1/.test(line)));
+			assert.equal(
+				result.completedMutations.some((line) => /Failed to delete remote branch/.test(line)),
+				false,
+			);
 		}
 	});
 });
