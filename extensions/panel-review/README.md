@@ -46,10 +46,11 @@ ignores the outcome.
    The diff is never passed on a command line.
 3. Asks for the review intent (from positional arguments or an editor prefilled with
    commit subjects) and confirms once before spending anything.
-4. Spawns 2–5 reviewers concurrently. Each is an ephemeral child process:
+4. Spawns 2–5 reviewers concurrently. Each is an isolated child process with a retained native session:
 
    ```
-   pi --mode json -p --no-session \
+   pi --mode json -p --session-dir ~/.pi/kstack/subagents \
+     --session-id <uuid> --name panel-review/<label> \
      --no-extensions --no-skills --no-prompt-templates \
      --tools read,grep,find,ls \
      --model <provider/model[:thinking]> \
@@ -232,7 +233,7 @@ node --test extensions/panel-review/
 Manual smoke test: in a fixture repository with committed, staged, unstaged,
 untracked, and binary changes, run
 `/panel-review --base HEAD "fixture review"` and verify parallel
-progress, child argv (`--no-session`, discovery flags, read-only tools), the
+progress, child argv (managed session flags, discovery flags, read-only tools), the
 confirmation names the thermo-nuclear lens, a single verdict message, no child
 session files, and an unchanged repository.
 

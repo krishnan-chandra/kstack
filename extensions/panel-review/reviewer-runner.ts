@@ -47,6 +47,7 @@ export async function runReviewer(options: RunReviewerOptions): Promise<Reviewer
 	const result = await runChildAgent({
 		args: buildChildArgs(options),
 		cwd: options.cwd,
+		session: { owner: "panel-review", label: options.spec.label },
 		signal: options.signal,
 		deps: {
 			...deps,
@@ -61,9 +62,16 @@ export async function runReviewer(options: RunReviewerOptions): Promise<Reviewer
 	const identity = { label: options.spec.label, model: options.model };
 	if (result.status === "completed") return { ...identity, ...result };
 	if (result.status === "aborted")
-		return { ...identity, status: "aborted", usage: result.usage, activity: result.activity };
+		return { ...identity, status: "aborted", usage: result.usage, activity: result.activity, session: result.session };
 	let error = result.error;
 	if (error.startsWith("Child produced no output."))
 		error = `Reviewer produced no output.${error.slice("Child produced no output.".length)}${result.stderr.trim() ? ` stderr: ${result.stderr.trim()}` : ""}`;
-	return { ...identity, status: "failed", error, usage: result.usage, activity: result.activity };
+	return {
+		...identity,
+		status: "failed",
+		error,
+		usage: result.usage,
+		activity: result.activity,
+		session: result.session,
+	};
 }

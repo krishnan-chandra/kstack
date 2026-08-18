@@ -67,5 +67,5 @@ test("child keeps skills and context but disables recursive runtime features", (
 	assert.ok(args.includes("--no-extensions"));
 	assert.ok(args.includes("--no-prompt-templates"));
 	assert.ok(!args.includes("--no-skills"));
-	assert.ok(args.includes("--no-session"));
+	assert.ok(!args.includes("--no-session"));
 });

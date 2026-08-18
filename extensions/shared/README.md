@@ -5,7 +5,8 @@
 | Module | Purpose |
 | --- | --- |
 | `change-kind.ts` | Defines the change-kind taxonomy, labels, and proof-obligation playbook names. |
-| `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, and parses their JSONL event streams. |
+| `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, persists native sessions, and parses their JSONL event streams. |
+| `subagent-sessions.ts` | Owns native child-session identity, active leases, file resolution, and retention. |
 | `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
 | `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec` for VCS modules. |
@@ -46,6 +47,12 @@ The gate has these narrow exceptions:
 
 Treat each exception as dependency debt. Add a public `api.ts` or `types.ts`
 contract instead of extending the exception list.
+
+## Subagent sessions
+
+Every child launched through `runChildAgent` writes a native Pi session to the flat Kstack-managed directory `~/.pi/kstack/subagents/`. Active leases prevent pruning while children are running. Completed sessions are pruned oldest-first to a global cap of 500 files.
+
+The normal `/resume` list does not search this custom directory. Open a retained session directly with `pi --session <absolute-jsonl-path>`. The session-archive extension does not currently index this directory. References can therefore outlive their files after retention pruning.
 
 ## Environment variables
 

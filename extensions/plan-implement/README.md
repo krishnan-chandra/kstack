@@ -87,7 +87,7 @@ Bug fixes require a before-and-after reproduction, refactors pin behavior,
 performance work compares matching measurements, features prove observable
 behavior, and prototypes stay isolated and produce a decision.
 
-Both children use `--no-session --no-extensions --no-prompt-templates`. The
+Children persist native sessions under `~/.pi/kstack/subagents/` and use `--no-extensions --no-prompt-templates`. The
 review-fixer and publisher phases reuse the implementer model and tools; the
 publisher's skills (`write-pr`, `find-reviewers`, and in stack mode the
 re-added skill set) reach the child through normal skill discovery or explicit

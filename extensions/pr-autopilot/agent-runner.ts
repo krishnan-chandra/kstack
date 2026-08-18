@@ -33,6 +33,7 @@ interface AgentRunResultBase {
 	role: AutopilotAgentRole;
 	model: string;
 	usage: UsageSummary;
+	session: import("../shared/child-agent-runner.ts").ChildSession;
 }
 export type AgentRunResult =
 	| (AgentRunResultBase & { status: "completed"; output: string })
@@ -63,6 +64,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 			noTools: options.noTools,
 		}),
 		cwd: options.cwd,
+		session: { owner: "pr-autopilot", label: options.role },
 		stdin: options.stdin,
 		signal: options.signal,
 		deps: {
@@ -76,7 +78,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 		},
 		onProgress: (progress) => options.onProgress?.({ role: options.role, ...progress }),
 	});
-	const identity = { role: options.role, model, usage: result.usage };
+	const identity = { role: options.role, model, usage: result.usage, session: result.session };
 	if (result.status === "completed") return { ...identity, status: "completed", output: result.output };
 	if (result.status === "aborted") return { ...identity, status: "aborted" };
 	return {

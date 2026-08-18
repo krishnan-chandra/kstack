@@ -177,6 +177,10 @@ after upgrading starts with an empty handled-item filter.
 - Secrets (`.env`, `credentials.json`, keys) and `.github/workflows/**` are
   restored and refused before the parent records a fix.
 
+## Child-session history
+
+Autopilot child roles persist native Pi sessions under `~/.pi/kstack/subagents/`. Reopen a retained run with `pi --session <absolute-jsonl-path>`; normal `/resume` and session-archive do not list this managed store.
+
 ## Aborting
 
 Press <kbd>Ctrl+Shift+B</kbd> during an autopilot run to abort the active child

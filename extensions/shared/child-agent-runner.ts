@@ -9,6 +9,16 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { parsePositiveInteger } from "./config-validate.ts";
 import { JsonLineParser } from "./pi-json-lines.ts";
+import {
+	type ChildSession,
+	type ChildSessionIdentity,
+	createSubagentSessionStore,
+	type ObservedSessionHeader,
+	type SubagentSessionStore,
+	validateSessionHeader,
+} from "./subagent-sessions.ts";
+
+export type { ChildSession, ChildSessionIdentity, SubagentSessionStore };
 
 export interface SpawnedProcess {
 	stdin?: { write(data: string): boolean; end(): void };
@@ -41,6 +51,7 @@ export interface ChildRunnerDeps {
 	outputCapBytes?: number;
 	stderrCapBytes?: number;
 	stdoutLineCapBytes?: number;
+	sessionStore?: SubagentSessionStore;
 }
 
 export type ChildEvent =
@@ -52,6 +63,7 @@ export type ChildEvent =
 interface RunChildOptions {
 	args: string[];
 	cwd: string;
+	session: ChildSessionIdentity;
 	stdin?: string;
 	signal?: AbortSignal;
 	deps?: ChildRunnerDeps;
@@ -59,10 +71,12 @@ interface RunChildOptions {
 	onEvent?: (event: ChildEvent) => void;
 }
 
-type ChildRunResult =
+type ChildProcessResult =
 	| { status: "completed"; output: string; usage: ChildUsage }
 	| { status: "failed"; error: string; usage: ChildUsage; stderr: string; activity?: string }
 	| { status: "aborted"; usage: ChildUsage; activity?: string };
+
+type ChildRunResult = ChildProcessResult & { session: ChildSession };
 
 const DEFAULT_OUTPUT_CAP = 1024 * 1024;
 const DEFAULT_STDERR_CAP = 64 * 1024;
@@ -81,7 +95,7 @@ interface ChildIsolationOptions {
 
 /** Canonical isolation prefix for isolated Pi child processes. */
 export function childIsolationArgs(options: ChildIsolationOptions = {}): string[] {
-	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions"];
+	const args = ["--mode", "json", "-p", "--no-extensions"];
 	if (options.noSkills !== false) args.push("--no-skills");
 	args.push("--no-prompt-templates");
 	if (options.noContextFiles) args.push("--no-context-files");
@@ -138,6 +152,11 @@ function emptyUsage(): ChildUsage {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
 
+function stripFreshSessionWarning(stderr: string, id: string): string {
+	const warning = `Warning: No project session found with id '${id}'; creating a new session with that id.`;
+	return stderr.replace(warning, "").trim();
+}
+
 function assistantText(message: { content?: { type?: string; text?: string }[] } | undefined): string {
 	return (message?.content ?? [])
 		.filter((part) => part.type === "text" && part.text)
@@ -147,8 +166,20 @@ function assistantText(message: { content?: { type?: string; text?: string }[] }
 
 export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult> {
 	const deps = options.deps ?? {};
+	const sessionStore = deps.sessionStore ?? createSubagentSessionStore();
+	const preparedResult = sessionStore.prepare(options.session, options.cwd);
+	if (!preparedResult.ok) {
+		return Promise.resolve({
+			status: "failed",
+			error: preparedResult.failure.error,
+			usage: emptyUsage(),
+			stderr: "",
+			session: preparedResult.failure.session,
+		});
+	}
+	const prepared = preparedResult.prepared;
 	const spawnImpl = deps.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
-	const invocation = (deps.piInvocation ?? getPiInvocation)(options.args);
+	const invocation = (deps.piInvocation ?? getPiInvocation)([...prepared.cliArgs, ...options.args]);
 	const debugCap = parsePositiveInteger(process.env.KSTACK_CHILD_DEBUG_CAP_BYTES);
 	const outputCap = debugCap ?? deps.outputCapBytes ?? DEFAULT_OUTPUT_CAP;
 	const stderrCap = debugCap ?? deps.stderrCapBytes ?? DEFAULT_STDERR_CAP;
@@ -166,7 +197,13 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 				stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			});
 		} catch (error) {
-			resolve({ status: "failed", error: `Spawn failed: ${(error as Error).message}`, usage, stderr: "" });
+			resolve({
+				status: "failed",
+				error: `Spawn failed: ${(error as Error).message}`,
+				usage,
+				stderr: "",
+				session: sessionStore.finish(prepared, { spawnFailed: true }),
+			});
 			return;
 		}
 
@@ -187,6 +224,10 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		let lastToolStartAt: number | undefined;
+		let observedHeader: ObservedSessionHeader | undefined;
+		let forcedMissingReason: "setup-failed" | "protocol-mismatch" | undefined;
+		let firstRecordSeen = false;
+		let spawnFailed = false;
 
 		const emit = () => options.onProgress?.({ turns: usage.turns, activity, ...(preview ? { preview } : {}) });
 		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
@@ -217,14 +258,19 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			aborting = true;
 			stop();
 		};
-		const finish = (result: ChildRunResult) => {
+		const finish = (result: ChildProcessResult) => {
 			if (settled) return;
 			settled = true;
 			if (idleTimer) clearTimeout(idleTimer);
 			if (runtimeTimer) clearTimeout(runtimeTimer);
 			if (graceTimer) clearTimeout(graceTimer);
 			options.signal?.removeEventListener("abort", abort);
-			resolve(result);
+			const session = sessionStore.finish(prepared, {
+				header: observedHeader,
+				spawnFailed,
+				forcedMissingReason,
+			});
+			resolve({ ...result, session });
 		};
 		const armIdle = () => {
 			if (settled || deps.idleTimeoutMs === undefined) return;
@@ -235,8 +281,16 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			}, deps.idleTimeoutMs);
 		};
 
+		const spawned = sessionStore.markSpawned(prepared, child.pid);
+		if (!spawned.ok) {
+			forcedMissingReason = "setup-failed";
+			protocolError = spawned.failure.error;
+			stop();
+		}
+
 		const parser = new JsonLineParser(
 			(event) => {
+				if (event.type === "session") return;
 				if (event.type === "message_start" && event.message?.role === "assistant") {
 					preview = "";
 					emit();
@@ -298,6 +352,22 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			},
 			{
 				maxLineBytes: lineCap,
+				onRecord: (record) => {
+					if (!firstRecordSeen) {
+						firstRecordSeen = true;
+						const validation = validateSessionHeader(record, prepared);
+						if (validation.ok) observedHeader = validation.header;
+						else forcedMissingReason = "protocol-mismatch";
+					} else if (typeof record === "object" && record !== null && "type" in record && record.type === "session") {
+						forcedMissingReason = "protocol-mismatch";
+					}
+				},
+				onMalformed: () => {
+					if (!firstRecordSeen) {
+						firstRecordSeen = true;
+						forcedMissingReason = "protocol-mismatch";
+					}
+				},
 				onOverflow: (maxBytes) => {
 					protocolError = `Child emitted a JSONL stdout line larger than ${maxBytes} bytes.`;
 				},
@@ -314,10 +384,14 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			if (Buffer.byteLength(stderr, "utf8") < stderrCap)
 				stderr = truncateHeadUtf8(stderr + data.toString("utf8"), stderrCap, "stderr");
 		});
-		child.on("error", (error) => finish({ status: "failed", error: `Spawn failed: ${error.message}`, usage, stderr }));
+		child.on("error", (error) => {
+			spawnFailed = true;
+			finish({ status: "failed", error: `Spawn failed: ${error.message}`, usage, stderr });
+		});
 		child.on("close", (code) => {
 			closed = true;
 			parser.flush();
+			stderr = stripFreshSessionWarning(stderr, prepared.id);
 			if (aborting) return finish({ status: "aborted", usage, activity });
 			if (idleTimedOut)
 				return finish({
@@ -338,9 +412,11 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			if (protocolError) return finish({ status: "failed", error: protocolError, usage, stderr });
 			const exitCode = code ?? 1;
 			if (exitCode !== 0 || stopReason === "error" || stopReason === "aborted" || errorMessage) {
+				const diagnosticStderr = stripFreshSessionWarning(stderr, prepared.id);
 				return finish({
 					status: "failed",
-					error: errorMessage || stderr.trim() || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`),
+					error:
+						errorMessage || diagnosticStderr || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`),
 					usage,
 					stderr,
 				});
@@ -365,7 +441,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 				stop();
 			}, deps.maxRuntimeMs);
 		}
-		if (options.stdin !== undefined && child.stdin) {
+		if (options.stdin !== undefined && child.stdin && !killStarted) {
 			child.stdin.write(options.stdin);
 			child.stdin.end();
 		}
