@@ -9,7 +9,7 @@ Fan out N parallel attempts at the same task. Read every candidate end to end. P
 
 ## Track the phases
 
-Keep one visible checklist in working notes or status updates before launching candidates. Pi does not require a dedicated task-list tool. The checklist keeps an autonomous Arena run from silently dropping a phase.
+Keep one visible checklist in working notes or status updates before launching candidates. The `parallel_agents` tool supplies a live status pane during fan-out and cross-judging; the checklist tracks the parent-only pick, graft, and verify phases.
 
 1. Frame
 2. Fan out
@@ -49,29 +49,13 @@ The N candidates will receive the same prompt, so the prompt is the contract. Ge
 1. **State the artifact** each candidate is producing.
 2. **Derive the rubric.** State what success looks like for *this* task, then turn it into 3–6 concrete gradeable criteria. Concrete: `Adds a --dry-run flag that skips writes`. Vague: `code is correct`. The rubric is the picker’s tool in Phase D; candidates only see the task.
 3. **Pick the runners.** Use `runners` from `kstack.json` when present. Otherwise default to 3–4 candidates across different available models. Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
-4. **Assign output paths.** Each candidate writes to its own location. Use `/tmp/arena-<slug>/candidate-<n>/` or separate directories under the working tree. N candidates writing to the same path is shared mutable state and will produce corrupt results.
+4. **Assign output paths.** Each candidate writes to its own pre-created worktree or directory. Use the `git-worktrees` skill when the repository uses Git; use the repository's configured workspace mechanism for other VCS backends. N candidates writing to the same path is shared mutable state and will produce corrupt results.
 
 ## Phase B: Fan out
 
-Spawn all N candidates in parallel. When the `subagent` tool is available:
+Spawn all N candidates in one `parallel_agents` tool call with `kind: "arena"` and the configured `maxConcurrency`. The extension shows the same live status pane used by panel review: queued/running/completed state, model, elapsed time, current tool, and output preview. Do not replace it with background `pi` commands or a silent shell `wait`.
 
-```
-subagent({
-  tasks: [
-    { agent: "worker", task: "<full task prompt with output path>", cwd: "<candidate dir>" },
-    { agent: "worker", task: "<full task prompt with output path>", cwd: "<candidate dir>" },
-    ...
-  ]
-})
-```
-
-When specific models are configured (via `kstack.json` or user request), spawn each candidate as a separate `pi` subprocess so the model can be set per runner:
-
-```bash
-pi -p --no-session --model <provider/model[:thinking]> "<task>" &
-```
-
-Run all candidates concurrently (backgrounded) and wait for all to complete.
+Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared writable directories. Children run without extensions, skills, prompt templates, or context files. Put self-contained instructions in each prompt because repository instruction files are not loaded.
 
 Each candidate receives:
 - The full task description
@@ -84,19 +68,13 @@ If a candidate fails to produce output, proceed with N−1 and note the dropout 
 
 ## Phase C: Cross-judge
 
-After all candidates complete, spawn one read-only judge on a different model from the candidates. The judge sees:
+After all candidates complete, run the judge through a second `parallel_agents` call with one `kind: "arena"` task on a different model from the candidates. The judge sees:
 - The rubric (from Phase A)
-- Each candidate's output (by path label, not by model name — blind judging)
+- Each candidate's output (by candidate label, not by model name — blind judging)
 
 The judge scores each criterion and recommends a base with rationale.
 
-Spawn one read-only judge subprocess with the `crossJudge` model from `kstack.json`:
-
-```bash
-pi -p --no-session --tools read,grep,find,ls --model <crossJudge model[:thinking]> "<judge task>"
-```
-
-If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
+Use the `crossJudge` model from `kstack.json`. If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
 
 ## Phase D: Pick a base
 

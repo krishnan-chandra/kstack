@@ -46,17 +46,9 @@ Keep the bundle under 2 MiB. If the diff is larger, include `git diff --stat` an
 
 ## Parallel read-only reviewers
 
-Launch three reviewers in the same turn, in parallel. They report findings only: no edits, formatters, commits, or worktrees.
+Launch all three reviewers in one `parallel_agents` tool call with `kind: "simplify"`. The extension shows the same live status pane used by panel review: queued/running/completed state, model, elapsed time, current tool, and output preview. Do not replace it with background `pi` commands or a silent shell `wait`.
 
-Pi has no subagent tool in the main session. Use isolated headless Pi processes with an enforced read-only allowlist:
-
-```bash
-pi -p --no-session --no-extensions --no-skills --no-context-files \
-  --tools read,grep,find,ls --model <provider/model[:thinking]> \
-  "<review brief>" &
-```
-
-Use the session's active model for all three reviewers unless the user named a different model. Start all three commands, then `wait`. Do not rely on the prompt to prevent writes; the tool allowlist is the boundary.
+Use one task per lens. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. The tool runs every task from the repository root, enforces read/grep/find/ls-only isolation, disables extensions, skills, prompt templates, and context files, applies idle and runtime limits, and propagates cancellation.
 
 Give each reviewer the scope bundle path, the scope summary, and the matching template below. Instruct reviewers to return only findings within scope, cite `path:line` or diff hunks, and make no writes. A reviewer with nothing worth reporting returns `No simplification findings.`
 
@@ -66,7 +58,7 @@ Give each reviewer the scope bundle path, the scope summary, and the matching te
 | Performance | [`references/performance-reviewer.md`](references/performance-reviewer.md) | Hot-path cost, repeated work, chatty I/O |
 | Reuse | [`references/reuse-reviewer.md`](references/reuse-reviewer.md) | Existing helpers and house patterns to reuse |
 
-Save each reviewer's stdout to `.workspace/simplify/<run-id>/<lens>.txt` when practical so fixes can reference them.
+After the tool returns, save each completed report to `.workspace/simplify/<run-id>/<lens>.txt` when practical so fixes can reference it. If one lens fails or aborts, continue with the completed reports and name the missing lens in **Skipped**; do not rerun an opaque wait or discard sibling findings.
 
 ## Apply targeted fixes
 
