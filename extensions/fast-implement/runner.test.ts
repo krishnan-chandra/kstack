@@ -10,6 +10,12 @@ import { type FastImplementRequest, LIMITS, type ResolvedRole } from "./types.ts
 type ChildRunOptions = Parameters<typeof runChildAgent>[0];
 
 const usage: ChildUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
+const childSession = {
+	kind: "persisted" as const,
+	id: "00000000-0000-4000-8000-000000000001",
+	name: "fast-implement/implementer",
+	file: "/sessions/child.jsonl",
+};
 
 const request: FastImplementRequest = {
 	task: "Fix the narrow bug",
@@ -138,7 +144,7 @@ function fakeJjBackend(overrides: Partial<JjVcsBackend> = {}): JjVcsBackend & { 
 }
 
 function completedChild(output = "implemented") {
-	return { status: "completed" as const, output, usage: emptyUsage() };
+	return { status: "completed" as const, output, usage: emptyUsage(), session: childSession };
 }
 
 function promptFileFrom(options: ChildRunOptions): string {
@@ -321,7 +327,7 @@ describe("completed child and verification", () => {
 		}
 		assert.equal(childOptions.cwd, isolationPlan.path);
 		assert.equal(childOptions.signal, signal);
-		assert.ok(childOptions.args.includes("--no-session"));
+		assert.ok(!childOptions.args.includes("--no-session"));
 		assert.ok(childOptions.args.includes("--no-extensions"));
 		assert.ok(childOptions.args.includes("--no-prompt-templates"));
 		assert.ok(!childOptions.args.includes("--no-skills"));
@@ -360,7 +366,7 @@ describe("retained outcomes after worktree creation", () => {
 			backend,
 			runChild: async (options) => {
 				tempDir = dirname(promptFileFrom(options));
-				return { status: "failed", error: "child crashed", usage: emptyUsage(), stderr: "boom" };
+				return { status: "failed", error: "child crashed", usage: emptyUsage(), stderr: "boom", session: childSession };
 			},
 		});
 		assert.deepEqual(result, {
@@ -368,6 +374,7 @@ describe("retained outcomes after worktree creation", () => {
 			error: "child crashed",
 			branch: isolationPlan.ref,
 			cwd: isolationPlan.path,
+			session: childSession,
 		});
 		assert.ok(!backend.calls.some((call) => call.startsWith("verify:")));
 		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
@@ -381,7 +388,7 @@ describe("retained outcomes after worktree creation", () => {
 			backend,
 			runChild: async (options) => {
 				tempDir = dirname(promptFileFrom(options));
-				return { status: "aborted", usage: emptyUsage() };
+				return { status: "aborted", usage: emptyUsage(), session: childSession };
 			},
 		});
 		assert.deepEqual(result, {
@@ -389,6 +396,7 @@ describe("retained outcomes after worktree creation", () => {
 			error: "Implementation child was aborted.",
 			branch: isolationPlan.ref,
 			cwd: isolationPlan.path,
+			session: childSession,
 		});
 		assert.ok(!backend.calls.some((call) => call.startsWith("verify:")));
 		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
@@ -437,6 +445,7 @@ describe("retained outcomes after worktree creation", () => {
 			branch: isolationPlan.ref,
 			cwd: isolationPlan.path,
 			output: "partial work",
+			session: childSession,
 		});
 		assert.ok(
 			backend.calls.includes(`verify:${isolationPlan.path}:${isolationPlan.ref}:${isolationPlan.baseSha}:true`),

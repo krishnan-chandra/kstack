@@ -4,6 +4,28 @@ import { describe, it } from "node:test";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import { buildChildArgs, runAgent, type SpawnedProcess, truncateUtf8 } from "./agent-runner.ts";
 
+const ID = "00000000-0000-4000-8000-000000000001";
+const sessionStore = {
+	prepare: (_identity: unknown, cwd: string) => ({
+		ok: true as const,
+		prepared: {
+			id: ID,
+			name: "plan-implement/planner",
+			root: "/sessions",
+			expectedCwd: cwd,
+			cliArgs: [],
+			leaseFile: "/lease",
+		},
+	}),
+	markSpawned: () => ({ ok: true as const }),
+	finish: () => ({
+		kind: "persisted" as const,
+		id: ID,
+		name: "plan-implement/planner",
+		file: "/sessions/planner.jsonl",
+	}),
+};
+
 class FakeProcess implements SpawnedProcess {
 	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
 	stderr = new EventEmitter() as SpawnedProcess["stderr"] & EventEmitter;
@@ -26,6 +48,14 @@ class FakeProcess implements SpawnedProcess {
 	error(error: Error): void {
 		this.events.emit("error", error);
 	}
+	emitHeader(cwd = "/repo"): void {
+		this.stdout.emit(
+			"data",
+			Buffer.from(
+				`${JSON.stringify({ type: "session", version: 3, id: ID, timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n`,
+			),
+		);
+	}
 }
 
 function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
@@ -40,6 +70,7 @@ function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
 			piInvocation: (args: string[]) => ({ command: "pi", args }),
 			killGraceMs: 5,
 			timeoutMs: 1000,
+			sessionStore,
 		},
 		...extra,
 	};
@@ -284,9 +315,11 @@ describe("plan-implement child runner", () => {
 					},
 					piInvocation: (args: string[]) => ({ command: "pi", args }),
 					timeoutMs: 1000,
+					sessionStore,
 				},
 			}),
 		);
+		process.emitHeader("/managed/repo/change");
 		process.stdout.emit(
 			"data",
 			Buffer.from(
@@ -304,6 +337,7 @@ describe("plan-implement child runner", () => {
 	it("returns the final assistant output and usage", async () => {
 		const process = new FakeProcess();
 		const promise = runAgent(options(process));
+		process.emitHeader();
 		process.stdout.emit(
 			"data",
 			Buffer.from(
@@ -339,6 +373,7 @@ describe("plan-implement child runner", () => {
 
 		const provider = new FakeProcess();
 		const providerPromise = runAgent(options(provider));
+		provider.emitHeader();
 		provider.stdout.emit(
 			"data",
 			Buffer.from(
@@ -408,6 +443,7 @@ describe("plan-implement child runner", () => {
 				},
 			}),
 		);
+		process.emitHeader();
 		process.stdout.emit("data", Buffer.from("x".repeat(17)));
 		assert.deepEqual(process.kills, ["SIGTERM"]);
 		process.close(null);
@@ -438,6 +474,7 @@ describe("plan-implement child runner", () => {
 			}),
 		);
 
+		process.emitHeader();
 		process.stdout.emit(
 			"data",
 			Buffer.from(

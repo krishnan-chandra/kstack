@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { ChangeKind } from "../shared/change-kind.ts";
+import type { ChildSession } from "../shared/child-agent-runner.ts";
 
 export const LIMITS = {
 	maxTaskBytes: 32 * 1024,
@@ -29,5 +30,12 @@ export interface FastImplementRequest {
 	changeKind: ChangeKind;
 }
 export type FastImplementOutcome =
-	| { status: "completed"; branch: string; cwd: string; output: string }
-	| { status: "failed" | "aborted"; error: string; branch?: string; cwd?: string; output?: string };
+	| { status: "completed"; branch: string; cwd: string; output: string; session?: ChildSession }
+	| {
+			status: "failed" | "aborted";
+			error: string;
+			branch?: string;
+			cwd?: string;
+			output?: string;
+			session?: ChildSession;
+	  };

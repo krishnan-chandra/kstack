@@ -57,6 +57,7 @@ export async function runWorktreeFastImplement(
 	// Everything after workstream creation stays inside one outcome boundary so
 	// a throwing exec or filesystem failure still reports the retained branch.
 	let temp: string | undefined;
+	let childSession: FastImplementOutcome["session"];
 	try {
 		temp = mkdtempSync(join(tmpdir(), "kstack-fast-implement-"));
 		const taskFile = join(temp, "task.md");
@@ -76,6 +77,7 @@ export async function runWorktreeFastImplement(
 				taskFile,
 			),
 			cwd,
+			session: { owner: "fast-implement", label: "implementer" },
 			signal: fx.signal,
 			deps: {
 				...fx.deps,
@@ -86,22 +88,30 @@ export async function runWorktreeFastImplement(
 				killGraceMs: LIMITS.killGraceMs,
 			},
 		});
+		childSession = child.session;
 		if (child.status !== "completed")
 			return {
 				status: child.status === "aborted" ? "aborted" : "failed",
 				error: child.status === "aborted" ? "Implementation child was aborted." : child.error,
 				branch,
 				cwd,
+				session: child.session,
 			};
 		const verified = await fx.backend.verifyRecordedWorkstream(cwd, {
 			...checkpoint,
 			requireNewCommit: true,
 		});
 		return verified.ok
-			? { status: "completed", branch, cwd, output: child.output }
-			: { status: "failed", error: verified.error, branch, cwd, output: child.output };
+			? { status: "completed", branch, cwd, output: child.output, session: child.session }
+			: { status: "failed", error: verified.error, branch, cwd, output: child.output, session: child.session };
 	} catch (error) {
-		return { status: "failed", error: error instanceof Error ? error.message : String(error), branch, cwd };
+		return {
+			status: "failed",
+			error: error instanceof Error ? error.message : String(error),
+			branch,
+			cwd,
+			...(childSession ? { session: childSession } : {}),
+		};
 	} finally {
 		if (temp) rmSync(temp, { recursive: true, force: true });
 	}

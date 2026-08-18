@@ -20,7 +20,7 @@ Without `--worktree`, the command:
 5. verifies the committed workstream after the implementation agent settles.
 
 Current-checkout mode works in the active TUI or RPC session, including
-`--no-session`. The extension temporarily selects the configured implementer
+a native session under `~/.pi/kstack/subagents/`. The extension temporarily selects the configured implementer
 model and thinking level, then restores the previous selection after verified
 completion when the user has not changed models during the run.
 
@@ -81,6 +81,10 @@ You can omit `thinking`. If you set it, the value must match the pinned level
 for that model. Missing configuration selects the first authenticated model in
 the list. `timeoutMinutes` accepts 1 through 60 and applies only to worktree
 mode.
+
+## Child-session history
+
+Worktree-mode implementers persist native Pi sessions under `~/.pi/kstack/subagents/`. Reopen a retained run with `pi --session <absolute-jsonl-path>`; normal `/resume` and session-archive do not list this managed store.
 
 ## Argument autocomplete
 

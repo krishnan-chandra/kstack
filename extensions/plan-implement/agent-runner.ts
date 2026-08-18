@@ -117,6 +117,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 	const result = await runChildAgent({
 		args: buildChildArgs(options),
 		cwd: options.cwd,
+		session: { owner: "plan-implement", label: options.role },
 		signal: options.signal,
 		deps: {
 			...deps,
@@ -139,10 +140,10 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 	});
 	const identity = { role: options.role, model: options.model };
 	if (result.status === "completed")
-		return { ...identity, status: "completed", output: result.output, usage: result.usage };
-	if (result.status === "aborted") return { ...identity, status: "aborted" };
+		return { ...identity, status: "completed", output: result.output, usage: result.usage, session: result.session };
+	if (result.status === "aborted") return { ...identity, status: "aborted", session: result.session };
 	let error = result.error;
 	if (error.startsWith("Timed out: exceeded max runtime")) error = `Timed out after ${Math.round(timeoutMs / 1000)}s.`;
 	if (error.startsWith("Child produced no output.")) error = `${options.role} produced no final output.`;
-	return { ...identity, status: "failed", error };
+	return { ...identity, status: "failed", error, session: result.session };
 }

@@ -18,11 +18,11 @@ describe("JsonLineParser", () => {
 });
 
 describe("buildChildArgs", () => {
-	it("is read-only with discovery disabled and no session", () => {
+	it("is read-only with discovery disabled; session flags are added by the runner", () => {
 		const args = buildChildArgs({ model: "a/b:high", promptFile: "/tmp/p.md", task: "Review /tmp/b.md" });
 		const joined = args.join(" ");
 		assert.match(joined, /--mode json/);
-		assert.match(joined, /--no-session/);
+		assert.ok(!joined.includes("--no-session"));
 		assert.match(joined, /--no-extensions/);
 		assert.match(joined, /--no-skills/);
 		assert.match(joined, /--no-prompt-templates/);
@@ -95,6 +95,14 @@ function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImp
 		};
 		if (!spec.neverClose) {
 			queueMicrotask(() => {
+				const header = {
+					type: "session",
+					version: 3,
+					id: "00000000-0000-4000-8000-000000000001",
+					timestamp: "2026-01-01T00:00:00.000Z",
+					cwd: "/repo",
+				};
+				for (const cb of listeners.stdout) cb(Buffer.from(`${JSON.stringify(header)}\n`));
 				const assistant = {
 					type: "message_end",
 					message: {
@@ -117,6 +125,26 @@ function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImp
 }
 
 const specA = { label: "A", model: "a/b" };
+const testSessionStore = {
+	prepare: (_identity: unknown, cwd: string) => ({
+		ok: true as const,
+		prepared: {
+			id: "00000000-0000-4000-8000-000000000001",
+			name: "panel-review/A",
+			root: "/sessions",
+			expectedCwd: cwd,
+			cliArgs: [],
+			leaseFile: "/sessions/.active/a.json",
+		},
+	}),
+	markSpawned: () => ({ ok: true as const }),
+	finish: (prepared: { id: string; name: string }) => ({
+		kind: "persisted" as const,
+		id: prepared.id,
+		name: prepared.name,
+		file: "/sessions/a.jsonl",
+	}),
+};
 
 function run(spec: FakeProcSpec, extra: Partial<Parameters<typeof runReviewer>[0]> = {}) {
 	return runReviewer({
@@ -125,7 +153,11 @@ function run(spec: FakeProcSpec, extra: Partial<Parameters<typeof runReviewer>[0
 		promptFile: "/tmp/p.md",
 		task: "t",
 		cwd: "/repo",
-		deps: { spawnImpl: fakeSpawn(spec), killGraceMs: 1 },
+		deps: {
+			spawnImpl: fakeSpawn(spec),
+			killGraceMs: 1,
+			sessionStore: testSessionStore,
+		},
 		...extra,
 	});
 }
@@ -194,7 +226,12 @@ describe("runReviewer", () => {
 			promptFile: "/tmp/p.md",
 			task: "t",
 			cwd: "/repo",
-			deps: { spawnImpl: fakeSpawn({ finalText: "x".repeat(10_000) }), outputCapBytes: 1000, killGraceMs: 1 },
+			deps: {
+				spawnImpl: fakeSpawn({ finalText: "x".repeat(10_000) }),
+				outputCapBytes: 1000,
+				killGraceMs: 1,
+				sessionStore: testSessionStore,
+			},
 		});
 		assert.equal(r.status, "completed");
 		if (r.status === "completed") {
@@ -213,7 +250,11 @@ describe("runReviewer", () => {
 			task: "t",
 			cwd: "/repo",
 			signal: abort.signal,
-			deps: { spawnImpl: fakeSpawn({ neverClose: true }, (sig) => killed.push(sig)), killGraceMs: 5 },
+			deps: {
+				spawnImpl: fakeSpawn({ neverClose: true }, (sig) => killed.push(sig)),
+				killGraceMs: 5,
+				sessionStore: testSessionStore,
+			},
 		});
 		abort.abort();
 		const r = await promise;
@@ -232,6 +273,7 @@ describe("runReviewer", () => {
 			cwd: "/repo",
 			signal: abort.signal,
 			deps: {
+				sessionStore: testSessionStore,
 				spawnImpl: fakeSpawn({ neverClose: true, closeOnSig: "SIGKILL" }, (sig) => killed.push(sig)),
 				killGraceMs: 5,
 			},
@@ -251,6 +293,7 @@ describe("runReviewer", () => {
 			task: "t",
 			cwd: "/repo",
 			deps: {
+				sessionStore: testSessionStore,
 				spawnImpl: fakeSpawn({ neverClose: true, closeOnSig: "SIGKILL" }, (sig) => killed.push(sig)),
 				killGraceMs: 5,
 				timeoutMs: 10,
@@ -269,7 +312,12 @@ describe("runReviewer", () => {
 			promptFile: "/tmp/p.md",
 			task: "t",
 			cwd: "/repo",
-			deps: { spawnImpl: fakeSpawn({ finalText: "ok" }, (sig) => killed.push(sig)), killGraceMs: 5, timeoutMs: 1000 },
+			deps: {
+				spawnImpl: fakeSpawn({ finalText: "ok" }, (sig) => killed.push(sig)),
+				killGraceMs: 5,
+				timeoutMs: 1000,
+				sessionStore: testSessionStore,
+			},
 		});
 		assert.equal(r.status, "completed");
 		assert.deepEqual(killed, []);
@@ -304,6 +352,16 @@ function timedSpawn(
 				return true;
 			},
 		};
+		setTimeout(() => {
+			const header = {
+				type: "session",
+				version: 3,
+				id: "00000000-0000-4000-8000-000000000001",
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd: "/repo",
+			};
+			for (const cb of listeners.stdout) cb(Buffer.from(`${JSON.stringify(header)}\n`));
+		}, 0).unref();
 		for (const chunk of spec.chunks) {
 			setTimeout(() => {
 				for (const cb of listeners.stdout) cb(Buffer.from(chunk.text));
@@ -334,6 +392,7 @@ describe("runReviewer stall detection", () => {
 			task: "t",
 			cwd: "/repo",
 			deps: {
+				sessionStore: testSessionStore,
 				// 200ms total runtime with output every 40ms; idle limit is 100ms.
 				spawnImpl: timedSpawn(
 					{
@@ -364,6 +423,7 @@ describe("runReviewer stall detection", () => {
 			task: "t",
 			cwd: "/repo",
 			deps: {
+				sessionStore: testSessionStore,
 				spawnImpl: timedSpawn({ chunks }, (sig) => killed.push(sig)),
 				killGraceMs: 5,
 				timeoutMs: 60_000, // idle never fires: output every 20ms
@@ -383,6 +443,7 @@ describe("runReviewer stall detection", () => {
 			task: "t",
 			cwd: "/repo",
 			deps: {
+				sessionStore: testSessionStore,
 				spawnImpl: timedSpawn({
 					chunks: [
 						{
@@ -480,6 +541,14 @@ describe("runReviewer live text preview", () => {
 				},
 			};
 			queueMicrotask(() => {
+				const header = JSON.stringify({
+					type: "session",
+					version: 3,
+					id: "00000000-0000-4000-8000-000000000001",
+					timestamp: "2026-01-01T00:00:00.000Z",
+					cwd: "/repo",
+				});
+				for (const cb of listeners.stdout) cb(Buffer.from(`${header}\n`));
 				for (const line of lines) {
 					const half = Math.floor(line.length / 2);
 					for (const cb of listeners.stdout) cb(Buffer.from(line.slice(0, half)));
@@ -500,7 +569,7 @@ describe("runReviewer live text preview", () => {
 			promptFile: "/tmp/p.md",
 			task: "t",
 			cwd: "/repo",
-			deps: { spawnImpl, killGraceMs: 1 },
+			deps: { spawnImpl, killGraceMs: 1, sessionStore: testSessionStore },
 			onProgress: (info) => seen.push({ preview: info.preview }),
 		});
 		assert.equal(r.status, "completed");

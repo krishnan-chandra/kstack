@@ -1,4 +1,5 @@
 /** Shared types and limits for the plan/implement workflow. */
+import type { ChildSession } from "../shared/child-agent-runner.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
 export type { ModelThinkingLevel };
@@ -51,11 +52,12 @@ export type AgentRunResult =
 			model: string;
 			output: string;
 			usage: UsageSummary;
+			session?: ChildSession;
 			/** Execution-ledger section preserved for panel review, including omissions. */
 			executionLedger?: string;
 	  }
-	| { status: "failed"; role: AgentRole; model: string; error: string }
-	| { status: "aborted"; role: AgentRole; model: string };
+	| { status: "failed"; role: AgentRole; model: string; error: string; session?: ChildSession }
+	| { status: "aborted"; role: AgentRole; model: string; session?: ChildSession };
 
 export const LIMITS = {
 	taskBytes: 32 * 1024,

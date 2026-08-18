@@ -79,7 +79,15 @@ export default function (pi: ExtensionAPI): void {
 			box.addChild(new Text(header, 0, 0));
 			return box;
 		}
-		box.addChild(new Text(`${theme.fg("success", "■ Panel review verdict")}\n\n${message.content}`, 0, 0));
+		let evidence = "";
+		if (details?.schemaVersion === 2) {
+			const rows = details.childSessions.map((session) => {
+				if (session.kind === "persisted") return `${session.label} (${session.role}): ${session.id}\n  ${session.file}`;
+				return `${session.label} (${session.role}): not persisted — ${session.reason} (${session.id ?? "ID unavailable"})`;
+			});
+			evidence = `\n\n${theme.fg("accent", "Evidence sessions")}\n${rows.join("\n")}`;
+		}
+		box.addChild(new Text(`${theme.fg("success", "■ Panel review verdict")}\n\n${message.content}${evidence}`, 0, 0));
 		return box;
 	});
 

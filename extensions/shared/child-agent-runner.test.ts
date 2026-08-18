@@ -1,9 +1,32 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
-import { type ChildEvent, childIsolationArgs, runChildAgent, type SpawnedProcess } from "./child-agent-runner.ts";
+import {
+	type ChildEvent,
+	childIsolationArgs,
+	runChildAgent,
+	type SpawnedProcess,
+	type SubagentSessionStore,
+} from "./child-agent-runner.ts";
+
+const sessionStore: SubagentSessionStore = {
+	prepare: (_identity, cwd) => ({
+		ok: true,
+		prepared: {
+			id: "00000000-0000-4000-8000-000000000001",
+			name: "test/child",
+			root: "/sessions",
+			expectedCwd: cwd,
+			cliArgs: ["--session-id", "00000000-0000-4000-8000-000000000001"],
+			leaseFile: "/sessions/.active/test.json",
+		},
+	}),
+	markSpawned: () => ({ ok: true }),
+	finish: (prepared) => ({ kind: "persisted", id: prepared.id, name: prepared.name, file: "/sessions/test.jsonl" }),
+};
 
 class FakeProcess implements SpawnedProcess {
+	private headerSent = false;
 	stdin = {
 		writes: [] as string[],
 		ended: false,
@@ -37,6 +60,15 @@ class FakeProcess implements SpawnedProcess {
 		this.events.emit("error", error);
 	}
 	output(text: string): void {
+		if (!this.headerSent) {
+			this.headerSent = true;
+			this.stdout.emit(
+				"data",
+				Buffer.from(
+					`${JSON.stringify({ type: "session", version: 3, id: "00000000-0000-4000-8000-000000000001", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/repo" })}\n`,
+				),
+			);
+		}
 		this.stdout.emit("data", Buffer.from(text));
 	}
 }
@@ -57,6 +89,7 @@ function run(child: FakeProcess, overrides: Record<string, unknown> = {}) {
 	return runChildAgent({
 		args: ["--mode", "json"],
 		cwd: "/repo",
+		session: { owner: "test", label: "child" },
 		deps: {
 			spawnImpl: () => child,
 			piInvocation: (args) => ({ command: "pi", args }),
@@ -64,6 +97,7 @@ function run(child: FakeProcess, overrides: Record<string, unknown> = {}) {
 			outputCapBytes: 1024,
 			stderrCapBytes: 64,
 			stdoutLineCapBytes: 1024,
+			sessionStore,
 			...overrides,
 		},
 	});
@@ -75,7 +109,6 @@ describe("childIsolationArgs", () => {
 			"--mode",
 			"json",
 			"-p",
-			"--no-session",
 			"--no-extensions",
 			"--no-skills",
 			"--no-prompt-templates",
@@ -87,7 +120,6 @@ describe("childIsolationArgs", () => {
 			"--mode",
 			"json",
 			"-p",
-			"--no-session",
 			"--no-extensions",
 			"--no-prompt-templates",
 		]);
@@ -98,7 +130,6 @@ describe("childIsolationArgs", () => {
 			"--mode",
 			"json",
 			"-p",
-			"--no-session",
 			"--no-extensions",
 			"--no-skills",
 			"--no-prompt-templates",
@@ -111,7 +142,6 @@ describe("childIsolationArgs", () => {
 			"--mode",
 			"json",
 			"-p",
-			"--no-session",
 			"--no-extensions",
 			"--no-skills",
 			"--no-prompt-templates",
@@ -126,7 +156,6 @@ describe("childIsolationArgs", () => {
 			"--mode",
 			"json",
 			"-p",
-			"--no-session",
 			"--no-extensions",
 			"--no-prompt-templates",
 			"--no-context-files",
@@ -173,8 +202,9 @@ describe("runChildAgent", () => {
 		const promise = runChildAgent({
 			args: [],
 			cwd: "/repo",
+			session: { owner: "test", label: "child" },
 			signal: controller.signal,
-			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), killGraceMs: 5 },
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), killGraceMs: 5, sessionStore },
 		});
 		controller.abort();
 		await new Promise((resolve) => setTimeout(resolve, 15));
@@ -222,8 +252,9 @@ describe("runChildAgent", () => {
 		const promise = runChildAgent({
 			args: [],
 			cwd: "/repo",
+			session: { owner: "test", label: "child" },
 			stdin: "secret",
-			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }) },
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), sessionStore },
 		});
 		assert.deepEqual(child.stdin.writes, ["secret"]);
 		assert.equal(child.stdin.ended, true);
@@ -272,8 +303,9 @@ describe("runChildAgent", () => {
 		const promise = runChildAgent({
 			args: ["--mode", "json"],
 			cwd: "/repo",
+			session: { owner: "test", label: "child" },
 			onEvent: (ev) => events.push(ev),
-			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }) },
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), sessionStore },
 		});
 		child.output(
 			`${JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "/repo/foo.ts" } })}\n`,

@@ -190,6 +190,10 @@ Downstream routes have their own trust boundaries:
 - The `kstack-route` message card records the selected route, delivery mode,
   classifier source, and dispatch status.
 
+## Classifier session history
+
+Classifier runs persist native Pi sessions under `~/.pi/kstack/subagents/`. Reopen a retained run with `pi --session <absolute-jsonl-path>`; normal `/resume` and session-archive do not list this managed store.
+
 ## Troubleshooting
 
 **"plan-implement extension is not loaded"**: Run `pi list` to verify

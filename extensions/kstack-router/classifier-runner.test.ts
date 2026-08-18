@@ -4,6 +4,28 @@ import { describe, it } from "node:test";
 import { buildClassifierChildArgs, runClassifier, type SpawnedProcess } from "./classifier-runner.ts";
 import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
 
+const ID = "00000000-0000-4000-8000-000000000001";
+const sessionStore = {
+	prepare: (_identity: unknown, cwd: string) => ({
+		ok: true as const,
+		prepared: {
+			id: ID,
+			name: "kstack-router/classify",
+			root: "/sessions",
+			expectedCwd: cwd,
+			cliArgs: [],
+			leaseFile: "/lease",
+		},
+	}),
+	markSpawned: () => ({ ok: true as const }),
+	finish: () => ({
+		kind: "persisted" as const,
+		id: ID,
+		name: "kstack-router/classify",
+		file: "/sessions/classify.jsonl",
+	}),
+};
+
 const ENVELOPE = `${CLASSIFIER_SENTINEL_START}\n{"schemaVersion":1,"route":"investigate","confidence":"high","rationale":"read-only question"}\n${CLASSIFIER_SENTINEL_END}`;
 
 class FakeStdin {
@@ -42,7 +64,18 @@ class FakeProcess implements SpawnedProcess {
 	error(error: Error): void {
 		this.events.emit("error", error);
 	}
+	private headerSent = false;
 	emitStdout(chunk: string): void {
+		if (!this.headerSent) {
+			this.headerSent = true;
+			this.stdout.emit(
+				"data",
+				Buffer.from(
+					`${JSON.stringify({ type: "session", version: 3, id: ID, timestamp: "2026-01-01T00:00:00.000Z", cwd: process.cwd() })}\n`,
+					"utf8",
+				),
+			);
+		}
 		this.stdout.emit("data", Buffer.from(chunk, "utf8"));
 	}
 }
@@ -65,6 +98,7 @@ function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
 		killGraceMs: 5,
 		timeoutSeconds: 60,
 		spawnImpl: () => process,
+		sessionStore,
 		...extra,
 	};
 }
@@ -78,7 +112,7 @@ describe("buildClassifierChildArgs", () => {
 		assert.ok(args.includes("--no-context-files"));
 		assert.ok(args.includes("--no-tools"));
 		assert.ok(args.includes("--no-approve"));
-		assert.ok(args.includes("--no-session"));
+		assert.ok(!args.includes("--no-session"));
 		assert.ok(args.includes("--mode"));
 		assert.ok(args.includes("json"));
 		assert.ok(args.includes("-p"));

@@ -36,6 +36,8 @@ interface PiJsonEvent {
 interface JsonLineParserOptions {
 	maxLineBytes?: number;
 	onOverflow?: (maxLineBytes: number) => void;
+	onRecord?: (record: unknown) => void;
+	onMalformed?: () => void;
 }
 
 const DEFAULT_MAX_LINE_BYTES = 2 * 1024 * 1024;
@@ -99,9 +101,11 @@ export class JsonLineParser {
 	private process(line: string): void {
 		if (!line.trim()) return;
 		try {
-			this.onEvent(JSON.parse(line) as PiJsonEvent);
+			const record: unknown = JSON.parse(line);
+			this.options.onRecord?.(record);
+			this.onEvent(record as PiJsonEvent);
 		} catch {
-			// Malformed child output is ignored; exit status and stderr provide diagnostics.
+			this.options.onMalformed?.();
 		}
 	}
 }

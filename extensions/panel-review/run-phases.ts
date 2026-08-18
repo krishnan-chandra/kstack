@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
+import type { ChildSession, MissingSessionReason } from "../shared/subagent-sessions.ts";
 import {
 	type ConfigLoad,
 	DEFAULT_MAX_RUNTIME_MINUTES,
@@ -84,8 +85,7 @@ export interface ReviewPipelineEffects {
 	sendVerdict(verdict: string, details: VerdictDetails): void;
 }
 
-export interface VerdictDetails {
-	schemaVersion: 1;
+interface VerdictDetailsBase {
 	baseSha: string;
 	headSha: string;
 	models: string[];
@@ -94,6 +94,29 @@ export interface VerdictDetails {
 	truncated: boolean;
 	synthesized: boolean;
 	contextFilesDisabled: boolean;
+}
+
+type VerdictChildSession =
+	| { label: string; role: "reviewer" | "lead"; kind: "persisted"; id: string; file: string }
+	| { label: string; role: "reviewer" | "lead"; kind: "missing"; id?: string; reason: MissingSessionReason };
+
+export type VerdictDetails =
+	| (VerdictDetailsBase & { schemaVersion: 1 })
+	| (VerdictDetailsBase & { schemaVersion: 2; childSessions: VerdictChildSession[] });
+
+function verdictSession(
+	label: string,
+	role: "reviewer" | "lead",
+	session: ChildSession | undefined,
+): VerdictChildSession {
+	if (session?.kind === "persisted") return { label, role, kind: "persisted", id: session.id, file: session.file };
+	return {
+		label,
+		role,
+		kind: "missing",
+		...(session?.id ? { id: session.id } : {}),
+		reason: session?.reason ?? "not-reported",
+	};
 }
 
 export interface ReviewPipelineOps {
@@ -268,7 +291,7 @@ export async function runReviewPipeline(
 			);
 		}
 		const details: VerdictDetails = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			baseSha: scope.baseSha,
 			headSha: scope.headSha,
 			models: resolution.reviewers.map(modelCliId),
@@ -282,6 +305,10 @@ export async function runReviewPipeline(
 			truncated: scope.truncated || truncated,
 			synthesized,
 			contextFilesDisabled: scope.contextFilesTouched,
+			childSessions: [
+				...panel.results.map((result) => verdictSession(result.label, "reviewer", result.session)),
+				verdictSession("lead", "lead", synthesisResult.session),
+			],
 		};
 		await fx.waitForIdle();
 		if (!fx.isCurrent()) return { status: "aborted" };

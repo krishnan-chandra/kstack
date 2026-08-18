@@ -2,6 +2,7 @@
  * Shared types for the panel-review extension.
  */
 
+import type { ChildSession } from "../shared/child-agent-runner.ts";
 import type { ModelSpec } from "../shared/model-spec.ts";
 
 export interface ReviewerSpec extends ModelSpec {
@@ -34,7 +35,7 @@ export interface UsageSummary {
 }
 
 export type ReviewerResult =
-	| { status: "completed"; label: string; model: string; output: string; usage: UsageSummary }
+	| { status: "completed"; label: string; model: string; output: string; usage: UsageSummary; session?: ChildSession }
 	| {
 			status: "failed";
 			label: string;
@@ -44,8 +45,16 @@ export type ReviewerResult =
 			usage?: UsageSummary;
 			/** Last known child activity (e.g. "read bundle.md", "thinking"). */
 			activity?: string;
+			session?: ChildSession;
 	  }
-	| { status: "aborted"; label: string; model: string; usage?: UsageSummary; activity?: string };
+	| {
+			status: "aborted";
+			label: string;
+			model: string;
+			usage?: UsageSummary;
+			activity?: string;
+			session?: ChildSession;
+	  };
 
 export interface PanelArgs {
 	base?: string;
