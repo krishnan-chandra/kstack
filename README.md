@@ -15,6 +15,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
+| [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live multi-agent TUI dashboard, bounded concurrency, cancellation, and per-child runtime limits. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with a live multi-phase TUI dashboard and full-screen subagent console. |
 | [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation session for an explicit, bounded change. Current-checkout mode takes over the TUI in a fresh linked session; `--worktree` uses an isolated child process. Both modes verify local commits, skip independent planning and review, and never publish. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
@@ -104,7 +105,7 @@ before launching a model or mutating repository state.
 | Workflow | Git backend | jj backend | Graphite backend |
 | --- | --- | --- | --- |
 | `fast-implement` | Current branch or `--worktree` | Current workspace; no `--worktree` | Current branch or tracked `--worktree` |
-| `plan-implement --single` | Current branch or `--worktree` | `trunk()`-based change and bookmark | Current branch or tracked `--worktree` |
+| `plan-implement --single` | Current branch or `--worktree` | `main`-based change and bookmark | Current branch or tracked `--worktree` |
 | `plan-implement --stack` | Refused | Local jj stack | Graphite stack adapter |
 | `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push | Branch validation and native Graphite record/restack/submit |
 | `land` auto-discovery | Current branch | Bookmark targeting `@` | Current Graphite branch |
@@ -343,6 +344,7 @@ node --test check-exports.test.mjs
 npm run test:handoff
 npm run test:session-archive
 node --test extensions/panel-review/
+node --test 'extensions/parallel-agents/*.test.ts'
 node --test extensions/plan-implement/
 node --test extensions/kstack-router/
 node --test extensions/land/
