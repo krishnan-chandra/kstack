@@ -4,7 +4,7 @@
  * One PR at a time, lowest unmerged first. Tiny models only. The loop:
  *
  *   refresh snapshot → conflicts/behind (merge base, never rebase)
- *   → unresolved threads (fix / dismiss / ask)
+ *   → unresolved review items (fix / dismiss / ask / ignore)
  *   → watch pending CI instead of inventing work
  *   → flake retrigger once
  *   → code CI (after comments, on the current SHA)
@@ -335,7 +335,8 @@ export async function runAutopilot(
 			"info",
 		);
 
-		const ready = await declareReady(state);
+		const hasUntriagedDiscussion = state.threads.some((thread) => thread.source === "issue-comment");
+		const ready = hasUntriagedDiscussion ? undefined : await declareReady(state);
 		if (ready) return ready;
 
 		if (
@@ -523,9 +524,9 @@ export async function runAutopilot(
 		);
 		const codeChecks = parsed.checks.filter((c) => c.cls === "code");
 		const fixThreads = parsed.threads.filter((t) => t.decision === "fix");
-		const dismissThreads = parsed.threads.filter((t) => t.decision === "dismiss");
+		const hasCommentWork = parsed.threads.some((thread) => thread.decision !== "ask");
 
-		const commentsFirst = mode === "threads" || fixThreads.length > 0 || dismissThreads.length > 0;
+		const commentsFirst = mode === "threads" || hasCommentWork;
 		const fixMode: FixMode =
 			mode === "threads"
 				? "threads"
@@ -535,7 +536,7 @@ export async function runAutopilot(
 						? "ci"
 						: "threads";
 
-		if (fixThreads.length === 0 && dismissThreads.length === 0 && codeChecks.length === 0) {
+		if (!hasCommentWork && codeChecks.length === 0) {
 			if (askThreads.length > 0) break;
 			if (staleOrInfra.length > 0) {
 				blockedReasons.push(staleOrInfra.map((c) => `${c.name}: ${c.cls} (${c.action})`).join("; "));
@@ -642,7 +643,7 @@ export async function runAutopilot(
 
 		setPhase("replying", cycle);
 		const repliedThreadIds = [...persisted.repliedThreadIds];
-		const handled = await applyThreadReplies(
+		const replyResult = await applyThreadReplies(
 			exec,
 			cwd,
 			state,
@@ -650,17 +651,19 @@ export async function runAutopilot(
 			{ resolveFix: pushedAFix, repliedThreadIds },
 			notify,
 		);
-		if (handled.length > 0) {
-			persisted = {
-				...persisted,
-				handledThreadIds: [...persisted.handledThreadIds, ...handled],
-				repliedThreadIds: repliedThreadIds.filter((id) => !handled.includes(id)),
-			};
-			notify(`Replied and resolved ${handled.length} thread(s).`, "info");
-		} else {
-			persisted = { ...persisted, repliedThreadIds };
-		}
+		persisted = {
+			...persisted,
+			handledThreadIds: [...persisted.handledThreadIds, ...replyResult.handled],
+			repliedThreadIds: repliedThreadIds.filter((id) => !replyResult.handled.includes(id)),
+		};
 		await ops.savePersistedState(persisted);
+		if (!replyResult.ok) {
+			blockedReasons.push(replyResult.error);
+			break;
+		}
+		if (replyResult.handled.length > 0) {
+			notify(`Handled ${replyResult.handled.length} review item(s).`, "info");
+		}
 
 		if (mode === "threads") {
 			const recheck = await refresh();

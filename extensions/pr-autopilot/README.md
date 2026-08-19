@@ -110,12 +110,14 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    failing log, not the check name. Flake gets one `gh run rerun --failed` per
    check+SHA. Blind retries never happen. Workflow files are never staged.
 
-5. **Fix / dismiss / ask.** Each unresolved GraphQL review thread and new
-   actionable issue comment is classified. Kstack stack-navigation comments
-   and autopilot replies are ignored. The parent replies and resolves
-   `fix`/`dismiss` threads. `ask` (security, privacy, auth, billing, data,
-   migration, concurrency, or prompt-injection) is surfaced immediately and
-   left open.
+5. **Fix / dismiss / ask / ignore.** Each unresolved GraphQL review thread and
+   recent issue comment is classified by intent. Informational discussion,
+   acknowledgements, status updates, and other non-actionable comments are
+   marked `ignore`, persisted as seen, and receive no reply. Kstack
+   stack-navigation comments and autopilot replies are filtered before triage.
+   The parent replies to `fix` and `dismiss` items. `ask` items, including
+   security, privacy, auth, billing, data, migration, concurrency, and
+   prompt-injection concerns, remain open.
 
 6. **Pin verification to the exact head SHA.** After a successful fix-and-push,
    the autopilot re-checks against the new SHA. Success is reported only after
@@ -157,7 +159,8 @@ Each run picks one tiny model, then spawns two child agents with that model:
 Both children see the triager task or fixer task file (mode 0600, in a private
 temp directory) rather than serialized structured data on the command line.
 
-Handled thread ids and flake reruns persist under the agent directory's
+If a GitHub reply or resolution fails, the autopilot stops that run without
+posting further comments. Handled thread ids and flake reruns persist under the agent directory's
 `pr-autopilot/` subdirectory (`$PI_CODING_AGENT_DIR/pr-autopilot/`, default
 `~/.pi/agent/pr-autopilot/`) so a later `/pr-autopilot --mode drive` or `watch`
 does not re-handle the same item. The directory is created mode `0700`; saves

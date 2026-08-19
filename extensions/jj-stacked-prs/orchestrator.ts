@@ -580,13 +580,11 @@ async function applyPublication(
 						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
 					};
 				}
-				const comments = await reconcileComments(plan, published, options, deps, github);
 				return {
 					status: "partial",
 					planId: plan.planId,
-					completedActions: [...completed, ...comments.completed],
+					completedActions: completed,
 					failedAction: failed,
-					commentErrors: comments.errors,
 				};
 			}
 		}
@@ -616,13 +614,11 @@ async function applyPublication(
 						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
 					};
 				}
-				const comments = await reconcileComments(plan, published, options, deps, github);
 				return {
 					status: "partial",
 					planId: plan.planId,
-					completedActions: [...completed, ...comments.completed],
+					completedActions: completed,
 					failedAction: failed,
-					commentErrors: comments.errors,
 				};
 			}
 		}
@@ -796,6 +792,7 @@ async function reconcileComments(
 				};
 			}
 			errors.push(`PR #${slice.prNumber}: ${errorMessage(error)}`);
+			break;
 		}
 	}
 	return { completed, errors };

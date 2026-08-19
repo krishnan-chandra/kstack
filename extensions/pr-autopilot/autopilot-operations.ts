@@ -4,7 +4,7 @@
  * One PR at a time, lowest unmerged first. Tiny models only. The loop:
  *
  *   refresh snapshot → conflicts/behind (merge base, never rebase)
- *   → unresolved threads (fix / dismiss / ask)
+ *   → unresolved review items (fix / dismiss / ask / ignore)
  *   → watch pending CI instead of inventing work
  *   → flake retrigger once
  *   → code CI (after comments, on the current SHA)
@@ -372,7 +372,7 @@ function parseFailureClass(raw: unknown): FailureClass {
 }
 
 function parseDecision(raw: unknown): ThreadDecision | undefined {
-	if (raw === "fix" || raw === "dismiss" || raw === "ask") return raw;
+	if (raw === "fix" || raw === "dismiss" || raw === "ask" || raw === "ignore") return raw;
 	return undefined;
 }
 
@@ -384,7 +384,8 @@ interface ParsedCheck {
 type ParsedThread =
 	| { id: string; decision: "fix"; cls: FailureClass; action: string; reply: string }
 	| { id: string; decision: "dismiss"; action: string; reply: string }
-	| { id: string; decision: "ask"; action: string };
+	| { id: string; decision: "ask"; action: string }
+	| { id: string; decision: "ignore"; action: string };
 
 interface ParsedTriage {
 	checks: ParsedCheck[];
@@ -409,6 +410,7 @@ function parseThreadEntry(raw: unknown): ParsedThread | undefined {
 		case "dismiss":
 			return { id, decision, action, reply };
 		case "ask":
+		case "ignore":
 			return { id, decision, action };
 		default: {
 			const _exhaustive: never = decision;
@@ -499,17 +501,24 @@ export async function applyThreadReplies(
 	parsed: ParsedTriage,
 	opts: { resolveFix: boolean; repliedThreadIds: string[] },
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
-): Promise<string[]> {
+): Promise<{ ok: true; handled: string[] } | { ok: false; handled: string[]; error: string }> {
 	const handled: string[] = [];
 	const byId = new Map(state.threads.map((t) => [t.id, t]));
+	const failed = (message: string) => {
+		notify(message, "warning");
+		return { ok: false as const, handled, error: message };
+	};
 	for (const thread of parsed.threads) {
 		if (thread.decision === "ask") continue;
 		if (thread.decision === "fix" && !opts.resolveFix) continue;
 		const source = byId.get(thread.id);
 		if (!source) continue;
-		const reply = thread.decision === "fix" || thread.decision === "dismiss" ? thread.reply : "";
+		if (thread.decision === "ignore") {
+			handled.push(thread.id);
+			continue;
+		}
 		const body =
-			reply.trim() ||
+			thread.reply.trim() ||
 			(thread.decision === "dismiss"
 				? `Dismissing: ${thread.action}`
 				: `Addressed in a follow-up commit. ${thread.action}`);
@@ -517,27 +526,24 @@ export async function applyThreadReplies(
 			if (source.replyToId !== undefined && !opts.repliedThreadIds.includes(thread.id)) {
 				const posted = await replyToReviewComment(exec, cwd, state.number, source.replyToId, body);
 				if (posted.code !== 0) {
-					notify(`Could not reply to thread ${thread.id}: ${posted.stderr.trim()}`, "warning");
-					continue;
+					return failed(`Could not reply to thread ${thread.id}: ${posted.stderr.trim()}`);
 				}
 				opts.repliedThreadIds.push(thread.id);
 			}
 			const resolved = await resolveReviewThread(exec, cwd, thread.id);
 			if (resolved.code !== 0) {
-				notify(`Could not resolve thread ${thread.id}: ${resolved.stderr.trim()}`, "warning");
-				continue;
+				return failed(`Could not resolve thread ${thread.id}: ${resolved.stderr.trim()}`);
 			}
 			handled.push(thread.id);
 		} else {
 			const posted = await replyToIssueComment(exec, cwd, state.number, body);
 			if (posted.code !== 0) {
-				notify(`Could not reply to discussion ${thread.id}: ${posted.stderr.trim()}`, "warning");
-				continue;
+				return failed(`Could not reply to discussion ${thread.id}: ${posted.stderr.trim()}`);
 			}
 			handled.push(thread.id);
 		}
 	}
-	return handled;
+	return { ok: true, handled };
 }
 
 export function maxFixCycles(mode: AutopilotMode): number {

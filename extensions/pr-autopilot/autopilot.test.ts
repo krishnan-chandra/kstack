@@ -207,6 +207,19 @@ describe("pr-autopilot state machine", () => {
 			);
 			assert.match(describeBlockers(state), /pending/);
 		});
+
+		it("counts only unresolved review threads", () => {
+			const state = buildPRState(
+				makePr(),
+				[
+					makeThread("review-thread-1"),
+					{ id: "issue-comment-1", commenter: "reviewer", body: "FYI", source: "issue-comment" },
+				],
+				[],
+				null,
+			);
+			assert.match(describeBlockers(state), /unresolved threads \(1\)/);
+		});
 	});
 
 	describe("mutation checkout boundary", () => {
@@ -754,6 +767,22 @@ describe("pr-autopilot state machine", () => {
 			assert.equal(classifyBlockers(parsed).hasAskThreads, false);
 			assert.equal(classifyBlockers(parsed).hasUnfixableCI, true);
 		});
+
+		it("parses informational review items as ignore decisions", () => {
+			const parsed = parseTriage(
+				JSON.stringify({
+					checks: [],
+					threads: [{ id: "issue-comment-1", decision: "ignore", action: "informational status update" }],
+					conflicts: false,
+					draft: false,
+					summary: "No action needed.",
+				}),
+			);
+			if ("error" in parsed) throw new Error(parsed.error);
+			assert.deepEqual(parsed.threads, [
+				{ id: "issue-comment-1", decision: "ignore", action: "informational status update" },
+			]);
+		});
 	});
 
 	describe("applyForceAsk", () => {
@@ -813,6 +842,7 @@ describe("pr-autopilot state machine", () => {
 			assert.match(task, /UNTRUSTED PR DATA/);
 			assert.match(task, /Error: expected 1/);
 			assert.match(task, /decision/);
+			assert.match(task, /"ignore" — informational/);
 			assert.match(task, /VCS backend: jj/);
 		});
 
