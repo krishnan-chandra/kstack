@@ -64,7 +64,7 @@ interface ConsoleTranscripts {
 	subscribe(listener: () => void): () => void;
 }
 
-export interface ConsoleCopy {
+interface ConsoleCopy {
 	/** Console title shown in the wide-layout title bar. */
 	title: string;
 	emptyMessage: string;
@@ -540,6 +540,7 @@ export class SubagentConsoleComponent implements Component {
 	private readonly theme: DashboardTheme;
 	private readonly onClose: () => void;
 	private readonly onAbort?: () => void;
+	private readonly isAbortInput: (data: string) => boolean;
 	private readonly text: TerminalText;
 	private readonly copy: ConsoleCopy;
 	private lastWidth = 80;
@@ -557,6 +558,7 @@ export class SubagentConsoleComponent implements Component {
 		onAbort?: () => void,
 		text: TerminalText = fallbackTerminalText,
 		copy: ConsoleCopy = DEFAULT_COPY,
+		isAbortInput: (data: string) => boolean = () => false,
 	) {
 		this.dashboard = dashboard;
 		this.transcripts = transcripts;
@@ -564,6 +566,7 @@ export class SubagentConsoleComponent implements Component {
 		this.theme = theme;
 		this.onClose = onClose;
 		this.onAbort = onAbort;
+		this.isAbortInput = isAbortInput;
 		this.text = text;
 		this.copy = copy;
 
@@ -662,7 +665,7 @@ export class SubagentConsoleComponent implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (checkKey(data, "ctrl+shift+i") || checkKey(data, "ctrl+shift+x")) {
+		if (this.isAbortInput(data)) {
 			this.onAbort?.();
 			return;
 		}
@@ -763,9 +766,10 @@ export class SubagentConsoleComponent implements Component {
 	}
 }
 
-export interface OpenSubagentConsoleOptions {
+interface OpenSubagentConsoleOptions {
 	text?: TerminalText;
 	onAbort?: () => void;
+	isAbortInput?: (data: string) => boolean;
 	copy?: ConsoleCopy;
 }
 
@@ -782,6 +786,7 @@ export function openSubagentConsole(
 ): OpenSubagentConsoleResult {
 	const text = options.text ?? fallbackTerminalText;
 	const onAbort = options.onAbort;
+	const isAbortInput = options.isAbortInput;
 	let doneFn: (() => void) | undefined;
 	let closedResolve!: () => void;
 	const closed = new Promise<void>((resolve) => {
@@ -814,6 +819,7 @@ export function openSubagentConsole(
 					onAbort,
 					text,
 					options.copy,
+					isAbortInput,
 				);
 				return component;
 			},

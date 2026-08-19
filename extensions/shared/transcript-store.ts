@@ -6,9 +6,9 @@ export type TranscriptEntry =
 	| { kind: "text"; text: string; turn: number; at: number }
 	| { kind: "turn"; turn: number; usage: ChildUsage; at: number };
 
-export const MAX_CHILD_TRANSCRIPT_BYTES = 128 * 1024;
-export const MAX_CHILD_ENTRIES = 1000;
-export const MAX_ENTRY_TEXT_BYTES = 8 * 1024;
+const MAX_CHILD_TRANSCRIPT_BYTES = 128 * 1024;
+const MAX_CHILD_ENTRIES = 1000;
+const MAX_ENTRY_TEXT_BYTES = 8 * 1024;
 export const EVICTION_NOTICE = "… earlier transcript dropped (cap 128 KiB)";
 
 function entryBytes(entry: TranscriptEntry): number {
@@ -59,13 +59,6 @@ export class ChildTranscriptStore {
 
 	private emit(): void {
 		for (const listener of this.listeners) listener();
-	}
-
-	flush(): void {
-		if (!this.throttleTimer) return;
-		clearTimeout(this.throttleTimer);
-		this.throttleTimer = undefined;
-		this.emit();
 	}
 
 	dispose(): void {
@@ -120,7 +113,7 @@ export class ChildTranscriptStore {
 				state.liveTail = truncateTailUtf8((state.liveTail ?? "") + event.delta, MAX_ENTRY_TEXT_BYTES);
 				this.enforceLimits(state);
 				if (this.throttleMs <= 0) this.emit();
-				else if (!this.throttleTimer) {
+				else if (this.listeners.size > 0 && !this.throttleTimer) {
 					this.throttleTimer = setTimeout(() => {
 						this.throttleTimer = undefined;
 						this.emit();

@@ -2,67 +2,24 @@
 
 import { rmSync } from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Box, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, Text } from "@earendil-works/pi-tui";
+import { getAgentPaneHost } from "../shared/agent-pane.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
-import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
-import { PanelDashboardStore } from "./live-dashboard.ts";
 import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import { type PipelineDashboard, resolvePanel, runReviewPipeline, type VerdictDetails } from "./run-phases.ts";
-import { type OpenSubagentConsoleResult, openSubagentConsole } from "./subagent-console.ts";
-import { PanelTranscriptStore } from "./transcript-store.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
 export default function (pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "panel-review");
 	const lifecycle = new PanelLifecycle();
-	let activeConsole: OpenSubagentConsoleResult | undefined;
-	let activeStores: { dashboard: PanelDashboardStore; transcripts: PanelTranscriptStore } | undefined;
+	const paneHost = getAgentPaneHost(pi);
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
-
-	pi.registerShortcut("ctrl+shift+v", {
-		description: "Inspect panel review child transcripts",
-		handler: async (ctx) => {
-			if (ctx.mode !== "tui" || !activeStores || !lifecycle.isRunning()) {
-				ctx.ui.notify("No panel review is running.", "info");
-				return;
-			}
-			if (activeConsole) return;
-			const { dashboard, transcripts } = activeStores;
-			const subagentConsole = openSubagentConsole(ctx, dashboard, transcripts, {
-				text: {
-					stripTerminalSequences,
-					truncateToWidth: (text, width) => truncateToWidth(text, width),
-					visibleWidth,
-				},
-				onAbort: () => {
-					lifecycle.abortRun();
-				},
-			});
-			activeConsole = subagentConsole;
-			subagentConsole.closed.finally(() => {
-				if (activeConsole === subagentConsole) activeConsole = undefined;
-			});
-		},
-	});
-
-	pi.registerShortcut("ctrl+shift+x", {
-		description: "Abort the running panel review",
-		handler: async (ctx) => {
-			if (lifecycle.abortRun()) {
-				if (ctx.mode !== "tui") {
-					ctx.ui.setStatus("panel-review", "panel-review: aborting (SIGTERM, SIGKILL after grace)…");
-				}
-			} else {
-				ctx.ui.notify("No panel review is running.", "info");
-			}
-		},
-	});
 
 	pi.registerMessageRenderer("panel-review", (message, { expanded, outputPad }, theme) => {
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
@@ -230,44 +187,30 @@ export default function (pi: ExtensionAPI): void {
 	});
 	pi.events.on(PANEL_REVIEW_REQUEST_EVENT, (data) => claimPanelReviewRequest(data, runPanelReview));
 	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => {
-		activeConsole?.close();
-		activeConsole = undefined;
-		activeStores = undefined;
-		lifecycle.shutdownSession();
-	});
+	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 
 	function createDashboard(ctx: ExtensionCommandContext, reviewers: ReviewerSpec[]): PipelineDashboard | undefined {
 		if (ctx.mode !== "tui") return undefined;
-		const dashboardStore = new PanelDashboardStore();
-		const transcriptStore = new PanelTranscriptStore();
-		for (const reviewer of reviewers) {
-			dashboardStore.addReviewer(reviewer.label, reviewer.label, modelCliId(reviewer));
-			transcriptStore.addChild(reviewer.label);
-		}
-		activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
-		const disposeWidget = mountLiveDashboard(ctx.ui, "panel-review", dashboardStore, {
-			stripTerminalSequences,
-			truncateToWidth: (text, width) => truncateToWidth(text, width),
+		const pane = paneHost.startRun({
+			ctx,
+			title: "Panel review",
+			emptyMessage: "No panel children active",
+			clearPreviewOnComplete: false,
+			onAbort: () => {
+				lifecycle.abortRun();
+			},
 		});
+		for (const reviewer of reviewers) {
+			pane.addChild({ id: reviewer.label, label: reviewer.label, model: modelCliId(reviewer) });
+		}
 		return {
-			addLead: (id, label, model) => {
-				dashboardStore.addLead(id, label, model);
-				transcriptStore.addChild(id);
-			},
-			markRunning: (id) => dashboardStore.markRunning(id),
-			progress: (id, info) => dashboardStore.progress(id, info),
-			complete: (id, info) => dashboardStore.complete(id, info),
-			event: (id, ev) => transcriptStore.push(id, ev),
-			note: (id, text) => transcriptStore.note(id, text),
-			tick: () => dashboardStore.tick(),
-			dispose: () => {
-				activeConsole?.close();
-				activeConsole = undefined;
-				activeStores = undefined;
-				transcriptStore.dispose();
-				disposeWidget();
-			},
+			addLead: (id, label, model) => pane.addChild({ id, label, model, modelColor: "accent" }),
+			markRunning: (id) => pane.markRunning(id),
+			progress: (id, info) => pane.progress(id, info),
+			complete: (id, info) => pane.complete(id, info),
+			event: (id, event) => pane.event(id, event),
+			note: (id, text) => pane.note(id, text),
+			dispose: () => pane.dispose(),
 		};
 	}
 }

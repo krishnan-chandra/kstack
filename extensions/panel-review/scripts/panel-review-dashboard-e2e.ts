@@ -156,7 +156,7 @@ await handler("--base HEAD verify-dashboard", ctx);
 
 // ── Assertions ───────────────────────────────────────────────────────────
 assert.ok(renders > 5, `expected repeated re-renders, got ${renders}`);
-assert.ok(!widgets.has("panel-review"), "widget cleared on completion");
+assert.ok(!widgets.has("kstack-agent-pane"), "widget cleared on completion");
 assert.equal(component, undefined, "component disposed");
 assert.ok(!statuses.has("panel-review"), "TUI progress is not duplicated in the footer");
 

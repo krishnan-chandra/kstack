@@ -1,4 +1,9 @@
-import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
+import {
+	type ChildEvent,
+	type ChildRunnerDeps,
+	childIsolationArgs,
+	runChildAgent,
+} from "../shared/child-agent-runner.ts";
 import type { ParallelAgentResult, ParallelAgentTask } from "./types.ts";
 
 export interface ParallelAgentRunnerDeps extends ChildRunnerDeps {
@@ -22,6 +27,7 @@ export async function runParallelAgent(options: {
 	signal?: AbortSignal;
 	deps?: ParallelAgentRunnerDeps;
 	onProgress?: (info: { turns: number; activity?: string; preview?: string }) => void;
+	onEvent?: (event: ChildEvent) => void;
 }): Promise<ParallelAgentResult> {
 	const deps = options.deps ?? {};
 	const result = await runChildAgent({
@@ -38,9 +44,7 @@ export async function runParallelAgent(options: {
 			stderrCapBytes: deps.stderrCapBytes ?? 8 * 1024,
 		},
 		onProgress: options.onProgress,
+		onEvent: options.onEvent,
 	});
-	const identity = { label: options.task.label, model: options.task.model };
-	if (result.status === "completed") return { ...identity, ...result };
-	if (result.status === "aborted") return { ...identity, ...result };
-	return { ...identity, ...result };
+	return { label: options.task.label, model: options.task.model, ...result };
 }

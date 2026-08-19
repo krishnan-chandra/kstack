@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { AgentPaneRun } from "../shared/agent-pane.ts";
 import type { ChildUsage } from "../shared/child-agent-runner.ts";
-import { ParallelAgentsDashboardStore } from "./live-dashboard.ts";
 import { runParallelAgents } from "./orchestrator.ts";
 import type { ParallelAgentResult, ParallelAgentTask } from "./types.ts";
 
@@ -46,9 +46,17 @@ describe("runParallelAgents", () => {
 		);
 	});
 
-	it("feeds child progress and terminal state into the shared dashboard", async () => {
-		const dashboard = new ParallelAgentsDashboardStore("arena", () => 1000);
-		dashboard.addAgent("a", "a", "model/a");
+	it("feeds child events, progress, and terminal state into the pane", async () => {
+		const calls: string[] = [];
+		const pane: AgentPaneRun = {
+			addChild() {},
+			markRunning: (id) => calls.push(`running:${id}`),
+			progress: (id, info) => calls.push(`progress:${id}:${info.turns}`),
+			complete: (id, info) => calls.push(`complete:${id}:${info.status}:${info.turns}`),
+			event: (id, event) => calls.push(`event:${id}:${event.kind}`),
+			note: (id, text) => calls.push(`note:${id}:${text}`),
+			dispose() {},
+		};
 		const completed: ParallelAgentResult = {
 			status: "completed",
 			label: "a",
@@ -62,16 +70,21 @@ describe("runParallelAgents", () => {
 			tasks: [tasks[0]],
 			maxConcurrency: 1,
 			deps: {
-				dashboard,
-				runAgent: async ({ onProgress }) => {
+				pane,
+				runAgent: async ({ onProgress, onEvent }) => {
 					onProgress?.({ turns: 2, activity: "grep x", preview: "draft" });
+					onEvent?.({ kind: "tool_start", summary: "grep x", at: 1 });
 					return completed;
 				},
 			},
 		});
-		const row = dashboard.getRows()[0];
-		assert.equal(row.status, "completed");
-		assert.equal(row.turns, 4);
-		assert.equal(row.preview, undefined);
+		assert.deepEqual(calls, [
+			"running:a",
+			"note:a:Child started",
+			"progress:a:2",
+			"event:a:tool_start",
+			"complete:a:completed:4",
+			"note:a:Child completed",
+		]);
 	});
 });

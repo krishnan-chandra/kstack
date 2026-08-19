@@ -5,14 +5,15 @@
 | Module | Purpose |
 | --- | --- |
 | `change-kind.ts` | Defines the change-kind taxonomy, labels, and proof-obligation playbook names. |
+| `agent-pane.ts` | Owns the shared live agent pane, canonical shortcuts, nested foreground-run stack, bounded transcript stores, console lifecycle, and TUI cleanup. |
 | `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, persists native sessions, and parses their JSONL event streams. |
 | `subagent-sessions.ts` | Owns native child-session identity, active leases, file resolution, and retention. |
 | `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
 | `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec` for VCS modules. |
 | `github.ts` | Provides a bounded, validated `gh` client for repository and PR snapshots, merges, and merge verification. |
-| `subagent-console.ts` | Renders the full-screen read-only subagent console (sidebar + transcript) used by live dashboards. |
-| `live-dashboard.ts` | Stores and renders shared live-dashboard state with extension-specific copy and display policy. |
+| `subagent-console.ts` | Renders the policy-driven full-screen read-only subagent console (sidebar + transcript) used by the agent-pane host. |
+| `live-dashboard.ts` | Stores and renders shared live-dashboard state behind the agent-pane host. |
 | `terminal-text.ts` | Sanitizes and width-bounds untrusted terminal text, with fallbacks for tests outside the Pi host. |
 | `kstack-config.ts` | Locates `kstack.json`, loads and validates sections, and defines common model and thinking predicates. |
 | `model-availability.ts` | Checks whether a child process can reproduce an authenticated model. |
