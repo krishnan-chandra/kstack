@@ -103,24 +103,30 @@ describe("stack-prefix landing", () => {
 		}
 	});
 
-	it("preserves single-PR landing when the selected PR closes only one local slice", async () => {
-		const one = commit("aaa", "feat1");
+	it("cleans up local jj state when the selected PR closes one local slice", async () => {
+		let stack = [commit("aaa", "feat1")];
+		const mutations: string[] = [];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+			abandonRange: async (_cwd, trunk, merged) => {
+				mutations.push(`abandon:${trunk}..${merged}`);
+				stack = [];
+			},
+		});
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 11, headBookmark: "feat1", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
 				ui: ui(),
-				jj: fakeJj({
-					fetchStack: async () => [one],
-					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
-				}),
-				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
-				landPr: async () => {
-					throw new Error("stack landing must not run");
-				},
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => (stack.length > 0 ? [openPrs()[0]] : []) }),
+				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
-		assert.deepEqual(result, { status: "not-stack" });
+		assert.equal(result.status, "stack");
+		if (result.status === "stack") assert.equal(result.outcome.status, "completed");
+		assert.ok(mutations.includes("abandon:trunk..feat1"));
 	});
 
 	it("blocks when kstack metadata names predecessors missing from the local prefix", async () => {

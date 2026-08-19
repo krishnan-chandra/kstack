@@ -111,9 +111,8 @@ export async function landStackThroughPullRequest(
 			},
 		};
 	}
-	if (model.slices.length <= 1 && !metadataConfirmsPrefix) return { status: "not-stack" };
 	if (model.blockers.length > 0) return { status: "stack", outcome: { status: "blocked", blockers: model.blockers } };
-	if (model.slices.length <= 1) {
+	if (model.slices.length <= 1 && metadataConfirmsPrefix) {
 		return {
 			status: "stack",
 			outcome: {
@@ -128,7 +127,7 @@ export async function landStackThroughPullRequest(
 		};
 	}
 
-	const outcome = await landStack(
+	const outcome = await landStackWithAuthorization(
 		{
 			cwd: options.cwd,
 			top: options.headBookmark,
@@ -137,6 +136,8 @@ export async function landStackThroughPullRequest(
 			readiness: options.readiness,
 		},
 		deps,
+		"interactive-confirmation",
+		model,
 	);
 	return { status: "stack", outcome };
 }
@@ -154,6 +155,7 @@ async function landStackWithAuthorization(
 	options: LandStackOptions,
 	deps: OrchestratorDeps,
 	authorization: "interactive-confirmation" | "model-tool",
+	initialModel?: InspectModel,
 ): Promise<StackLandOutcome> {
 	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
 		return {
@@ -173,7 +175,7 @@ async function landStackWithAuthorization(
 		};
 	}
 	if (deps.signal?.aborted) return { status: "cancelled" };
-	const prepared = await prepareLand(options, deps);
+	const prepared = await prepareLand(options, deps, initialModel);
 	if (prepared.status !== "ok") return prepared;
 	if (authorization === "interactive-confirmation") {
 		const confirmation = renderLandConfirmation({
@@ -190,17 +192,18 @@ async function landStackWithAuthorization(
 		if (deps.signal?.aborted) return { status: "cancelled" };
 		if (!confirmed) return { status: "declined" };
 	}
-	return runLandLoop(options, deps, prepared.method, prepared.model);
+	return runLandLoop(options, deps, prepared.method, prepared.model, prepared.mapped);
 }
 
 async function remapLand(
 	options: LandStackOptions,
 	deps: OrchestratorDeps,
+	inspectedModel?: InspectModel,
 ): Promise<
 	| { status: "ok"; mapped: MappedLandSlice[]; model: InspectModel; repository: { owner: string; repo: string } }
 	| { status: "blocked"; blockers: StackBlocker[] }
 > {
-	const model = await inspectStack(options, deps);
+	const model = inspectedModel ?? (await inspectStack(options, deps));
 	const mapped = await mapStackPullRequests(model, options, deps);
 	if (mapped.status !== "ok") return mapped;
 	return { status: "ok", mapped: mapped.mapped, model, repository: mapped.repository };
@@ -209,11 +212,12 @@ async function remapLand(
 async function prepareLand(
 	options: LandStackOptions,
 	deps: OrchestratorDeps,
+	initialModel?: InspectModel,
 ): Promise<
 	| { status: "ok"; mapped: MappedLandSlice[]; method: StackMergeMethod; model: InspectModel }
 	| { status: "blocked"; blockers: StackBlocker[] }
 > {
-	const remapped = await remapLand(options, deps);
+	const remapped = await remapLand(options, deps, initialModel);
 	if (remapped.status !== "ok") return remapped;
 	const method = await resolveLandMethod(
 		options,
@@ -442,6 +446,7 @@ async function runLandLoop(
 	deps: OrchestratorDeps,
 	method: StackMergeMethod,
 	initialModel: InspectModel,
+	initialMapped: MappedLandSlice[],
 ): Promise<StackLandOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createGitHubAdapter(deps.run);
@@ -458,6 +463,7 @@ async function runLandLoop(
 	const recoveryOperationIds: string[] = [];
 	let remainingBookmarks: string[] = [];
 	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, completedMutations);
+	let preparedFirstIteration = true;
 
 	const progress = (): {
 		frontiers: StackLandFrontier[];
@@ -475,7 +481,10 @@ async function runLandLoop(
 
 	for (;;) {
 		if (deps.signal?.aborted) return { status: "cancelled", ...progress() };
-		const prepared = await remapLand(options, deps);
+		const prepared = preparedFirstIteration
+			? { status: "ok" as const, mapped: initialMapped, model: initialModel }
+			: await remapLand(options, deps);
+		preparedFirstIteration = false;
 		if (prepared.status !== "ok") {
 			return frontiers.length === 0
 				? prepared

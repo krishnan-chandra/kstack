@@ -94,9 +94,14 @@ create PRs, repair bases, or update navigation comments.
 - `requestStackPublication(pi, input, ctx)` — discovery, planning, confirmation,
   stale checking, and apply for trusted in-process workflow callers. The
   extension owns that confirmation.
-- `requestStackLanding(pi, input, ctx)` — maps a selected PR head to a local jj
-  stack. It returns `not-stack` for one-slice work and otherwise lands the full
-  prefix through that PR.
+- `requestStackLanding(pi, input, ctx)` — maps a selected PR head to local jj
+  state. When a local bookmark matches the PR head, it lands the complete prefix,
+  including one-slice work, then abandons the landed range, removes stale
+  bookmarks, refreshes trunk, deletes the verified remote branch, and settles a
+  safe empty working copy onto refreshed trunk. A discovered blocker stops the
+  run before single-PR fallback. It returns `not-stack` only when the PR head has
+  no matching local bookmark and navigation metadata does not identify missing
+  stack predecessors.
 
 Completed outcomes return a base-to-top PR map. Other outcomes are
 `declined`, `busy`, `blocked`, `stale`, `partial`, `cancelled`,

@@ -32,14 +32,17 @@ with no open stack relatives keeps the ordinary exact-head GitHub path. Graphite
 stack landing rejects `--method` because repository/Graphite settings own the
 merge strategy and queue policy.
 
-In jj mode, Land asks `jj-stacked-prs` whether the selected PR head closes a
-local linear stack. A stack with two or more slices lands bottom-up through the
-selected PR. An owned kstack navigation comment also prevents single-PR fallback
-when local predecessors are missing. A PR that maps to one slice and has no such
-metadata keeps the ordinary single-PR path. Once Land identifies a multi-PR
-stack, discovery or preflight failures stop the run. Land never falls back to an
-individual middle-stack merge. If the `jj-stacked-prs` listener is unavailable,
-Land stops before mutation.
+In jj mode, Land asks `jj-stacked-prs` whether the selected PR head matches a
+local bookmark. A matching one-slice or multi-slice prefix uses stack landing:
+it lands bottom-up through the selected PR, abandons each landed local range,
+removes stale bookmarks, refreshes trunk, deletes verified remote branches, and
+settles a safe empty working copy onto refreshed trunk. Discovery or preflight
+blockers, including blockers on a single slice, stop the run rather than falling
+back to ordinary single-PR landing. An owned kstack navigation comment likewise
+prevents fallback when local predecessors are missing. The ordinary exact-head
+GitHub path remains only when no local bookmark matches the PR head and metadata
+does not identify missing stack predecessors. If the `jj-stacked-prs` listener
+is unavailable, Land stops before mutation.
 
 Land runs the configured backend's preflight before resolving or mutating the
 target. Git mode refuses jj-managed workspaces. jj mode requires jj 0.44 or
