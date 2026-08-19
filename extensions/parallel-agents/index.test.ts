@@ -18,6 +18,7 @@ describe("parallel-agents extension", () => {
 		let tool: RegisteredTool | undefined;
 		const handlers = new Map<string, () => void>();
 		const pi = {
+			registerShortcut() {},
 			registerTool(value: RegisteredTool) {
 				tool = value;
 			},
@@ -34,6 +35,7 @@ describe("parallel-agents extension", () => {
 		let tool: RegisteredTool | undefined;
 		const root = mkdtempSync(join(tmpdir(), "parallel-agents-test-"));
 		const pi = {
+			registerShortcut() {},
 			registerTool(value: RegisteredTool) {
 				tool = value;
 			},

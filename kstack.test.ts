@@ -5,7 +5,10 @@ import { registerKstackExtensions } from "./kstack.ts";
 
 test("registerKstackExtensions preserves order and rejects a partial load", async () => {
 	const loaded: string[] = [];
-	const pi = {} as ExtensionAPI;
+	const pi = {
+		registerShortcut() {},
+		on() {},
+	} as unknown as ExtensionAPI;
 
 	await assert.rejects(
 		registerKstackExtensions(pi, [

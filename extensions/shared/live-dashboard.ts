@@ -182,7 +182,7 @@ export interface RenderRequester {
 	terminal?: { rows?: number };
 }
 
-export class LiveDashboardComponent implements Component {
+class LiveDashboardComponent implements Component {
 	private unsubscribe: (() => void) | undefined;
 	private readonly store: LiveDashboardStore;
 	private readonly theme: DashboardTheme;

@@ -9,6 +9,7 @@ import parallelAgents from "./extensions/parallel-agents/index.ts";
 import planImplement from "./extensions/plan-implement/index.ts";
 import prAutopilot from "./extensions/pr-autopilot/index.ts";
 import sessionArchive from "./extensions/session-archive/index.ts";
+import { getAgentPaneHost } from "./extensions/shared/agent-pane.ts";
 import steeringSwap from "./extensions/steering-swap/index.ts";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
@@ -32,6 +33,7 @@ export async function registerKstackExtensions(
 	pi: ExtensionAPI,
 	factories: ReadonlyArray<{ name: string; register: ExtensionFactory }> = KSTACK_EXTENSIONS,
 ): Promise<void> {
+	getAgentPaneHost(pi);
 	for (const factory of factories) await factory.register(pi);
 }
 

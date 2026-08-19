@@ -2,10 +2,8 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { mountLiveDashboard } from "../shared/live-dashboard.ts";
-import { ParallelAgentsDashboardStore } from "./live-dashboard.ts";
+import { type AgentPaneRun, getAgentPaneHost } from "../shared/agent-pane.ts";
 import { runParallelAgents } from "./orchestrator.ts";
 import type { ParallelAgentKind, ParallelAgentsDetails, ParallelAgentTask } from "./types.ts";
 
@@ -43,7 +41,7 @@ const TaskSchema = Type.Object({
 
 export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 	let activeController: AbortController | undefined;
-	let disposeDashboard: (() => void) | undefined;
+	const paneHost = getAgentPaneHost(pi);
 
 	pi.registerTool({
 		name: "parallel_agents",
@@ -96,13 +94,15 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 			const abort = () => controller.abort();
 			if (signal?.aborted) abort();
 			else signal?.addEventListener("abort", abort, { once: true });
-			const dashboard = ctx.mode === "tui" ? new ParallelAgentsDashboardStore(kind) : undefined;
-			if (dashboard) {
-				for (const task of tasks) dashboard.addAgent(task.label, task.label, task.model);
-				disposeDashboard = mountLiveDashboard(ctx.ui, "parallel-agents", dashboard, {
-					stripTerminalSequences,
-					truncateToWidth: (text, width) => truncateToWidth(text, width),
+			let pane: AgentPaneRun | undefined;
+			if (ctx.mode === "tui") {
+				pane = paneHost.startRun({
+					ctx,
+					title: kind === "simplify" ? "Simplify" : "Arena",
+					clearPreviewOnComplete: true,
+					onAbort: abort,
 				});
+				for (const task of tasks) pane.addChild({ id: task.label, label: task.label, model: task.model });
 			} else {
 				ctx.ui.setStatus("parallel-agents", `${kind}: running ${tasks.length} agent(s)`);
 			}
@@ -112,7 +112,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 					tasks,
 					maxConcurrency: params.maxConcurrency ?? DEFAULT_CONCURRENCY,
 					signal: controller.signal,
-					deps: { dashboard },
+					deps: { pane },
 				});
 				const completed = results.filter((result) => result.status === "completed").length;
 				const failed = results.filter((result) => result.status === "failed").length;
@@ -135,8 +135,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 				};
 			} finally {
 				signal?.removeEventListener("abort", abort);
-				disposeDashboard?.();
-				disposeDashboard = undefined;
+				pane?.dispose();
 				ctx.ui.setStatus("parallel-agents", undefined);
 				if (activeController === controller) activeController = undefined;
 			}
@@ -146,7 +145,5 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
 		activeController?.abort();
 		activeController = undefined;
-		disposeDashboard?.();
-		disposeDashboard = undefined;
 	});
 }

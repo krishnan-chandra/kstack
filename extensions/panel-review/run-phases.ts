@@ -71,7 +71,6 @@ export interface PipelineDashboard {
 	event(label: string, event: ChildEvent): void;
 	note(label: string, text: string): void;
 	addLead(label: string, name: string, model: string): void;
-	tick(): void;
 	dispose(): void;
 }
 
@@ -154,7 +153,6 @@ export async function runReviewPipeline(
 		updateStatus();
 		ticker = setInterval(() => {
 			updateStatus();
-			if (fx.isCurrent()) dashboard?.tick();
 		}, 1000);
 		ticker.unref?.();
 		const childDeps = {

@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
-import { Box, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, Text } from "@earendil-works/pi-tui";
 import { requestJjStackCapabilities, requestStackPublication } from "../jj-stacked-prs/api.ts";
 import { requestLand } from "../land/api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
+import { getAgentPaneHost } from "../shared/agent-pane.ts";
 import {
 	CHANGE_KINDS,
 	type ChangeKind,
@@ -19,7 +20,6 @@ import {
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { findOpenPullRequestByHead } from "../shared/github.ts";
-import { mountLiveDashboard } from "../shared/live-dashboard.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
@@ -31,12 +31,10 @@ import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.t
 import { getArgumentCompletions, parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveRoles } from "./config.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
-import { PlanImplementDashboardStore, type PlanPipelineDashboard } from "./live-dashboard.ts";
+import type { PlanPipelineDashboard } from "./live-dashboard.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { createStackDeliveryAdapter } from "./stack-delivery.ts";
-import { type OpenSubagentConsoleResult, openSubagentConsole } from "./subagent-console.ts";
-import { PlanImplementTranscriptStore } from "./transcript-store.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, SkillRef, WorkLocation } from "./types.ts";
 import { validateVcsMode } from "./vcs-mode.ts";
 
@@ -76,61 +74,12 @@ function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[]
 export default function planImplementExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "plan-implement");
 	const lifecycle = new WorkflowLifecycle();
-	let activeConsole: OpenSubagentConsoleResult | undefined;
-	let activeStores: { dashboard: PlanImplementDashboardStore; transcripts: PlanImplementTranscriptStore } | undefined;
+	const paneHost = getAgentPaneHost(pi);
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => {
-		activeConsole?.close();
-		activeConsole = undefined;
-		activeStores = undefined;
-		lifecycle.shutdownSession();
-	});
-	pi.registerShortcut("ctrl+shift+p", {
-		description: "Inspect plan/implement child transcripts",
-		handler: async (ctx) => {
-			if (ctx.mode !== "tui" || !activeStores || !lifecycle.isRunning()) {
-				ctx.ui.notify("No plan/implement run is active.", "info");
-				return;
-			}
-			if (activeConsole) return;
-			const { dashboard, transcripts } = activeStores;
-			const subagentConsole = openSubagentConsole(ctx, dashboard, transcripts, {
-				text: {
-					stripTerminalSequences,
-					truncateToWidth: (text, width) => truncateToWidth(text, width),
-					visibleWidth,
-				},
-				onAbort: () => {
-					if (!lifecycle.abortActiveChild()) {
-						const suffix =
-							lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
-						ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
-					}
-				},
-			});
-			activeConsole = subagentConsole;
-			subagentConsole.closed.finally(() => {
-				if (activeConsole === subagentConsole) activeConsole = undefined;
-			});
-		},
-	});
-	pi.registerShortcut("ctrl+shift+i", {
-		description: "Abort the running plan/implement agent",
-		handler: async (ctx) => {
-			if (lifecycle.abortActiveChild()) {
-				if (ctx.mode !== "tui") {
-					ctx.ui.setStatus("plan-implement", "plan-implement: aborting child process…");
-				}
-			} else {
-				const suffix =
-					lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
-				ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
-			}
-		},
-	});
+	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 	pi.registerMessageRenderer("plan-implement", (message, { expanded, outputPad }, theme) => {
 		const details = message.details as PhaseDetails | undefined;
 		const phase = details ? PHASE_LABELS[details.phase] : "Implementer";
@@ -458,42 +407,29 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		implementerModel: string,
 	): PlanPipelineDashboard | undefined {
 		if (ctx.mode !== "tui") return undefined;
-		const dashboardStore = new PlanImplementDashboardStore();
-		const transcriptStore = new PlanImplementTranscriptStore();
-		dashboardStore.addPhase("planner", "Planner", plannerModel, "planner");
-		transcriptStore.addChild("planner");
-		dashboardStore.addPhase("implementer", "Implementer", implementerModel, "implementer");
-		transcriptStore.addChild("implementer");
-
-		activeStores = { dashboard: dashboardStore, transcripts: transcriptStore };
-		const disposeWidget = mountLiveDashboard(ctx.ui, "plan-implement", dashboardStore, {
-			stripTerminalSequences,
-			truncateToWidth: (text, width) => truncateToWidth(text, width),
+		const pane = paneHost.startRun({
+			ctx,
+			title: "Plan & implement",
+			emptyMessage: "No plan/implement phases active",
+			onAbort: () => {
+				if (!lifecycle.abortActiveChild()) {
+					const suffix =
+						lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
+					ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
+				}
+			},
 		});
-		const ticker = setInterval(() => {
-			dashboardStore.tick();
-		}, 1000);
-		ticker.unref?.();
+		pane.addChild({ id: "planner", label: "Planner", model: plannerModel });
+		pane.addChild({ id: "implementer", label: "Implementer", model: implementerModel });
 
 		return {
-			addPhase: (id, label, model, role) => {
-				dashboardStore.addPhase(id, label, model, role);
-				transcriptStore.addChild(id);
-			},
-			markRunning: (id) => dashboardStore.markRunning(id),
-			progress: (id, info) => dashboardStore.progress(id, info),
-			complete: (id, info) => dashboardStore.complete(id, info),
-			event: (id, ev) => transcriptStore.push(id, ev),
-			note: (id, text) => transcriptStore.note(id, text),
-			tick: () => dashboardStore.tick(),
-			dispose: () => {
-				clearInterval(ticker);
-				activeConsole?.close();
-				activeConsole = undefined;
-				activeStores = undefined;
-				transcriptStore.dispose();
-				disposeWidget();
-			},
+			addPhase: (id, label, model, _role) => pane.addChild({ id, label, model }),
+			markRunning: (id) => pane.markRunning(id),
+			progress: (id, info) => pane.progress(id, info),
+			complete: (id, info) => pane.complete(id, info),
+			event: (id, event) => pane.event(id, event),
+			note: (id, text) => pane.note(id, text),
+			dispose: () => pane.dispose(),
 		};
 	}
 }

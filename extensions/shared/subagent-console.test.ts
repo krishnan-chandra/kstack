@@ -478,6 +478,13 @@ describe("SubagentConsoleComponent", () => {
 			},
 			fakeText,
 			COPY,
+			(data) => {
+				try {
+					return matchesKey(data, "ctrl+shift+x");
+				} catch {
+					return false;
+				}
+			},
 		);
 		return { dashboard, transcripts, flags, component };
 	}
@@ -507,14 +514,16 @@ describe("SubagentConsoleComponent", () => {
 		component.dispose();
 	});
 
-	it("passes ctrl+shift abort keys through to onAbort and ignores unknown sequences", () => {
+	it("passes the configured abort key through to onAbort and ignores unknown sequences", () => {
 		const { component, flags } = setup();
 		const before = component.getState().selectedIndex;
 		assert.doesNotThrow(() => component.handleInput("\x1b[999~"));
 		assert.equal(component.getState().selectedIndex, before);
 		component.handleInput("\x1b[120;6u"); // ctrl+shift+x
 		assert.equal(flags.aborted, true);
-		component.handleInput("\x1b[105;6u"); // ctrl+shift+i
+		flags.aborted = false;
+		component.handleInput("\x1b[105;6u"); // ctrl+shift+i is no longer an alias
+		assert.equal(flags.aborted, false);
 		component.dispose();
 	});
 

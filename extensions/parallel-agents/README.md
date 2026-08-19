@@ -1,6 +1,6 @@
 # parallel-agents
 
-`parallel_agents` runs the child processes required by the Simplify and Arena skills. In TUI mode it mounts Kstack's shared live dashboard, the same component used by panel-review and plan-implement.
+`parallel_agents` runs the child processes required by the Simplify and Arena skills. In TUI mode it mounts Kstack's shared live agent pane, the same interface used by panel-review and plan-implement.
 
 ## Use
 
@@ -11,7 +11,9 @@ The tool is model-callable; it does not add a slash command.
 - `tasks` contains 1–8 labeled prompts and explicit `provider/model[:thinking]` model ids.
 - `maxConcurrency` defaults to 4.
 
-Each row shows queued/running/completed state, model, elapsed time, current tool, and a bounded output preview. The widget is removed after the tool settles.
+Each row shows queued/running/completed state, model, elapsed time, current tool, and a bounded output preview. Press **Ctrl+Shift+V** while the tool is running to open the full-screen read-only console. Use `Left`/`Right` or `Tab`/`Shift+Tab` to switch children, the arrow and paging keys to scroll, and `f` to toggle follow-tail. **Esc** closes the console without cancelling. **Ctrl+Shift+X** aborts the active run.
+
+Transcript text and labels are sanitized and width-bounded. Each child keeps at most 128 KiB or 1,000 entries; older entries are evicted with a notice. Pane state is ephemeral, never enters the parent session, and is available only while that tool call remains active. Arena fan-out and cross-judge calls therefore receive separate fresh panes.
 
 ## Isolation and limits
 

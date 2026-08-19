@@ -46,7 +46,7 @@ Keep the bundle under 2 MiB. If the diff is larger, include `git diff --stat` an
 
 ## Parallel read-only reviewers
 
-Launch all three reviewers in one `parallel_agents` tool call with `kind: "simplify"`. The extension shows the same live status pane used by panel review: queued/running/completed state, model, elapsed time, current tool, and output preview. Do not replace it with background `pi` commands or a silent shell `wait`.
+Launch all three reviewers in one `parallel_agents` tool call with `kind: "simplify"`. The extension shows the shared live agent pane with queued/running/completed state, model, elapsed time, current tool, and output preview. While the call is active, **Ctrl+Shift+V** opens the read-only transcript console and **Ctrl+Shift+X** aborts it. Do not replace it with background `pi` commands or a silent shell `wait`.
 
 Use one task per lens. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. The tool runs every task from the repository root, enforces read/grep/find/ls-only isolation, disables extensions, skills, prompt templates, and context files, applies idle and runtime limits, and propagates cancellation.
 

@@ -53,7 +53,7 @@ The N candidates will receive the same prompt, so the prompt is the contract. Ge
 
 ## Phase B: Fan out
 
-Spawn all N candidates in one `parallel_agents` tool call with `kind: "arena"` and the configured `maxConcurrency`. The extension shows the same live status pane used by panel review: queued/running/completed state, model, elapsed time, current tool, and output preview. Do not replace it with background `pi` commands or a silent shell `wait`.
+Spawn all N candidates in one `parallel_agents` tool call with `kind: "arena"` and the configured `maxConcurrency`. The extension shows the shared live agent pane with queued/running/completed state, model, elapsed time, current tool, and output preview. While the call is active, **Ctrl+Shift+V** opens the read-only transcript console and **Ctrl+Shift+X** aborts it. Do not replace it with background `pi` commands or a silent shell `wait`.
 
 Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared writable directories. Children run without extensions, skills, prompt templates, or context files. Put self-contained instructions in each prompt because repository instruction files are not loaded.
 
@@ -68,7 +68,7 @@ If a candidate fails to produce output, proceed with N−1 and note the dropout 
 
 ## Phase C: Cross-judge
 
-After all candidates complete, run the judge through a second `parallel_agents` call with one `kind: "arena"` task on a different model from the candidates. The judge sees:
+After all candidates complete, run the judge through a second `parallel_agents` call with one `kind: "arena"` task on a different model from the candidates. This call receives a fresh live pane with no fan-out transcript state. The judge sees:
 - The rubric (from Phase A)
 - Each candidate's output (by candidate label, not by model name — blind judging)
 
