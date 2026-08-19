@@ -119,7 +119,7 @@ Add a `kstack-router` section to `$PI_CODING_AGENT_DIR/kstack.json`:
 {
   "kstack-router": {
     "classifier": {
-      "model": "google-vertex/gemini-3.7-flash",
+      "model": "openai/gpt-5.6-luna",
       "thinking": "low"
     },
     "timeoutSeconds": 90
@@ -139,7 +139,7 @@ All fields are optional. Without configuration:
 ## Model fallback
 
 1. Configured model (from `kstack.json`).
-2. Built-in default: `google-vertex/gemini-3.7-flash` with low reasoning.
+2. Built-in default: `openai/gpt-5.6-luna` with low reasoning.
 3. Active session model (with a warning about latency/cost).
 4. Manual route picker (no model call).
 

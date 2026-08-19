@@ -151,7 +151,7 @@ the `"panel-review"` section:
 {
   "panel-review": {
     "reviewers": [
-      { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "medium" },
+      { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "medium" },
       { "label": "sonnet", "model": "anthropic/claude-sonnet-5", "thinking": "medium" }
     ],
     "maxConcurrency": 5,
@@ -179,8 +179,8 @@ the `"panel-review"` section:
   back to the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Claude Sonnet 5**
   (`anthropic/claude-sonnet-5`, medium), **DeepSeek V4 Pro** (`openrouter/deepseek/deepseek-v4-pro`,
-  medium), **Kimi k3** (`openrouter/moonshotai/kimi-k3`, medium), **Gemini 3.7 Flash**
-  (`google-vertex/gemini-3.7-flash`, medium). Defaults that are unavailable or
+  medium), **Kimi k3** (`openrouter/moonshotai/kimi-k3`, medium), **GLM 5.2**
+  (`openrouter/z-ai/glm-5.2`, medium). Defaults that are unavailable or
   unauthenticated are skipped with a warning; write a config to override the
   panel.
 - If fewer than two default models are available, up to five distinct models

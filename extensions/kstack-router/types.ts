@@ -67,7 +67,7 @@ export interface RouterConfig {
 }
 
 export const DEFAULTS = {
-	classifierModel: "google-vertex/gemini-3.7-flash",
+	classifierModel: "openai/gpt-5.6-luna",
 	classifierThinking: "low",
 	timeoutSeconds: 90,
 	maxTaskBytes: 32 * 1024,

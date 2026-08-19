@@ -22,11 +22,11 @@ describe("validateConfig", () => {
 				{ label: "B", model: "openai/gpt-5.4" },
 			],
 			maxConcurrency: 2,
-			synthesis: { model: "google-vertex/gemini-3.7-flash" },
+			synthesis: { model: "openrouter/z-ai/glm-5.2" },
 		});
 		assert.ok(r.ok);
 		assert.equal(r.config.maxConcurrency, 2);
-		assert.equal(r.config.synthesis.model, "google-vertex/gemini-3.7-flash");
+		assert.equal(r.config.synthesis.model, "openrouter/z-ai/glm-5.2");
 	});
 	it("applies default timeouts and accepts overrides", () => {
 		const base = {
@@ -34,7 +34,7 @@ describe("validateConfig", () => {
 				{ label: "A", model: "anthropic/claude-sonnet-4-5", thinking: "high" },
 				{ label: "B", model: "openai/gpt-5.4" },
 			],
-			synthesis: { model: "google-vertex/gemini-3.7-flash" },
+			synthesis: { model: "openrouter/z-ai/glm-5.2" },
 		};
 		const def = validateConfig(base);
 		assert.ok(def.ok);
@@ -107,11 +107,11 @@ describe("validateConfig", () => {
 				{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 				{ label: "sol", model: "openai/gpt-5.6-sol" },
 			],
-			synthesis: { model: "google-vertex/gemini-3.7-flash" },
+			synthesis: { model: "openrouter/z-ai/glm-5.2" },
 		});
 		assert.ok(r.ok);
 		assert.equal(r.config.reviewers[0].model, "openrouter/deepseek/deepseek-v4-pro");
-		assert.equal(r.config.synthesis.model, "google-vertex/gemini-3.7-flash");
+		assert.equal(r.config.synthesis.model, "openrouter/z-ai/glm-5.2");
 	});
 
 	it("rejects unknown thinking levels", () => {
@@ -168,7 +168,7 @@ describe("validateConfig", () => {
 				{ label: "A", model: "a/b" },
 				{ label: "B", model: "c/d" },
 			],
-			synthesis: { model: "google-vertex/gemini-3.7-flash", thinking: "low" },
+			synthesis: { model: "openrouter/z-ai/glm-5.2", thinking: "low" },
 		});
 		assert.ok(good.ok);
 		assert.equal(good.config.synthesis.thinking, "low");
@@ -193,7 +193,7 @@ describe("resolveReviewers", () => {
 				{ label: "B", model: "openai/y" },
 			],
 			maxConcurrency: 4,
-			synthesis: { model: "google-vertex/gemini-3.7-flash" },
+			synthesis: { model: "openrouter/z-ai/glm-5.2" },
 		};
 		const ok = resolveReviewers(config, { find: find(["anthropic/x", "openai/y"]), scopedModels: [] });
 		assert.ok(ok.ok);
@@ -212,7 +212,7 @@ describe("resolveReviewers", () => {
 			{ label: "sonnet", model: "anthropic/claude-sonnet-5", thinking: "medium" },
 			{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 			{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
-			{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "medium" },
+			{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
 		]);
 		assert.equal(r.maxConcurrency, 5);
 		assert.equal(r.warnings.length, 0);
@@ -285,11 +285,11 @@ describe("resolveSynthesisModel", () => {
 				{ label: "B", model: "openai/y" },
 			],
 			maxConcurrency: 4,
-			synthesis: { model: "google-vertex/gemini-3.7-flash", thinking: "low" as const },
+			synthesis: { model: "openrouter/z-ai/glm-5.2", thinking: "low" as const },
 		};
-		const r = resolveSynthesisModel(config, { find: find(["google-vertex/gemini-3.7-flash"]), scopedModels: [] });
+		const r = resolveSynthesisModel(config, { find: find(["openrouter/z-ai/glm-5.2"]), scopedModels: [] });
 		assert.ok(r.ok);
-		assert.equal(r.model, "google-vertex/gemini-3.7-flash");
+		assert.equal(r.model, "openrouter/z-ai/glm-5.2");
 		assert.equal(r.thinking, "low");
 		assert.equal(r.source, "config");
 	});
@@ -301,11 +301,11 @@ describe("resolveSynthesisModel", () => {
 				{ label: "B", model: "openai/y" },
 			],
 			maxConcurrency: 4,
-			synthesis: { model: "google-vertex/gemini-3.7-flash" },
+			synthesis: { model: "openrouter/z-ai/glm-5.2" },
 		};
 		const r = resolveSynthesisModel(config, { find: find(["anthropic/x"]), scopedModels: [] });
 		assert.ok(!r.ok);
-		assert.match(r.error, /gemini-3\.7-flash/);
+		assert.match(r.error, /glm-5\.2/);
 	});
 
 	it("uses the built-in small, fast default without a config", () => {
@@ -352,7 +352,7 @@ describe("loadConfig — kstack.json", () => {
 			{ label: "A", model: "anthropic/claude-sonnet-4-5" },
 			{ label: "B", model: "openai/gpt-5.4" },
 		],
-		synthesis: { model: "google-vertex/gemini-3.7-flash" },
+		synthesis: { model: "openrouter/z-ai/glm-5.2" },
 	};
 
 	it("returns missing when kstack.json does not exist", () => {
@@ -368,7 +368,7 @@ describe("loadConfig — kstack.json", () => {
 		assert.equal(r.path, getKstackPath(env()));
 		if (r.status === "loaded") {
 			assert.equal(r.config.reviewers.length, 2);
-			assert.equal(r.config.synthesis.model, "google-vertex/gemini-3.7-flash");
+			assert.equal(r.config.synthesis.model, "openrouter/z-ai/glm-5.2");
 		}
 	});
 

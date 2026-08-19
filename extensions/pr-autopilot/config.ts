@@ -8,7 +8,7 @@
  *     "pr-autopilot": {
  *       "models": [
  *         { "label": "luna",     "model": "openai/gpt-5.6-luna", "thinking": "low" },
- *         { "label": "gemini",   "model": "google-vertex/gemini-3.7-flash", "thinking": "low" },
+ *         { "label": "glm",       "model": "openrouter/z-ai/glm-5.2", "thinking": "low" },
  *         { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" }
  *       ],
  *       "maxConcurrency": 3,
@@ -20,7 +20,7 @@
  * The autopilot is tiny-model-only by construction: the validator rejects any
  * thinking level above "low" and the resolver only considers the configured
  * tiny set. When no config file exists the built-in DEFAULT_TINY_MODELS
- * (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash) are used.
+ * (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash) are used.
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
@@ -51,7 +51,7 @@ export type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
  */
 export const DEFAULT_TINY_MODELS: readonly AutopilotModelSpec[] = [
 	{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-	{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
+	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
 ] as const;
 

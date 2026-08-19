@@ -23,7 +23,7 @@ export const DEFAULT_PLANNERS: readonly RoleSpec[] = [
 
 export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [
 	{ model: "openai/gpt-5.6-terra", thinking: "medium" },
-	{ model: "google-vertex/gemini-3.7-flash", thinking: "high" },
+	{ model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 	{ model: "openrouter/deepseek/deepseek-v4-flash", thinking: "high" },
 	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 ];

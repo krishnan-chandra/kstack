@@ -35,7 +35,7 @@ The autopilot is tiny-model-only by construction:
 
 - The config validator **rejects** any thinking level above `"low"`.
 - Every child agent in a run uses one model chosen at random from that array.
-- The default pool is GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek V4 Flash.
+- The default pool is GPT-5.6 Luna, GLM 5.2, and DeepSeek V4 Flash.
 
 If no `pr-autopilot` section exists in `kstack.json`, the built-in defaults are
 used, filtered to what is available in the Pi model registry.
@@ -50,7 +50,7 @@ Config lives in the `"pr-autopilot"` section of
   "pr-autopilot": {
     "models": [
       { "label": "luna", "model": "openai/gpt-5.6-luna", "thinking": "low" },
-      { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "low" },
+      { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "low" },
       { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" }
     ],
     "maxConcurrency": 3,

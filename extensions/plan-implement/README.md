@@ -247,7 +247,7 @@ child.
 Without config, the first authenticated candidate is selected from each list:
 
 - Planner: GPT-5.6 Sol (high), Claude Opus 4.6 (high), Claude Fable 5 (high).
-- Implementer: GPT-5.6 Terra (medium), then Gemini 3.7 Flash, DeepSeek V4
+- Implementer: GPT-5.6 Terra (medium), then GLM 5.2, DeepSeek V4
   Flash, or Kimi k3 (medium).
 
 The extension does not fall back to the active parent model; explicit role and

@@ -18,7 +18,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live multi-agent TUI dashboard, bounded concurrency, cancellation, and per-child runtime limits. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with a live multi-phase TUI dashboard and full-screen subagent console. |
 | [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation session for an explicit, bounded change. Current-checkout mode takes over the TUI in a fresh linked session; `--worktree` uses an isolated child process. Both modes verify local commits, skip independent planning and review, and never publish. |
-| [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
+| [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 | [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, advances, and lands linear GitHub PR stacks on a colocated jj workspace. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
 
@@ -266,7 +266,7 @@ the review/fix/CI loop with only tiny models:
 /land --pr 42 --readiness watch        # run autopilot for each selected frontier
 ```
 
-`pr-autopilot` uses only tiny models (GPT-5.6 Luna, Gemini 3.7 Flash, and DeepSeek
+`pr-autopilot` uses only tiny models (GPT-5.6 Luna, GLM 5.2, and DeepSeek
 V4 Flash) recorded in the `pr-autopilot` section of `kstack.example.json`. It stops at
 merge-ready — it never auto-merges or rebases shared history. See
 [`extensions/pr-autopilot/README.md`](extensions/pr-autopilot/README.md) for details.

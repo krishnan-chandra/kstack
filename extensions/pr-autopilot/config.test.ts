@@ -9,7 +9,7 @@ describe("pr-autopilot config", () => {
 	it("defaults to the three tiny models", () => {
 		assert.equal(DEFAULT_TINY_MODELS.length, 3);
 		assert.equal(DEFAULT_TINY_MODELS[0].model, "openai/gpt-5.6-luna");
-		assert.equal(DEFAULT_TINY_MODELS[1].model, "google-vertex/gemini-3.7-flash");
+		assert.equal(DEFAULT_TINY_MODELS[1].model, "openrouter/z-ai/glm-5.2");
 		assert.equal(DEFAULT_TINY_MODELS[2].model, "openrouter/deepseek/deepseek-v4-flash");
 		for (const m of DEFAULT_TINY_MODELS) {
 			assert.equal(m.thinking, "low");
@@ -20,7 +20,7 @@ describe("pr-autopilot config", () => {
 		const result = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-				{ label: "lite", model: "google-vertex/gemini-3.7-flash" },
+				{ label: "lite", model: "openrouter/z-ai/glm-5.2" },
 			],
 			maxConcurrency: 2,
 			timeoutMinutes: 5,
@@ -41,7 +41,7 @@ describe("pr-autopilot config", () => {
 		const result = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "high" },
-				{ label: "lite", model: "google-vertex/gemini-3.7-flash" },
+				{ label: "lite", model: "openrouter/z-ai/glm-5.2" },
 			],
 		});
 		assert.equal(result.ok, false);
@@ -137,7 +137,7 @@ describe("pr-autopilot config", () => {
 		const valid = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-				{ label: "lite", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
+				{ label: "lite", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
 			],
 		});
 		assert.equal(valid.ok, true);
@@ -159,7 +159,7 @@ describe("pr-autopilot config", () => {
 			},
 		);
 		assert.equal(bad.ok, false);
-		if (!bad.ok) assert.match(bad.error, /gemini-3.7-flash/);
+		if (!bad.ok) assert.match(bad.error, /glm-5.2/);
 	});
 
 	it("falls back to defaults filtered to available", () => {
@@ -169,7 +169,7 @@ describe("pr-autopilot config", () => {
 				{ status: "missing", path: dir },
 				{
 					available: (provider, modelId) =>
-						provider === "openai" || (provider === "google-vertex" && modelId.includes("gemini")),
+						provider === "openai" || (provider === "openrouter" && modelId.includes("glm")),
 				},
 			);
 			assert.equal(result.ok, true);
@@ -199,7 +199,7 @@ describe("pr-autopilot config", () => {
 					"pr-autopilot": {
 						models: [
 							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-							{ label: "lite", model: "google-vertex/gemini-3.7-flash", thinking: "low" },
+							{ label: "lite", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
 						],
 					},
 				}),

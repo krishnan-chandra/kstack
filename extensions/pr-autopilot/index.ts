@@ -2,7 +2,7 @@
  * Bounded PR Autopilot extension for Pi.
  *
  * Watches over an open PR using one tiny model per run, chosen at random
- * from the configured pool (GPT-5.6 Luna, Gemini 3.7 Flash, DeepSeek V4
+ * from the configured pool (GPT-5.6 Luna, GLM 5.2, DeepSeek V4
  * Flash by default). Spawns isolated child agents with that model to triage
  * CI/check status and review threads, generates fixes, commits, and pushes —
  * stopping at merge-ready. Never auto-merges, never re-stacks shared history.

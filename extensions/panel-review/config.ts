@@ -7,7 +7,7 @@
  *   {
  *     "panel-review": {
  *       "reviewers": [
- *         { "label": "gemini", "model": "google-vertex/gemini-3.7-flash", "thinking": "medium" }
+ *         { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "medium" }
  *       ],
  *       "maxConcurrency": 5,
  *       "timeoutMinutes": 10,
@@ -61,7 +61,7 @@ export const DEFAULT_PANEL: ReviewerSpec[] = [
 	// medium responds promptly at similar review quality.
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" },
 	{ label: "kimi", model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
-	{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "medium" },
+	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "medium" },
 ];
 
 /**

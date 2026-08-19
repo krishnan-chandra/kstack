@@ -19,7 +19,7 @@ describe("collectKstackModelAliases", () => {
 			"panel-review": {
 				reviewers: [
 					{ label: "terra", model: "openai/gpt-5.6-terra", thinking: "max" },
-					{ label: "gemini", model: "google-vertex/gemini-3.7-flash", thinking: "high" },
+					{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 				],
 			},
 			arena: { runners: [{ label: "kimi", model: "openrouter/moonshotai/kimi-k3" }] },
@@ -29,7 +29,7 @@ describe("collectKstackModelAliases", () => {
 			aliases.map((a) => [a.alias, a.modelRef, a.thinking, a.source]),
 			[
 				["terra", "openai/gpt-5.6-terra", "max", "kstack.json"],
-				["gemini", "google-vertex/gemini-3.7-flash", "high", "kstack.json"],
+				["glm", "openrouter/z-ai/glm-5.2", "high", "kstack.json"],
 				["kimi", "openrouter/moonshotai/kimi-k3", undefined, "kstack.json"],
 			],
 		);
