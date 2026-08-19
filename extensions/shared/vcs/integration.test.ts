@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const EXTENSIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const MUTATING_EXTENSIONS = ["fast-implement", "plan-implement", "pr-autopilot", "land"] as const;
+const MUTATING_EXTENSIONS = ["plan-implement", "pr-autopilot", "land"] as const;
 
 function source(path: string): string {
 	return readFileSync(path, "utf8");
@@ -22,13 +22,10 @@ describe("configured VCS adapter boundary", () => {
 	});
 
 	it("owns reusable workflow preflight below the Pi adapter", () => {
-		for (const [extension, workflow] of [
-			["fast-implement", "runner.ts"],
-			["pr-autopilot", "driver.ts"],
-		] as const) {
-			assert.doesNotMatch(source(join(EXTENSIONS_DIR, extension, "index.ts")), /\.preflight\s*\(/);
-			assert.equal(source(join(EXTENSIONS_DIR, extension, workflow)).match(/\.preflight\s*\(/g)?.length, 1);
-		}
+		assert.doesNotMatch(source(join(EXTENSIONS_DIR, "pr-autopilot", "index.ts")), /\.preflight\s*\(/);
+		assert.equal(source(join(EXTENSIONS_DIR, "pr-autopilot", "driver.ts")).match(/\.preflight\s*\(/g)?.length, 1);
+		// plan-implement deliberately owns separate normal and fast-mode adapter preflights.
+		assert.equal(source(join(EXTENSIONS_DIR, "plan-implement", "index.ts")).match(/\.preflight\s*\(/g)?.length, 2);
 	});
 
 	it("keeps direct Git and jj mutations out of workflow modules", () => {

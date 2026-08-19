@@ -4,8 +4,8 @@ import { dirname } from "node:path";
 import { describe, it } from "node:test";
 import type { ChildUsage, runChildAgent } from "../shared/child-agent-runner.ts";
 import type { GitVcsBackend, IsolationPlan, JjVcsBackend } from "../shared/vcs/backend.ts";
-import { buildImplementerGuidance, runWorktreeFastImplement } from "./runner.ts";
-import { type FastImplementRequest, LIMITS, type ResolvedRole } from "./types.ts";
+import { buildFastImplementerGuidance, runFastWorktree } from "./fast-runner.ts";
+import { LIMITS, type RoleSpec } from "./types.ts";
 
 type ChildRunOptions = Parameters<typeof runChildAgent>[0];
 
@@ -17,17 +17,12 @@ const childSession = {
 	file: "/sessions/child.jsonl",
 };
 
-const request: FastImplementRequest = {
+const request = {
 	task: "Fix the narrow bug",
-	workLocation: "worktree",
-	changeKind: "bug-fix",
+	changeKind: "bug-fix" as const,
 };
 
-const role: ResolvedRole = {
-	implementer: { model: "openai/gpt-5.6-sol", thinking: "low" },
-	timeoutMinutes: 12,
-	source: "config",
-};
+const implementer: RoleSpec = { model: "openai/gpt-5.6-sol", thinking: "low" };
 
 const isolationPlan: IsolationPlan = {
 	sourceRepoRoot: "/repo",
@@ -153,7 +148,7 @@ function promptFileFrom(options: ChildRunOptions): string {
 	return promptFile;
 }
 
-describe("runWorktreeFastImplement fixtures", () => {
+describe("runFastWorktree fixtures", () => {
 	it("builds a typed Git backend without launching Pi or Git", () => {
 		const backend = fakeGitBackend();
 		assert.equal(backend.id, "git");
@@ -161,29 +156,11 @@ describe("runWorktreeFastImplement fixtures", () => {
 	});
 });
 
-describe("request and backend validation", () => {
-	it("rejects a current-checkout request before preflight", async () => {
-		const backend = fakeGitBackend();
-		let ranChild = false;
-		const result = await runWorktreeFastImplement({ ...request, workLocation: "current" }, role, "/repo", {
-			backend,
-			runChild: async () => {
-				ranChild = true;
-				return completedChild();
-			},
-		});
-		assert.deepEqual(result, {
-			status: "failed",
-			error: "The configured VCS backend does not support managed worktrees.",
-		});
-		assert.deepEqual(backend.calls, []);
-		assert.equal(ranChild, false);
-	});
-
+describe("backend validation", () => {
 	it("rejects a jj backend before preflight", async () => {
 		const backend = fakeJjBackend();
 		let ranChild = false;
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async () => {
 				ranChild = true;
@@ -208,7 +185,7 @@ describe("worktree setup short-circuits", () => {
 			},
 		});
 		let ranChild = false;
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async () => {
 				ranChild = true;
@@ -232,7 +209,7 @@ describe("worktree setup short-circuits", () => {
 			},
 		});
 		let ranChild = false;
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async () => {
 				ranChild = true;
@@ -259,7 +236,7 @@ describe("worktree setup short-circuits", () => {
 			},
 		});
 		let ranChild = false;
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async () => {
 				ranChild = true;
@@ -277,7 +254,7 @@ describe("worktree setup short-circuits", () => {
 
 	it("plans and creates the worktree once, in order, with the request cwd and task", async () => {
 		const backend = fakeGitBackend();
-		await runWorktreeFastImplement(request, role, "/repo", {
+		await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async () => completedChild(),
 		});
@@ -299,9 +276,10 @@ describe("completed child and verification", () => {
 		let taskMode = 0;
 		let promptMode = 0;
 		let tempDir = "";
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			signal,
+			timeoutMinutes: 12,
 			runChild: async (options) => {
 				childOptions = options;
 				const promptFile = promptFileFrom(options);
@@ -337,14 +315,14 @@ describe("completed child and verification", () => {
 			["--model", "openai/gpt-5.6-sol:low"],
 		);
 		assert.equal(childOptions.deps?.maxRuntimeMs, 12 * 60_000);
-		assert.equal(childOptions.deps?.outputCapBytes, LIMITS.outputBytes);
+		assert.equal(childOptions.deps?.outputCapBytes, LIMITS.implementerOutputBytes);
 		assert.equal(childOptions.deps?.stderrCapBytes, LIMITS.stderrBytes);
 		assert.equal(childOptions.deps?.stdoutLineCapBytes, LIMITS.stdoutLineBytes);
 		assert.equal(childOptions.deps?.killGraceMs, LIMITS.killGraceMs);
 		assert.ok(taskContents.includes(request.task));
 		assert.ok(taskContents.includes("VCS backend: git"));
 		assert.ok(taskContents.includes(`Workstream: ${isolationPlan.ref}`));
-		assert.equal(promptContents, buildImplementerGuidance(request.changeKind, backend));
+		assert.equal(promptContents, buildFastImplementerGuidance(request.changeKind, backend));
 		if (process.platform !== "win32") {
 			assert.equal(taskMode, 0o600);
 			assert.equal(promptMode, 0o600);
@@ -362,7 +340,7 @@ describe("retained outcomes after worktree creation", () => {
 	it("returns a failed child with branch and cwd and does not verify", async () => {
 		const backend = fakeGitBackend();
 		let tempDir = "";
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async (options) => {
 				tempDir = dirname(promptFileFrom(options));
@@ -384,7 +362,7 @@ describe("retained outcomes after worktree creation", () => {
 	it("returns an aborted child with the abort message, branch, and cwd", async () => {
 		const backend = fakeGitBackend();
 		let tempDir = "";
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async (options) => {
 				tempDir = dirname(promptFileFrom(options));
@@ -406,7 +384,7 @@ describe("retained outcomes after worktree creation", () => {
 	it("converts a throwing child into a retained failed outcome", async () => {
 		const backend = fakeGitBackend();
 		let tempDir = "";
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async (options) => {
 				tempDir = dirname(promptFileFrom(options));
@@ -432,7 +410,7 @@ describe("retained outcomes after worktree creation", () => {
 			},
 		});
 		let tempDir = "";
-		const result = await runWorktreeFastImplement(request, role, "/repo", {
+		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
 			runChild: async (options) => {
 				tempDir = dirname(promptFileFrom(options));

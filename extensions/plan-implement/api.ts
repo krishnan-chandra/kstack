@@ -12,6 +12,8 @@ interface PlanImplementPayload {
 	mode: DeliveryMode;
 	workLocation: WorkLocation;
 	changeKind: ChangeKind;
+	/** When true, skip planner/panel-review/publisher and run one bounded implementer. */
+	fast: boolean;
 	ctx: ExtensionCommandContext;
 }
 
@@ -38,6 +40,9 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 		"workLocation" in value &&
 		isWorkLocation(value.workLocation) &&
 		!(value.mode === "stack" && value.workLocation === "worktree") &&
+		"fast" in value &&
+		typeof value.fast === "boolean" &&
+		!(value.fast && value.mode === "stack") &&
 		"changeKind" in value &&
 		typeof value.changeKind === "string" &&
 		isChangeKind(value.changeKind),
@@ -55,18 +60,20 @@ export function claimPlanImplementRequest(
 		mode: DeliveryMode,
 		workLocation: WorkLocation,
 		changeKind: ChangeKind,
+		fast: boolean,
 		ctx: ExtensionCommandContext,
 	) => Promise<void>,
 ): boolean {
 	return channel.claim(value, (payload) =>
-		run(payload.task, payload.mode, payload.workLocation, payload.changeKind, payload.ctx),
+		run(payload.task, payload.mode, payload.workLocation, payload.changeKind, payload.fast, payload.ctx),
 	);
 }
 
 /**
  * Invoke the loaded plan-implement extension directly through Pi's event bus.
  * The mutable request is claimed synchronously; completion resolves when the
- * plan → approve → implement → panel-review workflow finishes.
+ * plan → approve → implement → panel-review workflow (or, with `fast`, the
+ * single bounded implementer) finishes.
  */
 export async function requestPlanImplement(
 	pi: ExtensionAPI,
@@ -74,8 +81,9 @@ export async function requestPlanImplement(
 	mode: DeliveryMode,
 	workLocation: WorkLocation,
 	changeKind: ChangeKind,
+	fast: boolean,
 	ctx: ExtensionCommandContext,
 ): Promise<{ handled: true } | { handled: false }> {
-	const result = await channel.request(pi, { task, mode, workLocation, changeKind, ctx });
+	const result = await channel.request(pi, { task, mode, workLocation, changeKind, fast, ctx });
 	return result.handled ? { handled: true } : { handled: false };
 }

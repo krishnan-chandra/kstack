@@ -361,8 +361,8 @@ export default function (pi: ExtensionAPI): void {
 				} else if (route === "fast-change") {
 					notify(
 						worktree
-							? "Delegated to fast-implement. Use Ctrl+Shift+A to abort the worktree child."
-							: "Delegated to fast-implement in this session; its plan and discussion remain in context.",
+							? "Delegated to plan-implement --fast. Use Ctrl+Shift+I to abort the worktree child."
+							: "Delegated to plan-implement --fast in this session; its plan and discussion remain in context.",
 						"info",
 					);
 				} else if (route === "review") {

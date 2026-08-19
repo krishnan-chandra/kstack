@@ -13,6 +13,7 @@ reviewers (`find-reviewers`).
 /plan-implement --single --change-kind feature Add archive search
 /plan-implement --worktree --change-kind feature Add archive search without touching this checkout
 /plan-implement --stack --change-kind refactor Split the auth rollout into a three-PR jj stack
+/plan-implement --fast --change-kind feature Add archive search
 /plan-implement
 ```
 
@@ -20,6 +21,11 @@ Use `--change-kind` with `bug-fix`, `feature`, `refactor`, `performance`,
 `prototype`, or `generic`. If you omit the flag, the command asks you to select
 a change kind. Use `generic` as the explicit escape hatch when no specialized
 proof obligations apply.
+
+Add `--fast` to skip planning, panel review, and publishing: one bounded
+implementer runs in this session (or in an isolated `--worktree` child), the
+workstream is verified as a new local commit, and publication never happens
+automatically. `--fast` is always single-PR and cannot be combined with `--stack`.
 
 The argument-less form also asks for the delivery mode before opening the task
 editor. `--single` remains the default when the command includes a task or
@@ -180,7 +186,7 @@ and bodies for listed PRs and recommend reviewers; it does not push, create PRs,
 repair bases, or update navigation comments.
 
 The Planner, Implementer, Review fixer, and Publisher cards identify the
-model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+X** to abort an actively running child process. At
+model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
 the plan-approval boundary the shortcut reports that no child is running and
 does not pre-abort the future implementer.
 
@@ -194,10 +200,10 @@ In TUI mode, plan-implement mounts a live dashboard widget above the editor and 
   - Use `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End` / `g` / `G` to scroll.
   - Press `f` to toggle auto-follow tail.
   - Press `Escape` to close the console and restore the chat.
-  - Press `Ctrl+Shift+X` to abort the running child.
+  - Press `Ctrl+Shift+I` from the main view, or `Ctrl+Shift+X` from the main view or console, to abort the running child.
   - Displays lifecycle notes, tool calls with elapsed durations, turn boundaries with input/output token counts and costs, wrapped assistant text, and the real-time live streaming tail.
 
-Live dashboard state and transcripts are ephemeral (capped at 128 KiB or 1,000 entries per child) and never written to the session or disk. When plan-implement starts panel review, the panel pane temporarily becomes active; the plan pane and its transcript return when review finishes.
+Live dashboard state and transcripts are ephemeral (capped at 128 KiB per child) and never written to the session or disk.
 
 ## In-process API (composability)
 

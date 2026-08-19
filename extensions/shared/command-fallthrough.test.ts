@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { commandFallthroughResult, matchCommandFallthrough } from "./command-fallthrough.ts";
 
-const commands = new Set(["fast-implement", "kstack"]);
+const commands = new Set(["plan-implement", "kstack"]);
 
 describe("matchCommandFallthrough", () => {
 	it("matches a newline after a guarded command name and preserves multiline arguments", () => {
-		assert.deepEqual(matchCommandFallthrough("/fast-implement\n\n--worktree\nfix it", commands), {
-			command: "fast-implement",
+		assert.deepEqual(matchCommandFallthrough("/plan-implement\n\n--worktree\nfix it", commands), {
+			command: "plan-implement",
 			args: "--worktree\nfix it",
 		});
 	});
@@ -23,7 +23,7 @@ describe("matchCommandFallthrough", () => {
 
 	it("does not claim unknown commands or normal command syntax", () => {
 		assert.equal(matchCommandFallthrough("/unknown\ntask", commands), undefined);
-		assert.equal(matchCommandFallthrough("/fast-implement task", commands), undefined);
+		assert.equal(matchCommandFallthrough("/plan-implement task", commands), undefined);
 	});
 });
 
@@ -31,7 +31,7 @@ describe("commandFallthroughResult", () => {
 	it("blocks guarded multiline commands with actionable feedback", () => {
 		const notifications: Array<{ message: string; level: string }> = [];
 		const result = commandFallthroughResult(
-			{ source: "interactive", text: "/fast-implement\n--worktree fix it" },
+			{ source: "interactive", text: "/plan-implement\n--worktree fix it" },
 			commands,
 			(message, level) => notifications.push({ message, level }),
 		);
@@ -40,7 +40,7 @@ describe("commandFallthroughResult", () => {
 		assert.deepEqual(notifications, [
 			{
 				message:
-					"/fast-implement was not run because Pi dispatches extension commands only when the name is followed by a literal space. Retry as /fast-implement --worktree fix it",
+					"/plan-implement was not run because Pi dispatches extension commands only when the name is followed by a literal space. Retry as /plan-implement --worktree fix it",
 				level: "error",
 			},
 		]);
@@ -49,7 +49,7 @@ describe("commandFallthroughResult", () => {
 	it("passes extension-injected and unknown input through", () => {
 		const notify = () => assert.fail("should not notify");
 		assert.deepEqual(
-			commandFallthroughResult({ source: "extension", text: "/fast-implement\ntask" }, commands, notify),
+			commandFallthroughResult({ source: "extension", text: "/plan-implement\ntask" }, commands, notify),
 			{ action: "continue" },
 		);
 		assert.deepEqual(commandFallthroughResult({ source: "rpc", text: "/unknown\ntask" }, commands, notify), {
@@ -60,7 +60,7 @@ describe("commandFallthroughResult", () => {
 	it("blocks guarded RPC fallthrough instead of sending it to the model", () => {
 		const notifications: string[] = [];
 		assert.deepEqual(
-			commandFallthroughResult({ source: "rpc", text: "/fast-implement\ntask" }, commands, (message) =>
+			commandFallthroughResult({ source: "rpc", text: "/plan-implement\ntask" }, commands, (message) =>
 				notifications.push(message),
 			),
 			{ action: "handled" },

@@ -5,9 +5,9 @@ import { CHANGE_KINDS, type ChangeKind, isChangeKind } from "../shared/change-ki
 import { type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
 const DELIVERY_FLAGS = new Set(["--single", "--stack"]);
-const PLAN_IMPLEMENT_FLAGS = ["--single", "--stack", "--worktree", "--change-kind"] as const;
+const PLAN_IMPLEMENT_FLAGS = ["--single", "--stack", "--worktree", "--change-kind", "--fast"] as const;
 
-const PLAN_IMPLEMENT_BOOLEAN_FLAGS = new Set(["--single", "--stack", "--worktree"]);
+const PLAN_IMPLEMENT_BOOLEAN_FLAGS = new Set(["--single", "--stack", "--worktree", "--fast"]);
 
 /**
  * Complete the finite leading flags of `/plan-implement` (`--single`,
@@ -74,14 +74,15 @@ export function validateTask(task: string): { ok: true; task: string } | { ok: f
 export function parsePlanImplementArgs(
 	args: string,
 ):
-	| { ok: true; mode: DeliveryMode; workLocation: WorkLocation; changeKind?: ChangeKind; task: string }
+	| { ok: true; mode: DeliveryMode; workLocation: WorkLocation; changeKind?: ChangeKind; fast: boolean; task: string }
 	| { ok: false; error: string } {
 	const trimmed = args.trim();
-	if (!trimmed) return { ok: true, mode: "single", workLocation: "current", task: "" };
+	if (!trimmed) return { ok: true, mode: "single", workLocation: "current", fast: false, task: "" };
 
 	const tokens = trimmed.split(/\s+/);
 	let mode: DeliveryMode = "single";
 	let workLocation: WorkLocation = "current";
+	let fast = false;
 	let deliverySeen = false;
 	let changeKind: ChangeKind | undefined;
 	let i = 0;
@@ -107,6 +108,12 @@ export function parsePlanImplementArgs(
 			continue;
 		}
 
+		if (token === "--fast") {
+			if (fast) return { ok: false, error: "Duplicate --fast flag." };
+			fast = true;
+			continue;
+		}
+
 		if (token === "--change-kind") {
 			if (changeKind !== undefined) return { ok: false, error: "Duplicate --change-kind flag." };
 			const value = tokens[++i];
@@ -126,6 +133,14 @@ export function parsePlanImplementArgs(
 		};
 	}
 
+	// --fast is the lower-assurance single-PR implementer; it cannot be combined
+	// with the planner-driven stack delivery.
+	if (fast && mode === "stack") {
+		return {
+			ok: false,
+			error: "--fast cannot be combined with --stack. Fast mode is always single-PR.",
+		};
+	}
 	if (mode === "stack" && workLocation === "worktree") {
 		return {
 			ok: false,
@@ -133,7 +148,7 @@ export function parsePlanImplementArgs(
 				"--stack and --worktree cannot currently be combined. Use --stack in the jj workspace or --single --worktree.",
 		};
 	}
-	return { ok: true, mode, workLocation, changeKind, task: tokens.slice(i).join(" ") };
+	return { ok: true, mode, workLocation, changeKind, fast, task: tokens.slice(i).join(" ") };
 }
 
 function boundedPanelIntent(task: string): string {

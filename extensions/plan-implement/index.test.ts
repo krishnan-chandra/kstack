@@ -134,6 +134,7 @@ describe("getArgumentCompletions", () => {
 			{ value: "--stack", label: "--stack" },
 			{ value: "--worktree", label: "--worktree" },
 			{ value: "--change-kind", label: "--change-kind" },
+			{ value: "--fast", label: "--fast" },
 		]);
 	});
 

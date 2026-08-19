@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { FAST_IMPLEMENT_REQUEST_EVENT } from "../fast-implement/api.ts";
 import { LAND_REQUEST_EVENT } from "../land/api.ts";
+import { PLAN_IMPLEMENT_REQUEST_EVENT } from "../plan-implement/api.ts";
 import { PRAUTOPILOT_REQUEST_EVENT } from "../pr-autopilot/api.ts";
 import { dispatchRoute, getRestrictedTools } from "./dispatch.ts";
 import { RouterLifecycle } from "./lifecycle.ts";
@@ -82,7 +82,7 @@ describe("dispatchRoute", () => {
 		const bus: ExtensionAPI = {
 			events: {
 				emit(name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
-					assert.equal(name, FAST_IMPLEMENT_REQUEST_EVENT);
+					assert.equal(name, PLAN_IMPLEMENT_REQUEST_EVENT);
 					value.claimed = true;
 					value.completion = Promise.resolve();
 				},
@@ -106,7 +106,7 @@ describe("dispatchRoute", () => {
 		} as never;
 		assert.deepEqual(
 			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
-			{ status: "failed", error: "fast-implement dispatch failed: replacement send failed" },
+			{ status: "failed", error: "plan-implement dispatch failed: replacement send failed" },
 		);
 	});
 

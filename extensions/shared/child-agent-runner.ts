@@ -85,7 +85,7 @@ const DEFAULT_KILL_GRACE = 5000;
 const PREVIEW_CAP = 4096;
 
 interface ChildIsolationOptions {
-	/** Pass --no-skills (default true; fast-implement sets false). */
+	/** Pass --no-skills (default true; plan-implement --fast sets false). */
 	noSkills?: boolean;
 	/** Pass --no-context-files (default false). */
 	noContextFiles?: boolean;

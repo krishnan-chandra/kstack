@@ -106,8 +106,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | Workflow | Roles to configure | Constraints |
 | --- | --- | --- |
 | `vcs` | `backend` | Use exactly `"git"`, `"jj"`, or `"graphite"`; jj requires a colocated workspace and jj 0.44+, Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
-| `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. |
-| `fast-implement` | `implementer`, `timeoutMinutes` | The implementer must be one of the bounded pairs `openai/gpt-5.6-sol:low`, `openrouter/deepseek/deepseek-v4-flash:high`, or `openrouter/moonshotai/kimi-k3:medium`; timeout is 1–60 minutes. This low-assurance single-PR workflow is independent of the plan-implement roles. |
+| `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. `--fast` mode reuses this implementer and skips planning, review, and publishing. |
 | `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
 | `kstack-router` | `classifier`, `timeoutSeconds` | `timeoutSeconds` is 1–600. |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
@@ -151,8 +150,7 @@ Before showing the preview, check all of these conditions:
 - Each configured section has the shape and constraints in the table above.
 - `panel-review.reviewers` contains 2–5 entries and has a `synthesis` entry.
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
-  high-or-deeper thinking.
-- `fast-implement`, when configured, has one authenticated implementer from its bounded allowlist above and a 1–60 minute timeout.
+  high-or-deeper thinking. `--fast` reuses the `implementer` without a planner.
 - The investigation rules above hold.
 - `pr-autopilot.models` contains 2–5 unique labels and model IDs, every thinking
   level is `off`, `minimal`, or `low`, concurrency is 1–5, idle timeout is

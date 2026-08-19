@@ -14,10 +14,9 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
-| [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with the shared live agent pane and transcript console. |
-| [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live agent pane and transcript console, bounded concurrency, cancellation, and per-child runtime limits. |
-| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with the shared live agent pane and nested panel restoration. |
-| [`fast-implement`](extensions/fast-implement/) | Runs one confirmed implementation session for an explicit, bounded change. Current-checkout mode takes over the TUI in a fresh linked session; `--worktree` uses an isolated child process. Both modes verify local commits, skip independent planning and review, and never publish. |
+| [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
+| [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live multi-agent TUI dashboard, bounded concurrency, cancellation, and per-child runtime limits. |
+| [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with a live multi-phase TUI dashboard and full-screen subagent console. Add `--fast` to skip planning, review, and publishing for one bounded implementer. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 | [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, advances, and lands linear GitHub PR stacks on a colocated jj workspace. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
@@ -68,9 +67,10 @@ K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
 (default `~/.pi/agent/kstack.json`). The `vcs.backend` setting selects `"git"`,
 `"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
 Model assignments for panel-review, plan-implement, arena, swarm, and the
-`how` and `why` investigation skills use sections in the same file. The optional
-`fast-implement` section configures its one-shot implementer independently of
-`plan-implement`. A top-level `aliases` array (or any `{label, model, thinking}`
+`how` and `why` investigation skills use sections in the same file. The
+`plan-implement` section also drives `--fast` mode, which runs the same
+implementer while skipping planning, review, and publishing. A top-level
+`aliases` array (or any `{label, model, thinking}`
 entry anywhere in the file) defines model short names that `/handoff --model`
 resolves alongside Pi model display names.
 
@@ -104,7 +104,6 @@ before launching a model or mutating repository state.
 
 | Workflow | Git backend | jj backend | Graphite backend |
 | --- | --- | --- | --- |
-| `fast-implement` | Current branch or `--worktree` | Current workspace; no `--worktree` | Current branch or tracked `--worktree` |
 | `plan-implement --single` | Current branch or `--worktree` | `main`-based change and bookmark | Current branch or tracked `--worktree` |
 | `plan-implement --stack` | Refused | Local jj stack | Graphite stack adapter |
 | `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push | Branch validation and native Graphite record/restack/submit |
@@ -217,7 +216,7 @@ The two-model implementation workflow is available as an extension command:
 /plan-implement --change-kind bug-fix Fix the archive race
 ```
 
-Without `--change-kind`, the command asks you to select one before planning. For explicit low-risk bounded edits, use `/fast-implement --change-kind feature <task>` or `/kstack --route fast-change <task>`; this lower-assurance option never publishes automatically. It
+Without `--change-kind`, the command asks you to select one before planning. For explicit low-risk bounded edits, use `/plan-implement --fast --change-kind feature <task>` or `/kstack --route fast-change <task>`; this lower-assurance option never publishes automatically. It
 keeps skills enabled in both child agents, so each role can consult the
 original task-specific skills it needs. See
 [`extensions/plan-implement/README.md`](extensions/plan-implement/README.md)
@@ -350,7 +349,6 @@ node --test extensions/kstack-router/
 node --test extensions/land/
 node --test extensions/pr-autopilot/
 node --test extensions/jj-stacked-prs/
-node --test extensions/fast-implement/
 node --test extensions/shared/
 node --test skills/reflect/
 node --test skills/architect/
