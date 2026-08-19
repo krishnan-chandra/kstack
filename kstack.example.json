@@ -11,9 +11,10 @@
 	},
 	"panel-review": {
 		"reviewers": [
-			{ "label": "sonnet", "model": "anthropic/claude-sonnet-5", "thinking": "medium" },
+			{ "label": "gemini", "model": "openrouter/google/gemini-3.7-flash", "thinking": "medium" },
 			{ "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "medium" },
-			{ "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "medium" }
+			{ "label": "luna", "model": "openai/gpt-5.6-luna", "thinking": "high" },
+			{ "label": "inkling", "model": "openrouter/thinkingmachines/inkling-small", "thinking": "medium" }
 		],
 		"maxConcurrency": 5,
 		"timeoutMinutes": 10,
@@ -23,10 +24,6 @@
 	"plan-implement": {
 		"planner": { "model": "openai/gpt-5.6-sol", "thinking": "high" },
 		"implementer": { "model": "openai/gpt-5.6-terra", "thinking": "medium" },
-		"timeoutMinutes": 30
-	},
-	"fast-implement": {
-		"implementer": { "model": "openrouter/moonshotai/kimi-k3", "thinking": "medium" },
 		"timeoutMinutes": 30
 	},
 	"kstack-router": {
