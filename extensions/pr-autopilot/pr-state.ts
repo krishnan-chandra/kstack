@@ -50,7 +50,7 @@ export function buildPRState(
 		mergeStateStatus: pr.mergeStateStatus,
 		checks,
 		threads,
-		hasUnresolvedThreads: threads.length > 0,
+		hasUnresolvedThreads: threads.some((thread) => thread.source === "review-thread"),
 	};
 }
 
@@ -99,7 +99,10 @@ export function describeBlockers(state: PRState): string {
 	if (state.isDraft || state.mergeStateStatus === "DRAFT") issues.push("draft");
 	if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY") issues.push("conflicts");
 	if (state.mergeStateStatus === "BEHIND") issues.push("behind base");
-	if (state.hasUnresolvedThreads) issues.push(`unresolved threads (${state.threads.length})`);
+	if (state.hasUnresolvedThreads) {
+		const unresolvedReviewThreads = state.threads.filter((thread) => thread.source === "review-thread").length;
+		issues.push(`unresolved threads (${unresolvedReviewThreads})`);
+	}
 	const failing = state.checks.filter((c) => c.conclusion === "failure" || c.status === "cancelled");
 	if (failing.length > 0) issues.push(`${failing.length} failing check(s)`);
 	if (hasPendingChecks(state) && failing.length === 0) issues.push("checks pending");
@@ -164,8 +167,9 @@ For each failing check, classify as one of:
 
 For each review item, decide:
 - "fix" — real in-scope code issue. Smallest safe change.
-- "dismiss" — invalid or moot. Do not churn code.
-- "ask" — security, privacy, auth, billing, data, migration, concurrency, or anything you must not guess. Also ask when the comment is out of scope.
+- "dismiss" — an explicit review request that is invalid, already fixed, or moot. A dismissal reply is useful.
+- "ask" — security, privacy, auth, billing, data, migration, concurrency, or anything you must not guess. Also ask when the comment requests out-of-scope work.
+- "ignore" — informational discussion, status updates, acknowledgements, questions that do not request a change, bot output, or other non-actionable comments. Do not reply.
 
 A local nothing-to-check result is not evidence that red CI is unrelated.
 
@@ -173,7 +177,7 @@ Return ONLY a JSON object:
 \`\`\`json
 {
   "checks": [{ "name": "...", "cls": "...", "action": "..." }],
-  "threads": [{ "id": "...", "decision": "fix|dismiss|ask", "cls": "...", "action": "...", "reply": "..." }],
+  "threads": [{ "id": "...", "decision": "fix|dismiss|ask|ignore", "cls": "...", "action": "...", "reply": "..." }],
   "conflicts": true | false,
   "draft": true | false,
   "summary": "Lead with the cause in one line."
@@ -220,7 +224,7 @@ ${
 ## Instructions (tiny-model only)
 
 1. Only edit files needed for threads marked decision=fix and checks marked cls=code, matching the mode above.
-2. Skip dismiss/ask threads, and skip flake/infra/stale-base/unknown checks.
+2. Skip dismiss/ask/ignore threads, and skip flake/infra/stale-base/unknown checks.
 3. Do not stage, commit, or push. The parent autopilot inspects and publishes after confirmation.
 4. Do NOT rebase, restack, mark the PR ready, merge, or touch merge settings.
 5. Do NOT edit CI workflows or GitHub Actions config to make a failure pass.

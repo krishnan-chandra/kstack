@@ -83,7 +83,7 @@ export interface ReviewThread {
 }
 
 /** Triager decision for one review item. */
-export type ThreadDecision = "fix" | "dismiss" | "ask";
+export type ThreadDecision = "fix" | "dismiss" | "ask" | "ignore";
 
 /**
  * A check-run classification produced by the tiny-model triager: tells the

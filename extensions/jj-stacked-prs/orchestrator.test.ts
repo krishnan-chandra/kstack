@@ -467,20 +467,21 @@ describe("publishStack", () => {
 		}
 	});
 
-	it("stops later core actions after the first conclusive failure", async () => {
+	it("stops later core actions and comment writes after the first conclusive failure", async () => {
 		const jj = fakeJj({
 			pushBookmark: async (_cwd, _remote, bookmark) => {
 				jj.calls.push(`push:${bookmark}`);
 				if (bookmark === "feat2") throw new Error("network");
 			},
 		});
+		const github = fakeGithub();
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
 				ui: ui(),
 				jj,
-				github: fakeGithub(),
+				github,
 				acquirePublicationLock: permissiveLock(),
 			},
 		);
@@ -489,6 +490,7 @@ describe("publishStack", () => {
 			assert.ok(result.completedActions.some((action) => action.kind === "create-draft-pr"));
 			assert.equal(result.failedAction.kind, "push-bookmark");
 		}
+		assert.equal(github.comments.length, 0);
 	});
 
 	it("is cancelled before an action starts and indeterminate after a mutator starts", async () => {
@@ -829,6 +831,28 @@ describe("navigation comment reconciliation concurrency", () => {
 		);
 		assert.equal(statusCalls.length, 5);
 		assert.equal(peakStatus, 4);
+	});
+
+	it("stops comment writes after the first write failure", async () => {
+		const attempted: number[] = [];
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: stackedJj(2),
+				github: fakeGithub({
+					listOpenPrs: async () => linearPrs(2),
+					createOrUpdateComment: async (input) => {
+						attempted.push(input.prNumber);
+						throw new Error("comment write failed");
+					},
+				}),
+				acquirePublicationLock: permissiveLock(),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(attempted, [11]);
 	});
 
 	it("keeps successful writes and unknown ancestor status after independent read failures", async () => {

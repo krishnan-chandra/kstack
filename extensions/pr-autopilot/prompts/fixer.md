@@ -22,7 +22,7 @@ Do NOT merge, mark ready, or touch merge settings.
 For each thread marked `decision: "fix"` in the triage:
 1. Read the file at the indicated path/line (or search for the relevant code).
 2. Address the reviewer's concern with a minimal, correct change.
-3. Skip `dismiss` and `ask` threads.
+3. Skip `dismiss`, `ask`, and `ignore` threads.
 
 ### Failing checks
 For each check marked `cls: "code"` in the triage, when the mode includes CI:
@@ -44,7 +44,7 @@ For each check marked `cls: "code"` in the triage, when the mode includes CI:
 - Do NOT stage, commit, push, or force-push.
 - Do NOT merge or mark the PR ready for review.
 - Do NOT edit `.github/workflows` or other CI config to make a failure pass.
-- Do NOT address dismiss/ask threads or flake/infra/stale-base failures.
+- Do NOT address dismiss/ask/ignore threads or flake/infra/stale-base failures.
 - Do NOT modify files outside the scope of the fix threads and code failures.
 
 ## Output

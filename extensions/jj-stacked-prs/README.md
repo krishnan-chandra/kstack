@@ -141,8 +141,10 @@ mutation when evidence collection or metadata generation fails.
 Partial and indeterminate results list completed or in-flight actions and
 require a fresh plan. A valid local slice with no pull request reports
 `publish-required`; publish the stack before retrying landing. The extension
-never rolls back a valid push, PR creation, or base repair. Comment failures are
-reported separately.
+never rolls back a valid push, PR creation, or base repair. It does not write
+navigation comments after a core publication or ready-state mutation fails. If
+a navigation-comment write fails after successful publication, later comment
+writes are skipped and the error is reported separately.
 
 Publication acquires an advisory per-repository file lock under
 `<agentDir>/kstack-locks/`. A second process that attempts to publish the same
