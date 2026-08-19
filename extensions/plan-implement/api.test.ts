@@ -24,27 +24,36 @@ describe("plan-implement in-process API", () => {
 			mode: DeliveryMode;
 			workLocation: WorkLocation;
 			changeKind: ChangeKind;
+			fast: boolean;
 			ctx: ExtensionCommandContext;
 		}[] = [];
 		const ctx = {} as ExtensionCommandContext;
 		const pi = {
 			events: fakeBus((data) => {
-				claimPlanImplementRequest(data, async (task, mode, workLocation, changeKind, receivedCtx) => {
+				claimPlanImplementRequest(data, async (task, mode, workLocation, changeKind, fast, receivedCtx) => {
 					assert.equal(receivedCtx, ctx);
-					calls.push({ task, mode, workLocation, changeKind, ctx });
+					calls.push({ task, mode, workLocation, changeKind, fast, ctx });
 				});
 			}),
 		} as unknown as ExtensionAPI;
-		const result = await requestPlanImplement(pi, "Add feature X", "single", "worktree", "feature", ctx);
+		const result = await requestPlanImplement(pi, "Add feature X", "single", "worktree", "feature", false, ctx);
 		assert.deepEqual(result, { handled: true });
 		assert.deepEqual(calls, [
-			{ task: "Add feature X", mode: "single", workLocation: "worktree", changeKind: "feature", ctx },
+			{ task: "Add feature X", mode: "single", workLocation: "worktree", changeKind: "feature", fast: false, ctx },
 		]);
 	});
 
 	it("reports unavailable when plan-implement has no listener", async () => {
 		const pi = { events: fakeBus() } as unknown as ExtensionAPI;
-		const result = await requestPlanImplement(pi, "", "single", "current", "generic", {} as ExtensionCommandContext);
+		const result = await requestPlanImplement(
+			pi,
+			"",
+			"single",
+			"current",
+			"generic",
+			false,
+			{} as ExtensionCommandContext,
+		);
 		assert.deepEqual(result, { handled: false });
 	});
 
@@ -56,6 +65,7 @@ describe("plan-implement in-process API", () => {
 				mode: "single" as DeliveryMode,
 				workLocation: "current" as WorkLocation,
 				changeKind: "generic" as ChangeKind,
+				fast: false,
 				ctx: {} as ExtensionCommandContext,
 			},
 			claimed: false,
@@ -90,7 +100,32 @@ describe("plan-implement in-process API", () => {
 			claimPlanImplementRequest(
 				{
 					schemaVersion: 1,
-					payload: { task: "test", mode: "stack", workLocation: "worktree", changeKind: "generic", ctx: {} },
+					payload: {
+						task: "test",
+						mode: "stack",
+						workLocation: "worktree",
+						changeKind: "generic",
+						fast: false,
+						ctx: {},
+					},
+					claimed: false,
+				},
+				async () => {},
+			),
+			false,
+		);
+		assert.equal(
+			claimPlanImplementRequest(
+				{
+					schemaVersion: 1,
+					payload: {
+						task: "test",
+						mode: "stack",
+						workLocation: "current",
+						changeKind: "generic",
+						fast: true,
+						ctx: {},
+					},
 					claimed: false,
 				},
 				async () => {},

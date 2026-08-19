@@ -1,14 +1,51 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
-import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
-import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
-import { type FastImplementOutcome, type FastImplementRequest, LIMITS, type ResolvedRole } from "./types.ts";
+/** Isolated `--fast --worktree` implementer and its guidance composition. */
 
-const extensionDir = new URL(".", import.meta.url);
-const sharedPlaybooks = new URL("../shared/playbooks/", extensionDir);
-export function buildChildArgs(model: string, promptFile: string, taskFile: string): string[] {
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
+import {
+	type ChildRunnerDeps,
+	type ChildSession,
+	childIsolationArgs,
+	runChildAgent,
+} from "../shared/child-agent-runner.ts";
+import { readPromptAsset } from "../shared/prompt-assets.ts";
+import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
+import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
+import type { RoleSpec } from "./types.ts";
+import { LIMITS } from "./types.ts";
+
+const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
+const PLAYBOOKS_DIR = join(EXTENSION_DIR, "..", "shared", "playbooks");
+
+export type FastImplementOutcome =
+	| { status: "completed"; branch: string; cwd: string; output: string; session?: ChildSession }
+	| {
+			status: "failed" | "aborted";
+			error: string;
+			branch?: string;
+			cwd?: string;
+			output?: string;
+			session?: ChildSession;
+	  };
+
+interface FastImplementRequest {
+	task: string;
+	changeKind: ChangeKind;
+}
+
+interface FastRunEffects {
+	backend: VcsBackend;
+	runChild?: typeof runChildAgent;
+	deps?: ChildRunnerDeps;
+	signal?: AbortSignal;
+	timeoutMinutes?: number;
+}
+
+function buildFastChildArgs(model: string, promptFile: string, taskFile: string): string[] {
 	// Keeps skills and context files available to the implementer.
 	return [
 		...childIsolationArgs({ noSkills: false }),
@@ -19,30 +56,24 @@ export function buildChildArgs(model: string, promptFile: string, taskFile: stri
 		`Read the user task at ${taskFile}, inspect the repository, implement it, run focused verification, and commit coherent changes. Do not push, publish, open a PR, or land.`,
 	];
 }
-interface FastRunEffects {
-	backend: VcsBackend;
-	runChild?: typeof runChildAgent;
-	deps?: ChildRunnerDeps;
-	signal?: AbortSignal;
-}
 
-export function buildImplementerGuidance(changeKind: ChangeKind, backend: Pick<VcsBackend, "childGuidance">): string {
+export function buildFastImplementerGuidance(changeKind: ChangeKind, backend: Pick<VcsBackend, "id">): string {
 	const playbook = changeKindPlaybookFile(changeKind);
 	return [
-		readFileSync(new URL("implementer.md", new URL("prompts/", extensionDir)), "utf8"),
-		readFileSync(new URL("engineering-principles.md", sharedPlaybooks), "utf8"),
-		...(playbook ? [readFileSync(new URL(playbook, sharedPlaybooks), "utf8")] : []),
-		backend.childGuidance(),
+		readPromptAsset(PROMPTS_DIR, "implementer-fast.md"),
+		readPromptAsset(PLAYBOOKS_DIR, "engineering-principles.md"),
+		...(playbook ? [readPromptAsset(PLAYBOOKS_DIR, playbook)] : []),
+		vcsChildGuidance(backend.id),
 	].join("\n\n---\n\n");
 }
 
-export async function runWorktreeFastImplement(
+export async function runFastWorktree(
 	request: FastImplementRequest,
-	role: ResolvedRole,
+	implementer: RoleSpec,
 	initialCwd: string,
 	fx: FastRunEffects,
 ): Promise<FastImplementOutcome> {
-	if (request.workLocation !== "worktree" || !fx.backend.isolation) {
+	if (!fx.backend.isolation) {
 		return { status: "failed", error: "The configured VCS backend does not support managed worktrees." };
 	}
 	const preflight = await fx.backend.preflight(initialCwd);
@@ -67,22 +98,22 @@ export async function runWorktreeFastImplement(
 			`# User task\n\n${request.task}\n\nVCS backend: ${fx.backend.id}\nWorkstream: ${checkpoint.ref}\n`,
 			{ mode: 0o600 },
 		);
-		writeFileSync(promptFile, buildImplementerGuidance(request.changeKind, fx.backend), { mode: 0o600 });
+		writeFileSync(promptFile, buildFastImplementerGuidance(request.changeKind, fx.backend), { mode: 0o600 });
 		chmodSync(taskFile, 0o600);
 		chmodSync(promptFile, 0o600);
 		const child = await (fx.runChild ?? runChildAgent)({
-			args: buildChildArgs(
-				`${role.implementer.model}${role.implementer.thinking ? `:${role.implementer.thinking}` : ""}`,
+			args: buildFastChildArgs(
+				`${implementer.model}${implementer.thinking ? `:${implementer.thinking}` : ""}`,
 				promptFile,
 				taskFile,
 			),
 			cwd,
-			session: { owner: "fast-implement", label: "implementer" },
+			session: { owner: "plan-implement", label: "fast-implementer" },
 			signal: fx.signal,
 			deps: {
 				...fx.deps,
-				maxRuntimeMs: role.timeoutMinutes * 60_000,
-				outputCapBytes: LIMITS.outputBytes,
+				maxRuntimeMs: (fx.timeoutMinutes ?? LIMITS.defaultTimeoutMinutes) * 60_000,
+				outputCapBytes: LIMITS.implementerOutputBytes,
 				stderrCapBytes: LIMITS.stderrBytes,
 				stdoutLineCapBytes: LIMITS.stdoutLineBytes,
 				killGraceMs: LIMITS.killGraceMs,

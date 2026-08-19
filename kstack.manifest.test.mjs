@@ -5,7 +5,6 @@ import test from "node:test";
 
 const REPO_ROOT = import.meta.dirname;
 const EXPECTED_EXTENSIONS = [
-	"fast-implement",
 	"handoff",
 	"jj-stacked-prs",
 	"kstack-router",

@@ -1,7 +1,6 @@
 /** Deterministic dispatch for each route. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { requestFastImplement } from "../fast-implement/api.ts";
 import { requestLand } from "../land/api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPlanImplement } from "../plan-implement/api.ts";
@@ -43,7 +42,15 @@ export async function dispatchRoute(
 		case "change": {
 			const mode = delivery === "stack" ? "stack" : "single";
 			try {
-				const result = await requestPlanImplement(pi, task, mode, worktree ? "worktree" : "current", changeKind, ctx);
+				const result = await requestPlanImplement(
+					pi,
+					task,
+					mode,
+					worktree ? "worktree" : "current",
+					changeKind,
+					false,
+					ctx,
+				);
 				if (!result.handled) {
 					return {
 						status: "failed",
@@ -65,13 +72,21 @@ export async function dispatchRoute(
 					error: "fast-change supports only single-PR workstreams. Use the change route for stacks.",
 				};
 			try {
-				const result = await requestFastImplement(pi, task, worktree ? "worktree" : "current", changeKind, ctx);
+				const result = await requestPlanImplement(
+					pi,
+					task,
+					"single",
+					worktree ? "worktree" : "current",
+					changeKind,
+					true,
+					ctx,
+				);
 				if (!result.handled) {
-					return { status: "failed", error: "fast-implement extension is not loaded or did not accept the request." };
+					return { status: "failed", error: "plan-implement extension is not loaded or did not accept the request." };
 				}
 				return { status: "dispatched" };
 			} catch (err) {
-				return { status: "failed", error: `fast-implement dispatch failed: ${(err as Error).message}` };
+				return { status: "failed", error: `plan-implement dispatch failed: ${(err as Error).message}` };
 			}
 		}
 

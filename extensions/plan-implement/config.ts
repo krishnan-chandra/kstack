@@ -136,3 +136,33 @@ export function resolveRoles(
 		},
 	};
 }
+
+/**
+ * Resolve only the implementer role, for `--fast` mode which has no planner.
+ * Uses the configured `implementer` when present and authenticated, otherwise
+ * the first authenticated default implementer. The planner/distinctness
+ * constraint does not apply.
+ */
+export function resolveImplementerOnly(
+	config: PlanImplementConfig | null,
+	deps: ResolveDeps,
+): { ok: true; implementer: RoleSpec } | { ok: false; error: string } {
+	const configured = config?.implementer;
+	if (configured) {
+		if (!isAvailable(configured, deps)) {
+			return {
+				ok: false,
+				error: `Configured plan-implement implementer is unavailable or unauthenticated: ${configured.model}.`,
+			};
+		}
+		return { ok: true, implementer: configured };
+	}
+	const implementer = DEFAULT_IMPLEMENTERS.find((spec) => isAvailable(spec, deps));
+	if (!implementer) {
+		return {
+			ok: false,
+			error: `No fast implementer model is available. Tried: ${DEFAULT_IMPLEMENTERS.map((x) => x.model).join(", ")}.`,
+		};
+	}
+	return { ok: true, implementer };
+}

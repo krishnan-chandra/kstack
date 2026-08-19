@@ -16,7 +16,7 @@ session name.
 |---|---|---|
 | `investigate` | Read-only research, explain, diagnose | Active session, read-only tools |
 | `change` | Feature, fix, refactor, prototype | plan-implement → panel-review |
-| `fast-change` | Implement an explicit, bounded existing plan | fast-implement (current session or worktree child) |
+| `fast-change` | Implement an explicit, bounded existing plan | plan-implement --fast (current session or worktree child) |
 | `arena` | Competing parallel candidates | Arena skill, frame-first |
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
