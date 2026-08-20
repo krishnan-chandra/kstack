@@ -21,6 +21,13 @@
       "prompt": "Update this PR's title and description. The change crosses the command entry point, persistence, and cleanup behavior; describe the user-facing result and give reviewers a useful order to review it without dumping a list of files.",
       "expected_output": "Produces a concise outcome-oriented title and a review guide ordered by runtime flow rather than by changed file.",
       "assertions": []
+    },
+    {
+      "id": 4,
+      "name": "repository-template",
+      "prompt": "Create the draft PR for this branch. The repository has a pull-request template under `.github`; follow it exactly, keep the description useful to reviewers, and do not publish metadata that fails its title or body requirements.",
+      "expected_output": "Treats the repository template as authoritative, preserves its exact required structure, fills each requested section, validates the title and body, and only then creates the draft PR.",
+      "assertions": []
     }
   ]
 }

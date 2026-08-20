@@ -42,11 +42,14 @@ freshness, not authorization.
 - Plans pushes, draft-PR creation, and base repairs from local/remote bookmark
   targets and open PRs in the same GitHub repository.
 - Generates each new draft's title and body from the slice subject, commit
-  descriptions, and changed paths. Bodies are rendered from a shared
-  `PrDocument` (`## Summary` plus a thematic `## Review guide`). Publication
-  does not call a model, so session thinking level cannot abort the stack.
-  Existing PR metadata remains unchanged. Rewrite drafts with the `write-pr`
-  skill when you want richer prose.
+  descriptions, and changed paths. When the repository defines one default
+  pull-request template, publication preserves its headings, comments, and
+  checklist items, fills its sections, and validates its recognizable title
+  rules before the first remote mutation. Repositories without a template use
+  the shared `PrDocument` (`## Summary` plus a thematic `## Review guide`).
+  Publication does not call a model, so session thinking level cannot abort the
+  stack. Existing PR metadata remains unchanged. Rewrite drafts with the
+  `write-pr` skill when you want richer prose.
 - Publishes from `/jj-stack publish` after standard `ctx.ui.confirm`, or from
   `jj_stack_publish` after an explicit user request. Both paths recompute the
   plan and refuse a stale plan ID before mutation. Metadata generation for all
@@ -117,6 +120,7 @@ Completed outcomes return a base-to-top PR map. Other outcomes are
 | Abort grace | 5s SIGTERM then SIGKILL |
 | Tool content | 50 KiB / 2,000 lines |
 | Metadata input per slice | 128 KiB diff / 32 KiB log |
+| Repository PR template | 24 KiB, exactly one default |
 | Generated PR body | 30 KiB |
 | Navigation comment | 100 entries / 60 KiB |
 | Concurrent mutation runs | 1 per session |
@@ -133,10 +137,10 @@ Extensions run with the user's OS permissions. This is not a sandbox. Commands
 operate on `ctx.cwd` only. `repositoryPath` exists for trusted in-process
 callers such as `plan-implement`.
 
-Diffs and commit descriptions are untrusted model input. The metadata call has
-no tools, and its JSON output must pass title, size, heading, review-guide, and
-placeholder checks before GitHub receives it. Publication stops without remote
-mutation when evidence collection or metadata generation fails.
+Diffs and commit descriptions are untrusted metadata input. Generated metadata
+must pass title, size, placeholder, and repository-template checks before GitHub
+receives it. Publication stops without remote mutation when template discovery,
+evidence collection, metadata generation, or conformance validation fails.
 
 Partial and indeterminate results list completed or in-flight actions and
 require a fresh plan. A valid local slice with no pull request reports

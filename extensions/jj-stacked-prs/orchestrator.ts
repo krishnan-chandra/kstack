@@ -16,8 +16,14 @@ import {
 	reconcileStackEntries,
 } from "./github.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
-import { renderPrDocument } from "./pr-document.ts";
+import { type PrDocument, renderPrDocument } from "./pr-document.ts";
 import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
+import {
+	discoverRepositoryPrTemplate,
+	type RepositoryPrTemplate,
+	renderRepositoryPrTemplate,
+	validatePrMetadataAgainstTemplate,
+} from "./pr-template.ts";
 import type { ProcessRunner } from "./process.ts";
 import { buildPublicationPlan, type PublicationSnapshot, slicesForPublication } from "./publication.ts";
 import { renderConfirmation } from "./render.ts";
@@ -69,6 +75,7 @@ export interface OrchestratorDeps {
 	}) => Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
 	configuredMethodFor?: (nameWithOwner: string) => StackMergeMethod | undefined;
 	generatePrMetadata?: PrMetadataGenerator;
+	loadRepositoryPrTemplate?: (cwd: string) => RepositoryPrTemplate | undefined;
 	acquirePublicationLock?: (repositoryPath: string) => LockAttempt;
 }
 
@@ -468,7 +475,13 @@ async function applyPublication(
 	const slicesNeedingMetadata = plan.slices.filter((slice) =>
 		slice.actions.some((action) => action.kind === "create-draft-pr"),
 	);
+	let repositoryTemplate: RepositoryPrTemplate | undefined;
 	if (slicesNeedingMetadata.length > 0) {
+		try {
+			repositoryTemplate = (deps.loadRepositoryPrTemplate ?? discoverRepositoryPrTemplate)(options.cwd);
+		} catch (error) {
+			return { status: "failed", error: errorMessage(error), completedActions: [] };
+		}
 		if (deps.signal?.aborted) return { status: "cancelled", completedActions: [] };
 		const controller = new AbortController();
 		const generationSignal = deps.signal ? AbortSignal.any([deps.signal, controller.signal]) : controller.signal;
@@ -483,9 +496,11 @@ async function applyPublication(
 									baseRevset: slice.baseBookmark ? bookmarkRevset(slice.baseBookmark) : (options.trunk ?? "trunk()"),
 									subject: slice.subject,
 									changeIds: slice.changeIds,
+									repositoryTemplate,
 									signal: generationSignal,
 								})
-							: provisionalPrMetadata(slice.subject, slice.bookmark);
+							: provisionalPrMetadata(slice.subject, slice.bookmark, repositoryTemplate);
+						if (repositoryTemplate) validatePrMetadataAgainstTemplate(metadata, repositoryTemplate);
 						return [slice.bookmark, metadata] as const;
 					} catch (error) {
 						controller.abort();
@@ -915,8 +930,12 @@ function toFailedAction(
 	return { kind, bookmark, error: errorMessage(error) };
 }
 
-function provisionalPrMetadata(subject: string, bookmark: string): PrMetadata {
-	return renderPrDocument({
+function provisionalPrMetadata(
+	subject: string,
+	bookmark: string,
+	repositoryTemplate?: RepositoryPrTemplate,
+): PrMetadata {
+	const document: PrDocument = {
 		title: subject || bookmark,
 		summaryBullets: [subject || bookmark],
 		reviewSteps: [
@@ -925,7 +944,8 @@ function provisionalPrMetadata(subject: string, bookmark: string): PrMetadata {
 				description: `Review the exact changes published by \`${bookmark}\`.`,
 			},
 		],
-	});
+	};
+	return repositoryTemplate ? renderRepositoryPrTemplate(document, repositoryTemplate) : renderPrDocument(document);
 }
 
 function isIndeterminate(error: unknown): boolean {

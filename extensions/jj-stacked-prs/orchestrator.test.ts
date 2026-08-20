@@ -277,6 +277,40 @@ describe("publishStack", () => {
 		}
 	});
 
+	it("rejects metadata that does not conform to the repository template before the first remote mutation", async () => {
+		const jj = fakeJj();
+		let created = false;
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui({ hasUI: false }),
+				jj,
+				github: fakeGithub({
+					createDraftPr: async () => {
+						created = true;
+						throw new Error("must not create");
+					},
+				}),
+				loadRepositoryPrTemplate: () => ({
+					path: ".github/pull_request_template.md",
+					source: "### What changed?\n",
+					requiresConventionalTitle: false,
+					minimumDescriptionWords: undefined,
+				}),
+				generatePrMetadata: async () => ({
+					title: "Add feature",
+					body: "## Summary\n\n- Wrong shape.",
+				}),
+				acquirePublicationLock: permissiveLock(),
+			},
+		);
+		assert.equal(result.status, "failed");
+		assert.deepEqual(jj.calls, []);
+		assert.equal(created, false);
+		if (result.status === "failed") assert.match(result.error, /required template fragment/);
+	});
+
 	it("fails metadata generation before the first remote mutation", async () => {
 		const jj = fakeJj();
 		let created = false;
