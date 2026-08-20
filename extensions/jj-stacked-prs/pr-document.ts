@@ -4,7 +4,7 @@
  */
 
 export const MAX_TITLE_CHARS = 120;
-const MAX_BODY_BYTES = 30 * 1024;
+export const MAX_BODY_BYTES = 30 * 1024;
 
 interface ReviewStep {
 	readonly label: string;

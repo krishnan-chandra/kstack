@@ -48,7 +48,7 @@ git diff --name-status <base>...<head>
 git diff <base>...<head>
 ```
 
-Fetch the base ref first if it is unavailable or stale. Read enough surrounding code to understand behavior, not only changed lines. Check repository PR templates and a small sample of recent PR titles for local conventions. Treat commit messages and an existing PR body as clues, not truth; the diff is authoritative.
+Fetch the base ref first if it is unavailable or stale. Read enough surrounding code to understand behavior, not only changed lines. Locate the repository's pull-request template before composing metadata. Check the default GitHub locations and any template selected by the existing PR; if several selectable templates exist and none is selected, ask which one to use. Also sample recent PR titles for local conventions. Treat commit messages and an existing PR body as clues, not truth; the diff is authoritative.
 
 If the committed diff is empty, stop instead of creating or rewriting a misleading PR.
 
@@ -66,7 +66,7 @@ Do not change user-level identity or signing configuration without the user's ap
 
 ## Compose the title
 
-Write one concrete sentence fragment that names the primary user-visible or developer-visible outcome.
+Write one concrete title that names the primary user-visible or developer-visible outcome. The repository template's title instructions are authoritative. Apply its required syntax, prefix, issue reference, capitalization, and length before the defaults below.
 
 - Follow the repository's established title pattern when one is clear.
 - Prefer an imperative title such as `Add retry limits to archive uploads`.
@@ -75,10 +75,11 @@ Write one concrete sentence fragment that names the primary user-visible or deve
 
 ## Compose the body
 
-Use this compact default structure. Stacked publication renders the same
-`PrDocument` shape from `extensions/jj-stacked-prs/pr-document.ts`; keep the
-headings and first-item forms so a later parse can recover the document.
-Adapt extra repository template sections only after Summary and Review guide:
+The repository template is the body contract. Preserve its headings, order, checklist items, warnings, and HTML comments. Fill every requested section with substantive, slice-specific content. Do not replace repository headings with Kstack's generic headings or append a competing top-level structure.
+
+Put the factual change summary and a short thematic review guide inside the template section that asks what changed. Put rationale only in the template's rationale or context section. Put commands, checks, screenshots, or an explicit honest statement that testing was not run in its testing section. Keep required boilerplate even when GitHub hides it as comments.
+
+Only when the repository has no PR template, use this compact default:
 
 ```markdown
 ## Summary
@@ -99,13 +100,15 @@ Keep the body factual and easy to scan:
 - Explain what changed and why when the diff provides evidence for the why.
 - Name important compatibility constraints, migrations, risks, or intentional non-goals only when they matter.
 - Include test evidence only when it is known. Never claim that tests passed because test files changed.
-- Preserve still-relevant issue-closing references, required checklist items, warnings, and rollout notes from an existing body or repository template.
+- Preserve still-relevant issue-closing references and rollout notes from an existing body.
 - Remove stale prose, generic benefits, exhaustive file lists, and sections that would be empty.
 - Use plain language and project terms. A tired reviewer should know what to inspect and in what order.
 
 Before applying the body, compare every claim with the diff. In particular, check that the summary covers all meaningful themes and that each review-guide step tells the reviewer what to verify, not merely which file to open.
 
 ## Apply the PR metadata
+
+Before any `gh pr create` or `gh pr edit`, re-read the selected repository template and compare it with the final title and body. Verify that the title obeys every template rule and that the body preserves every required heading, checklist item, warning, and HTML comment in order. Verify that every requested section has substantive content rather than a placeholder. Stop before mutation if the metadata does not conform.
 
 Write the body to a temporary file so shell quoting cannot corrupt Markdown.
 

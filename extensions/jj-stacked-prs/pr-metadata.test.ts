@@ -13,6 +13,13 @@ import {
 } from "./pr-metadata.ts";
 import type { ProcessRunner } from "./process.ts";
 
+const genericTemplate = {
+	path: ".github/pull_request_template.md",
+	source: "<!-- Keep this structure. -->\n\n## Change summary\n\n## Motivation\n\n## Verification",
+	requiresConventionalTitle: false,
+	minimumDescriptionWords: undefined,
+};
+
 const request: PrMetadataRequest = {
 	cwd: "/repo",
 	bookmark: "feature-two",
@@ -144,6 +151,23 @@ describe("deterministic PR metadata", () => {
 		assert.match(metadata.body, /^## Summary\n\n- /);
 		assert.match(metadata.body, /## Review guide\n\n1\. \*\*/);
 	});
+
+	it("generates deterministic metadata inside a repository template", async () => {
+		const run: ProcessRunner = async (argv) => {
+			if (argv.includes("--name-only")) {
+				return { kind: "ok", code: 0, stdout: "src/profile.ts\n", stderr: "" };
+			}
+			if (argv.includes("log")) {
+				return { kind: "ok", code: 0, stdout: "abc Add profile editing\n", stderr: "" };
+			}
+			return { kind: "ok", code: 0, stdout: "diff --git\n", stderr: "" };
+		};
+		const metadata = await generateDeterministicPrMetadata(run, { ...request, repositoryTemplate: genericTemplate });
+		assert.match(metadata.body, /^<!-- Keep this structure\. -->/);
+		assert.match(metadata.body, /## Change summary[\s\S]*\*\*Review guide\*\*/);
+		assert.match(metadata.body, /## Motivation\n\n\S/);
+		assert.match(metadata.body, /## Verification\n\n\S/);
+	});
 });
 
 describe("PR metadata prompt and response", () => {
@@ -156,13 +180,29 @@ describe("PR metadata prompt and response", () => {
 		assert.match(prompt, /## Summary/);
 		assert.match(prompt, /## Review guide/);
 		assert.match(prompt, /thematic numbered review guide/i);
-		assert.ok(
-			prompt.includes(
-				'"body":"## Summary\\n\\n- Add profile editing controls.\\n\\n## Review guide\\n\\n1. **Editing flow** — Verify the form."',
-			),
-		);
+		assert.ok(prompt.includes('"body":"## Summary\\n\\n- Add profile editing controls.'));
 		assert.equal((prompt.match(/BEGIN UNTRUSTED SLICE DATA/g) ?? []).length, 1);
 		assert.equal((prompt.match(/END UNTRUSTED SLICE DATA/g) ?? []).length, 1);
+	});
+
+	it("includes the repository template and a matching JSON example in the prompt", () => {
+		const prompt = buildPrMetadataPrompt(
+			{ ...request, repositoryTemplate: genericTemplate },
+			{ diff: "diff --git", log: "abc Add profile editing", names: "src/profile.ts" },
+		);
+		assert.match(prompt, /Repository template rules/);
+		assert.match(prompt, /## Change summary/);
+		assert.doesNotMatch(prompt, /"title":"Add profile editing"/);
+		assert.match(prompt, /complete repository-conforming Markdown body/);
+	});
+
+	it("accepts a repository-conforming title and body without rewriting its headings", () => {
+		const body = `<!-- Keep this structure. -->\n\n## Change summary\n\n- Enforce the repository template.\n\n## Motivation\n\nPrevent invalid PR descriptions.\n\n## Verification\n\n- Unit tests.`;
+		const metadata = parsePrMetadataResponse(
+			JSON.stringify({ title: "Enforce repository template", body }),
+			genericTemplate,
+		);
+		assert.equal(metadata.body, body);
 	});
 
 	it("accepts a strict write-pr title and body", () => {
