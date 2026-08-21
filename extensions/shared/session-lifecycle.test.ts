@@ -82,6 +82,58 @@ test("owns one signal for the active run", () => {
 	assert.equal(lifecycle.beginRun(session), undefined);
 });
 
+test("begins a fresh abortable phase for the current run", () => {
+	const lifecycle = new SessionRunLifecycle();
+	lifecycle.startSession();
+	const session = lifecycle.currentSessionToken();
+	assert.ok(session);
+	const run = lifecycle.beginRun(session);
+	assert.ok(run);
+	const firstSignal = lifecycle.runSignal(run);
+	assert.ok(firstSignal);
+
+	const nextSignal = lifecycle.beginNextPhase(run);
+
+	assert.ok(nextSignal);
+	assert.notEqual(nextSignal, firstSignal);
+	assert.equal(nextSignal.aborted, false);
+	assert.equal(lifecycle.runSignal(run), nextSignal);
+	assert.equal(lifecycle.abortRun(), true);
+	assert.equal(nextSignal.aborted, true);
+	assert.equal(firstSignal.aborted, false);
+});
+
+test("does not begin a phase without a current run", () => {
+	const lifecycle = new SessionRunLifecycle();
+	lifecycle.startSession();
+	const session = lifecycle.currentSessionToken();
+	assert.ok(session);
+	assert.equal(lifecycle.beginNextPhase(session), undefined);
+
+	const run = lifecycle.beginRun(session);
+	assert.ok(run);
+	lifecycle.endRun(run);
+	assert.equal(lifecycle.beginNextPhase(run), undefined);
+
+	lifecycle.shutdownSession();
+	assert.equal(lifecycle.beginNextPhase(run), undefined);
+});
+
+test("shutdown aborts the newest phase signal", () => {
+	const lifecycle = new SessionRunLifecycle();
+	lifecycle.startSession();
+	const session = lifecycle.currentSessionToken();
+	assert.ok(session);
+	const run = lifecycle.beginRun(session);
+	assert.ok(run);
+	const signal = lifecycle.beginNextPhase(run);
+	assert.ok(signal);
+
+	lifecycle.shutdownSession();
+
+	assert.equal(signal.aborted, true);
+});
+
 test("aborts the active run at most once", () => {
 	const lifecycle = new SessionRunLifecycle();
 	lifecycle.startSession();

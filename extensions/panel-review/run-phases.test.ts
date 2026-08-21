@@ -28,6 +28,37 @@ function loaded(config = panelConfig): ConfigLoad {
 	return { status: "loaded", config, path: "/agent/kstack.json" };
 }
 
+const testScope: ScopeBundle = {
+	path: "/tmp/bundle.md",
+	dir: "/tmp",
+	repoRoot: "/repo",
+	headSha: "head",
+	baseSha: "base",
+	baseRef: "main",
+	baseStrategy: "main",
+	fileCount: 1,
+	diffBytes: 1,
+	untrackedCount: 0,
+	binaryCount: 0,
+	truncated: false,
+	contextFilesTouched: false,
+	generatedAt: "now",
+};
+
+const testPipelineInput: Parameters<typeof runReviewPipeline>[0] = {
+	scope: testScope,
+	intent: "review",
+	options: {},
+	resolution: {
+		reviewers: panelConfig.reviewers,
+		maxConcurrency: 2,
+		warnings: [],
+		synthesis: { model: "test/lead", cliId: "test/lead" },
+		timeoutMinutes: 1,
+		maxRuntimeMinutes: 2,
+	},
+};
+
 test("invalid configuration returns its original path and error", () => {
 	const result = resolvePanel({ status: "invalid", path: "/agent/kstack.json", error: "bad reviewers" }, deps([]));
 	assert.deepEqual(result, {
@@ -101,6 +132,7 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 		setCompactStatus: () => {},
 		createDashboard: () => undefined,
 		runSignal: undefined,
+		beginSynthesisPhase: () => undefined,
 		waitForIdle: async () => {},
 		sendVerdict: () => assert.fail("failed panels must not emit a verdict"),
 	};
@@ -118,39 +150,7 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 			throw new Error("reviewer runner should be owned by the fake panel");
 		},
 	};
-	const scope: ScopeBundle = {
-		path: "/tmp/bundle.md",
-		dir: "/tmp",
-		repoRoot: "/repo",
-		headSha: "head",
-		baseSha: "base",
-		baseRef: "main",
-		baseStrategy: "main",
-		fileCount: 1,
-		diffBytes: 1,
-		untrackedCount: 0,
-		binaryCount: 0,
-		truncated: false,
-		contextFilesTouched: false,
-		generatedAt: "now",
-	};
-	const result = await runReviewPipeline(
-		{
-			scope,
-			intent: "review",
-			options: {},
-			resolution: {
-				reviewers: panelConfig.reviewers,
-				maxConcurrency: 2,
-				warnings: [],
-				synthesis: { model: "test/lead", cliId: "test/lead" },
-				timeoutMinutes: 1,
-				maxRuntimeMinutes: 2,
-			},
-		},
-		fx,
-		ops,
-	);
+	const result = await runReviewPipeline(testPipelineInput, fx, ops);
 	assert.equal(result.status, "failed");
 	if (result.status === "failed") {
 		assert.match(result.error, /one \(test\/one\): failed — timeout/);
@@ -159,65 +159,99 @@ test("pipeline reports every reviewer diagnostic when the panel fails", async ()
 	assert.match(notifications[0] ?? "", /All reviewers failed; nothing to synthesize/);
 });
 
-test("pipeline forwards and observes the lifecycle run signal", async () => {
-	const controller = new AbortController();
+test("a partially aborted panel advances to synthesis with a fresh signal", async () => {
+	const panelController = new AbortController();
+	const synthesisController = new AbortController();
+	const notifications: string[] = [];
+	let verdictSent = false;
+	const fx: ReviewPipelineEffects = {
+		isCurrent: () => true,
+		notify: (message) => notifications.push(message),
+		setCompactStatus: () => {},
+		createDashboard: () => undefined,
+		runSignal: panelController.signal,
+		beginSynthesisPhase: () => synthesisController.signal,
+		waitForIdle: async () => {},
+		sendVerdict: () => {
+			verdictSent = true;
+		},
+	};
+	const ops: ReviewPipelineOps = {
+		runPanel: async (reviewers, _maxConcurrency, runOne) => {
+			const aborted = await runOne(reviewers[0], 0);
+			return {
+				results: [
+					{
+						status: "completed",
+						label: "finished",
+						model: "test/finished",
+						output: "no findings",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+					},
+					aborted,
+				],
+				completed: 1,
+				failed: 0,
+				aborted: 1,
+			};
+		},
+		runReviewer: async (input) => {
+			if (input.spec.label === "lead") {
+				assert.equal(input.signal, synthesisController.signal);
+				assert.equal(input.signal.aborted, false);
+				return {
+					status: "completed",
+					label: "lead",
+					model: input.model,
+					output: "final verdict",
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+				};
+			}
+			assert.equal(input.signal, panelController.signal);
+			assert.match(input.task, /complete independent thermo-nuclear review of the entire bundle/);
+			assert.match(input.task, /every relevant rubric dimension and the full Approval Bar/);
+			panelController.abort();
+			assert.equal(input.signal.aborted, true);
+			return { status: "aborted", label: input.spec.label, model: input.model };
+		},
+	};
+	const result = await runReviewPipeline(testPipelineInput, fx, ops);
+
+	assert.equal(result.status, "completed");
+	assert.equal(verdictSent, true);
+	assert.match(notifications[0] ?? "", /1 completed, 1 aborted.*Proceeding to synthesis/);
+});
+
+test("pipeline aborts when a fresh synthesis phase cannot begin", async () => {
+	let reviewerStarted = false;
+	let verdictSent = false;
 	const fx: ReviewPipelineEffects = {
 		isCurrent: () => true,
 		notify: () => {},
 		setCompactStatus: () => {},
 		createDashboard: () => undefined,
-		runSignal: controller.signal,
+		runSignal: undefined,
+		beginSynthesisPhase: () => undefined,
 		waitForIdle: async () => {},
-		sendVerdict: () => assert.fail("aborted panels must not emit a verdict"),
+		sendVerdict: () => {
+			verdictSent = true;
+		},
 	};
 	const ops: ReviewPipelineOps = {
-		runPanel: async (reviewers, _maxConcurrency, runOne) => {
-			const result = await runOne(reviewers[0], 0);
-			return { results: [result], completed: 0, failed: 0, aborted: 1 };
-		},
-		runReviewer: async (input) => {
-			assert.equal(input.signal, controller.signal);
-			assert.match(input.task, /complete independent thermo-nuclear review of the entire bundle/);
-			assert.match(input.task, /every relevant rubric dimension and the full Approval Bar/);
-			controller.abort();
-			assert.equal(input.signal.aborted, true);
-			return { status: "aborted", label: input.spec.label, model: input.model };
+		runPanel: async () => ({
+			results: [{ status: "aborted", label: "one", model: "test/one" }],
+			completed: 0,
+			failed: 0,
+			aborted: 1,
+		}),
+		runReviewer: async () => {
+			reviewerStarted = true;
+			throw new Error("synthesis must not start without a fresh phase signal");
 		},
 	};
-	const scope: ScopeBundle = {
-		path: "/tmp/bundle.md",
-		dir: "/tmp",
-		repoRoot: "/repo",
-		headSha: "head",
-		baseSha: "base",
-		baseRef: "main",
-		baseStrategy: "main",
-		fileCount: 1,
-		diffBytes: 1,
-		untrackedCount: 0,
-		binaryCount: 0,
-		truncated: false,
-		contextFilesTouched: false,
-		generatedAt: "now",
-	};
+	const result = await runReviewPipeline(testPipelineInput, fx, ops);
 
-	const result = await runReviewPipeline(
-		{
-			scope,
-			intent: "review",
-			options: {},
-			resolution: {
-				reviewers: panelConfig.reviewers,
-				maxConcurrency: 2,
-				warnings: [],
-				synthesis: { model: "test/lead", cliId: "test/lead" },
-				timeoutMinutes: 1,
-				maxRuntimeMinutes: 2,
-			},
-		},
-		fx,
-		ops,
-	);
-
-	assert.equal(result.status, "aborted");
+	assert.deepEqual(result, { status: "aborted" });
+	assert.equal(reviewerStarted, false);
+	assert.equal(verdictSent, false);
 });

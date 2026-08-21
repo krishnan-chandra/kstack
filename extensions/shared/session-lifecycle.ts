@@ -55,7 +55,18 @@ export class SessionRunLifecycle extends SessionLifecycle {
 		return this.isCurrent(token) ? this.controller?.signal : undefined;
 	}
 
-	/** Abort the active run. Returns false when no run can be aborted. */
+	/**
+	 * Start a fresh abortable phase after all work using the previous phase's
+	 * signal has settled. The previous signal is left unchanged so cancellation
+	 * remains observable as belonging to that completed phase.
+	 */
+	beginNextPhase(token: SessionToken): AbortSignal | undefined {
+		if (!this.isCurrent(token)) return undefined;
+		this.controller = new AbortController();
+		return this.controller.signal;
+	}
+
+	/** Abort the active run phase. Returns false when no phase can be aborted. */
 	abortRun(): boolean {
 		if (!this.controller || this.controller.signal.aborted) return false;
 		this.controller.abort();

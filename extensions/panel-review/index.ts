@@ -145,11 +145,12 @@ export default function (pi: ExtensionAPI): void {
 			);
 			if (!confirmed) return { status: "declined" };
 			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
-			runToken = lifecycle.beginRun(session);
-			if (!runToken) {
+			const activeRunToken = lifecycle.beginRun(session);
+			if (!activeRunToken) {
 				notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");
 				return { status: "failed", error: "a panel review is already running" };
 			}
+			runToken = activeRunToken;
 			return await runReviewPipeline(
 				{ scope, intent, options, resolution },
 				{
@@ -157,7 +158,8 @@ export default function (pi: ExtensionAPI): void {
 					notify,
 					setCompactStatus,
 					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
-					runSignal: lifecycle.runSignal(runToken),
+					runSignal: lifecycle.runSignal(activeRunToken),
+					beginSynthesisPhase: () => lifecycle.beginNextPhase(activeRunToken),
 					waitForIdle: () => ctx.waitForIdle(),
 					sendVerdict: (verdict, details) =>
 						pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),
