@@ -114,7 +114,10 @@ ignores the outcome.
    Outside TUI mode (RPC), the compact footer status line remains the
    fallback, showing each reviewer's live activity (current tool call, turn
    count, elapsed time). Press **Ctrl+Shift+X** to
-   abort: children get SIGTERM, then SIGKILL after a 5 s grace. A child that
+   finish the panel stage early: active reviewer children get SIGTERM, then
+   SIGKILL after a 5 s grace, and synthesis immediately starts with every
+   report completed so far plus aborted statuses for the rest. Once synthesis
+   starts, the same shortcut aborts the synthesis child. A child that
    produces no output for the idle timeout (`timeoutMinutes`, default 10) is
    killed as stalled — any stdout/stderr output resets the timer, so
    slow-but-progressing reviewers keep running. A separate absolute ceiling
@@ -135,9 +138,12 @@ ignores the outcome.
    message, so it stays in context and can guide later fixes. No fixes are
    applied automatically.
 
-One failed reviewer never discards the others; failures are shown in the final
-report. If every reviewer fails, nothing is synthesized. If synthesis fails,
-the raw reviewer reports are preserved instead.
+One failed or manually aborted reviewer never discards the others; failures and
+aborts are shown in the final report. Manual abort advances directly from the
+panel stage to synthesis, even when no reviewer completed, so the lead still
+produces a final assessment from the available statuses and reports. If every
+reviewer fails without a manual abort, nothing is synthesized. If synthesis
+fails, the raw reviewer reports are preserved instead.
 
 ## Configuration
 

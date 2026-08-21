@@ -80,6 +80,7 @@ export interface ReviewPipelineEffects {
 	setCompactStatus(status: string | undefined): void;
 	createDashboard(reviewers: ReviewerSpec[]): PipelineDashboard | undefined;
 	runSignal: AbortSignal | undefined;
+	beginSynthesisPhase(): AbortSignal | undefined;
 	waitForIdle(): Promise<void>;
 	sendVerdict(verdict: string, details: VerdictDetails): void;
 }
@@ -211,11 +212,7 @@ export async function runReviewPipeline(
 		clearInterval(ticker);
 		ticker = undefined;
 		fx.setCompactStatus(undefined);
-		if (panel.aborted > 0 && panel.completed === 0 && panel.failed === 0) {
-			fx.notify("Panel review aborted.", "info");
-			return { status: "aborted" };
-		}
-		if (panel.completed === 0) {
+		if (panel.completed === 0 && panel.aborted === 0) {
 			const diagnostics = panel.results
 				.map(
 					(result) =>
@@ -225,6 +222,14 @@ export async function runReviewPipeline(
 			fx.notify(`All reviewers failed; nothing to synthesize.\n${diagnostics}`, "error");
 			return { status: "failed", error: `All reviewers failed.\n${diagnostics}` };
 		}
+		if (panel.aborted > 0) {
+			fx.notify(
+				`Panel stopped early: ${panel.completed} completed, ${panel.aborted} aborted. Proceeding to synthesis.`,
+				"info",
+			);
+		}
+		const synthesisSignal = fx.beginSynthesisPhase();
+		if (!synthesisSignal) return { status: "aborted" };
 		const synthesis = resolution.synthesis;
 		fx.setCompactStatus(`panel-review: synthesizing verdict with ${synthesis.cliId}…`);
 		dashboard?.addLead("lead", "lead", synthesis.cliId);
@@ -254,7 +259,7 @@ export async function runReviewPipeline(
 			task: `Synthesize the panel review in ${synthesisInputFile}. The repository root is ${scope.repoRoot}.`,
 			cwd: scope.repoRoot,
 			noContextFiles: scope.contextFilesTouched,
-			signal: fx.runSignal,
+			signal: synthesisSignal,
 			deps: childDeps,
 			onProgress: ({ turns, activity, preview }) => {
 				if (fx.isCurrent())
