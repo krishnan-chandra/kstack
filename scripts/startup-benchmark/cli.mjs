@@ -27,7 +27,7 @@ function readOptionValue(argv, index, option) {
 }
 
 export function benchmarkUsage() {
-	return `Usage: node startup-benchmark/index.mjs [options]
+	return `Usage: node scripts/startup-benchmark/index.mjs [options]
 
 Options:
   --runs <count>         Measured rounds (default: 10; minimum: 1)

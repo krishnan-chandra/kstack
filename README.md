@@ -173,7 +173,7 @@ Pi defaults:
 
 ```bash
 cd /path/to/kstack
-./install.mjs
+./scripts/install/index.mjs
 ```
 
 The installer runs `pi install` and merges
@@ -285,7 +285,7 @@ wanted.
 Package installation is preferred because it keeps the aggregator and skills
 tied to the checkout. Copying `extensions/` into Pi's global user directory is
 no longer the supported install path: Pi would discover ten source factories
-instead of `kstack.ts`. Use `./install.mjs` or `pi install`.
+instead of `kstack.ts`. Use `./scripts/install/index.mjs` or `pi install`.
 
 For a one-off extension test without installing anything, run from the repository
 root:
@@ -333,13 +333,13 @@ The harness runs `empty`, `package-disabled`, `skills-only`, `extensions-only`, 
 
 Its primary metric is the `full` median - `empty` median. It writes raw JSON samples and a Markdown summary under `local/benchmarks/startup/`.
 
-The benchmark is warm, offline, isolated, and headless. It does not measure MCP, TUI paint, disk-cold startup, network work, or an LLM request. Compare reports only when the machine, Pi executable and version, options, workload, and recorded startup-environment fingerprint match. Run `node startup-benchmark/index.mjs --help` to list options.
+The benchmark is warm, offline, isolated, and headless. It does not measure MCP, TUI paint, disk-cold startup, network work, or an LLM request. Compare reports only when the machine, Pi executable and version, options, workload, and recorded startup-environment fingerprint match. Run `node scripts/startup-benchmark/index.mjs --help` to list options.
 
 For focused runs, use the individual test commands:
 
 ```bash
-node --test install.test.mjs
-node --test check-exports.test.mjs
+node --test scripts/install/index.test.mjs
+node --test scripts/check-exports/index.test.mjs
 npm run test:handoff
 npm run test:session-archive
 node --test extensions/panel-review/

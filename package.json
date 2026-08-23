@@ -14,13 +14,13 @@
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
-		"benchmark:startup": "node startup-benchmark/index.mjs",
-		"check:exports": "node check-exports.mjs",
-		"check:imports": "node check-imports.mjs",
+		"benchmark:startup": "node scripts/startup-benchmark/index.mjs",
+		"check:exports": "node scripts/check-exports/index.mjs",
+		"check:imports": "node scripts/check-imports/index.mjs",
 		"format": "biome check --write .",
 		"lint": "biome check .",
 		"lint:ci": "biome ci .",
-		"test": "node --test --test-reporter=dot \"*.test.mjs\" \"*.test.ts\" \"extensions/**/*.test.ts\" \"skills/**/*.test.ts\" \"skills/**/*.test.mjs\"",
+		"test": "node --test --test-reporter=dot \"kstack.manifest.test.mjs\" \"kstack.test.ts\" \"scripts/check-exports/index.test.mjs\" \"scripts/check-imports/index.test.mjs\" \"scripts/install/index.test.mjs\" \"extensions/**/*.test.ts\" \"skills/**/*.test.ts\" \"skills/**/*.test.mjs\"",
 		"test:extensions": "node --test --test-reporter=dot \"extensions/**/*.test.ts\"",
 		"test:handoff": "node --test --test-reporter=dot \"extensions/handoff/**/*.test.ts\"",
 		"test:session-archive": "node --test --test-reporter=dot \"extensions/session-archive/**/*.test.ts\"",

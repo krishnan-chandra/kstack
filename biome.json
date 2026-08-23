@@ -6,11 +6,7 @@
 			"kstack.test.ts",
 			"kstack.manifest.test.mjs",
 			"extensions/**",
-			"install.mjs",
-			"install.test.mjs",
-			"check-exports.mjs",
-			"check-exports.test.mjs",
-			"startup-benchmark/**/*.mjs",
+			"scripts/**/*.mjs",
 			"skills/**/*.mjs",
 			"skills/**/*.ts",
 			"!**/node_modules"

@@ -26,7 +26,7 @@ TypeScript type stripping and the SQLite API are available without a loader.
 Pi loads the package through `kstack.ts`; source factories stay under `extensions/`.
 
 Use a colocated test file for a focused iteration, such as
-`npm run test:handoff` or `node --test check-exports.test.mjs`.
+`npm run test:handoff` or `node --test scripts/check-exports/index.test.mjs`.
 
 The `git-worktrees` planner and inspector are Node TypeScript CLIs. Run them
 with the rest of the skill suite:
@@ -84,6 +84,6 @@ hk install
   working state and must never be tracked. Delete a plan after its change ships;
   use pull requests and Git history as the durable record.
 - `config/pi-defaults/` is merged into the user's Pi configuration by
-  `install.mjs`.
+  `scripts/install/index.mjs`.
 - Runtime configuration belongs at `$PI_CODING_AGENT_DIR/kstack.json`, never
   in this repository. The default agent directory is `~/.pi/agent`.

@@ -3,13 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-	findImportViolations,
-	findStaleImportExceptions,
-	IMPORT_EXCEPTIONS,
-} from "./check-imports.mjs";
+import { findImportViolations, findStaleImportExceptions, IMPORT_EXCEPTIONS } from "./index.mjs";
 
-const EXTENSIONS_ROOT = join(import.meta.dirname, "extensions");
+const EXTENSIONS_ROOT = join(import.meta.dirname, "..", "..", "extensions");
 
 function tempRoot() {
 	return mkdtempSync(join(tmpdir(), "kstack-check-imports-"));
