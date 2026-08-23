@@ -34,7 +34,7 @@
 Extension code may import a sibling extension only through its `api.ts` or
 `types.ts`. Request-channel APIs remain optional when a peer extension is not
 loaded; deep implementation imports create an unconditional module dependency.
-`check-imports/index.mjs` enforces this rule. Shared modules may not import extension
+`scripts/check-imports/index.mjs` enforces this rule. Shared modules may not import extension
 modules.
 
 The gate has these narrow exceptions:
