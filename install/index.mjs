@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULTS_DIR = join(REPO_ROOT, "config", "pi-defaults");
 
 function expandHome(path) {

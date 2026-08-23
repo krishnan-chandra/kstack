@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { applyPiDefaults, install } from "./install.mjs";
+import { applyPiDefaults, install } from "./index.mjs";
 
-const defaultsDir = join(import.meta.dirname, "config", "pi-defaults");
+const defaultsDir = join(import.meta.dirname, "..", "config", "pi-defaults");
 
 function tempAgentDir() {
 	return mkdtempSync(join(tmpdir(), "kstack-install-"));

@@ -173,7 +173,7 @@ Pi defaults:
 
 ```bash
 cd /path/to/kstack
-./install.mjs
+./install/index.mjs
 ```
 
 The installer runs `pi install` and merges
@@ -285,7 +285,7 @@ wanted.
 Package installation is preferred because it keeps the aggregator and skills
 tied to the checkout. Copying `extensions/` into Pi's global user directory is
 no longer the supported install path: Pi would discover ten source factories
-instead of `kstack.ts`. Use `./install.mjs` or `pi install`.
+instead of `kstack.ts`. Use `./install/index.mjs` or `pi install`.
 
 For a one-off extension test without installing anything, run from the repository
 root:
@@ -338,8 +338,8 @@ The benchmark is warm, offline, isolated, and headless. It does not measure MCP,
 For focused runs, use the individual test commands:
 
 ```bash
-node --test install.test.mjs
-node --test check-exports.test.mjs
+node --test install/index.test.mjs
+node --test check-exports/index.test.mjs
 npm run test:handoff
 npm run test:session-archive
 node --test extensions/panel-review/
