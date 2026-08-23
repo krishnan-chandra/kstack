@@ -10,7 +10,6 @@
 			"install.test.mjs",
 			"check-exports.mjs",
 			"check-exports.test.mjs",
-			"startup-benchmark.mjs",
 			"startup-benchmark/**/*.mjs",
 			"skills/**/*.mjs",
 			"skills/**/*.ts",
