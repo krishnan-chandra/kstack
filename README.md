@@ -333,7 +333,7 @@ The harness runs `empty`, `package-disabled`, `skills-only`, `extensions-only`, 
 
 Its primary metric is the `full` median - `empty` median. It writes raw JSON samples and a Markdown summary under `local/benchmarks/startup/`.
 
-The benchmark is warm, offline, isolated, and headless. It does not measure MCP, TUI paint, disk-cold startup, network work, or an LLM request. Compare reports only when the machine, Pi executable and version, options, workload, and recorded startup-environment fingerprint match. Run `node startup-benchmark.mjs --help` to list options.
+The benchmark is warm, offline, isolated, and headless. It does not measure MCP, TUI paint, disk-cold startup, network work, or an LLM request. Compare reports only when the machine, Pi executable and version, options, workload, and recorded startup-environment fingerprint match. Run `node startup-benchmark/index.mjs --help` to list options.
 
 For focused runs, use the individual test commands:
 

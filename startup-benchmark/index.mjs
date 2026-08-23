@@ -3,11 +3,11 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { benchmarkUsage, parseBenchmarkArgs } from "./startup-benchmark/cli.mjs";
-import { formatSummaryDelta, formatSummaryMilliseconds } from "./startup-benchmark/report.mjs";
-import { runStartupBenchmark } from "./startup-benchmark/runner.mjs";
+import { benchmarkUsage, parseBenchmarkArgs } from "./cli.mjs";
+import { formatSummaryDelta, formatSummaryMilliseconds } from "./report.mjs";
+import { runStartupBenchmark } from "./runner.mjs";
 
-const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function printSummary(result) {
 	console.log("Pi startup benchmark");
