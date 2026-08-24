@@ -9,7 +9,6 @@ import {
 	type HandoffModel,
 	isHandoffEffortLevel,
 	parseHandoffArgs,
-	pinHandoffEffort,
 	resolveModelReference,
 } from "./model-selection.ts";
 
@@ -425,50 +424,5 @@ describe("formatModelEffort", () => {
 
 	it("appends the effort suffix when present", () => {
 		assert.equal(formatModelEffort(MODELS[0], "high"), "anthropic/claude-sonnet-4-5:high");
-	});
-});
-
-describe("pinHandoffEffort", () => {
-	function makeThinkingApi(initial: string, available: string[] = ALL_EFFORTS) {
-		let current = initial;
-		const sets: string[] = [];
-		return {
-			api: {
-				getThinkingLevel: () => current,
-				setThinkingLevel: (level: HandoffEffortLevel) => {
-					sets.push(level);
-					current = available.includes(level) ? level : (available.at(-1) ?? "off");
-				},
-			},
-			sets,
-			get current() {
-				return current;
-			},
-		};
-	}
-
-	it("sets a different effort once and returns the effective level", () => {
-		const { api, sets } = makeThinkingApi("medium");
-		assert.equal(pinHandoffEffort(api, "high"), "high");
-		assert.deepEqual(sets, ["high"]);
-	});
-
-	it("round-trips through another level when the desired effort is already current", () => {
-		const { api, sets } = makeThinkingApi("high");
-		assert.equal(pinHandoffEffort(api, "high"), "high");
-		assert.deepEqual(sets, ["high", "off", "high"]);
-	});
-
-	it("returns the clamped level without bouncing when the request is unsupported", () => {
-		const { api, sets } = makeThinkingApi("high", ["low", "medium", "high"]);
-		assert.equal(pinHandoffEffort(api, "max"), "high");
-		assert.deepEqual(sets, ["max"]);
-	});
-
-	it("skips the bounce when the model exposes only one effective level", () => {
-		const { api, sets } = makeThinkingApi("off", ["off"]);
-		assert.equal(pinHandoffEffort(api, "off"), "off");
-		assert.ok(sets.includes("off"));
-		assert.equal(api.getThinkingLevel(), "off");
 	});
 });
