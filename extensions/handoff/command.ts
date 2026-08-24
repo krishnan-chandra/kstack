@@ -5,11 +5,12 @@
  * created the replacement runtime: `ctx.newSession()` takes neither option and
  * a brand-new session starts on the configured defaults, so nothing recorded
  * during setup can steer the already-created runtime. Pi re-runs extension
- * factories for every replacement runtime while reusing this module instance,
- * so the factory rebinding in index.ts hands the still-executing handler the
- * replacement session's live API. Selecting through that API records the
- * model and effort in the replacement transcript and never touches the
- * predecessor session or the persisted defaults.
+ * factories for every replacement runtime, sometimes through an isolated
+ * module graph. The factory publishes its live API through the process-wide
+ * rendezvous in replacement-selection-api.ts. The predecessor's handler reads
+ * that API after replacement, then records the model and effort only in the
+ * replacement transcript. It never changes the predecessor or persisted
+ * defaults.
  */
 
 import { existsSync } from "node:fs";
@@ -30,24 +31,19 @@ import {
 	parseHandoffArgs,
 	resolveModelReference,
 } from "./model-selection.ts";
+import { getReplacementSelectionApi, type ReplacementSelectionApi } from "./replacement-selection-api.ts";
 
 type HandoffApi = { getThinkingLevel(): string };
-
-/** The replacement session's live extension API, rebound by the factory. */
-export interface ReplacementSelectionApi {
-	setModel(model: HandoffModel): Promise<boolean>;
-	setThinkingLevel(level: HandoffEffortLevel): void;
-}
 
 export function createHandoffHandler(
 	api: HandoffApi,
 	deps: {
 		sourceExists?: (path: string) => boolean;
-		getReplacementApi?: () => ReplacementSelectionApi | undefined;
+		getReplacementApi?: (sessionId: string) => ReplacementSelectionApi | undefined;
 	} = {},
 ) {
 	const sourceExists = deps.sourceExists ?? existsSync;
-	const getReplacementApi = deps.getReplacementApi ?? (() => undefined);
+	const getReplacementApi = deps.getReplacementApi ?? getReplacementSelectionApi;
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("handoff requires interactive mode", "error");
@@ -157,7 +153,7 @@ export function createHandoffHandler(
 				// clamps effort against the selected model's capabilities. Both
 				// calls append to the replacement transcript only; failures fall
 				// through to the effective-state report below.
-				const replacement = getReplacementApi();
+				const replacement = getReplacementApi(fresh.sessionManager.getSessionId());
 				let selectionFailure: string | undefined;
 				if (expectedModel || expectedEffort) {
 					if (!replacement) {

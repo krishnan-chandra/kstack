@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createHandoffHandler as createHandler, type ReplacementSelectionApi } from "./command.ts";
+import { createHandoffHandler as createHandler } from "./command.ts";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
+import type { ReplacementSelectionApi } from "./replacement-selection-api.ts";
 
 const SESSION_FILE = "/sessions/old.jsonl";
 const SESSION_ID = "11111111-2222-3333-4444-555555555555";
@@ -165,7 +166,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 				get thinkingLevel() {
 					return freshThinkingLevel;
 				},
-				sessionManager: { getSessionFile: () => SESSION_FILE },
+				sessionManager: { getSessionFile: () => SESSION_FILE, getSessionId: () => SESSION_ID },
 				modelRegistry: {
 					hasConfiguredAuth: () => opts.freshHasConfiguredAuth ?? true,
 					getProviderAuth: async () => opts.freshProviderAuth,
