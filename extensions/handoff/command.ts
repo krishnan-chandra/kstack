@@ -1,19 +1,19 @@
 /**
  * Build the command handler separately so lifecycle behavior is easy to test.
  *
- * The handler needs `pi.setModel` and `pi.setThinkingLevel` to control the
- * replacement session's model and effort: `ctx.newSession()` takes neither
- * option, and a brand-new session resolves both from the configured defaults.
- * Those setters persist the defaults, so applying the model first and the
- * effort second before `newSession` determines the replacement's state in the
- * default configuration. A startup `--model` / `--thinking` flag or active
- * model scoping still wins; the handler detects that from the replacement
- * session's actual model and thinking level and warns instead of claiming
- * success.
+ * Model and effort selection is applied inside `withSession`, after Pi has
+ * created the replacement runtime: `ctx.newSession()` takes neither option and
+ * a brand-new session starts on the configured defaults, so nothing recorded
+ * during setup can steer the already-created runtime. Pi re-runs extension
+ * factories for every replacement runtime while reusing this module instance,
+ * so the factory rebinding in index.ts hands the still-executing handler the
+ * replacement session's live API. Selecting through that API records the
+ * model and effort in the replacement transcript and never touches the
+ * predecessor session or the persisted defaults.
  */
 
 import { existsSync } from "node:fs";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
 import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
 import { loadKstackRoot } from "../shared/kstack-config.ts";
@@ -28,16 +28,26 @@ import {
 	type HandoffModel,
 	isHandoffEffortLevel,
 	parseHandoffArgs,
-	pinHandoffEffort,
 	resolveModelReference,
 } from "./model-selection.ts";
 
-type HandoffApi = Pick<ExtensionAPI, "setModel"> & {
-	getThinkingLevel(): string;
-	setThinkingLevel(level: string): void;
-};
+type HandoffApi = { getThinkingLevel(): string };
 
-export function createHandoffHandler(api: HandoffApi, sourceExists: (path: string) => boolean = existsSync) {
+/** The replacement session's live extension API, rebound by the factory. */
+export interface ReplacementSelectionApi {
+	setModel(model: HandoffModel): Promise<boolean>;
+	setThinkingLevel(level: HandoffEffortLevel): void;
+}
+
+export function createHandoffHandler(
+	api: HandoffApi,
+	deps: {
+		sourceExists?: (path: string) => boolean;
+		getReplacementApi?: () => ReplacementSelectionApi | undefined;
+	} = {},
+) {
+	const sourceExists = deps.sourceExists ?? existsSync;
+	const getReplacementApi = deps.getReplacementApi ?? (() => undefined);
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("handoff requires interactive mode", "error");
@@ -129,105 +139,53 @@ export function createHandoffHandler(api: HandoffApi, sourceExists: (path: strin
 
 		const previousModel = ctx.model;
 		const previousEffort = readEffort(ctx.thinkingLevel, api);
-		const targetEffort = requestedEffort ?? previousEffort;
-		let appliedEffort: HandoffEffortLevel | undefined;
-
-		if (targetModel) {
-			let switched = false;
-			try {
-				switched = await api.setModel(targetModel as Parameters<ExtensionAPI["setModel"]>[0]);
-			} catch (err) {
-				ctx.ui.notify(
-					`Could not switch to ${formatModelRef(targetModel)}: ${err instanceof Error ? err.message : String(err)}`,
-					"error",
-				);
-				return;
-			}
-			if (!switched) {
-				ctx.ui.notify(`No API key available for ${formatModelRef(targetModel)}; handoff cancelled`, "error");
-				return;
-			}
-		} else if (previousModel) {
-			// Inherit the parent session's model. A fresh session resolves its
-			// model from the configured default, which can lag the active
-			// session (e.g. after resuming another session), so pin it
-			// explicitly. Best effort: if the pin fails (e.g. credentials were
-			// removed mid-session), fall back to Pi's normal default resolution
-			// instead of blocking the handoff.
-			let pinned = false;
-			try {
-				pinned = await api.setModel(previousModel);
-			} catch {
-				// Treated like a false result below.
-			}
-			if (!pinned) {
-				ctx.ui.notify(
-					`Could not pin ${formatModelRef(previousModel)} for the new session; it will start on the configured default model`,
-					"warning",
-				);
-			}
-		}
-
-		// Pin effort after the model so Pi clamps against the selected model's
-		// capabilities. Inherit the parent effort when the reference has no
-		// suffix, including when --model is omitted.
-		if (targetEffort) {
-			try {
-				appliedEffort = pinHandoffEffort(api, targetEffort);
-			} catch (err) {
-				ctx.ui.notify(
-					`Could not set effort ${targetEffort}: ${err instanceof Error ? err.message : String(err)}`,
-					"error",
-				);
-				await restoreParentState(api, {
-					targetModel,
-					previousModel,
-					previousEffort,
-					effortChanged: requestedEffort !== undefined || Boolean(previousEffort),
-				});
-				return;
-			}
-			if (requestedEffort && appliedEffort !== requestedEffort) {
-				ctx.ui.notify(
-					`Requested effort ${requestedEffort} is not supported; using ${appliedEffort} instead`,
-					"warning",
-				);
-			}
-		}
-
-		// An explicit --model / effort switch changes the parent session before
-		// replacement. If the replacement does not happen, restore both so a
-		// cancelled or failed handoff leaves neither the parent session nor the
-		// persisted defaults changed. Restore model first: model restoration
-		// can itself clamp effort. There is nothing to restore to when no model
-		// was active before; the parent then keeps the requested model/effort.
-		const restoreParent = async (): Promise<void> => {
-			await restoreParentState(api, {
-				targetModel,
-				previousModel,
-				previousEffort,
-				effortChanged: appliedEffort !== undefined,
-			});
-		};
+		const expectedModel = targetModel ?? previousModel;
+		const expectedEffort = requestedEffort ?? previousEffort;
 
 		let result: { cancelled: boolean };
-		let replacementSessionStarted = false;
-		const sessionOptions: Parameters<ExtensionCommandContext["newSession"]>[0] = {
+		const sessionOptions: NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]> = {
 			parentSession: oldFile,
 			setup: async (sm) => {
 				sm.appendSessionInfo(replacementSessionName);
 				sm.appendCustomMessageEntry("handoff", historyRef, true, source);
 			},
 			withSession: async (fresh) => {
-				replacementSessionStarted = true;
-				// Report the model and effort the replacement session actually
-				// started on. A startup --model / --thinking flag or active
-				// model scoping can override the switch made above; never
-				// claim otherwise.
+				// A brand-new session starts on the configured defaults, so switch
+				// it here through its own live API: Pi rebuilt the extension
+				// runtime for the replacement before withSession runs, and the
+				// factory rebinding points at that runtime. Model first so Pi
+				// clamps effort against the selected model's capabilities. Both
+				// calls append to the replacement transcript only; failures fall
+				// through to the effective-state report below.
+				const replacement = getReplacementApi();
+				let selectionFailure: string | undefined;
+				if (expectedModel || expectedEffort) {
+					if (!replacement) {
+						selectionFailure = "the replacement session API is unavailable";
+					} else {
+						if (expectedModel && !(fresh.model && sameModel(fresh.model as HandoffModel, expectedModel))) {
+							try {
+								const switched = await replacement.setModel(expectedModel);
+								if (!switched) selectionFailure = `no credentials for ${formatModelRef(expectedModel)}`;
+							} catch (err) {
+								selectionFailure = err instanceof Error ? err.message : String(err);
+							}
+						}
+						if (expectedEffort) {
+							try {
+								replacement.setThinkingLevel(expectedEffort);
+							} catch (err) {
+								selectionFailure ??= err instanceof Error ? err.message : String(err);
+							}
+						}
+					}
+				}
+
+				// Report the effective replacement state. Pi can reject or clamp a
+				// selection when the model is unavailable, unauthenticated, or
+				// lacks the requested effort level.
 				const actual = fresh.model;
 				const actualEffort = readFreshEffort(fresh.thinkingLevel);
-				const expectedModel = targetModel ?? previousModel;
-				const expectedEffort = appliedEffort;
 				const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
 				const effortMismatch = Boolean(expectedEffort && actualEffort && actualEffort !== expectedEffort);
 				if ((modelMismatch || effortMismatch) && actual) {
@@ -235,11 +193,9 @@ export function createHandoffHandler(api: HandoffApi, sourceExists: (path: strin
 					const expectedLabel = expectedModel
 						? formatModelEffort(expectedModel, expectedEffort)
 						: (expectedEffort ?? "the requested selection");
-					const reason = targetModel
-						? "a startup --model/--thinking flag or model scoping overrides handoff selection"
-						: "a startup --model/--thinking flag or model scoping overrides inheritance";
+					const failureSuffix = selectionFailure === undefined ? "" : ` (${selectionFailure})`;
 					fresh.ui.notify(
-						`Handoff started, but the session is on ${actualLabel} instead of ${expectedLabel} (${reason}). Previous session: ${oldFile}`,
+						`Handoff started, but the replacement could not apply ${expectedLabel}; it is on ${actualLabel}${failureSuffix}. Previous session: ${oldFile}`,
 						"warning",
 					);
 				} else if (actual && (targetModel || expectedEffort)) {
@@ -279,57 +235,42 @@ export function createHandoffHandler(api: HandoffApi, sourceExists: (path: strin
 				await fresh.sendUserMessage(edited);
 			},
 		};
-		try {
-			if (parsed.archive) {
-				const archiveRoot = getArchiveRoot();
-				let continueInFresh: (() => Promise<void>) | undefined;
-				const archiveResult = await archiveCurrentSession({
-					deps: { archiveRoot, dbPath: getArchiveDbPath(archiveRoot) },
-					snapshot: {
-						sourcePath: oldFile,
-						sessionId: oldId,
-						sessionDir: ctx.sessionManager.getSessionDir(),
-						sessionName: ctx.sessionManager.getSessionName()?.trim() || undefined,
-					},
-					waitForIdle: () => ctx.waitForIdle(),
-					confirm: (title, message) => ctx.ui.confirm(title, message),
-					skipConfirmation: true,
-					notify: (message, level) => ctx.ui.notify(message, level),
-					startNewSession: (archiveInFresh) =>
-						ctx.newSession({
-							// The active parent path is moved before continuation; the
-							// structured handoff metadata preserves durable provenance.
-							...sessionOptions,
-							parentSession: undefined,
-							withSession: async (fresh) => {
-								continueInFresh = () => sessionOptions.withSession?.(fresh) ?? Promise.resolve();
-								await archiveInFresh({ notify: (message, level) => fresh.ui.notify(message, level) });
-							},
-						}),
-					afterArchive: async () => {
-						await continueInFresh?.();
-					},
-				});
-				result = { cancelled: archiveResult.status === "cancelled" };
-			} else {
-				result = await ctx.newSession(sessionOptions);
-			}
-		} catch (err) {
-			// Once withSession begins, the old API is stale. In particular, a
-			// send failure must propagate without trying to restore the old model.
-			if (!replacementSessionStarted) await restoreParent();
-			throw err;
+		if (parsed.archive) {
+			const archiveRoot = getArchiveRoot();
+			let continueInFresh: (() => Promise<void>) | undefined;
+			const archiveResult = await archiveCurrentSession({
+				deps: { archiveRoot, dbPath: getArchiveDbPath(archiveRoot) },
+				snapshot: {
+					sourcePath: oldFile,
+					sessionId: oldId,
+					sessionDir: ctx.sessionManager.getSessionDir(),
+					sessionName: ctx.sessionManager.getSessionName()?.trim() || undefined,
+				},
+				waitForIdle: () => ctx.waitForIdle(),
+				confirm: (title, message) => ctx.ui.confirm(title, message),
+				skipConfirmation: true,
+				notify: (message, level) => ctx.ui.notify(message, level),
+				startNewSession: (archiveInFresh) =>
+					ctx.newSession({
+						// The active parent path is moved before continuation; the
+						// structured handoff metadata preserves durable provenance.
+						...sessionOptions,
+						parentSession: undefined,
+						withSession: async (fresh) => {
+							continueInFresh = () => sessionOptions.withSession?.(fresh) ?? Promise.resolve();
+							await archiveInFresh({ notify: (message, level) => fresh.ui.notify(message, level) });
+						},
+					}),
+				afterArchive: async () => {
+					await continueInFresh?.();
+				},
+			});
+			result = { cancelled: archiveResult.status === "cancelled" };
+		} else {
+			result = await ctx.newSession(sessionOptions);
 		}
 
-		if (result.cancelled) {
-			await restoreParent();
-			if (targetModel && !previousModel) {
-				const kept = formatModelEffort(targetModel, appliedEffort);
-				ctx.ui.notify(`New session cancelled; the parent session keeps ${kept}`, "info");
-			} else {
-				ctx.ui.notify("New session cancelled", "info");
-			}
-		}
+		if (result.cancelled) ctx.ui.notify("New session cancelled", "info");
 	};
 }
 
@@ -349,32 +290,6 @@ function readEffort(fromContext: unknown, api: Pick<HandoffApi, "getThinkingLeve
 
 function readFreshEffort(fromContext: unknown): HandoffEffortLevel | undefined {
 	return typeof fromContext === "string" && isHandoffEffortLevel(fromContext) ? fromContext : undefined;
-}
-
-async function restoreParentState(
-	api: Pick<HandoffApi, "setModel" | "setThinkingLevel">,
-	state: {
-		targetModel: HandoffModel | undefined;
-		previousModel: HandoffModel | undefined;
-		previousEffort: HandoffEffortLevel | undefined;
-		effortChanged: boolean;
-	},
-): Promise<void> {
-	const { targetModel, previousModel, previousEffort, effortChanged } = state;
-	if (targetModel && previousModel && !sameModel(previousModel, targetModel)) {
-		try {
-			await api.setModel(previousModel as Parameters<ExtensionAPI["setModel"]>[0]);
-		} catch {
-			// Best effort; the parent keeps the requested model.
-		}
-	}
-	if (effortChanged && previousEffort) {
-		try {
-			api.setThinkingLevel(previousEffort);
-		} catch {
-			// Best effort; the parent keeps the requested effort.
-		}
-	}
 }
 
 export function requireHandoffSource(ctx: { sessionManager: { getBranch(): unknown[] } }): HandoffSource {

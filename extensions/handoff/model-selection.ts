@@ -295,38 +295,3 @@ export function formatModelEffort(model: HandoffModel, effort?: string): string 
 	const ref = formatModelRef(model);
 	return effort ? `${ref}:${effort}` : ref;
 }
-
-interface ThinkingLevelApi {
-	getThinkingLevel(): string;
-	setThinkingLevel(level: HandoffEffortLevel): void;
-}
-
-/**
- * Apply `desired` through Pi's thinking-level setter and return the effective
- * post-clamp value.
- *
- * Pi only persists an effort when the effective level changes. Setting the
- * already-active parent level is therefore a no-op and would leave a stale
- * settings default for the replacement session. When the current effective
- * level already matches `desired`, briefly bounce through another supported
- * level and restore `desired` so the default is written. A model that exposes
- * only one effective level cannot persist a change; fresh-session clamping
- * already guarantees that level.
- */
-export function pinHandoffEffort(api: ThinkingLevelApi, desired: HandoffEffortLevel): HandoffEffortLevel {
-	const before = api.getThinkingLevel();
-	api.setThinkingLevel(desired);
-	const after = api.getThinkingLevel();
-	if (before === after && after === desired) {
-		for (const candidate of HANDOFF_EFFORT_LEVELS) {
-			if (candidate === desired) continue;
-			api.setThinkingLevel(candidate);
-			if (api.getThinkingLevel() !== desired) {
-				api.setThinkingLevel(desired);
-				break;
-			}
-		}
-	}
-	const effective = api.getThinkingLevel();
-	return isHandoffEffortLevel(effective) ? effective : desired;
-}

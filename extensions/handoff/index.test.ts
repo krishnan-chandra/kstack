@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createHandoffHandler as createHandler } from "./command.ts";
+import { createHandoffHandler as createHandler, type ReplacementSelectionApi } from "./command.ts";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
 
@@ -18,35 +18,29 @@ const MODELS: HandoffModel[] = [
 const PARENT_MODEL: HandoffModel = { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus 4.6" };
 const ALL_EFFORTS: HandoffEffortLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-function createHandoffHandler(api: Parameters<typeof createHandler>[0]) {
-	return createHandler(api, () => true);
+function createHandoffHandler(
+	api: Parameters<typeof createHandler>[0],
+	replacementApi?: ReplacementSelectionApi | undefined,
+) {
+	return createHandler(api, { sourceExists: () => true, getReplacementApi: () => replacementApi });
 }
 
-interface FakeApiOptions {
-	setModelResult?: boolean;
-	setModelError?: Error;
-	thinkingLevel?: string;
-	availableEfforts?: string[];
-	setThinkingLevelError?: Error;
-}
-
-function makeFakeApi(order: string[], opts: FakeApiOptions = {}) {
-	const available = opts.availableEfforts ?? ALL_EFFORTS;
-	let thinkingLevel = opts.thinkingLevel ?? "";
+// The predecessor session's extension API. The handler must only read the
+// parent thinking level from it; the spies prove the predecessor is never
+// mutated.
+function makeFakeApi(order: string[], opts: { thinkingLevel?: string } = {}) {
+	const thinkingLevel = opts.thinkingLevel ?? "";
 	const calls = { setModel: [] as unknown[], setThinkingLevel: [] as string[] };
 	const api = {
 		setModel: async (model: unknown) => {
 			order.push("setModel");
 			calls.setModel.push(model);
-			if (opts.setModelError) throw opts.setModelError;
-			return opts.setModelResult ?? true;
+			return true;
 		},
 		getThinkingLevel: () => thinkingLevel,
 		setThinkingLevel: (level: string) => {
 			order.push("setThinkingLevel");
 			calls.setThinkingLevel.push(level);
-			if (opts.setThinkingLevelError) throw opts.setThinkingLevelError;
-			thinkingLevel = available.includes(level) ? level : (available.at(-1) ?? "off");
 		},
 	};
 	return { api, apiCalls: calls };
@@ -66,6 +60,9 @@ interface FakeCtxOptions {
 	freshThinkingLevel?: string;
 	freshHasConfiguredAuth?: boolean;
 	freshProviderAuth?: unknown;
+	replacementSetModelResult?: boolean;
+	replacementSetModelError?: Error;
+	replacementAvailableEfforts?: string[];
 }
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
@@ -77,6 +74,28 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 		setEditorText: [] as string[],
 		sessionNames: [] as string[],
 		newSession: 0,
+	};
+
+	// Live replacement-session state, mutated only through the replacement API
+	// the way Pi's own setModel/setThinkingLevel mutate the active runtime.
+	let freshModel = "freshModel" in opts ? opts.freshModel : MODELS[0];
+	let freshThinkingLevel = "freshThinkingLevel" in opts ? opts.freshThinkingLevel : opts.thinkingLevel;
+	const availableEfforts = opts.replacementAvailableEfforts ?? ALL_EFFORTS;
+	const replacementCalls = { setModel: [] as HandoffModel[], setThinkingLevel: [] as string[] };
+	const replacementApi: ReplacementSelectionApi = {
+		setModel: async (model: HandoffModel) => {
+			order.push("replacement.setModel");
+			replacementCalls.setModel.push(model);
+			if (opts.replacementSetModelError) throw opts.replacementSetModelError;
+			if (opts.replacementSetModelResult === false) return false;
+			freshModel = model;
+			return true;
+		},
+		setThinkingLevel: (level: string) => {
+			order.push("replacement.setThinkingLevel");
+			replacementCalls.setThinkingLevel.push(level);
+			freshThinkingLevel = availableEfforts.includes(level) ? level : (availableEfforts.at(-1) ?? "off");
+		},
 	};
 
 	const ctx: Record<string, unknown> = {
@@ -139,9 +158,14 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 					return "entry-id";
 				},
 			});
-			await options.withSession?.({
-				model: "freshModel" in opts ? opts.freshModel : MODELS[0],
-				thinkingLevel: "freshThinkingLevel" in opts ? opts.freshThinkingLevel : opts.thinkingLevel,
+			const fresh = {
+				get model() {
+					return freshModel;
+				},
+				get thinkingLevel() {
+					return freshThinkingLevel;
+				},
+				sessionManager: { getSessionFile: () => SESSION_FILE },
 				modelRegistry: {
 					hasConfiguredAuth: () => opts.freshHasConfiguredAuth ?? true,
 					getProviderAuth: async () => opts.freshProviderAuth,
@@ -160,12 +184,13 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 					calls.sendUserMessage.push(text);
 					if (opts.sendUserMessageError) throw opts.sendUserMessageError;
 				},
-			});
+			};
+			await options.withSession?.(fresh);
 			return { cancelled: false };
 		},
 	};
 
-	return { ctx, notifications, customMessages, calls };
+	return { ctx, notifications, customMessages, calls, replacementApi, replacementCalls };
 }
 
 describe("handoff command guards", () => {
@@ -194,7 +219,7 @@ describe("handoff command guards", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandler(api, () => false)("goal", ctx as never);
+		await createHandler(api, { sourceExists: () => false })("goal", ctx as never);
 		assert.deepEqual(order, ["waitForIdle", "getSessionFile"]);
 		assert.match(notifications[0].message, /no longer exists.*cannot create a durable handoff/i);
 		assert.equal(calls.editorDrafts.length, 0);
@@ -206,7 +231,7 @@ describe("handoff command lifecycle", () => {
 	it("creates a reference-only handoff without requiring a model or reading conversation context", async () => {
 		const order: string[] = [];
 		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, calls, customMessages } = makeFakeCtx(order);
+		const { ctx, calls, customMessages, replacementCalls } = makeFakeCtx(order);
 		await createHandoffHandler(api)("  implement teams support  ", ctx as never);
 
 		assert.deepEqual(order, [
@@ -218,6 +243,8 @@ describe("handoff command lifecycle", () => {
 			"fresh.sendUserMessage",
 		]);
 		assert.equal(apiCalls.setModel.length, 0);
+		assert.equal(replacementCalls.setModel.length, 0);
+		assert.equal(replacementCalls.setThinkingLevel.length, 0);
 		assert.equal(calls.editorDrafts.length, 1);
 		const draft = calls.editorDrafts[0];
 		assert.ok(draft.includes("## Goal\nimplement teams support"));
@@ -304,7 +331,7 @@ describe("handoff command lifecycle", () => {
 	it("does not restore a possibly accepted prompt when sendUserMessage throws", async () => {
 		const order: string[] = [];
 		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "medium" });
-		const { ctx, calls } = makeFakeCtx(order, {
+		const fake = makeFakeCtx(order, {
 			model: PARENT_MODEL,
 			thinkingLevel: "medium",
 			freshModel: MODELS[2],
@@ -312,13 +339,16 @@ describe("handoff command lifecycle", () => {
 		});
 
 		await assert.rejects(
-			createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never),
+			createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:high goal", fake.ctx as never),
 			/provider failed after accepting prompt/,
 		);
-		assert.equal(calls.sendUserMessage.length, 1);
-		assert.equal(calls.setEditorText.length, 0);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["high"]);
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+		assert.equal(fake.calls.setEditorText.length, 0);
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+		// The replacement already starts on the requested model.
+		assert.deepEqual(fake.replacementCalls.setModel, []);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, ["high"]);
 	});
 });
 
@@ -343,519 +373,235 @@ describe("handoff editor cancellation", () => {
 	});
 });
 
-describe("handoff model selection", () => {
-	it("inherits the parent session's model by default", async () => {
+describe("handoff replacement model selection", () => {
+	it("applies the requested model and effort when replacement defaults differ", async () => {
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "low" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "low",
+			freshModel: MODELS[0],
+			freshThinkingLevel: "low",
+		});
+
+		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:medium goal", fake.ctx as never);
+
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+		assert.deepEqual(order, [
+			"waitForIdle",
+			"getSessionFile",
+			"getSessionId",
+			"editor",
+			"newSession",
+			"replacement.setModel",
+			"replacement.setThinkingLevel",
+			"fresh.sendUserMessage",
+		]);
+		assert.deepEqual(fake.replacementCalls.setModel, [MODELS[2]]);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, ["medium"]);
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+		assert.ok(fake.notifications.some((notification) => notification.message.includes("Model: openai/gpt-5.2:medium")));
+	});
+
+	it("inherits the parent model and effort through the replacement session API", async () => {
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "high" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "high",
+			freshModel: MODELS[0],
+			freshThinkingLevel: "low",
+		});
+
+		await createHandoffHandler(api, fake.replacementApi)("goal", fake.ctx as never);
+
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+		assert.deepEqual(fake.replacementCalls.setModel, [PARENT_MODEL]);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, ["high"]);
+		assert.ok(
+			fake.notifications.some((notification) => notification.message.includes("Model: anthropic/claude-opus-4-6:high")),
+		);
+	});
+
+	it("skips the model switch when the replacement already starts on the expected model", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order, { thinkingLevel: "high" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "high",
+			freshModel: PARENT_MODEL,
+			freshThinkingLevel: "high",
+		});
+
+		await createHandoffHandler(api, fake.replacementApi)("goal", fake.ctx as never);
+
+		assert.deepEqual(fake.replacementCalls.setModel, []);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, ["high"]);
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+	});
+
+	it("reports a mismatch with the failure reason when the model cannot be applied", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order, { thinkingLevel: "low" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "low",
+			freshModel: MODELS[0],
+			freshThinkingLevel: "low",
+			replacementSetModelResult: false,
+		});
+
+		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:medium goal", fake.ctx as never);
+
+		const warning = fake.notifications.find((notification) => notification.level === "warning")!;
+		assert.ok(warning.message.includes("could not apply openai/gpt-5.2:medium"));
+		assert.ok(warning.message.includes("anthropic/claude-sonnet-4-5"));
+		assert.ok(warning.message.includes("no credentials for openai/gpt-5.2"));
+		assert.ok(!warning.message.includes("startup"));
+		assert.ok(!warning.message.includes("scoping"));
+		// The handoff still continues on the replacement's actual state.
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+	});
+
+	it("reports the clamped effort when the requested level is unsupported", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order, { thinkingLevel: "low" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "low",
+			freshModel: MODELS[0],
+			freshThinkingLevel: "low",
+			replacementAvailableEfforts: ["off", "minimal", "low", "medium"],
+		});
+
+		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:xhigh goal", fake.ctx as never);
+
+		const warning = fake.notifications.find((notification) => notification.level === "warning")!;
+		assert.ok(warning.message.includes("could not apply openai/gpt-5.2:xhigh"));
+		assert.ok(warning.message.includes("openai/gpt-5.2:medium"));
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+	});
+
+	it("warns without failing when no replacement API is bound", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order, { thinkingLevel: "low" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "low",
+			freshModel: MODELS[0],
+			freshThinkingLevel: "low",
+		});
+
+		await createHandoffHandler(api, undefined)("goal", fake.ctx as never);
+
+		const warning = fake.notifications.find((notification) => notification.level === "warning")!;
+		assert.ok(warning.message.includes("could not apply anthropic/claude-opus-4-6:low"));
+		assert.ok(warning.message.includes("the replacement session API is unavailable"));
+		assert.deepEqual(fake.replacementCalls.setModel, []);
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+	});
+
+	it("leaves the predecessor unchanged when replacement is cancelled", async () => {
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "medium" });
+		const { ctx, notifications, calls } = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "medium",
+			newSessionResult: { cancelled: true },
+		});
+
+		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
+
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+		assert.equal(calls.newSession, 1);
+		assert.equal(notifications.at(-1)!.message, "New session cancelled");
+	});
+
+	it("applies no selection when replacement is cancelled", async () => {
+		const order: string[] = [];
+		const { api } = makeFakeApi(order, { thinkingLevel: "medium" });
+		const fake = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "medium",
+			newSessionResult: { cancelled: true },
+		});
+
+		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:high goal", fake.ctx as never);
+
+		assert.deepEqual(fake.replacementCalls.setModel, []);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, []);
+	});
+
+	it("leaves the predecessor unchanged when replacement creation throws", async () => {
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "medium" });
+		const { ctx } = makeFakeCtx(order, {
+			model: PARENT_MODEL,
+			thinkingLevel: "medium",
+			newSessionError: new Error("runtime creation failed"),
+		});
+
+		await assert.rejects(
+			createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never),
+			/runtime creation failed/,
+		);
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+	});
+
+	it("accepts scoped model references without mutating the predecessor", async () => {
 		const order: string[] = [];
 		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, calls } = makeFakeCtx(order, { model: PARENT_MODEL });
-		await createHandoffHandler(api)("goal", ctx as never);
+		const fake = makeFakeCtx(order, {
+			scopedModels: [{ model: MODELS[2] }, { model: MODELS[3] }],
+		});
 
-		assert.deepEqual(order, [
-			"waitForIdle",
-			"getSessionFile",
-			"getSessionId",
-			"editor",
-			"setModel",
-			"newSession",
-			"fresh.sendUserMessage",
-		]);
-		assert.deepEqual(apiCalls.setModel, [PARENT_MODEL]);
-		assert.equal(calls.newSession, 1);
+		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2 goal", fake.ctx as never);
+
+		assert.equal(fake.calls.newSession, 1);
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(fake.replacementCalls.setModel, [MODELS[2]]);
 	});
 
-	it("still hands off when inheriting the model fails", async () => {
+	it("rejects model references outside an active scope before replacement", async () => {
 		const order: string[] = [];
-		const failing = {
-			setModel: async () => {
-				order.push("setModel");
-				throw new Error("settings unavailable");
-			},
-			getThinkingLevel: () => "",
-			setThinkingLevel: () => {},
-		};
-		const { ctx, calls } = makeFakeCtx(order, { model: PARENT_MODEL });
-		await createHandoffHandler(failing)("goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.deepEqual(order, [
-			"waitForIdle",
-			"getSessionFile",
-			"getSessionId",
-			"editor",
-			"setModel",
-			"newSession",
-			"fresh.sendUserMessage",
-		]);
+		const { api } = makeFakeApi(order);
+		const { ctx, notifications, calls } = makeFakeCtx(order, {
+			scopedModels: [{ model: MODELS[2] }, { model: MODELS[3] }],
+		});
+
+		await createHandoffHandler(api)("--model anthropic/claude-sonnet-4-5 goal", ctx as never);
+
+		assert.equal(calls.newSession, 0);
+		assert.equal(notifications[0].level, "error");
+		assert.ok(notifications[0].message.includes("scoping"));
 	});
 
-	it("switches to an explicit model before creating the replacement session", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, calls } = makeFakeCtx(order, { model: PARENT_MODEL });
-		await createHandoffHandler(api)("--model openai/gpt-5.2 ship the feature", ctx as never);
-
-		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
-		assert.deepEqual(order, [
-			"waitForIdle",
-			"getSessionFile",
-			"getSessionId",
-			"editor",
-			"setModel",
-			"newSession",
-			"fresh.sendUserMessage",
-		]);
-		const draft = calls.editorDrafts[0];
-		assert.ok(draft.includes("## Goal\nship the feature"));
-		assert.ok(!draft.includes("--model"));
-		assert.ok(!draft.includes("gpt-5.2"));
+	it("rejects unknown and ambiguous references before opening the editor", async () => {
+		for (const args of ["--model nope/does-not-exist goal", "--model gpt goal"]) {
+			const order: string[] = [];
+			const { api } = makeFakeApi(order);
+			const { ctx, calls } = makeFakeCtx(order);
+			await createHandoffHandler(api)(args, ctx as never);
+			assert.equal(calls.editorDrafts.length, 0);
+			assert.equal(calls.newSession, 0);
+		}
 	});
 
-	it("does not leak an effort suffix into the goal draft", async () => {
+	it("does not leak model syntax into the continuation goal", async () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order, { thinkingLevel: "medium" });
 		const { ctx, calls } = makeFakeCtx(order, { model: PARENT_MODEL, thinkingLevel: "medium" });
+
 		await createHandoffHandler(api)("--model openai/gpt-5.2:high ship the feature", ctx as never);
+
 		const draft = calls.editorDrafts[0];
 		assert.ok(draft.includes("## Goal\nship the feature"));
 		assert.ok(!draft.includes("--model"));
 		assert.ok(!draft.includes("gpt-5.2"));
 		assert.ok(!draft.includes(":high"));
-	});
-
-	it("accepts -m, --model=, and unique bare model ids", async () => {
-		for (const args of ["-m gpt-5.2 goal", "--model=openai/gpt-5.2-codex goal", "--model gpt-5.2-codex goal"]) {
-			const order: string[] = [];
-			const { api, apiCalls } = makeFakeApi(order);
-			const { ctx, calls } = makeFakeCtx(order);
-			await createHandoffHandler(api)(args, ctx as never);
-			assert.equal(calls.newSession, 1, `no session created for: ${args}`);
-			assert.equal(apiCalls.setModel.length, 1, `setModel not called for: ${args}`);
-			assert.equal((apiCalls.setModel[0] as HandoffModel).provider, "openai");
-		}
-	});
-
-	it("rejects an unknown model before opening the editor", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("--model nope/does-not-exist goal", ctx as never);
-		assert.equal(calls.newSession, 0);
-		assert.equal(apiCalls.setModel.length, 0);
-		assert.deepEqual(order, []);
-		assert.equal(notifications[0].level, "error");
-		assert.ok(notifications[0].message.includes('Unknown model "nope/does-not-exist"'));
-	});
-
-	it("rejects an ambiguous model reference with the matches", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("--model gpt goal", ctx as never);
-		assert.equal(calls.newSession, 0);
-		assert.equal(apiCalls.setModel.length, 0);
-		assert.equal(notifications[0].level, "error");
-		assert.ok(notifications[0].message.includes("ambiguous"));
-		assert.ok(notifications[0].message.includes("openai/gpt-5.2"));
-		assert.ok(notifications[0].message.includes("openai/gpt-5.2-codex"));
-	});
-
-	it("rejects a --model flag with no value", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("goal --model", ctx as never);
-		assert.equal(calls.newSession, 0);
-		assert.deepEqual(order, []);
-		assert.equal(notifications[0].level, "error");
-		assert.ok(notifications[0].message.includes("--model requires a value"));
-	});
-
-	it("cancels the handoff when the requested model has no API key", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { setModelResult: false });
-		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.equal(apiCalls.setModel.length, 1);
-		assert.equal(calls.newSession, 0);
-		assert.equal(notifications.at(-1)!.level, "error");
-		assert.ok(notifications.at(-1)!.message.includes("No API key available for openai/gpt-5.2"));
-	});
-
-	it("cancels the handoff when switching to the requested model throws", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order, { setModelError: new Error("auth store locked") });
-		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.equal(calls.newSession, 0);
-		assert.equal(notifications.at(-1)!.level, "error");
-		assert.ok(notifications.at(-1)!.message.includes("Could not switch to openai/gpt-5.2"));
-		assert.ok(notifications.at(-1)!.message.includes("auth store locked"));
-	});
-
-	it("does not change the model when the editor is cancelled", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order, { editorResult: undefined });
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.equal(apiCalls.setModel.length, 0);
-		assert.equal(calls.newSession, 0);
-		assert.equal(notifications.at(-1)!.message, "Cancelled");
-	});
-});
-
-describe("handoff model restoration on failed handoff", () => {
-	it("restores the parent model when the replacement is cancelled after --model", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications, calls, customMessages } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			newSessionResult: { cancelled: true },
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-
-		assert.deepEqual(apiCalls.setModel, [MODELS[2], PARENT_MODEL]);
-		assert.deepEqual(order, [
-			"waitForIdle",
-			"getSessionFile",
-			"getSessionId",
-			"editor",
-			"setModel",
-			"newSession",
-			"setModel",
-		]);
-		assert.equal(customMessages.length, 0);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.message, "New session cancelled");
-		assert.equal(notifications.at(-1)!.level, "info");
-	});
-
-	it("restores the parent model and effort when the replacement is cancelled after --model:effort", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "medium" });
-		const { ctx, notifications } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "medium",
-			newSessionResult: { cancelled: true },
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
-
-		assert.deepEqual(apiCalls.setModel, [MODELS[2], PARENT_MODEL]);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["high", "medium"]);
-		assert.deepEqual(order, [
-			"waitForIdle",
-			"getSessionFile",
-			"getSessionId",
-			"editor",
-			"setModel",
-			"setThinkingLevel",
-			"newSession",
-			"setModel",
-			"setThinkingLevel",
-		]);
-		assert.equal(notifications.at(-1)!.message, "New session cancelled");
-	});
-
-	it("restores the parent model when newSession throws and rethrows the error", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			newSessionError: new Error("runtime creation failed"),
-		});
-		await assert.rejects(
-			createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never),
-			/runtime creation failed/,
-		);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2], PARENT_MODEL]);
-		assert.equal(calls.newSession, 1);
-	});
-
-	it("restores the parent model and effort when newSession throws after an effort switch", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "low" });
-		const { ctx, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "low",
-			newSessionError: new Error("runtime creation failed"),
-		});
-		await assert.rejects(
-			createHandoffHandler(api)("--model openai/gpt-5.2:max goal", ctx as never),
-			/runtime creation failed/,
-		);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2], PARENT_MODEL]);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["max", "low"]);
-		assert.equal(calls.newSession, 1);
-	});
-
-	it("does not restore when cancelled without an explicit --model", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			newSessionResult: { cancelled: true },
-		});
-		await createHandoffHandler(api)("goal", ctx as never);
-		// The inherit pin sets the parent's own model; there is no switch to undo.
-		assert.deepEqual(apiCalls.setModel, [PARENT_MODEL]);
-		assert.equal(notifications.at(-1)!.message, "New session cancelled");
-	});
-
-	it("notes the kept model when cancelled with --model but no previous model", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications } = makeFakeCtx(order, {
-			newSessionResult: { cancelled: true },
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
-		assert.equal(notifications.at(-1)!.message, "New session cancelled; the parent session keeps openai/gpt-5.2");
-	});
-
-	it("notes the kept model and effort when cancelled with no previous model", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications } = makeFakeCtx(order, {
-			newSessionResult: { cancelled: true },
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["high"]);
-		assert.equal(notifications.at(-1)!.message, "New session cancelled; the parent session keeps openai/gpt-5.2:high");
-	});
-});
-
-describe("handoff effort selection", () => {
-	it("inherits the parent effort when --model has no suffix", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "high" });
-		const { ctx, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "high",
-			freshModel: MODELS[2],
-			freshThinkingLevel: "high",
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2 ship the feature", ctx as never);
-
-		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
-		assert.ok(apiCalls.setThinkingLevel.includes("high"));
-		assert.ok(order.indexOf("setModel") < order.indexOf("setThinkingLevel"));
-		assert.ok(order.indexOf("setThinkingLevel") < order.indexOf("newSession"));
-		assert.equal(calls.newSession, 1);
-	});
-
-	it("inherits the parent model and effort when --model is omitted", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "medium" });
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "medium",
-			freshModel: PARENT_MODEL,
-			freshThinkingLevel: "medium",
-		});
-		await createHandoffHandler(api)("goal", ctx as never);
-
-		assert.deepEqual(apiCalls.setModel, [PARENT_MODEL]);
-		assert.ok(apiCalls.setThinkingLevel.includes("medium"));
-		assert.ok(order.indexOf("setModel") < order.indexOf("setThinkingLevel"));
-		assert.ok(order.indexOf("setThinkingLevel") < order.indexOf("newSession"));
-		assert.equal(calls.newSession, 1);
-		assert.ok(
-			notifications.some((n) => n.level === "info" && n.message.includes("Model: anthropic/claude-opus-4-6:medium")),
-		);
-	});
-
-	it("sets an explicit effort after the model and before newSession", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "low" });
-		const { ctx, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "low",
-			freshModel: MODELS[2],
-			freshThinkingLevel: "max",
-		});
-		await createHandoffHandler(api)("-m anthropic/claude-opus-4-6:max finish the refactor", ctx as never);
-
-		assert.deepEqual(apiCalls.setModel, [PARENT_MODEL]);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["max"]);
-		assert.deepEqual(order, [
-			"waitForIdle",
-			"getSessionFile",
-			"getSessionId",
-			"editor",
-			"setModel",
-			"setThinkingLevel",
-			"newSession",
-			"fresh.sendUserMessage",
-		]);
-		assert.equal(calls.newSession, 1);
-	});
-
-	it("pins an already-current inherited effort so a fresh session can inherit it", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "high" });
-		const { ctx } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "high",
-			freshModel: PARENT_MODEL,
-			freshThinkingLevel: "high",
-		});
-		await createHandoffHandler(api)("goal", ctx as never);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["high", "off", "high"]);
-	});
-
-	it("warns when an explicit effort is clamped to a supported level", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, {
-			thinkingLevel: "medium",
-			availableEfforts: ["low", "medium", "high"],
-		});
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "medium",
-			freshModel: MODELS[2],
-			freshThinkingLevel: "high",
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2:max goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["max"]);
-		assert.ok(
-			notifications.some(
-				(n) => n.level === "warning" && n.message.includes("Requested effort max is not supported; using high instead"),
-			),
-		);
-	});
-
-	it("falls back to getThinkingLevel when ctx.thinkingLevel is missing", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "xhigh" });
-		const { ctx } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			freshModel: PARENT_MODEL,
-			freshThinkingLevel: "xhigh",
-		});
-		await createHandoffHandler(api)("goal", ctx as never);
-		assert.ok(apiCalls.setThinkingLevel.includes("xhigh"));
-	});
-
-	it("restores model and effort when setting effort throws", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order, {
-			thinkingLevel: "medium",
-			setThinkingLevelError: new Error("settings locked"),
-		});
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "medium",
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
-		assert.equal(calls.newSession, 0);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2], PARENT_MODEL]);
-		assert.deepEqual(apiCalls.setThinkingLevel, ["high", "medium"]);
-		assert.ok(notifications.some((n) => n.level === "error" && n.message.includes("Could not set effort high")));
-	});
-});
-
-describe("handoff model scoping and override detection", () => {
-	const SCOPED = [{ model: MODELS[2] }, { model: MODELS[3] }];
-
-	it("restricts --model to scoped models when scoping is active", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order, { scopedModels: SCOPED });
-		await createHandoffHandler(api)("--model anthropic/claude-sonnet-4-5 goal", ctx as never);
-		assert.equal(calls.newSession, 0);
-		assert.equal(apiCalls.setModel.length, 0);
-		assert.deepEqual(order, []);
-		assert.equal(notifications[0].level, "error");
-		assert.ok(notifications[0].message.includes('Unknown model "anthropic/claude-sonnet-4-5"'));
-		assert.ok(notifications[0].message.includes("scoping"));
-	});
-
-	it("accepts a scoped model when scoping is active", async () => {
-		const order: string[] = [];
-		const { api, apiCalls } = makeFakeApi(order);
-		const { ctx, calls } = makeFakeCtx(order, { scopedModels: SCOPED });
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.deepEqual(apiCalls.setModel, [MODELS[2]]);
-	});
-
-	it("warns when the replacement session started on a different model than requested", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			freshModel: MODELS[0],
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.level, "warning");
-		assert.ok(notifications.at(-1)!.message.includes("is on anthropic/claude-sonnet-4-5"));
-		assert.ok(notifications.at(-1)!.message.includes("instead of openai/gpt-5.2"));
-	});
-
-	it("reports the requested model when the replacement session matches it", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order, { freshModel: MODELS[2] });
-		await createHandoffHandler(api)("--model openai/gpt-5.2 goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.level, "info");
-		assert.ok(notifications.at(-1)!.message.includes("Model: openai/gpt-5.2"));
-	});
-
-	it("reports the replacement model and effort when both match", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order, { thinkingLevel: "medium" });
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			thinkingLevel: "medium",
-			freshModel: MODELS[2],
-			freshThinkingLevel: "high",
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.level, "info");
-		assert.ok(notifications.at(-1)!.message.includes("Model: openai/gpt-5.2:high"));
-	});
-
-	it("warns when the replacement session started on a different effort than requested", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order, { thinkingLevel: "medium" });
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "medium",
-			freshModel: MODELS[2],
-			freshThinkingLevel: "low",
-		});
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.level, "warning");
-		assert.ok(notifications.at(-1)!.message.includes("is on openai/gpt-5.2:low"));
-		assert.ok(notifications.at(-1)!.message.includes("instead of openai/gpt-5.2:high"));
-	});
-
-	it("warns when inheritance fell back to a different model", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			freshModel: MODELS[2],
-		});
-		await createHandoffHandler(api)("goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.level, "warning");
-		assert.ok(notifications.at(-1)!.message.includes("is on openai/gpt-5.2"));
-		assert.ok(notifications.at(-1)!.message.includes("instead of anthropic/claude-opus-4-6"));
-		assert.ok(notifications.at(-1)!.message.includes("overrides inheritance"));
-	});
-
-	it("notifies when pinning the parent model fails but still hands off", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order, { setModelResult: false });
-		const { ctx, notifications, calls } = makeFakeCtx(order, { model: PARENT_MODEL });
-		await createHandoffHandler(api)("goal", ctx as never);
-		assert.equal(calls.newSession, 1);
-		assert.ok(
-			notifications.some((n) => n.level === "warning" && n.message.includes("Could not pin anthropic/claude-opus-4-6")),
-		);
 	});
 });
