@@ -171,31 +171,34 @@ rows stay unnamed.
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
 
-Pi loads one TypeScript entry, `kstack.ts`, plus the `skills/` tree. The
-aggregator registers every factory under `extensions/` in a fixed order. Pi
+Pi loads one TypeScript entry, `kstack.ts`, from the package. The installer
+links each directory in `skills/` into the shared `~/.agents/skills` directory.
+The aggregator registers every factory under `extensions/` in a fixed order. Pi
 treats the set as one extension: `pi config` cannot toggle an individual Kstack
 extension, and a factory startup failure rejects the whole set instead of leaving
 a partially registered package.
 
 ## Install for the current user
 
-This repository is a Pi package. The `pi` manifest loads `kstack.ts` and the
-`skills/` tree. Individual factories remain under `extensions/` for tests and
-one-off `-e` loads. Pi packages cannot provide
-`settings.json` or `keybindings.json`, so the recommended installer both
-registers the checkout as a user-level Pi package and applies kstack's tracked
-Pi defaults:
+This repository is a Pi package. The `pi` manifest loads `kstack.ts`.
+Individual factories remain under `extensions/` for tests and one-off `-e`
+loads. Pi packages cannot provide `settings.json` or `keybindings.json`, so the
+recommended installer registers the checkout, links its skills for compatible
+agent harnesses, and applies Kstack's tracked Pi defaults:
 
 ```bash
 cd /path/to/kstack
 ./scripts/install/index.mjs
 ```
 
-The installer runs `pi install` and merges
+The installer runs `pi install`, links each Kstack skill into
+`~/.agents/skills`, and merges
 [`config/pi-defaults/settings.json`](config/pi-defaults/settings.json) and
 [`config/pi-defaults/keybindings.json`](config/pi-defaults/keybindings.json)
-into `$PI_CODING_AGENT_DIR` (default `~/.pi/agent`). It preserves unrelated
-settings and keybindings while making the tracked values authoritative:
+into `$PI_CODING_AGENT_DIR` (default `~/.pi/agent`). Set
+`AGENTS_SKILLS_DIR` to use another shared skills directory. The installer
+preserves unrelated settings and keybindings while making the tracked values
+authoritative:
 
 - Thinking blocks are hidden.
 - All queued steering and follow-up messages are delivered together.
@@ -208,14 +211,16 @@ Rerunning the installer is safe and reapplies these defaults. It refuses to
 modify either config file if existing JSON is malformed.
 
 By default, `pi install` writes to the current user's global settings. It loads
-all extensions and all skills in this repository across Pi projects; the
-installer intentionally does not pass `-l`, which would create a project-local
-installation instead. To register only the package without applying kstack's Pi
-preferences, use `pi install "$PWD"` directly.
+all Kstack extensions across Pi projects. Pi and other compatible harnesses
+load the skills through `~/.agents/skills`. The installer does not pass `-l`,
+which would create a project-local installation instead. To register only the
+Pi extension without linking skills or applying Kstack's Pi preferences, use
+`pi install "$PWD"` directly.
 
-Pi records a reference to the checkout rather than copying it. Pulling or
-editing the repository updates the installed resources; use `/reload` in a
-running Pi process, or restart Pi, after changes.
+Pi and the shared skill links reference the checkout rather than copying it.
+Pulling or editing the repository updates the installed resources. Use
+`/reload` in a running Pi process, or restart Pi, after changes. Rerun the
+installer if you move the checkout.
 
 Inspect or enable the installed aggregator and skills with:
 
@@ -291,16 +296,16 @@ To remove the package registration, run this from the same checkout:
 pi remove "$PWD"
 ```
 
-Removal does not revert the merged Pi preferences; delete those managed keys
-from `settings.json` and `keybindings.json` manually if they are no longer
-wanted.
+Removal does not remove the links in `~/.agents/skills` or revert the merged Pi
+preferences. Remove the Kstack-managed links and delete the managed keys from
+`settings.json` and `keybindings.json` if they are no longer wanted.
 
 ### Manual copy installation
 
-Package installation is preferred because it keeps the aggregator and skills
-tied to the checkout. Copying `extensions/` into Pi's global user directory is
-no longer the supported install path: Pi would discover ten source factories
-instead of `kstack.ts`. Use `./scripts/install/index.mjs` or `pi install`.
+The installer is preferred because it keeps the aggregator and shared skill
+links tied to the checkout. Copying `extensions/` into Pi's global user
+directory is no longer supported: Pi would discover ten source factories
+instead of `kstack.ts`. Use `./scripts/install/index.mjs`.
 
 For a one-off extension test without installing anything, run from the repository
 root:
@@ -380,7 +385,7 @@ The `git-worktrees` planner and inspector are Node TypeScript CLIs:
 node --test skills/git-worktrees/
 ```
 
-The package also includes the skills listed in the table above. Pi discovers them when this repository is installed with `pi install`. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
+The installer links the skills listed in the table above into `~/.agents/skills`. Pi and other compatible harnesses discover them there. Most skills can load automatically when a task matches their description or can be invoked with `/skill:<name>`. `architect` and `decision-trail` are explicit-only — one launches several design runs, the other adds a log a routine change doesn't need; invoke them with `/skill:architect` and `/skill:decision-trail`.
 
 Skill eval workspaces live under `.workspace/` (gitignored) so test runs and review pages never dirty the repository.
 
