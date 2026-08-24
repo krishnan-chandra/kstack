@@ -68,6 +68,7 @@ async function createIsolatedScenario(profile, baseEnvironment) {
 		await mkdir(agentDir, { recursive: true });
 		await writeJson(join(agentDir, "settings.json"), {
 			packages: profile.packages,
+			skills: profile.skillPaths,
 			defaultModel: "startup-benchmark/probe",
 		});
 		await writeJson(join(agentDir, "models.json"), {
@@ -175,6 +176,7 @@ function scenarioResult(profile, state, emptySummary) {
 		id: profile.id,
 		purpose: profile.purpose,
 		packages: profile.packages,
+		skillPaths: profile.skillPaths,
 		commandInventory: {
 			required: profile.requiredCommands,
 			forbidden: profile.forbiddenCommands,

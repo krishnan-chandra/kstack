@@ -17,11 +17,10 @@ const EXPECTED_EXTENSIONS = [
 	"steering-swap",
 ];
 
-test("package.json points Pi at the TypeScript aggregator and keeps skills", () => {
+test("package.json points Pi at the TypeScript aggregator only", () => {
 	const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8"));
 	assert.deepEqual(pkg.pi, {
 		extensions: ["./kstack.ts"],
-		skills: ["./skills"],
 	});
 });
 

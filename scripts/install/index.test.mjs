@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { applyPiDefaults, install } from "./index.mjs";
+import { applyPiDefaults, install, syncGlobalSkills } from "./index.mjs";
 
 const defaultsDir = join(import.meta.dirname, "..", "..", "config", "pi-defaults");
 
@@ -43,21 +43,27 @@ test("applyPiDefaults merges managed preferences without removing existing confi
 	});
 });
 
-test("install registers the package before merging defaults into Pi's updated settings", () => {
+test("install registers the package and global skills before merging Pi defaults", () => {
 	const agentDir = tempAgentDir();
-	let installedRoot;
+	const calls = [];
 
 	install({
 		repoRoot: "/example/kstack",
 		agentDir,
 		defaultsDir,
 		installPackage(repoRoot) {
-			installedRoot = repoRoot;
+			calls.push(["package", repoRoot]);
 			writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [repoRoot] }, null, 2)}\n`);
+		},
+		syncSkills(repoRoot) {
+			calls.push(["skills", repoRoot]);
 		},
 	});
 
-	assert.equal(installedRoot, "/example/kstack");
+	assert.deepEqual(calls, [
+		["package", "/example/kstack"],
+		["skills", "/example/kstack"],
+	]);
 	assert.deepEqual(readJson(join(agentDir, "settings.json")), {
 		packages: ["/example/kstack"],
 		hideThinkingBlock: true,
@@ -68,6 +74,58 @@ test("install registers the package before merging defaults into Pi's updated se
 		"tui.input.submit": "enter",
 		"app.message.followUp": "alt+enter",
 	});
+});
+
+test("syncGlobalSkills links skills and removes stale managed links", () => {
+	const root = mkdtempSync(join(tmpdir(), "kstack-repo-"));
+	const globalSkillsDir = mkdtempSync(join(tmpdir(), "agent-skills-"));
+	for (const name of ["alpha", "beta"]) {
+		mkdirSync(join(root, "skills", name), { recursive: true });
+		writeFileSync(join(root, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: test\n---\n`);
+	}
+
+	syncGlobalSkills(root, globalSkillsDir);
+	assert.equal(readlinkSync(join(globalSkillsDir, "alpha")), join(root, "skills", "alpha"));
+	assert.equal(readlinkSync(join(globalSkillsDir, "beta")), join(root, "skills", "beta"));
+
+	mkdirSync(join(root, "skills", "beta-renamed"));
+	writeFileSync(join(root, "skills", "beta-renamed", "SKILL.md"), "---\nname: beta-renamed\ndescription: test\n---\n");
+	rmSync(join(root, "skills", "beta"), { recursive: true });
+	syncGlobalSkills(root, globalSkillsDir);
+
+	assert.throws(() => readlinkSync(join(globalSkillsDir, "beta")), /ENOENT/);
+	assert.equal(readlinkSync(join(globalSkillsDir, "beta-renamed")), join(root, "skills", "beta-renamed"));
+});
+
+test("syncGlobalSkills refuses all changes when an unmanaged skill conflicts", () => {
+	const root = mkdtempSync(join(tmpdir(), "kstack-repo-"));
+	const globalSkillsDir = mkdtempSync(join(tmpdir(), "agent-skills-"));
+	for (const name of ["alpha", "beta"]) {
+		mkdirSync(join(root, "skills", name), { recursive: true });
+		writeFileSync(join(root, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: test\n---\n`);
+	}
+	mkdirSync(join(globalSkillsDir, "beta"));
+
+	assert.throws(() => syncGlobalSkills(root, globalSkillsDir), /Refusing to replace unmanaged skill/);
+	assert.throws(() => readlinkSync(join(globalSkillsDir, "alpha")), /ENOENT/);
+});
+
+test("syncGlobalSkills repairs a managed link after the checkout moves", () => {
+	const oldRoot = mkdtempSync(join(tmpdir(), "kstack-old-"));
+	const newRoot = mkdtempSync(join(tmpdir(), "kstack-new-"));
+	const globalSkillsDir = mkdtempSync(join(tmpdir(), "agent-skills-"));
+	for (const root of [oldRoot, newRoot]) {
+		mkdirSync(join(root, "skills", "alpha"), { recursive: true });
+		writeFileSync(join(root, "skills", "alpha", "SKILL.md"), "---\nname: alpha\ndescription: test\n---\n");
+	}
+	symlinkSync(join(oldRoot, "skills", "alpha"), join(globalSkillsDir, "alpha"));
+	writeFileSync(
+		join(globalSkillsDir, ".kstack-managed.json"),
+		`${JSON.stringify({ alpha: join(oldRoot, "skills", "alpha") }, null, 2)}\n`,
+	);
+
+	syncGlobalSkills(newRoot, globalSkillsDir);
+	assert.equal(readlinkSync(join(globalSkillsDir, "alpha")), join(newRoot, "skills", "alpha"));
 });
 
 test("install preserves the user-owned kstack backend selection", () => {
@@ -81,6 +139,7 @@ test("install preserves the user-owned kstack backend selection", () => {
 		agentDir,
 		defaultsDir,
 		installPackage() {},
+		syncSkills() {},
 	});
 
 	assert.equal(readFileSync(configPath, "utf8"), config);

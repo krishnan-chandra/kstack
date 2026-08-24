@@ -60,7 +60,7 @@ function packageFilter(source, { extensions = [], skills = [] } = {}) {
 	return { source, extensions, skills, prompts: [], themes: [] };
 }
 
-function profile({ id, purpose, packages, inventory, loadExtensions, loadSkills }) {
+function profile({ id, purpose, packages, skillPaths = [], inventory, loadExtensions, loadSkills }) {
 	const requiredCommands = [
 		...(loadExtensions ? inventory.extensionCommands : []),
 		...(loadSkills ? inventory.skillCommands : []),
@@ -73,6 +73,7 @@ function profile({ id, purpose, packages, inventory, loadExtensions, loadSkills 
 		id,
 		purpose,
 		packages,
+		skillPaths,
 		requiredCommands,
 		forbiddenCommands,
 		timingRequirements: { main: true, extensions: loadExtensions },
@@ -111,7 +112,8 @@ export async function createScenarioProfiles(packageRoot) {
 			profile({
 				id: "skills-only",
 				purpose: "Kstack skill discovery cost.",
-				packages: [packageFilter(source, { skills: ["skills/**"] })],
+				packages: [],
+				skillPaths: [join(source, "skills")],
 				inventory,
 				loadExtensions: false,
 				loadSkills: true,
@@ -126,8 +128,9 @@ export async function createScenarioProfiles(packageRoot) {
 			}),
 			profile({
 				id: "full",
-				purpose: "Installed Kstack package behavior.",
+				purpose: "Installed Kstack behavior.",
 				packages: [source],
+				skillPaths: [join(source, "skills")],
 				inventory,
 				loadExtensions: true,
 				loadSkills: true,
