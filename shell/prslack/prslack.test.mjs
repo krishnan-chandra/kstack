@@ -10,7 +10,7 @@ const FUNCTIONS = join(ROOT, "shell/prslack/prslack.sh");
 const INSTALLER = join(ROOT, "shell/prslack/install.sh");
 
 const FAKE_GH = `#!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { fstatSync, readFileSync } from "node:fs";
 const scenario = JSON.parse(readFileSync(process.env.PRSLACK_SCENARIO, "utf8"));
 const args = process.argv.slice(2);
 const valueAfter = (flag) => {
@@ -21,6 +21,13 @@ const fail = (message) => {
   console.error(message);
   process.exit(1);
 };
+if (scenario.requireCapturedStdout) {
+  const stdout = fstatSync(1);
+  const finalStdout = fstatSync(3);
+  if (stdout.dev === finalStdout.dev && stdout.ino === finalStdout.ino) {
+    fail("gh wrote directly to final stdout");
+  }
+}
 if (args[0] === "repo" && args[1] === "view") {
   process.stdout.write((scenario.defaultBranch ?? "main") + "\\n");
   process.exit(0);
@@ -37,7 +44,7 @@ if (args[1] === "view") {
   }
   const view = scenario.views?.[selector];
   if (!view) fail(\`no PR for \${selector}\`);
-  process.stdout.write(\`\${view.number}\\t\${view.base}\\t\${view.url}\\t\${view.additions ?? 0}\\t\${view.deletions ?? 0}\\t\${view.title ?? ""}\\n\`);
+  process.stdout.write(\`\${view.number}\\u001f\${view.base}\\u001f\${view.url}\\u001f\${view.additions ?? 0}\\u001f\${view.deletions ?? 0}\\u001f\${view.title ?? ""}\\n\`);
   process.exit(0);
 }
 if (args[1] === "list") {
@@ -45,7 +52,7 @@ if (args[1] === "list") {
   if (scenario.listErrors?.includes(head)) fail(\`could not list parents for \${head}\`);
   const parents = scenario.parents?.[head] ?? [];
   for (const parent of parents) {
-    process.stdout.write(\`\${parent.number}\\t\${parent.base}\\t\${parent.url}\\t\${parent.additions ?? 0}\\t\${parent.deletions ?? 0}\\t\${parent.title ?? ""}\\n\`);
+    process.stdout.write(\`\${parent.number}\\u001f\${parent.base}\\u001f\${parent.url}\\u001f\${parent.additions ?? 0}\\u001f\${parent.deletions ?? 0}\\u001f\${parent.title ?? ""}\\n\`);
   }
   process.exit(0);
 }
@@ -81,14 +88,15 @@ async function harness(t, scenario, extraEnv = {}) {
 }
 
 function runFunction(name, args, env) {
-	return spawnSync("/bin/sh", ["-c", `. "$1"; shift; ${name} "$@"`, "sh", FUNCTIONS, ...args], {
+	return spawnSync("/bin/sh", ["-c", `exec 3>&1; . "$1"; shift; ${name} "$@"`, "sh", FUNCTIONS, ...args], {
 		encoding: "utf8",
 		env,
 	});
 }
 
-test("prslack formats one PR through gh", async (t) => {
+test("prslack captures gh output for an explicit PR number", async (t) => {
 	const h = await harness(t, {
+		requireCapturedStdout: true,
 		rendered: {
 			"42": "[Keep titles compact](https://github.com/acme/widgets/pull/42) (widgets +19/-4)",
 		},
@@ -98,7 +106,32 @@ test("prslack formats one PR through gh", async (t) => {
 	assert.equal(result.stdout, "[Keep titles compact](https://github.com/acme/widgets/pull/42) (widgets +19/-4)\n");
 });
 
-test("prslack and prstack resolve the current branch's PR without a selector", async (t) => {
+test("prslack accepts a PR URL", async (t) => {
+	const url = "https://github.com/acme/widgets/pull/42";
+	const h = await harness(t, {
+		requireCapturedStdout: true,
+		rendered: {
+			[url]: "[Keep titles compact](https://github.com/acme/widgets/pull/42) (widgets +19/-4)",
+		},
+	});
+	const result = runFunction("prslack", [url], h.env);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "[Keep titles compact](https://github.com/acme/widgets/pull/42) (widgets +19/-4)\n");
+});
+
+test("prslack captures gh output for the current branch's PR", async (t) => {
+	const h = await harness(t, {
+		requireCapturedStdout: true,
+		rendered: {
+			__current__: "[Current branch PR](https://github.com/acme/widgets/pull/55) (widgets +7/-2)",
+		},
+	});
+	const result = runFunction("prslack", [], h.env);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "[Current branch PR](https://github.com/acme/widgets/pull/55) (widgets +7/-2)\n");
+});
+
+test("prstack resolves the current branch's PR without a selector", async (t) => {
 	const h = await harness(t, {
 		views: {
 			__current__: {
@@ -110,16 +143,10 @@ test("prslack and prstack resolve the current branch's PR without a selector", a
 				deletions: 2,
 			},
 		},
-		rendered: {
-			__current__: "[Current branch PR](https://github.com/acme/widgets/pull/55) (widgets +7/-2)",
-		},
 	});
-	const single = runFunction("prslack", [], h.env);
-	assert.equal(single.status, 0, single.stderr);
-	assert.equal(single.stdout, "[Current branch PR](https://github.com/acme/widgets/pull/55) (widgets +7/-2)\n");
-	const stack = runFunction("prstack", [], h.env);
-	assert.equal(stack.status, 0, stack.stderr);
-	assert.equal(stack.stdout, "[Current branch PR](https://github.com/acme/widgets/pull/55) (widgets +7/-2)\n");
+	const result = runFunction("prstack", [], h.env);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "[Current branch PR](https://github.com/acme/widgets/pull/55) (widgets +7/-2)\n");
 });
 
 test("prslack treats -- after the selector as a no-op terminator", async (t) => {
@@ -139,17 +166,27 @@ test("prslack treats -- after the selector as a no-op terminator", async (t) => 
 	assert.match(extra.stderr, /expected one PR selector/);
 });
 
-test("prstack follows GitHub PR bases and prints base to top", async (t) => {
+test("prstack prints only the prefix through a PR-number- or branch-selected layer", async (t) => {
+	const selected = {
+		number: 102,
+		base: "feature-one",
+		url: "https://github.com/acme/widgets/pull/102",
+		title: "Expose the command",
+		additions: 12,
+		deletions: 1,
+	};
 	const h = await harness(t, {
 		views: {
-			"102": {
-				number: 102,
-				base: "feature-one",
-				url: "https://github.com/acme/widgets/pull/102",
-				title: "Expose the command",
-				additions: 12,
-				deletions: 1,
+			"102": selected,
+			"103": {
+				number: 103,
+				base: "feature-two",
+				url: "https://github.com/acme/widgets/pull/103",
+				title: "Layer above the selection",
+				additions: 4,
+				deletions: 0,
 			},
+			"feature-two": selected,
 		},
 		parents: {
 			"feature-one": [
@@ -164,38 +201,106 @@ test("prstack follows GitHub PR bases and prints base to top", async (t) => {
 			],
 		},
 	});
-	const result = runFunction("prstack", ["102", "--repo", "acme/widgets"], h.env);
-	assert.equal(result.status, 0, result.stderr);
-	assert.equal(
-		result.stdout,
+	const expected =
 		"[Add the model](https://github.com/acme/widgets/pull/101) (widgets +30/-2)\n" +
-			"[Expose the command](https://github.com/acme/widgets/pull/102) (widgets +12/-1)\n",
-	);
+		"[Expose the command](https://github.com/acme/widgets/pull/102) (widgets +12/-1)\n";
+	const byNumber = runFunction("prstack", ["102", "--repo", "acme/widgets"], h.env);
+	assert.equal(byNumber.status, 0, byNumber.stderr);
+	assert.equal(byNumber.stdout, expected);
+	assert.doesNotMatch(byNumber.stdout, /Layer above the selection/);
+
+	const byBranch = runFunction("prstack", ["feature-two", "--repo", "acme/widgets"], h.env);
+	assert.equal(byBranch.status, 0, byBranch.stderr);
+	assert.equal(byBranch.stdout, expected);
+	assert.doesNotMatch(byBranch.stdout, /Layer above the selection/);
 });
 
-test("prstack resolves an omitted selector from the nearest jj bookmark", async (t) => {
+test("prslack captures gh output after resolving a jj bookmark", async (t) => {
 	const h = await harness(
 		t,
 		{
-			views: {
-				"top-bookmark": {
-					number: 77,
-					base: "main",
-					url: "https://github.com/acme/widgets/pull/77",
-					title: "Finish the stack",
-					additions: 8,
-					deletions: 3,
-				},
+			requireCapturedStdout: true,
+			rendered: {
+				"top-bookmark": "[Finish the stack](https://github.com/acme/widgets/pull/77) (widgets +8/-3)",
 			},
 		},
 		{ PRSLACK_JJ_TOP: "top-bookmark" },
 	);
-	const result = runFunction("prstack", [], h.env);
+	const result = runFunction("prslack", [], h.env);
 	assert.equal(result.status, 0, result.stderr);
 	assert.equal(result.stdout, "[Finish the stack](https://github.com/acme/widgets/pull/77) (widgets +8/-3)\n");
 });
 
-test("prstack emits no partial stdout when stack discovery fails", async (t) => {
+test("prstack rejects a chain that cannot reach the default branch", async (t) => {
+	const h = await harness(t, {
+		views: {
+			"102": {
+				number: 102,
+				base: "feature-one",
+				url: "https://github.com/acme/widgets/pull/102",
+				title: "Top",
+				additions: 2,
+				deletions: 1,
+			},
+		},
+	});
+	const result = runFunction("prstack", ["102"], h.env);
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /no open PR has head branch feature-one.*default branch main/);
+});
+
+test("prstack rejects a PR record with an empty base branch", async (t) => {
+	const h = await harness(t, {
+		views: {
+			"102": {
+				number: 102,
+				base: "",
+				url: "https://github.com/acme/widgets/pull/102",
+				title: "Top",
+				additions: 2,
+				deletions: 1,
+			},
+		},
+	});
+	const result = runFunction("prstack", ["102"], h.env);
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /incomplete PR record/);
+});
+
+test("prstack rejects an incomplete ancestor PR record", async (t) => {
+	const h = await harness(t, {
+		views: {
+			"102": {
+				number: 102,
+				base: "feature-one",
+				url: "https://github.com/acme/widgets/pull/102",
+				title: "Top",
+				additions: 2,
+				deletions: 1,
+			},
+		},
+		parents: {
+			"feature-one": [
+				{
+					number: 101,
+					base: "",
+					url: "https://github.com/acme/widgets/pull/101",
+					title: "Incomplete base",
+					additions: 3,
+					deletions: 1,
+				},
+			],
+		},
+	});
+	const result = runFunction("prstack", ["102"], h.env);
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /incomplete PR record/);
+});
+
+test("prstack emits no partial stdout when GitHub stack discovery fails", async (t) => {
 	const h = await harness(t, {
 		views: {
 			"102": {

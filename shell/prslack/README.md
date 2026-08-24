@@ -1,8 +1,8 @@
 # prslack and prstack
 
 `prslack` formats one GitHub pull request for chat or Markdown. `prstack`
-formats a published PR stack from base to top. Both commands print one line per
-PR:
+formats a selected prefix of a published PR stack from base to selected layer.
+Both commands print one line per PR:
 
 ```text
 [Title](https://github.com/owner/repo/pull/123) (repo +10/-2)
@@ -36,14 +36,19 @@ prslack https://github.com/owner/repo/pull/123
 prslack feature-branch --repo owner/repo
 
 prstack 126
-prstack top-bookmark --repo owner/repo
+prstack feature-branch --repo owner/repo
 ```
 
-`prstack` treats its argument as the top PR. It follows open PRs whose head
-branches match each PR's base branch, then prints the result from base to top.
-If you omit the argument, it first asks `gh` for the current branch's PR. In a
-detached jj workspace, it falls back to the nearest unique bookmark between
-`trunk()` and `@`.
+With no selector, `prslack` resolves the current branch's PR. It captures the
+formatted GitHub CLI output before writing the completed Markdown line to
+stdout, so the final line does not pass through GitHub CLI's pager.
+
+`prstack` accepts a PR number or branch for the selected stack layer. It follows
+each open PR's base branch down to the repository's default branch, then prints
+the prefix in base-to-selected order. It never includes layers above the
+selection. If you omit the selector, `prstack` first asks `gh` for the current
+branch's PR. In a detached jj workspace, it falls back to the nearest unique
+bookmark between `trunk()` and `@`.
 
 The installer also supports the subcommand form:
 
@@ -80,7 +85,7 @@ Both functions accept the same repository option:
 A PR selector can be a number, URL, branch, or jj bookmark. With no selector,
 `prslack` resolves the current PR and uses the same jj fallback as `prstack`.
 
-`prstack` follows at most 50 PRs. It stops when a base branch has no open PR and
-fails if a base branch identifies multiple open PRs. The function buffers all
-formatted lines and writes to stdout only after every PR resolves, so failed
-stacks do not leave partial output ready to paste.
+`prstack` follows at most 50 PRs. A missing or ambiguous ancestor is an error,
+and the command does not emit a truncated prefix. The function buffers all
+formatted lines and writes to stdout only after the selected prefix reaches the
+default branch, so failed stacks do not leave partial output ready to paste.

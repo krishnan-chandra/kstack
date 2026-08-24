@@ -5,9 +5,13 @@ _prslack_usage() {
 Usage: prslack [PR] [-R OWNER/REPO]
        prstack [TOP_PR] [-R OWNER/REPO]
 
-PR and TOP_PR can be a pull request number, URL, branch, or jj bookmark.
-prstack treats TOP_PR as the top of the stack and prints its open ancestors
-from base to top.
+PR can be a pull request number, URL, branch, or jj bookmark. With no PR,
+prslack resolves the current branch's pull request. GitHub CLI output is
+captured before prslack writes the completed Markdown line to stdout.
+
+TOP_PR can be a pull request number or branch for any selected stack layer.
+prstack prints the prefix from the base pull request through that layer. It
+fails without output if the open stack cannot reach the default branch.
 EOF
 }
 
@@ -85,7 +89,7 @@ _prslack_gh_pr_view() {
 }
 
 _prslack_view_record() {
-	_prslack_view_template='{{printf "%v\t%s\t%s\t%v\t%v\t%s\n" .number .baseRefName .url .additions .deletions .title}}'
+	_prslack_view_template='{{printf "%v\x1f%s\x1f%s\x1f%v\x1f%v\x1f%s\n" .number .baseRefName .url .additions .deletions .title}}'
 	_prslack_gh_pr_view "$1" "$2" number,baseRefName,url,additions,deletions,title \
 		--template "$_prslack_view_template"
 }
@@ -93,6 +97,15 @@ _prslack_view_record() {
 _prslack_render() {
 	_prslack_render_query='(.url | split("/") | .[-3]) as $repo | "[\(.title)](\(.url)) (\($repo) +\(.additions)/-\(.deletions))"'
 	_prslack_gh_pr_view "$1" "$2" title,url,additions,deletions --jq "$_prslack_render_query"
+}
+
+_prslack_print_rendered() {
+	_prslack_rendered=$(_prslack_render "$1" "$2") || return 1
+	printf '%s\n' "$_prslack_rendered"
+}
+
+_prslack_record_complete() {
+	[ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] && [ -n "$4" ] && [ -n "$5" ]
 }
 
 _prslack_infer_jj_top() {
@@ -159,21 +172,21 @@ prslack() {
 		fi
 
 		if [ -n "$PRSLACK_SELECTOR" ]; then
-			_prslack_render "$PRSLACK_SELECTOR" "$PRSLACK_REPO"
+			_prslack_print_rendered "$PRSLACK_SELECTOR" "$PRSLACK_REPO"
 			exit $?
 		fi
 
 		_prslack_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/prslack.XXXXXX") || exit 1
 		trap 'rm -rf "$_prslack_tmp_dir"' 0
 		trap 'exit 1' HUP INT TERM
-		if _prslack_render "" "$PRSLACK_REPO" 2>"$_prslack_tmp_dir/current-error"; then
+		if _prslack_print_rendered "" "$PRSLACK_REPO" 2>"$_prslack_tmp_dir/current-error"; then
 			exit 0
 		fi
 		PRSLACK_SELECTOR=$(_prslack_infer_jj_top) || {
 			cat "$_prslack_tmp_dir/current-error" >&2
 			exit 1
 		}
-		_prslack_render "$PRSLACK_SELECTOR" "$PRSLACK_REPO"
+		_prslack_print_rendered "$PRSLACK_SELECTOR" "$PRSLACK_REPO"
 	)
 }
 
@@ -195,11 +208,12 @@ prstack() {
 		: >"$_prslack_seen"
 
 		_prslack_record=$(_prslack_resolve_top "$PRSLACK_SELECTOR" "$PRSLACK_REPO" "$_prslack_tmp_dir/current-error") || exit 1
-		_prslack_tab=$(printf '\t')
-		IFS="$_prslack_tab" read -r _prslack_number _prslack_base _prslack_url _prslack_additions _prslack_deletions _prslack_title <<EOF
+		_prslack_record_separator=$(printf '\037')
+		IFS="$_prslack_record_separator" read -r _prslack_number _prslack_base _prslack_url _prslack_additions _prslack_deletions _prslack_title <<EOF
 $_prslack_record
 EOF
-		[ -n "$_prslack_number" ] && [ -n "$_prslack_url" ] && [ -n "$_prslack_additions" ] && [ -n "$_prslack_deletions" ] || {
+		_prslack_record_complete "$_prslack_number" "$_prslack_base" "$_prslack_url" \
+			"$_prslack_additions" "$_prslack_deletions" || {
 			_prslack_error "GitHub returned an incomplete PR record"
 			exit 1
 		}
@@ -225,23 +239,28 @@ EOF
 				_prslack_error "stack exceeds the 50-PR limit"
 				exit 1
 			fi
-			[ -n "$_prslack_base" ] || break
 			[ "$_prslack_base" != "$_prslack_default_branch" ] || break
 
-			_prslack_candidates=$(gh pr list --repo "$_prslack_repo" --state open --head "$_prslack_base" --limit 100 \
+			_prslack_candidates=$(gh pr list --repo "$_prslack_repo" --state open --head "$_prslack_base" --limit 2 \
 				--json number,baseRefName,url,additions,deletions,title \
-				--template '{{range .}}{{printf "%v\t%s\t%s\t%v\t%v\t%s\n" .number .baseRefName .url .additions .deletions .title}}{{end}}') || exit 1
+				--template '{{range .}}{{printf "%v\x1f%s\x1f%s\x1f%v\x1f%v\x1f%s\n" .number .baseRefName .url .additions .deletions .title}}{{end}}') || exit 1
 			_prslack_candidate_count=$(printf '%s\n' "$_prslack_candidates" | awk 'NF { count++ } END { print count + 0 }')
 			if [ "$_prslack_candidate_count" -eq 0 ]; then
-				break
+				_prslack_error "no open PR has head branch $_prslack_base; could not reach default branch $_prslack_default_branch"
+				exit 1
 			fi
 			if [ "$_prslack_candidate_count" -ne 1 ]; then
 				_prslack_error "multiple open PRs use head branch $_prslack_base"
 				exit 1
 			fi
-			IFS="$_prslack_tab" read -r _prslack_number _prslack_base _prslack_url _prslack_additions _prslack_deletions _prslack_title <<EOF
+			IFS="$_prslack_record_separator" read -r _prslack_number _prslack_base _prslack_url _prslack_additions _prslack_deletions _prslack_title <<EOF
 $_prslack_candidates
 EOF
+			_prslack_record_complete "$_prslack_number" "$_prslack_base" "$_prslack_url" \
+				"$_prslack_additions" "$_prslack_deletions" || {
+				_prslack_error "GitHub returned an incomplete PR record"
+				exit 1
+			}
 		done
 
 		awk '{ rows[NR] = $0 } END { for (i = NR; i >= 1; i--) { sub(/^[^\t]*\t/, "", rows[i]); print rows[i] } }' \
