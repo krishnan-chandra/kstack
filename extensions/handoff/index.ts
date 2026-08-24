@@ -23,30 +23,38 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
-import { createHandoffHandler, type ReplacementSelectionApi, requireHandoffSource } from "./command.ts";
+import { createHandoffHandler, requireHandoffSource } from "./command.ts";
 import { readHandoffHistory, searchHandoffHistory } from "./history-reader.ts";
 import { completeHandoffArgs } from "./model-selection.ts";
-
-// Pi re-runs this factory for every replacement runtime while reusing this
-// module instance (the loader caches the factory and its module graph across
-// session replacement). Rebinding here lets a /handoff handler that is still
-// executing in the predecessor session apply model and effort to the
-// replacement session through its live API.
-let currentSessionApi: ReplacementSelectionApi | undefined;
+import {
+	bindReplacementSelectionApi,
+	type ReplacementSelectionApi,
+	unbindReplacementSelectionApi,
+} from "./replacement-selection-api.ts";
 
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "handoff");
-	currentSessionApi = {
-		setModel: (model) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0]),
-		setThinkingLevel: (level) => pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]),
-	};
 	const { Type, StringEnum } = await import("@earendil-works/pi-ai");
+	let selectionApi: ReplacementSelectionApi | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		selectionApi = {
+			setModel: async (model) => {
+				const resolved = ctx.modelRegistry.find(model.provider, model.id);
+				return resolved ? pi.setModel(resolved) : false;
+			},
+			setThinkingLevel: (level) => pi.setThinkingLevel(level),
+		};
+		bindReplacementSelectionApi(ctx.sessionManager.getSessionId(), selectionApi);
+	});
+	pi.on("session_shutdown", (_event, ctx) => {
+		if (selectionApi) unbindReplacementSelectionApi(ctx.sessionManager.getSessionId(), selectionApi);
+	});
 
 	pi.registerCommand("handoff", {
 		description:
 			"Continue in a lean session linked to current history (optional --archive, --model provider/model-id[:effort])",
 		getArgumentCompletions: completeHandoffArgs,
-		handler: createHandoffHandler(pi, { getReplacementApi: () => currentSessionApi }),
+		handler: createHandoffHandler(pi),
 	});
 
 	pi.registerTool({
