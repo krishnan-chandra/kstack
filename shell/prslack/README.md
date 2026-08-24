@@ -76,10 +76,11 @@ its variables, traps, and temporary files do not alter the interactive shell.
 
 ## Options
 
-Both functions accept the same repository option:
+Both functions accept the same repository and label options:
 
 ```text
 -R, --repo OWNER/REPO
+    --label repo|dirs
 ```
 
 A PR selector can be a number, URL, branch, or jj bookmark. With no selector,
@@ -89,3 +90,39 @@ A PR selector can be a number, URL, branch, or jj bookmark. With no selector,
 and the command does not emit a truncated prefix. The function buffers all
 formatted lines and writes to stdout only after the selected prefix reaches the
 default branch, so failed stacks do not leave partial output ready to paste.
+
+## Labels
+
+The parenthesized token defaults to the repository name:
+
+```text
+[Title](https://github.com/owner/repo/pull/123) (repo +10/-2)
+```
+
+Monorepos can switch to directory labels with a checked-in `.prslack` file:
+
+```text
+label=dirs
+```
+
+In dirs mode the token lists up to three top-level directories from the PR's
+changed files, ranked by touched file count with an alphabetical tie-break:
+
+```text
+[Share retry config](https://github.com/aaru/aaru/pull/124) (backend,frontend +18/-3)
+```
+
+Root-level files use the directory name `root`. A fourth directory becomes
+`+1 other`; more than that becomes `+N others`. If GitHub returns no files, the
+label falls back to the repository name. `gh pr view` and `gh pr list` expose at
+most 100 files, so the directory list is an approximation for very large diffs.
+
+Mode selection, highest wins:
+
+1. `--label repo` or `--label dirs`
+2. `PRSLACK_LABEL`
+3. `label=` in a `.prslack` file found by walking up from the current directory
+4. `repo`
+
+When you pass `-R owner/repo` from another checkout, `.prslack` still comes from
+the current directory. Use `--label` or `PRSLACK_LABEL` in that case.
