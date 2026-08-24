@@ -1,0 +1,28 @@
+#!/bin/sh
+
+script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd) || exit 1
+if [ -f "$script_dir/../prslack.sh" ]; then
+	library=$script_dir/../prslack.sh
+elif [ -f "$script_dir/../lib/prslack/prslack.sh" ]; then
+	library=$script_dir/../lib/prslack/prslack.sh
+else
+	printf 'prslack: could not find prslack.sh relative to %s\n' "$script_dir" >&2
+	exit 1
+fi
+
+# shellcheck source=/dev/null
+. "$library"
+
+case "${0##*/}" in
+	prstack)
+		prstack "$@"
+		;;
+	*)
+		if [ "${1-}" = stack ]; then
+			shift
+			prstack "$@"
+		else
+			prslack "$@"
+		fi
+		;;
+esac

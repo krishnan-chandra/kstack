@@ -57,6 +57,21 @@ routes do not create workstreams.
 | [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only; panel-review applies the same canonical lens to every reviewer and synthesis model. |
 
+## Standalone shell tools
+
+[`prslack` and `prstack`](shell/prslack/) format one GitHub PR or a published PR
+stack as Markdown with GitHub addition and deletion counts. They are sourceable
+POSIX shell functions and do not depend on Pi or Kstack at runtime. Install the
+command wrappers separately with:
+
+```sh
+./shell/prslack/install.sh
+```
+
+The installer writes to `~/.local` by default and does not change shell startup
+files. See the [shell tool README](shell/prslack/README.md) for function-loading
+instructions and options.
+
 ## Subagent sessions
 
 Kstack extension child agents persist native Pi sessions under `~/.pi/kstack/subagents/`. The managed flat store protects active runs and retains at most 500 sessions, pruning completed sessions oldest-first. These sessions do not appear in normal `/resume` results; reopen one with `pi --session <absolute-jsonl-path>`. Panel-review verdicts expose reviewer and lead evidence paths when expanded. The session archive does not currently index this custom directory, and retained references can point to files that later age out.
