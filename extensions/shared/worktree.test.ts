@@ -41,7 +41,7 @@ function backend(exec: ExecFn, overrides: { mkdir?: (path: string) => void } = {
 describe("managed Git worktrees", () => {
 	it("plans beneath the managed root using a repo identity hash and pinned base", async () => {
 		const { exec } = fakeGit();
-		const planned = await backend(exec).planIsolation("/start", "Add archive search");
+		const planned = await backend(exec).isolation.plan("/start", "Add archive search");
 		assert.equal(planned.ok, true);
 		if (!planned.ok) return;
 		assert.match(planned.plan.path, /^\/managed\/repo-[0-9a-f]{8}\/add-archive-search$/);
@@ -62,14 +62,14 @@ describe("managed Git worktrees", () => {
 			if (args[0] === "show-ref") return result(1);
 			return result(1, "", `unexpected in ${options.cwd}: ${args.join(" ")}`);
 		};
-		const planned = await backend(exec).planIsolation("/repo", "Add search");
+		const planned = await backend(exec).isolation.plan("/repo", "Add search");
 		assert.equal(planned.ok, true);
 		if (planned.ok) assert.equal(planned.plan.baseRef, "refs/remotes/upstream/trunk");
 	});
 
 	it("adds a numeric suffix when a branch is already present", async () => {
 		const { exec } = fakeGit({ occupiedBranches: new Set(["kstack/add-search"]) });
-		const planned = await backend(exec).planIsolation("/start", "Add search");
+		const planned = await backend(exec).isolation.plan("/start", "Add search");
 		assert.equal(planned.ok, true);
 		if (planned.ok) assert.equal(planned.plan.path.split("/").at(-1), "add-search-2");
 	});
@@ -78,10 +78,10 @@ describe("managed Git worktrees", () => {
 		const { exec, calls } = fakeGit();
 		const made: string[] = [];
 		const vcs = backend(exec, { mkdir: (path) => void made.push(path) });
-		const planned = await vcs.planIsolation("/start", "Add search");
+		const planned = await vcs.isolation.plan("/start", "Add search");
 		assert.equal(planned.ok, true);
 		if (!planned.ok) return;
-		const created = await vcs.createIsolation(planned.plan);
+		const created = await vcs.isolation.create(planned.plan);
 		assert.equal(created.ok, true);
 		assert.deepEqual(made, [planned.plan.path.slice(0, planned.plan.path.lastIndexOf("/"))]);
 		assert.ok(
@@ -102,7 +102,7 @@ describe("managed Git worktrees", () => {
 			baseRef: "refs/remotes/origin/main",
 			baseSha: BASE_SHA,
 		};
-		const created = await backend(exec).createIsolation(plan);
+		const created = await backend(exec).isolation.create(plan);
 		assert.equal(created.ok, false);
 		if (!created.ok) assert.match(created.error, /Nothing was overwritten/);
 	});

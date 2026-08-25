@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, it } from "node:test";
 import type { ChildUsage, runChildAgent } from "../shared/child-agent-runner.ts";
-import type { GitVcsBackend, IsolationPlan, JjVcsBackend } from "../shared/vcs/backend.ts";
+import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import { buildFastImplementerGuidance, runFastWorktree } from "./fast-runner.ts";
 import { LIMITS, type RoleSpec } from "./types.ts";
 
@@ -34,7 +34,7 @@ const isolationPlan: IsolationPlan = {
 
 const emptyUsage = (): ChildUsage => ({ ...usage });
 
-function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend & { calls: string[] } {
+function fakeGitBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls: string[] } {
 	const calls: string[] = [];
 	return {
 		id: "git",
@@ -47,43 +47,20 @@ function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend &
 		},
 		headSha: async () => ({ ok: true, sha: isolationPlan.baseSha }),
 		currentRef: async () => ({ ok: true, ref: { kind: "branch", name: "main" } }),
-		workstreamIdentity: async () => ({
-			ok: true,
-			identity: { kind: "git", ref: "main", headSha: isolationPlan.baseSha },
-		}),
 		captureWorkstream: async () => ({ ok: true, snapshot: { ref: "main", token: `main@${isolationPlan.baseSha}` } }),
 		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
 		createWorkstream: async () => ({ ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha }),
-		verifyCommittedWorkstream: async (cwd, expected) => {
-			calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
-			return { ok: true, headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
-		},
 		verifyRecordedWorkstream: async (cwd, expected) => {
 			calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
 			return { ok: true, headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
 		},
-		commitPaths: async () => ({ ok: true }),
 		recordPaths: async () => ({ ok: true }),
 		restorePaths: async () => ({ ok: true }),
-		push: async () => ({ ok: true }),
 		publishRecordedChanges: async () => ({ ok: true }),
 		fetchRemoteHead: async () => ({ ok: true, sha: isolationPlan.baseSha }),
-		mergeBaseIntoHead: async () => ({ kind: "already-current" }),
 		updateBase: async () => ({ kind: "already-current" }),
-		planIsolation: async (cwd, task) => {
-			calls.push(`plan:${cwd}:${task}`);
-			return { ok: true, plan: isolationPlan };
-		},
-		createIsolation: async (plan) => {
-			calls.push(`create:${plan.path}:${plan.ref}`);
-			return { ok: true, plan };
-		},
-		removeIsolation: async (cwd, ref) => {
-			calls.push(`remove:${cwd}:${ref}`);
-			return { ok: true };
-		},
 		isolation: {
 			plan: async (cwd, task) => {
 				calls.push(`plan:${cwd}:${task}`);
@@ -102,7 +79,7 @@ function fakeGitBackend(overrides: Partial<GitVcsBackend> = {}): GitVcsBackend &
 	};
 }
 
-function fakeJjBackend(overrides: Partial<JjVcsBackend> = {}): JjVcsBackend & { calls: string[] } {
+function fakeJjBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls: string[] } {
 	const calls: string[] = [];
 	return {
 		id: "jj",
@@ -115,24 +92,16 @@ function fakeJjBackend(overrides: Partial<JjVcsBackend> = {}): JjVcsBackend & { 
 		},
 		headSha: async () => ({ ok: true, sha: isolationPlan.baseSha }),
 		currentRef: async () => ({ ok: true, ref: { kind: "bookmark", name: "main" } }),
-		workstreamIdentity: async () => ({
-			ok: true,
-			identity: { kind: "jj", ref: "main", changeId: "change", parentCommitIds: ["trunk"] },
-		}),
 		captureWorkstream: async () => ({ ok: true, snapshot: { ref: "main", token: "main@change" } }),
 		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
 		createWorkstream: async () => ({ ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha }),
-		verifyCommittedWorkstream: async () => ({ ok: true, headSha: isolationPlan.baseSha }),
 		verifyRecordedWorkstream: async () => ({ ok: true, headSha: isolationPlan.baseSha }),
-		commitPaths: async () => ({ ok: true }),
 		recordPaths: async () => ({ ok: true }),
 		restorePaths: async () => ({ ok: true }),
-		push: async () => ({ ok: true }),
 		publishRecordedChanges: async () => ({ ok: true }),
 		fetchRemoteHead: async () => ({ ok: true, sha: isolationPlan.baseSha }),
-		mergeBaseIntoHead: async () => ({ kind: "already-current" }),
 		updateBase: async () => ({ kind: "already-current" }),
 		...overrides,
 	};

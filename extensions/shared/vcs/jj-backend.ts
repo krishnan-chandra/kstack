@@ -5,8 +5,8 @@ import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { extractSlug, MAX_SLUG_LENGTH } from "../slug.ts";
 import type {
 	CurrentRef,
-	JjVcsBackend,
 	MergeBaseResult,
+	VcsBackend,
 	VcsResult,
 	WorkstreamCheckpoint,
 	WorkstreamSnapshot,
@@ -45,7 +45,7 @@ export function filesetPath(path: string): string {
 	return `cwd:"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export class JjBackend implements JjVcsBackend {
+export class JjBackend implements VcsBackend {
 	readonly id = "jj" as const;
 	readonly descriptor = { refNoun: "bookmark", workstreamNoun: "jj workspace", baseUpdateVerb: "merge" } as const;
 	private readonly exec: ExecFn;
@@ -125,26 +125,6 @@ export class JjBackend implements JjVcsBackend {
 				token: `${current.ref.name}@${changeId}/parents:${parentCommitIds.join(",")}`,
 			},
 		};
-	}
-
-	/** @deprecated Use captureWorkstream. */
-	async workstreamIdentity(
-		cwd: string,
-	): Promise<VcsResult<{ identity: { kind: "jj"; ref: string; changeId: string; parentCommitIds: string[] } }>> {
-		const [current, change, parents] = await Promise.all([
-			this.currentRef(cwd),
-			this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE], 5_000),
-			this.jj(cwd, ["log", "-r", "parents(@)", "--no-graph", "-T", COMMIT_ID_TEMPLATE], 5_000),
-		]);
-		if (!current.ok) return current;
-		if (current.ref.kind !== "bookmark")
-			return { ok: false, error: "The jj workstream has no unique bookmark on its current change." };
-		const changeId = output(change);
-		const parentCommitIds = lines(parents.stdout).sort();
-		if (change.code !== 0 || !changeId || parents.code !== 0 || parentCommitIds.length === 0) {
-			return { ok: false, error: "Could not resolve the current jj workstream identity." };
-		}
-		return { ok: true, identity: { kind: "jj", ref: current.ref.name, changeId, parentCommitIds } };
 	}
 
 	async assertWorkstreamUnchanged(cwd: string, expected: WorkstreamSnapshot): Promise<VcsResult> {
@@ -239,11 +219,6 @@ export class JjBackend implements JjVcsBackend {
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj commit failed: ${diagnostic(result)}` };
 	}
 
-	/** @deprecated Use recordPaths. */
-	commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
-		return this.recordPaths(cwd, paths, message);
-	}
-
 	async restorePaths(cwd: string, paths: string[]): Promise<VcsResult> {
 		const result = await this.jj(cwd, ["restore", ...paths.map(filesetPath)]);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj restore failed: ${diagnostic(result)}` };
@@ -274,11 +249,6 @@ export class JjBackend implements JjVcsBackend {
 		}
 		const result = await this.jj(cwd, ["git", "push", "--remote", "origin", "--bookmark", ref], 60_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj git push failed: ${diagnostic(result)}` };
-	}
-
-	/** @deprecated Use publishRecordedChanges. */
-	push(cwd: string, ref: string): Promise<VcsResult> {
-		return this.publishRecordedChanges(cwd, ref);
 	}
 
 	private async fetch(cwd: string, _ref?: string): Promise<VcsResult> {
@@ -402,18 +372,5 @@ export class JjBackend implements JjVcsBackend {
 					? `Merge conflicted in ${files.join(", ")}. Competing intents need a human.`
 					: "The jj merge produced conflicts.",
 		};
-	}
-
-	/** @deprecated Use updateBase. */
-	mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {
-		return this.updateBase(cwd, baseRef);
-	}
-
-	/** @deprecated Use verifyRecordedWorkstream. */
-	verifyCommittedWorkstream(
-		cwd: string,
-		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
-	): Promise<VcsResult<{ headSha: string }>> {
-		return this.verifyRecordedWorkstream(cwd, expected);
 	}
 }
