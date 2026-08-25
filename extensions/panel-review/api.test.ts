@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { BoundaryValue } from "../shared/validation.ts";
-import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT, requestPanelReview } from "./api.ts";
+import {
+	claimPanelReviewRequest,
+	isPanelReviewRequest,
+	PANEL_REVIEW_REQUEST_EVENT,
+	requestPanelReview,
+} from "./api.ts";
+import type { PanelPrArgs } from "./types.ts";
 
 function fakeBus(listener?: (data: BoundaryValue) => void) {
 	return {
@@ -46,6 +52,37 @@ describe("panel-review in-process API", () => {
 		assert.deepEqual(calls, [
 			{ intent: 'quoted "text" \\ path', base: "origin/main", repositoryPath: "/managed/worktree" },
 		]);
+	});
+
+	it("passes a validated PR target through the structured API", async () => {
+		const ctx =
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext;
+		let receivedPr: number | undefined;
+		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			events: fakeBus((data) => {
+				claimPanelReviewRequest(data, async (options) => {
+					receivedPr = options.pr;
+					return { status: "declined" };
+				});
+			}),
+		} as never;
+
+		const options: PanelPrArgs = { pr: 42, intent: "review the PR" };
+		await requestPanelReview(pi, options, ctx);
+		assert.equal(receivedPr, 42);
+	});
+
+	it("rejects malformed or conflicting PR targets at the request boundary", () => {
+		for (const options of [{ pr: "42" }, { pr: 0 }, { pr: 42, base: "main" }]) {
+			assert.equal(
+				isPanelReviewRequest({
+					schemaVersion: 2,
+					payload: { options, ctx: {} },
+					claimed: false,
+				}),
+				false,
+			);
+		}
 	});
 
 	it("reports unavailable when panel-review has no listener", async () => {

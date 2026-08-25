@@ -7,6 +7,7 @@ const scope: ScopeBundle = {
 	path: "/tmp/bundle.md",
 	dir: "/tmp",
 	repoRoot: "/repo",
+	reviewRoot: "/repo",
 	headSha: "h",
 	baseSha: "b",
 	baseRef: "main",

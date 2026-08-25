@@ -1,6 +1,6 @@
 /** Pure task validation, command parsing, and panel-review options. */
 
-import type { PanelArgs } from "../panel-review/types.ts";
+import type { PanelWorktreeArgs } from "../panel-review/types.ts";
 import { CHANGE_KINDS, type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
@@ -156,7 +156,11 @@ function boundedPanelIntent(task: string): string {
 	return Array.from(oneLine).slice(0, LIMITS.panelIntentChars).join("");
 }
 
-function addPlanReviewContext(options: PanelArgs, approvedPlan?: string, executionLedger?: string): PanelArgs {
+function addPlanReviewContext(
+	options: PanelWorktreeArgs,
+	approvedPlan?: string,
+	executionLedger?: string,
+): PanelWorktreeArgs {
 	return {
 		...options,
 		...(approvedPlan !== undefined ? { approvedPlan } : undefined),
@@ -164,7 +168,11 @@ function addPlanReviewContext(options: PanelArgs, approvedPlan?: string, executi
 	};
 }
 
-export function buildPanelReviewOptions(task: string, approvedPlan?: string, executionLedger?: string): PanelArgs {
+export function buildPanelReviewOptions(
+	task: string,
+	approvedPlan?: string,
+	executionLedger?: string,
+): PanelWorktreeArgs {
 	return addPlanReviewContext({ intent: `Plan/implement: ${boundedPanelIntent(task)}` }, approvedPlan, executionLedger);
 }
 
@@ -174,7 +182,7 @@ export function buildStackPanelReviewOptions(
 	trunkSha: string,
 	approvedPlan?: string,
 	executionLedger?: string,
-): PanelArgs {
+): PanelWorktreeArgs {
 	return addPlanReviewContext(
 		{
 			base: trunkSha,

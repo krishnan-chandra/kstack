@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
+	type CollectScopeOptions,
 	collectScope,
 	type GitExec,
 	parsePorcelainZ,
@@ -291,6 +292,47 @@ describe("collectScope", () => {
 			assert.match(content, /### a\.ts/);
 			assert.ok(!/### c\.ts/.test(content));
 			assert.equal(scope.untrackedCount, 3); // count reflects reality, not the cap
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("supports commit-target mode without invoking git status or reading untracked files", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		const seenArgs: string[][] = [];
+		try {
+			// Target existence is verified by PR resolution; this unit owns only
+			// commit-range argument construction.
+			const targetSha = "4".repeat(40);
+			const exec: GitExec = (args) => {
+				seenArgs.push(args);
+				const key = args.join(" ");
+				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+				if (key.startsWith(`diff --find-renames --find-copies mbsha..${targetSha}`))
+					return "diff --git a/tracked.ts b/tracked.ts\n+line\n";
+				if (key.startsWith(`diff --name-status --find-renames mbsha..${targetSha}`)) return "M\ttracked.ts\n";
+				if (key.startsWith(`log --format=%s mbsha..${targetSha}`)) return "commit 1\n";
+				throw new Error(`unexpected: ${key}`);
+			};
+			const options: CollectScopeOptions = {
+				exec,
+				headSha: targetSha,
+			};
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "pr" }, "PR review", options);
+			bundleDir = scope.dir;
+			assert.equal(scope.headSha, targetSha);
+			assert.equal(scope.repoRoot, root);
+			assert.equal(scope.reviewRoot, root);
+			assert.equal(scope.baseStrategy, "pr");
+			assert.equal(scope.untrackedCount, 0);
+			assert.ok(!seenArgs.some((a) => a[0] === "status"));
+			assert.ok(!seenArgs.some((a) => a[0] === "rev-parse" && a[1] === "HEAD"));
+			const content = readFileSync(scope.path, "utf8");
+			assert.match(content, new RegExp(`HEAD: ${targetSha}`));
+			assert.match(content, /commit 1/);
+			assert.ok(!content.includes("Untracked Files"));
 		} finally {
 			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			cleanup();

@@ -56,8 +56,7 @@ export type ReviewerResult =
 			session?: ChildSession;
 	  };
 
-export interface PanelArgs {
-	base?: string;
+interface PanelReviewContext {
 	intent?: string;
 	/** Internal callers may select another validated Git working tree. */
 	repositoryPath?: string;
@@ -65,6 +64,11 @@ export interface PanelArgs {
 	approvedPlan?: string;
 	executionLedger?: string;
 }
+
+export type PanelWorktreeArgs = PanelReviewContext & { base?: string; pr?: never };
+/* exported: in-process panel-review request contract */
+export type PanelPrArgs = PanelReviewContext & { base?: never; pr: number };
+export type PanelArgs = PanelWorktreeArgs | PanelPrArgs;
 
 /**
  * Structured result of a panel-review run, returned through the in-process
@@ -85,7 +89,7 @@ export type PanelReviewOutcome =
 	| { status: "aborted" }
 	| { status: "failed"; error: string };
 
-export type BaseStrategy = "explicit" | "upstream" | "remote-default" | "main" | "master" | "head";
+export type BaseStrategy = "explicit" | "upstream" | "remote-default" | "main" | "master" | "head" | "pr";
 
 export interface BaseResolution {
 	/** Ref the user asked for (or the fallback ref that resolved). */
@@ -100,7 +104,10 @@ export interface ScopeBundle {
 	path: string;
 	/** Temp directory containing the bundle; removed in finally. */
 	dir: string;
+	/** Git worktree used to build the immutable bundle. */
 	repoRoot: string;
+	/** Source tree exposed to reviewer read-only tools. */
+	reviewRoot: string;
 	headSha: string;
 	baseSha: string;
 	baseRef: string;
@@ -122,6 +129,10 @@ export const LIMITS = {
 	untrackedFileBytes: 256 * 1024,
 	/** Max untracked files included in the bundle (status uses -uall). */
 	untrackedFiles: 200,
+	/** Maximum tracked blob bytes accepted for an ephemeral PR source snapshot. */
+	prSnapshotBytes: 512 * 1024 * 1024,
+	/** Maximum tracked entries accepted for an ephemeral PR source snapshot. */
+	prSnapshotFiles: 200_000,
 	/** Final output per reviewer handed to the synthesizer. */
 	reviewerOutputBytes: 24 * 1024,
 	/** Aggregate reviewer input to the synthesizer. */

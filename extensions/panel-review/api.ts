@@ -1,4 +1,4 @@
-import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
+import { type BoundaryValue, isNumber, isObject, isString } from "../shared/validation.ts";
 /** Typed in-process contract for invoking panel-review from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -26,6 +26,10 @@ const channel = createRequestChannel<PanelReviewPayload, PanelReviewOutcome, 2>(
 			options !== null &&
 			!Array.isArray(options) &&
 			(!("base" in options) || options.base === undefined || isString(options.base)) &&
+			(!("pr" in options) ||
+				options.pr === undefined ||
+				(isNumber(options.pr) && Number.isSafeInteger(options.pr) && options.pr > 0)) &&
+			!("base" in options && options.base !== undefined && "pr" in options && options.pr !== undefined) &&
 			(!("intent" in options) || options.intent === undefined || isString(options.intent)) &&
 			(!("repositoryPath" in options) || options.repositoryPath === undefined || isString(options.repositoryPath)) &&
 			(!("approvedPlan" in options) || options.approvedPlan === undefined || isString(options.approvedPlan)) &&
