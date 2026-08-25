@@ -30,8 +30,8 @@ import { join } from "node:path";
 import { resolveRepoName } from "../shared/github.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import {
-	applyForceAsk,
 	applyThreadReplies,
+	applyTriageGuardrails,
 	doCommitAndPush,
 	fetchPRState,
 	loadPersistedState,
@@ -59,6 +59,7 @@ import {
 	pickModel,
 	resolveTargetPR,
 } from "./pr-state.ts";
+import { checkForTriageKey, threadForTriageKey } from "./triage-keys.ts";
 import {
 	type AutopilotMode,
 	type AutopilotModelSpec,
@@ -483,34 +484,40 @@ export async function runAutopilot(
 			blockedReasons.push(parsedRaw.error);
 			break;
 		}
-		const parsed = applyForceAsk(state, parsedRaw);
+		const parsed = applyTriageGuardrails(state, parsedRaw);
 		notify(`Cause: ${parsed.summary || summarizeTriage(triagerResult.output)}`, "info");
 
-		const askThreads = parsed.threads.filter((t) => t.decision === "ask");
+		const askThreads = parsed.threads.flatMap((thread) => {
+			if (thread.decision !== "ask" || !state) return [];
+			const source = threadForTriageKey(state, thread.key);
+			return source ? [{ action: thread.action, source }] : [];
+		});
 		if (askThreads.length > 0) {
-			const lines = askThreads.map((t) => {
-				const source = state?.threads.find((s) => s.id === t.id);
-				return `- ${t.id}${source?.path ? ` ${source.path}` : ""}: ${t.action}`;
-			});
+			const lines = askThreads.map(
+				({ action, source }) => `- ${source.id}${source.path ? ` ${source.path}` : ""}: ${action}`,
+			);
 			notify(`Ask (not guessing): ${lines.join("; ")}`, "error");
-			blockedReasons.push(`ask threads: ${askThreads.map((t) => t.id).join(", ")}`);
+			blockedReasons.push(`ask threads: ${askThreads.map(({ source }) => source.id).join(", ")}`);
 		}
 
 		const flakeKey = (name: string) => `${name}@${state?.headSha ?? ""}`;
-		const flakeChecks = parsed.checks.filter((c) => c.cls === "flake");
-		const newFlakes = flakeChecks.filter((c) => state && !persisted.flakeRetried.includes(flakeKey(c.name)));
+		const flakeChecks = parsed.checks.flatMap((classification) => {
+			if (classification.cls !== "flake" || !state) return [];
+			const check = checkForTriageKey(state, classification.key);
+			return check ? [check] : [];
+		});
+		const newFlakes = flakeChecks.filter((check) => !persisted.flakeRetried.includes(flakeKey(check.name)));
 		if (newFlakes.length > 0 && state) {
 			let reran = false;
-			for (const flake of newFlakes) {
-				const check = state.checks.find((c) => c.name === flake.name);
-				if (!check?.runId) continue;
+			for (const check of newFlakes) {
+				if (!check.runId) continue;
 				const rerun = await rerunFailedRun(exec, cwd, check.runId);
-				persisted = { ...persisted, flakeRetried: [...persisted.flakeRetried, flakeKey(flake.name)] };
+				persisted = { ...persisted, flakeRetried: [...persisted.flakeRetried, flakeKey(check.name)] };
 				if (rerun.code === 0) {
-					notify(`Cause: flake on ${flake.name}. Reran failed jobs once on SHA ${state.headSha.slice(0, 8)}.`, "info");
+					notify(`Cause: flake on ${check.name}. Reran failed jobs once on SHA ${state.headSha.slice(0, 8)}.`, "info");
 					reran = true;
 				} else {
-					notify(`Could not rerun ${flake.name}: ${rerun.stderr.trim()}`, "warning");
+					notify(`Could not rerun ${check.name}: ${rerun.stderr.trim()}`, "warning");
 				}
 			}
 			await ops.savePersistedState(persisted);
@@ -540,7 +547,14 @@ export async function runAutopilot(
 		if (!hasCommentWork && codeChecks.length === 0) {
 			if (askThreads.length > 0) break;
 			if (staleOrInfra.length > 0) {
-				blockedReasons.push(staleOrInfra.map((c) => `${c.name}: ${c.cls} (${c.action})`).join("; "));
+				blockedReasons.push(
+					staleOrInfra
+						.map((classification) => {
+							const check = state ? checkForTriageKey(state, classification.key) : undefined;
+							return `${check?.name ?? classification.key}: ${classification.cls} (${classification.action})`;
+						})
+						.join("; "),
+				);
 				break;
 			}
 			blockedReasons.push("triage found nothing the autopilot can fix");

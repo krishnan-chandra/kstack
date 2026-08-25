@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { JjBackend } from "../shared/vcs/jj-backend.ts";
 import {
-	applyForceAsk,
+	applyTriageGuardrails,
 	classifyBlockers,
 	doCommitAndPush,
 	fetchPRState,
@@ -711,12 +711,12 @@ describe("pr-autopilot state machine", () => {
 	describe("parseTriage and classifyBlockers", () => {
 		const sampleTriage = {
 			checks: [
-				{ name: "lint", cls: "code", action: "Fix lint error in src/index.ts" },
-				{ name: "e2e", cls: "infra", action: "External service timeout; wait and retry" },
+				{ key: "check-1", cls: "code", action: "Fix lint error in src/index.ts" },
+				{ key: "check-2", cls: "infra", action: "External service timeout; wait and retry" },
 			],
 			threads: [
-				{ id: "t1", decision: "fix", cls: "code", action: "Rename variable for clarity", reply: "Renamed." },
-				{ id: "t2", decision: "ask", cls: "code", action: "Design rethink needed" },
+				{ key: "thread-1", decision: "fix", cls: "code", action: "Rename variable for clarity", reply: "Renamed." },
+				{ key: "thread-2", decision: "ask", cls: "code", action: "Design rethink needed" },
 			],
 			conflicts: false,
 			draft: false,
@@ -747,6 +747,18 @@ describe("pr-autopilot state machine", () => {
 			assert.ok("error" in result);
 		});
 
+		it("drops malformed and numerically unsafe triage keys", () => {
+			const result = parseTriage(
+				JSON.stringify({
+					checks: [{ key: "check-9007199254740992", cls: "code" }],
+					threads: [{ key: "thread-0", decision: "ignore" }],
+				}),
+			);
+			if ("error" in result) throw new Error(result.error);
+			assert.deepEqual(result.checks, []);
+			assert.deepEqual(result.threads, []);
+		});
+
 		it("classifies blockers: infra CI and ask threads", () => {
 			const parsed = parseTriage(JSON.stringify(sampleTriage));
 			if ("error" in parsed) throw new Error(parsed.error);
@@ -759,7 +771,7 @@ describe("pr-autopilot state machine", () => {
 			const parsed = parseTriage(
 				JSON.stringify({
 					...sampleTriage,
-					threads: [{ id: "t1", decision: "fix", cls: "code", action: "Fix", reply: "done" }],
+					threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "Fix", reply: "done" }],
 				}),
 			);
 			if ("error" in parsed) throw new Error(parsed.error);
@@ -771,7 +783,7 @@ describe("pr-autopilot state machine", () => {
 			const parsed = parseTriage(
 				JSON.stringify({
 					checks: [],
-					threads: [{ id: "issue-comment-1", decision: "ignore", action: "informational status update" }],
+					threads: [{ key: "thread-1", decision: "ignore", action: "informational status update" }],
 					conflicts: false,
 					draft: false,
 					summary: "No action needed.",
@@ -779,26 +791,43 @@ describe("pr-autopilot state machine", () => {
 			);
 			if ("error" in parsed) throw new Error(parsed.error);
 			assert.deepEqual(parsed.threads, [
-				{ id: "issue-comment-1", decision: "ignore", action: "informational status update" },
+				{ key: "thread-1", decision: "ignore", action: "informational status update" },
 			]);
 		});
 	});
 
-	describe("applyForceAsk", () => {
+	describe("applyTriageGuardrails", () => {
 		it("overrides a fix decision on a security comment", () => {
 			const state = buildPRState(makePr(), [makeThread("t1", "this is a security issue in auth")], [], null);
 			const parsed = parseTriage(
 				JSON.stringify({
 					checks: [],
-					threads: [{ id: "t1", decision: "fix", cls: "code", action: "patch it", reply: "fixed" }],
+					threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "patch it", reply: "fixed" }],
 					conflicts: false,
 					draft: false,
 					summary: "fix",
 				}),
 			);
 			if ("error" in parsed) throw new Error(parsed.error);
-			const forced = applyForceAsk(state, parsed);
+			const forced = applyTriageGuardrails(state, parsed);
 			assert.equal(forced.threads[0].decision, "ask");
+		});
+
+		it("drops well-formed keys that do not identify a state record", () => {
+			const state = buildPRState(makePr(), [makeThread("t1", "rename this")], [makeCheck("lint", "failure")], null);
+			const parsed = parseTriage(
+				JSON.stringify({
+					checks: [{ key: "check-2", cls: "code", action: "invented check" }],
+					threads: [{ key: "thread-2", decision: "ignore", action: "invented thread" }],
+					conflicts: false,
+					draft: false,
+					summary: "invalid keys",
+				}),
+			);
+			if ("error" in parsed) throw new Error(parsed.error);
+			const guarded = applyTriageGuardrails(state, parsed);
+			assert.deepEqual(guarded.checks, []);
+			assert.deepEqual(guarded.threads, []);
 		});
 	});
 
@@ -806,8 +835,8 @@ describe("pr-autopilot state machine", () => {
 		it("produces a one-line summary", () => {
 			const result = summarizeTriage(
 				JSON.stringify({
-					checks: [{ name: "lint", cls: "code", action: "fix" }],
-					threads: [{ id: "t1", decision: "fix", cls: "code", action: "fix", reply: "ok" }],
+					checks: [{ key: "check-1", cls: "code", action: "fix" }],
+					threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "fix", reply: "ok" }],
 					conflicts: false,
 					draft: false,
 					summary: "Fix the lint error.",
@@ -857,7 +886,7 @@ describe("pr-autopilot state machine", () => {
 			assert.match(fixer, /VERIFY_FAIL/);
 			assert.match(fixer, /UNTRUSTED PR DATA/);
 			assert.match(fixer, /VCS backend: jj/);
-			assert.match(fixer, /Head ref: kstack\/fix-thing/);
+			assert.doesNotMatch(fixer, /Head ref:/);
 		});
 
 		it("fixer task for threads mode says threads only", () => {

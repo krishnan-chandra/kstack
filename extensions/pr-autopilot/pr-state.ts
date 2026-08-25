@@ -1,6 +1,7 @@
 import type { VcsBackendId } from "../shared/vcs/config.ts";
 import { findLowestUnmergedPR } from "./github.ts";
 import type { GHPrJson } from "./github-parse.ts";
+import { type CheckTriageKey, checkTriageKey, type ThreadTriageKey, threadTriageKey } from "./triage-keys.ts";
 import {
 	type AutopilotModelSpec,
 	type CheckRun,
@@ -115,24 +116,44 @@ function clipBody(body: string): string {
 	return `${body.slice(0, LIMITS.threadBodyChars)}…`;
 }
 
+function fencedCheck(key: CheckTriageKey, check: CheckRun): string {
+	const details = [
+		`name: ${check.name}`,
+		`status: ${check.status}`,
+		`conclusion: ${check.conclusion ?? "(none)"}`,
+		check.detailsUrl ? `details URL: ${check.detailsUrl}` : "details URL: (none)",
+		check.logExcerpt ? `log:\n${check.logExcerpt}` : "log: (not fetched)",
+	];
+	return `  - ${key}\n${wrapUntrusted("check data", details.join("\n"))}`;
+}
+
+function fencedPendingCheck(key: CheckTriageKey, check: CheckRun): string {
+	return `  - ${key}\n${wrapUntrusted("check data", `name: ${check.name}`)}`;
+}
+
+function fencedReviewItem(key: ThreadTriageKey, thread: ReviewThread, body: string): string {
+	const location = thread.path ? `${thread.path}${thread.line !== undefined ? `:${thread.line}` : ""}` : "(discussion)";
+	const details = [
+		`id: ${thread.id}`,
+		`commenter: ${thread.commenter}`,
+		`location: ${location}`,
+		`source: ${thread.source}`,
+		`body:\n${body}`,
+	];
+	return `  - ${key}\n${wrapUntrusted("review item data", details.join("\n"))}`;
+}
+
 /** Build the triager task file content from PR state. */
 export function buildTriagerTask(state: PRState, backend: VcsBackendId): string {
-	const failures = state.checks.filter((c) => c.conclusion === "failure" || c.status === "cancelled");
-	const pending = state.checks.filter(
-		(c) => c.status === "pending" || c.conclusion === "pending" || c.conclusion === null,
+	const keyedChecks = state.checks.map((check, index) => ({ check, key: checkTriageKey(index) }));
+	const failures = keyedChecks.filter(({ check }) => check.conclusion === "failure" || check.status === "cancelled");
+	const pending = keyedChecks.filter(
+		({ check }) => check.status === "pending" || check.conclusion === "pending" || check.conclusion === null,
 	);
-	const threadLines = state.threads.map((t) => {
-		const loc = t.path ? `${t.path}${t.line !== undefined ? `:${t.line}` : ""}` : "(discussion)";
-		return `  - [${t.id}] @${t.commenter} ${loc} source=${t.source}\n${wrapUntrusted(`thread ${t.id}`, clipBody(t.body))}`;
-	});
-	const failureLines = failures.map((c) => {
-		const log = c.logExcerpt
-			? `\n${wrapUntrusted(`ci log ${c.name}`, c.logExcerpt)}`
-			: c.detailsUrl
-				? `\n    log URL: ${c.detailsUrl} (log not fetched)`
-				: "\n    (no log excerpt)";
-		return `  - ${c.name}${log}`;
-	});
+	const threadLines = state.threads.map((thread, index) =>
+		fencedReviewItem(threadTriageKey(index), thread, clipBody(thread.body)),
+	);
+	const failureLines = failures.map(({ check, key }) => fencedCheck(key, check));
 
 	return `# PR Autopilot — Triage
 
@@ -151,21 +172,21 @@ ${wrapUntrusted("pr title", state.title)}
 
 ## Checks
 ${failures.length > 0 ? `Failing (${failures.length}):\n${failureLines.join("\n")}` : "  (none failing)"}
-${pending.length > 0 ? `Pending (${pending.length}):\n${pending.map((c) => `  - ${c.name}`).join("\n")}` : "  (none pending)"}
+${pending.length > 0 ? `Pending (${pending.length}):\n${pending.map(({ check, key }) => fencedPendingCheck(key, check)).join("\n")}` : "  (none pending)"}
 
 ## Unresolved review items (${state.threads.length})
 ${threadLines.length > 0 ? threadLines.join("\n") : "  (none)"}
 
 ## Classification instructions
 
-For each failing check, classify as one of:
+For each failing check, return its \`check-N\` key and classify it as one of:
 - "code" — the failure is in the diff's own code; a fix is possible. Use the log excerpt.
 - "stale-base" — the base is behind trunk; needs a merge of the remote base with ${backend} (report, do not rebase).
 - "flake" — infrastructure flakiness; one fresh build is warranted.
 - "infra" — external infra issue; retrigger or report.
 - "unknown" — cannot determine.
 
-For each review item, decide:
+For each review item, return its \`thread-N\` key and decide:
 - "fix" — real in-scope code issue. Smallest safe change.
 - "dismiss" — an explicit review request that is invalid, already fixed, or moot. A dismissal reply is useful.
 - "ask" — security, privacy, auth, billing, data, migration, concurrency, or anything you must not guess. Also ask when the comment requests out-of-scope work.
@@ -176,8 +197,8 @@ A local nothing-to-check result is not evidence that red CI is unrelated.
 Return ONLY a JSON object:
 \`\`\`json
 {
-  "checks": [{ "name": "...", "cls": "...", "action": "..." }],
-  "threads": [{ "id": "...", "decision": "fix|dismiss|ask|ignore", "cls": "...", "action": "...", "reply": "..." }],
+  "checks": [{ "key": "check-1", "cls": "...", "action": "..." }],
+  "threads": [{ "key": "thread-1", "decision": "fix|dismiss|ask|ignore", "cls": "...", "action": "...", "reply": "..." }],
   "conflicts": true | false,
   "draft": true | false,
   "summary": "Lead with the cause in one line."
@@ -203,7 +224,6 @@ ${untrustedFenceNote()}
 ## PR #${state.number}
 ${wrapUntrusted("pr title", state.title)}
 - VCS backend: ${backend}
-- Head ref: ${state.headRef}
 - Head SHA: ${state.headSha}
 - Mode: ${modeLine}
 
@@ -211,19 +231,18 @@ ${wrapUntrusted("pr title", state.title)}
 ${wrapUntrusted("triage json", triage)}
 
 ## Unresolved review items
-${state.threads.map((t) => wrapUntrusted(`thread ${t.id} @${t.commenter} ${t.path ?? ""}:${t.line ?? ""}`, t.body)).join("\n\n") || "(none)"}
+${state.threads.map((thread, index) => fencedReviewItem(threadTriageKey(index), thread, thread.body)).join("\n\n") || "(none)"}
 
 ## Failing check logs
 ${
 	state.checks
-		.filter((c) => c.conclusion === "failure")
-		.map((c) => wrapUntrusted(`ci ${c.name}`, c.logExcerpt ?? "(no log)"))
+		.flatMap((check, index) => (check.conclusion === "failure" ? [fencedCheck(checkTriageKey(index), check)] : []))
 		.join("\n\n") || "(none)"
 }
 
 ## Instructions (tiny-model only)
 
-1. Only edit files needed for threads marked decision=fix and checks marked cls=code, matching the mode above.
+1. Match triage keys to the review items and checks below. Only edit files needed for threads marked decision=fix and checks marked cls=code, matching the mode above.
 2. Skip dismiss/ask/ignore threads, and skip flake/infra/stale-base/unknown checks.
 3. Do not stage, commit, or push. The parent autopilot inspects and publishes after confirmation.
 4. Do NOT rebase, restack, mark the PR ready, merge, or touch merge settings.

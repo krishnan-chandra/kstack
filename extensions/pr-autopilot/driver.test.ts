@@ -37,7 +37,7 @@ interface Scenario {
 	mergeable?: "true" | "false";
 	branch?: string;
 	dirty?: boolean;
-	checks?: Array<{ name: string; state: string; bucket: string }>;
+	checks?: Array<{ name: string; state: string; bucket: string; link?: string }>;
 	thread?: { id: string; body: string };
 	issueComment?: { id: number; body: string };
 	triage?: string;
@@ -134,6 +134,8 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		if (command === "gh" && args[0] === "pr" && args[1] === "checks") {
 			return ok(JSON.stringify(scenario.checks ?? [{ name: "test", state: "SUCCESS", bucket: "pass" }]));
 		}
+		if (command === "gh" && args[0] === "run" && args[1] === "view") return ok("test failed\n");
+		if (command === "gh" && args[0] === "run" && args[1] === "rerun") return ok();
 		if (command === "git" && args[0] === "branch") return ok(`${scenario.branch ?? BRANCH}\n`);
 		if (command === "git" && args[0] === "rev-parse") return ok(`${mergedBase ? MERGED_SHA : SHA}\n`);
 		if (command === "git" && args[0] === "status") {
@@ -253,7 +255,7 @@ test("dirty worktree blocks the fixer before any mutation", async (t) => {
 	const { harness, result } = await run("drive", {
 		dirty: true,
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
-		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 	});
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
@@ -266,7 +268,7 @@ test("branch mismatch identifies the expected and actual branches", async (t) =>
 	const { harness, result } = await run("drive", {
 		branch: "kstack/other",
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
-		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 	});
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
@@ -314,7 +316,7 @@ test("informational issue comments are ignored without posting and do not block 
 	const { harness, result } = await run("drive", {
 		issueComment: { id: 9, body: "Thanks for the update" },
 		triage: triage({
-			threads: [{ id: "issue-comment-9", decision: "ignore", action: "informational acknowledgement" }],
+			threads: [{ key: "thread-1", decision: "ignore", action: "informational acknowledgement" }],
 		}),
 	});
 	t.after(() => harness.cleanup());
@@ -329,7 +331,7 @@ test("informational issue comments are ignored without posting and do not block 
 test("ask threads block without invoking a fixer", async (t) => {
 	const { harness, result } = await run("drive", {
 		thread: { id: "thread-1", body: "Please explain this design" },
-		triage: triage({ threads: [{ id: "thread-1", decision: "ask", cls: "code", action: "Need a product decision" }] }),
+		triage: triage({ threads: [{ key: "thread-1", decision: "ask", cls: "code", action: "Need a product decision" }] }),
 	});
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "blocked");
@@ -340,7 +342,7 @@ test("ask threads block without invoking a fixer", async (t) => {
 test("VERIFY_FAIL from a fixer is never pushed", async (t) => {
 	const { harness, result } = await run("drive", {
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
-		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 		fixer: "changed code\nVERIFY_FAIL",
 	});
 	t.after(() => harness.cleanup());
@@ -356,7 +358,7 @@ test("VERIFY_FAIL from a fixer is never pushed", async (t) => {
 test("declining a fix push returns incomplete", async (t) => {
 	const { harness, result } = await run("drive", {
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
-		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 		confirm: false,
 	});
 	t.after(() => harness.cleanup());
@@ -371,7 +373,7 @@ test("declining a fix push returns incomplete", async (t) => {
 test("triager and fixer use the same randomly chosen model", async (t) => {
 	const { harness, result } = await run("drive", {
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
-		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 		confirm: false,
 	});
 	t.after(() => harness.cleanup());
@@ -385,7 +387,7 @@ test("triager and fixer use the same randomly chosen model", async (t) => {
 test("drive mode stops at its configured cycle bound", async (t) => {
 	const { harness, result } = await run("drive", {
 		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
-		triage: triage({ checks: [{ name: "test", cls: "code", action: "fix test" }] }),
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 		fixerChanges: true,
 	});
 	t.after(() => harness.cleanup());
@@ -394,6 +396,23 @@ test("drive mode stops at its configured cycle bound", async (t) => {
 	assert.ok(result.blockedReasons.some((reason) => reason.includes("max cycles reached")));
 	assert.equal(harness.roles.filter((role) => role === "fixer").length, 3);
 	assert.equal(harness.calls.filter((call) => call.startsWith("gh repo view")).length, 1);
+});
+
+test("flake reruns use the trusted key without changing the remote check name", async (t) => {
+	const remoteName = `System Prompt Contract Tests ${"x".repeat(140)}`;
+	const { harness } = await run("drive", {
+		checks: [
+			{
+				name: remoteName,
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/12345",
+			},
+		],
+		triage: triage({ checks: [{ key: "check-1", cls: "flake", action: "rerun once" }] }),
+	});
+	t.after(() => harness.cleanup());
+	assert.ok(harness.calls.some((call) => call === "gh run rerun 12345 --failed"));
 });
 
 test("pending checks use the watch path without triage", async (t) => {
@@ -500,7 +519,7 @@ test("fix decision replies and resolves a review thread", async () => {
 	const parsed = parseThreads(
 		JSON.stringify({
 			checks: [],
-			threads: [{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
+			threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
 			conflicts: false,
 			draft: false,
 			summary: "",
@@ -535,7 +554,7 @@ test("ignore decision marks an issue comment handled without posting", async () 
 	const parsed = parseThreads(
 		JSON.stringify({
 			checks: [],
-			threads: [{ id: "issue-comment-1", decision: "ignore", action: "informational" }],
+			threads: [{ key: "thread-1", decision: "ignore", action: "informational" }],
 			conflicts: false,
 			draft: false,
 			summary: "",
@@ -561,7 +580,7 @@ test("dismiss decision replies to an issue comment without resolving", async () 
 	const parsed = parseThreads(
 		JSON.stringify({
 			checks: [],
-			threads: [{ id: "issue-comment-1", decision: "dismiss", action: "out of scope", reply: "" }],
+			threads: [{ key: "thread-1", decision: "dismiss", action: "out of scope", reply: "" }],
 			conflicts: false,
 			draft: false,
 			summary: "",
@@ -599,7 +618,7 @@ test("failed review-thread reply does not resolve and warns", async () => {
 	const parsed = parseThreads(
 		JSON.stringify({
 			checks: [],
-			threads: [{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
+			threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
 			conflicts: false,
 			draft: false,
 			summary: "",
@@ -639,8 +658,8 @@ test("a reply failure stops later GitHub comment writes", async () => {
 		JSON.stringify({
 			checks: [],
 			threads: [
-				{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." },
-				{ id: "issue-comment-2", decision: "dismiss", action: "out of scope", reply: "Not changing this." },
+				{ key: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." },
+				{ key: "thread-2", decision: "dismiss", action: "out of scope", reply: "Not changing this." },
 			],
 			conflicts: false,
 			draft: false,
@@ -675,7 +694,7 @@ test("failed resolve keeps the reply id but not the handled id", async () => {
 	const parsed = parseThreads(
 		JSON.stringify({
 			checks: [],
-			threads: [{ id: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
+			threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "rename", reply: "Renamed." }],
 			conflicts: false,
 			draft: false,
 			summary: "",

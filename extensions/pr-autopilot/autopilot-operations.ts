@@ -40,6 +40,15 @@ import {
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import { buildPRState } from "./pr-state.ts";
 import {
+	type CheckTriageKey,
+	checkForTriageKey,
+	isCheckTriageKey,
+	isThreadTriageKey,
+	type ThreadTriageKey,
+	threadForTriageKey,
+	threadTriageKey,
+} from "./triage-keys.ts";
+import {
 	type AutopilotMode,
 	type AutopilotPersistedState,
 	type ExecFn,
@@ -379,15 +388,15 @@ function parseDecision(raw: BoundaryValue): ThreadDecision | undefined {
 }
 
 interface ParsedCheck {
-	name: string;
+	key: CheckTriageKey;
 	cls: FailureClass;
 	action: string;
 }
 type ParsedThread =
-	| { id: string; decision: "fix"; cls: FailureClass; action: string; reply: string }
-	| { id: string; decision: "dismiss"; action: string; reply: string }
-	| { id: string; decision: "ask"; action: string }
-	| { id: string; decision: "ignore"; action: string };
+	| { key: ThreadTriageKey; decision: "fix"; cls: FailureClass; action: string; reply: string }
+	| { key: ThreadTriageKey; decision: "dismiss"; action: string; reply: string }
+	| { key: ThreadTriageKey; decision: "ask"; action: string }
+	| { key: ThreadTriageKey; decision: "ignore"; action: string };
 
 interface ParsedTriage {
 	checks: ParsedCheck[];
@@ -401,20 +410,20 @@ function parseThreadEntry(raw: BoundaryValue): ParsedThread | undefined {
 	if (!isObject(raw) || raw === null || Array.isArray(raw)) return undefined;
 	const obj =
 		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
-	const id = isString(obj.id) ? obj.id : undefined;
-	if (!id) return undefined;
+	const key = isString(obj.key) && isThreadTriageKey(obj.key) ? obj.key : undefined;
+	if (!key) return undefined;
 	const decision = parseDecision(obj.decision);
 	if (!decision) return undefined;
 	const action = isString(obj.action) ? obj.action : "";
 	const reply = isString(obj.reply) ? obj.reply : action;
 	switch (decision) {
 		case "fix":
-			return { id, decision, cls: parseFailureClass(obj.cls), action, reply };
+			return { key, decision, cls: parseFailureClass(obj.cls), action, reply };
 		case "dismiss":
-			return { id, decision, action, reply };
+			return { key, decision, action, reply };
 		case "ask":
 		case "ignore":
-			return { id, decision, action };
+			return { key, decision, action };
 		default: {
 			const _exhaustive: never = decision;
 			return _exhaustive;
@@ -448,9 +457,9 @@ export function parseTriage(triage: string): ParsedTriage | { error: string } {
 		if (!isObject(item) || item === null || Array.isArray(item)) continue;
 		const row =
 			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ item as JsonObject;
-		if (!isString(row.name)) continue;
+		if (!isString(row.key) || !isCheckTriageKey(row.key)) continue;
 		checks.push({
-			name: row.name,
+			key: row.key,
 			cls: parseFailureClass(row.cls),
 			action: isString(row.action) ? row.action : "",
 		});
@@ -468,25 +477,30 @@ export function parseTriage(triage: string): ParsedTriage | { error: string } {
 	};
 }
 
-/** Apply parent-side force-ask for sensitive or injection-like comments. */
-export function applyForceAsk(state: PRState, parsed: ParsedTriage): ParsedTriage {
-	const byId = new Map(state.threads.map((t) => [t.id, t]));
-	const threads = parsed.threads.map((thread) => {
-		const source = byId.get(thread.id);
-		if (!source || !shouldForceAsk(source.body)) return thread;
-		if (thread.decision === "ask") return thread;
-		return {
-			id: thread.id,
-			decision: "ask" as const,
-			action: thread.action || "Forced ask: sensitive or untrusted comment.",
-		};
+/** Discard unknown record keys and force sensitive review items to ask. */
+export function applyTriageGuardrails(state: PRState, parsed: ParsedTriage): ParsedTriage {
+	const checks = parsed.checks.filter((check) => checkForTriageKey(state, check.key) !== undefined);
+	const threads = parsed.threads.flatMap((thread) => {
+		const source = threadForTriageKey(state, thread.key);
+		if (!source) return [];
+		if (!shouldForceAsk(source.body) || thread.decision === "ask") return [thread];
+		return [
+			{
+				key: thread.key,
+				decision: "ask" as const,
+				action: thread.action || "Forced ask: sensitive or untrusted comment.",
+			},
+		];
 	});
-	for (const source of state.threads) {
+	const representedKeys = new Set(threads.map((thread) => thread.key));
+	for (const [index, source] of state.threads.entries()) {
 		if (!shouldForceAsk(source.body)) continue;
-		if (threads.some((t) => t.id === source.id)) continue;
-		threads.push({ id: source.id, decision: "ask", action: "Forced ask: sensitive or untrusted comment." });
+		const key = threadTriageKey(index);
+		if (representedKeys.has(key)) continue;
+		threads.push({ key, decision: "ask", action: "Forced ask: sensitive or untrusted comment." });
+		representedKeys.add(key);
 	}
-	return { ...parsed, threads };
+	return { ...parsed, checks, threads };
 }
 
 export function summarizeTriage(triage: string): string {
@@ -510,7 +524,6 @@ export async function applyThreadReplies(
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 ): Promise<{ ok: true; handled: string[] } | { ok: false; handled: string[]; error: string }> {
 	const handled: string[] = [];
-	const byId = new Map(state.threads.map((t) => [t.id, t]));
 	const failed = (message: string) => {
 		notify(message, "warning");
 		return { ok: false as const, handled, error: message };
@@ -518,10 +531,10 @@ export async function applyThreadReplies(
 	for (const thread of parsed.threads) {
 		if (thread.decision === "ask") continue;
 		if (thread.decision === "fix" && !opts.resolveFix) continue;
-		const source = byId.get(thread.id);
+		const source = threadForTriageKey(state, thread.key);
 		if (!source) continue;
 		if (thread.decision === "ignore") {
-			handled.push(thread.id);
+			handled.push(source.id);
 			continue;
 		}
 		const body =
@@ -530,24 +543,24 @@ export async function applyThreadReplies(
 				? `Dismissing: ${thread.action}`
 				: `Addressed in a follow-up commit. ${thread.action}`);
 		if (source.source === "review-thread") {
-			if (source.replyToId !== undefined && !opts.repliedThreadIds.includes(thread.id)) {
+			if (source.replyToId !== undefined && !opts.repliedThreadIds.includes(source.id)) {
 				const posted = await replyToReviewComment(exec, cwd, state.number, source.replyToId, body);
 				if (posted.code !== 0) {
-					return failed(`Could not reply to thread ${thread.id}: ${posted.stderr.trim()}`);
+					return failed(`Could not reply to thread ${source.id}: ${posted.stderr.trim()}`);
 				}
-				opts.repliedThreadIds.push(thread.id);
+				opts.repliedThreadIds.push(source.id);
 			}
-			const resolved = await resolveReviewThread(exec, cwd, thread.id);
+			const resolved = await resolveReviewThread(exec, cwd, source.id);
 			if (resolved.code !== 0) {
-				return failed(`Could not resolve thread ${thread.id}: ${resolved.stderr.trim()}`);
+				return failed(`Could not resolve thread ${source.id}: ${resolved.stderr.trim()}`);
 			}
-			handled.push(thread.id);
+			handled.push(source.id);
 		} else {
 			const posted = await replyToIssueComment(exec, cwd, state.number, body);
 			if (posted.code !== 0) {
-				return failed(`Could not reply to discussion ${thread.id}: ${posted.stderr.trim()}`);
+				return failed(`Could not reply to discussion ${source.id}: ${posted.stderr.trim()}`);
 			}
-			handled.push(thread.id);
+			handled.push(source.id);
 		}
 	}
 	return { ok: true, handled };
