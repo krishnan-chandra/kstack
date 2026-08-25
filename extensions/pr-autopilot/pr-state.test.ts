@@ -51,7 +51,7 @@ function hostileState(): PRState {
 	};
 }
 
-function splitFences(prompt: string): { inside: string; outside: string } {
+function splitFences(prompt: string) {
 	const inside: string[] = [];
 	const outside: string[] = [];
 	let inFence = false;
