@@ -35,8 +35,8 @@ never be committed to a repository. The JSONL file is the byte-identical source 
 metadata, extracted search text, FTS data, and byte offsets back into that
 artifact. It does **not** duplicate raw JSON lines. `read_session_archive` uses
 the stored byte offsets to read raw entries directly from `session.jsonl`.
-SHA-256 joins the two and detects drift. The index is reconstructible from the
-JSONL artifacts, although an automated reindex command is future work.
+SHA-256 joins the two and detects drift. If the SQLite index is lost, run
+`/session-archive-rebuild` to scan the JSONL artifacts and recreate missing rows.
 
 ## Commands
 
@@ -45,6 +45,7 @@ JSONL artifacts, although an automated reindex command is future work.
 | `/session-archive` | Confirm, then archive the current session and continue in a new empty session. Named sessions keep their name; unnamed sessions stay unnamed. |
 | `/session-archive-other` | Select any number of inactive sessions, confirm once, and archive the selection as one batch. In TUI mode, use arrows to navigate, Space to toggle, Enter to accept, and Escape to cancel. If nothing is checked, Enter accepts the focused session. RPC mode uses repeated selection with an explicit completion choice. Named sessions use their compact name; unnamed sessions use a bounded first-message summary. |
 | `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch, including unnamed sessions. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
+| `/session-archive-rebuild` | Scan archived JSONL artifacts, show the rebuild plan, and recreate missing SQLite rows after confirmation. Existing rows and artifact bytes are never changed; newly indexed artifacts are re-marked read-only. Conflicts, invalid artifacts, and interrupted operations are reported for manual inspection. |
 | `/sessions` | Searchable unified browser for active, archived, and recovery-error sessions across all projects. Enter immediately archives/restores a healthy selected row; error rows show the session ID, failure, and preserved-copy paths without mutating them. Active rows are ordered by Pi's latest user/assistant message timestamp; archived rows use their indexed equivalent. |
 
 Archiving is explicit. The existing archive commands remain confirmed; `/sessions` is the deliberate no-confirmation exception. Nothing is archived automatically
@@ -142,7 +143,7 @@ cross-process session-liveness detection described above.
 
 Selecting an archived row in `/sessions` restores its byte-identical JSONL to its recorded original path, makes it owner-writable (including recovery when the bytes had moved before chmod completed), removes its SQLite/FTS catalog entries, and returns it to `/resume`; it does not switch the current session. A restore journal lets startup reconciliation complete archive-only, active-only, or matching-duplicate interruptions while refusing collisions or mismatched bytes. Selecting the current active row first creates Pi's replacement session, then archives the old file; the browser does not reuse its stale context.
 
-Deferred: rebuild/reindex, retention/deletion, export, and bulk toggles.
+Deferred: retention/deletion, export, and bulk toggles.
 
 ## Development
 
@@ -162,6 +163,7 @@ Structure:
 - `session-jsonl.ts` — strict v3 parsing, text extraction, hashes, byte offsets
 - `archive-files.ts` — path validation, rename/copy fallback, chmod, guard
 - `reconcile.ts` — startup pending-operation recovery and explicit integrity checks
+- `rebuild.ts` — additive JSONL artifact scanning, classification, and confirmed index rebuilds
 - `sessions-command.ts` — testable unified-browser orchestration and exact-selection integrity gating
 - `tool-output.ts` — UTF-8-safe bounded output chunking
 - `*.test.ts` — Node test files beside the modules they cover
