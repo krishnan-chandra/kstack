@@ -54,6 +54,23 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 		const initial = await getPullRequest(deps.exec, deps.cwd, options.target.prNumber, deps.signal);
 		if (initial.state !== "OPEN") return empty("blocked", `PR #${initial.number} is ${initial.state.toLowerCase()}.`);
 
+		// Reject impossible repository/method combinations before readiness work,
+		// because autopilot may itself perform confirmed mutations.
+		if (repo.allowedMethods.length === 0) {
+			return empty(
+				"blocked",
+				"Repository only allows merge commits; kstack does not support merge commits. Enable squash or rebase merging in repository settings.",
+			);
+		}
+		const configuredMethod = deps.configuredMethodFor?.(repo.nameWithOwner);
+		const preselected = options.method ?? configuredMethod;
+		if (preselected && !repo.allowedMethods.includes(preselected)) {
+			return empty(
+				"blocked",
+				`Merge method ${preselected} is not enabled for ${repo.nameWithOwner}. Enabled methods: ${repo.allowedMethods.join(", ")}.`,
+			);
+		}
+
 		const readiness = await deps.runAutopilot(options.readiness, initial.number);
 		if (!readiness.handled) return empty("blocked", "pr-autopilot extension is unavailable.");
 		const autopilot = readiness.outcome;
@@ -94,19 +111,14 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 				blockers: ["GitHub no longer matches autopilot's exact-head readiness evidence."],
 			};
 		}
-		// Block early when GitHub only supports merge commits — kstack never allows them
-		if (repo.allowedMethods.length === 0) {
-			return {
-				...base,
-				status: "blocked",
-				blockers: [
-					"Repository only allows merge commits; kstack does not support merge commits. Enable squash or rebase merging in repository settings.",
-				],
-			};
+		// Priority: CLI --method > per-repo config > only allowed method > prompt
+		const autoSelectedOnlyMethod = !preselected && repo.allowedMethods.length === 1;
+		let method = preselected;
+		if (autoSelectedOnlyMethod) {
+			method = repo.allowedMethods[0];
+		} else if (!method) {
+			method = await deps.selectMethod(repo.allowedMethods);
 		}
-		const configuredMethod = deps.configuredMethodFor?.(repo.nameWithOwner);
-		// Priority: CLI --method > per-repo config > prompt
-		const method = options.method ?? configuredMethod ?? (await deps.selectMethod(repo.allowedMethods));
 		if (!method) return { ...base, status: "declined", blockers: ["No merge method selected."] };
 
 		frontier = {
@@ -116,10 +128,13 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			method,
 			state: "not-attempted",
 		};
-		// Skip confirmation when the method comes from per-repo config (not CLI
-		// --method) or when a caller presents a minted confirmation capability.
+		// Skip confirmation when only one repository-supported method was
+		// auto-selected, when the method comes from per-repo config (not CLI
+		// --method), or when a caller presents a minted confirmation capability.
 		const skipConfirm =
-			isLandConfirmation(options.confirmation) || (configuredMethod !== undefined && options.method === undefined);
+			autoSelectedOnlyMethod ||
+			isLandConfirmation(options.confirmation) ||
+			(configuredMethod !== undefined && options.method === undefined);
 		if (!skipConfirm) {
 			const confirmed = await deps.confirmMerge(
 				`${ready.url}\n${ready.headRef} -> ${ready.baseRef}\nPinned head: ${ready.headOid}\nMethod: ${method}\nGitHub may enqueue this PR when a merge queue is required.`,
