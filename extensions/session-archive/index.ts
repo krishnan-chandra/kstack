@@ -18,6 +18,7 @@ import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./r
 
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "session-archive", "sessions", "session-archive-other", "session-archive-all");
+	guardCommandFallthrough(pi, "session-archive-rebuild");
 	let sqliteAvailable = true;
 	try {
 		await import("node:sqlite");
@@ -36,6 +37,7 @@ export default async function (pi: ExtensionAPI) {
 		for (const [name, description] of [
 			["session-archive", "Archive the current session"],
 			["sessions", "Browse and toggle session archive status"],
+			["session-archive-rebuild", "Rebuild the session archive index"],
 		] as const) {
 			pi.registerCommand(name, {
 				description: `${description} (unavailable: Node 22+ required)`,
@@ -57,6 +59,7 @@ export default async function (pi: ExtensionAPI) {
 	} = await import("./archive-store.ts");
 	const { archiveCurrentSession, archiveInactiveSessions, restoreArchivedSession } = await import("./archive-ops.ts");
 	const { inspectArchiveIntegrity, reconcileArchive } = await import("./reconcile.ts");
+	const { applyRebuild, createRebuildCommand, planRebuild } = await import("./rebuild.ts");
 
 	const commands = createArchiveCommands({
 		archiveRoot,
@@ -69,6 +72,9 @@ export default async function (pi: ExtensionAPI) {
 		listArchivedSessionSummaries,
 		inspectArchiveIntegrity,
 		openArchiveDb,
+		planRebuild,
+		applyRebuild,
+		createRebuildCommand,
 	});
 	const tools = createArchiveTools({
 		dbPath,
@@ -125,6 +131,11 @@ export default async function (pi: ExtensionAPI) {
 	pi.registerCommand("session-archive-all", {
 		description: "Archive every inactive session in this directory in one confirmed batch",
 		handler: commands.sessionArchiveAll,
+	});
+
+	pi.registerCommand("session-archive-rebuild", {
+		description: "Confirm and rebuild missing archive index rows from JSONL artifacts",
+		handler: commands.sessionArchiveRebuild,
 	});
 
 	pi.registerTool({

@@ -63,6 +63,9 @@ export function createArchiveCommands(deps: {
 	listArchivedSessionSummaries: typeof import("./archive-store.ts").listArchivedSessionSummaries;
 	inspectArchiveIntegrity: typeof import("./reconcile.ts").inspectArchiveIntegrity;
 	openArchiveDb: typeof import("./archive-store.ts").openArchiveDb;
+	planRebuild?: typeof import("./rebuild.ts").planRebuild;
+	applyRebuild?: typeof import("./rebuild.ts").applyRebuild;
+	createRebuildCommand?: typeof import("./rebuild.ts").createRebuildCommand;
 }) {
 	const sessionArchive = async (_args: string, ctx: CommandContext) => {
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -92,6 +95,19 @@ export function createArchiveCommands(deps: {
 	};
 
 	const sessions = createSessionsCommand(deps);
+	const sessionArchiveRebuild =
+		deps.planRebuild && deps.applyRebuild && deps.createRebuildCommand
+			? deps.createRebuildCommand({
+					archiveRoot: deps.archiveRoot,
+					activeSessionsRoot: deps.activeSessionsRoot,
+					dbPath: deps.dbPath,
+					planRebuild: deps.planRebuild,
+					applyRebuild: deps.applyRebuild,
+					openArchiveDb: deps.openArchiveDb,
+				})
+			: async (_args: string, ctx: CommandContext) => {
+					ctx.ui.notify("Session archive rebuild is unavailable.", "error");
+				};
 
 	const sessionArchiveOther = async (_args: string, ctx: CommandContext) => {
 		if (!ctx.hasUI) {
@@ -155,7 +171,7 @@ export function createArchiveCommands(deps: {
 		reportBatchResults(ctx.ui.notify.bind(ctx.ui), outcomes);
 	};
 
-	return { sessionArchive, sessions, sessionArchiveOther, sessionArchiveAll };
+	return { sessionArchive, sessions, sessionArchiveOther, sessionArchiveAll, sessionArchiveRebuild };
 }
 
 export function createArchiveTools(deps: {
