@@ -19,9 +19,9 @@ import { type BoundaryValue, isObject, isString, type JsonObject } from "../shar
  *   cleanup  — remove the managed worktree and branch after confirmation.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { lstat, mkdir, open, readFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import type { VcsBackend, VcsResult, WorkstreamSnapshot } from "../shared/vcs/backend.ts";
@@ -138,18 +138,22 @@ export async function savePersistedState(state: AutopilotPersistedState): Promis
 	const dir = dirname(path);
 	await mkdir(dir, { recursive: true, mode: 0o700 });
 	if ((await checkStateDir(dir)) !== "directory") return;
+	const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 	try {
 		const handle = await open(
-			path,
-			constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+			tempPath,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
 			0o600,
 		);
 		try {
 			await handle.writeFile(JSON.stringify(state), "utf8");
+			await handle.sync();
 		} finally {
 			await handle.close();
 		}
+		await rename(tempPath, path);
 	} catch (error) {
+		await unlink(tempPath).catch(() => {});
 		const code = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
 			error as NodeJS.ErrnoException
 		).code;

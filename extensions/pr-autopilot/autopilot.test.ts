@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -616,6 +617,7 @@ describe("pr-autopilot state machine", () => {
 		it("round-trips handled thread ids with its repository key", async () => {
 			await withAgentDir(async () => {
 				const repoKey = `test-${process.pid}-${Date.now()}`;
+				const path = persistPath(repoKey, 5);
 				await savePersistedState({
 					repoKey,
 					prNumber: 5,
@@ -627,6 +629,68 @@ describe("pr-autopilot state machine", () => {
 				const loaded = await loadPersistedState(repoKey, 5);
 				assert.deepEqual(loaded.handledThreadIds, ["thread-1"]);
 				assert.equal(loaded.repoKey, repoKey);
+				assert.deepEqual(
+					(await readdir(dirname(path))).filter((file) => file.endsWith(".tmp")),
+					[],
+				);
+				if (process.platform !== "win32") {
+					assert.equal((await stat(path)).mode & 0o777, 0o600);
+				}
+			});
+		});
+
+		it("keeps the previous state visible until its replacement is ready", async () => {
+			await withAgentDir(async () => {
+				const repoKey = `atomic-${process.pid}-${Date.now()}`;
+				const path = persistPath(repoKey, 5);
+				const previous = {
+					repoKey,
+					prNumber: 5,
+					headSha: "first",
+					handledThreadIds: ["thread-1"],
+					repliedThreadIds: [],
+					flakeRetried: [],
+				};
+				await savePersistedState(previous);
+				const replacement = { ...previous, headSha: "second", handledThreadIds: ["thread-2"] };
+				const replacementWithProbe = {
+					...replacement,
+					toJSON() {
+						assert.equal(readFileSync(path, "utf8"), JSON.stringify(previous));
+						return replacement;
+					},
+				};
+
+				await savePersistedState(replacementWithProbe);
+
+				assert.deepEqual(await loadPersistedState(repoKey, 5), replacement);
+			});
+		});
+
+		it("completely replaces existing persisted state with private permissions", async () => {
+			await withAgentDir(async () => {
+				const repoKey = `replace-${process.pid}-${Date.now()}`;
+				const path = persistPath(repoKey, 5);
+				await savePersistedState({
+					repoKey,
+					prNumber: 5,
+					headSha: "first",
+					handledThreadIds: ["thread-1", "thread-2"],
+					repliedThreadIds: ["thread-1"],
+					flakeRetried: ["check-1"],
+				});
+				if (process.platform !== "win32") await chmod(path, 0o666);
+				const replacement = {
+					repoKey,
+					prNumber: 5,
+					headSha: "second",
+					handledThreadIds: [],
+					repliedThreadIds: [],
+					flakeRetried: [],
+				};
+				await savePersistedState(replacement);
+				assert.deepEqual(await loadPersistedState(repoKey, 5), replacement);
+				if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
 			});
 		});
 
@@ -654,7 +718,7 @@ describe("pr-autopilot state machine", () => {
 			});
 		});
 
-		it("refuses to write persisted state through a symlink", async () => {
+		it("replaces a state symlink without writing through it", async () => {
 			await withAgentDir(async (agentDir) => {
 				const repoKey = "symlink-write";
 				const path = persistPath(repoKey, 7);
@@ -662,15 +726,20 @@ describe("pr-autopilot state machine", () => {
 				const target = join(agentDir, "target.json");
 				await writeFile(target, "unchanged");
 				await symlink(target, path);
-				await savePersistedState({
+				const replacement = {
 					repoKey,
 					prNumber: 7,
 					headSha: "new",
 					handledThreadIds: ["t"],
 					repliedThreadIds: [],
 					flakeRetried: [],
-				});
+				};
+
+				await savePersistedState(replacement);
+
 				assert.equal(await readFile(target, "utf8"), "unchanged");
+				assert.equal((await lstat(path)).isSymbolicLink(), false);
+				assert.deepEqual(await loadPersistedState(repoKey, 7), replacement);
 			});
 		});
 
