@@ -230,7 +230,7 @@ the `"panel-review"` section:
 | Child max runtime | 30 min absolute ceiling |
 | Dashboard live text preview | 240-byte rolling UTF-8 tail per child |
 | Console transcript cap | 128 KiB / 1,000 entries per child (oldest evicted with notice) |
-| Console entry text cap | 8 KiB per entry (UTF-8 safe head/tail truncation) |
+| Console entry text cap | 24 KiB per entry (UTF-8 safe head/tail truncation) |
 
 PR snapshot materialization stops before archiving when the pinned tree exceeds
 the tracked-byte or entry limit. The archive and extracted tree can briefly use

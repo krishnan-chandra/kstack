@@ -8,7 +8,7 @@ export type TranscriptEntry =
 
 const MAX_CHILD_TRANSCRIPT_BYTES = 128 * 1024;
 const MAX_CHILD_ENTRIES = 1000;
-const MAX_ENTRY_TEXT_BYTES = 8 * 1024;
+const MAX_ENTRY_TEXT_BYTES = 24 * 1024;
 export const EVICTION_NOTICE = "… earlier transcript dropped (cap 128 KiB)";
 
 function entryBytes(entry: TranscriptEntry): number {
