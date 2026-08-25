@@ -27,7 +27,7 @@ import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
-import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
+import { vcsPolicy } from "../shared/vcs/policy.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parsePlanImplementArgs, validateTask } from "./command.ts";
 import { loadConfig, modelCliId, resolveImplementerOnly, resolveRoles } from "./config.ts";
@@ -227,6 +227,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const exec = makeExec(pi);
 		const backend = backendFor(vcsConfig.backend);
+		const policy = vcsPolicy(backend.id);
 		const stackAdapter = createStackDeliveryAdapter(vcsConfig.backend, {
 			exec,
 			jjPolicy: readPromptAsset(PROMPTS_DIR, "jj-stack-local.md"),
@@ -236,7 +237,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const engineeringPrinciplesPrompt = readPromptAsset(PLAYBOOKS_DIR, "engineering-principles.md");
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readPromptAsset(PLAYBOOKS_DIR, playbookFile) : undefined;
-		const backendPrompt = vcsChildGuidance(vcsConfig.backend);
+		const backendPrompt = policy.childGuidance;
 		const changePrompts = playbookPrompt
 			? [engineeringPrinciplesPrompt, playbookPrompt, backendPrompt]
 			: [engineeringPrinciplesPrompt, backendPrompt];
@@ -330,7 +331,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
 				? `Planner (read-only): ${plannerModel}\nImplementer (creates a local ${stackAdapter?.backendId ?? "configured"} stack): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackAdapter?.backendId === "jj" ? "trunk()" : "Graphite trunk"} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nThe implementer builds a LOCAL stack only — it does not push or create PRs. The parent independently validates the complete stack, shows the exact publication plan, confirms it, and verifies every resulting draft PR before launching the metadata/reviewer child.`
-				: `Planner (read-only): ${plannerModel}\nImplementer (${backend.id === "jj" ? "creates a dedicated jj change and task bookmark" : "creates a dedicated branch and incremental Git commits"}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : backend.id === "jj" ? "Location: current jj workspace\n" : "Location: current Git working tree\n"}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : backend.id === "jj" ? "The parent creates a trunk()-based jj change and task bookmark after plan approval. jj snapshots the current workspace state, so Git dirty-tree rules do not apply. " : "Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. "}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
+				: `Planner (read-only): ${plannerModel}\nImplementer (${policy.taskWorkstreamSummary}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : policy.currentModeDisclosure}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) {
 			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
@@ -570,6 +571,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const backend = backendFor(vcsConfig.backend);
+		const policy = vcsPolicy(backend.id);
 		const current = workLocation === "current";
 		if (current) {
 			const preflight = await preflightFastWorkstream(backend, ctx.cwd);
@@ -606,7 +608,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		try {
 			const confirmed = await ctx.ui.confirm(
 				current ? "Run a fast implementation in this session?" : "Run one fast implementation worktree child?",
-				`Implementer: ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\nLocation: ${current ? (backend.id === "jj" ? "current jj workspace" : "current Git checkout") : "managed Git worktree"}\nTimeout: ${current ? "none (interrupt or steer the session normally)" : `${timeoutMinutes} min`}\n\nFast mode skips planning, panel review, and publishing, but still requires inspection, verification, and locally recorded changes. It never publishes automatically.${current ? " The implementation starts in this session, so its existing plan and discussion remain in context." : ""}`,
+				`Implementer: ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\nLocation: ${current ? policy.currentWorkspaceLabel : "managed Git worktree"}\nTimeout: ${current ? "none (interrupt or steer the session normally)" : `${timeoutMinutes} min`}\n\nFast mode skips planning, panel review, and publishing, but still requires inspection, verification, and locally recorded changes. It never publishes automatically.${current ? " The implementation starts in this session, so its existing plan and discussion remain in context." : ""}`,
 			);
 			if (!lifecycle.isCurrent(runToken) || !confirmed) return;
 			ctx.ui.setStatus(

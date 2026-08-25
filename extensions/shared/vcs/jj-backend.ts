@@ -47,7 +47,6 @@ export function filesetPath(path: string): string {
 
 export class JjBackend implements VcsBackend {
 	readonly id = "jj" as const;
-	readonly descriptor = { refNoun: "bookmark", workstreamNoun: "jj workspace", baseUpdateVerb: "merge" } as const;
 	private readonly exec: ExecFn;
 
 	constructor(exec: ExecFn) {
@@ -64,15 +63,6 @@ export class JjBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec);
-	}
-
-	childGuidance(): string {
-		return [
-			"VCS backend: jj.",
-			"Use jj for all version-control state and mutations. Do not run git status, add, commit, checkout, switch, merge, rebase, restore, or push.",
-			"Inspect with jj status/diff/log. Record work with jj describe, jj commit, or jj new as appropriate, and keep the task bookmark on the change intended for publication.",
-			"Do not create Git branches or worktrees. Leave an empty jj working-copy commit after recording the implementation.",
-		].join(" ");
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {

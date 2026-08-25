@@ -23,7 +23,7 @@ import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
-import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
+import { vcsPolicy } from "../shared/vcs/policy.ts";
 import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT } from "./api.ts";
 import { parseArgs } from "./command.ts";
 import { getArgumentCompletions } from "./completion.ts";
@@ -169,6 +169,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		for (const warning of vcsConfig.warnings) notify(warning, "warning");
 		const exec = makeExec(pi);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
+		const policy = vcsPolicy(backend.id);
 
 		// Confirm the run before starting unless a trusted in-process caller already
 		// holds user consent (for example, an explicitly requested stack land).
@@ -189,7 +190,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					`Timeout: ${config.timeoutMinutes} min idle / ${config.maxRuntimeMinutes} max per child agent\n` +
 					"Bounded invariants:\n" +
 					"- Works the lowest unmerged PR first\n" +
-					`- Conflicts/behind: ${backend.descriptor.baseUpdateVerb} from the remote base with ${backend.id}${backend.descriptor.baseUpdateVerb === "restack" ? "; Graphite mutations proceed only when no local descendants exist" : " (never rebase)"}\n` +
+					`- Conflicts/behind: ${policy.baseUpdateVerb} from the remote base with ${backend.id}${policy.conflictRuleSuffix}\n` +
 					"- Comments before CI; watch pending checks instead of inventing work\n" +
 					"- Stops at merge-ready (never auto-merges)\n" +
 					"- One tiny model per run, chosen at random from the configured pool",
@@ -224,11 +225,10 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			const triagerPromptFile = join(tempDir, "triager-prompt.md");
 			const fixerPromptFile = join(tempDir, "fixer-prompt.md");
 			writeFileSync(triagerPromptFile, readPromptAsset(PROMPTS_DIR, "triager.md"), { encoding: "utf8", mode: 0o600 });
-			writeFileSync(
-				fixerPromptFile,
-				`${readPromptAsset(PROMPTS_DIR, "fixer.md")}\n\n${vcsChildGuidance(backend.id)}\n`,
-				{ encoding: "utf8", mode: 0o600 },
-			);
+			writeFileSync(fixerPromptFile, `${readPromptAsset(PROMPTS_DIR, "fixer.md")}\n\n${policy.childGuidance}\n`, {
+				encoding: "utf8",
+				mode: 0o600,
+			});
 
 			const updateStatus = (phase: LifecyclePhase, cycles = 0) => {
 				if (lifecycle.isCurrent(runToken)) {
@@ -273,12 +273,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					);
 					sendPhaseMessage(mode, "idle", result.cyclesCompleted, modelList, "Looks merge-ready — stopped, not merged.");
 				} else if (result.status === "cleaned") {
-					notify(
-						backend.id === "jj"
-							? "PR autopilot cleanup complete. jj mode has no managed Git worktree to remove."
-							: "PR autopilot cleanup complete. Managed worktree removed; session archive is manual.",
-						"info",
-					);
+					notify(policy.cleanupCompleteNotice, "info");
 				} else if (result.status === "blocked") {
 					notify(
 						`PR autopilot blocked: ${result.blockedReasons.join("; ")}. ` +

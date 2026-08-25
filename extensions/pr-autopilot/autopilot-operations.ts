@@ -25,6 +25,7 @@ import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import type { VcsBackend, VcsResult, WorkstreamSnapshot } from "../shared/vcs/backend.ts";
+import { vcsPolicy } from "../shared/vcs/policy.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
@@ -241,6 +242,7 @@ export async function prepareMutationCheckout(
 	cwd: string,
 	state: PRState,
 ): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>> {
+	const policy = vcsPolicy(backend.id);
 	const [current, head, clean] = await Promise.all([
 		backend.currentRef(cwd),
 		backend.headSha(cwd),
@@ -255,7 +257,7 @@ export async function prepareMutationCheckout(
 				: (refName ?? "a detached HEAD");
 		return {
 			ok: false,
-			error: `Selected PR #${state.number} uses ${state.headRef}, but the current workstream is ${actual}. Open the matching ${backend.descriptor.workstreamNoun} before retrying.`,
+			error: `Selected PR #${state.number} uses ${state.headRef}, but the current workstream is ${actual}. Open the matching ${policy.workstreamNoun} before retrying.`,
 		};
 	}
 	if (!head.ok || head.sha !== state.headSha) {
@@ -268,7 +270,7 @@ export async function prepareMutationCheckout(
 	if (!clean.empty) {
 		return {
 			ok: false,
-			error: `The ${backend.descriptor.workstreamNoun} must be clean before pr-autopilot can mutate it.`,
+			error: `The ${policy.workstreamNoun} must be clean before pr-autopilot can mutate it.`,
 		};
 	}
 	const remoteHead = await backend.fetchRemoteHead(cwd, state.headRef);

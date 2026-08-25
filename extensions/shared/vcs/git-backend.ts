@@ -178,7 +178,6 @@ function parsePorcelainPaths(stdout: string): string[] {
 
 export class GitBackend implements VcsBackend {
 	readonly id = "git" as const;
-	readonly descriptor = { refNoun: "branch", workstreamNoun: "Git checkout", baseUpdateVerb: "merge" } as const;
 	readonly isolation = {
 		plan: (cwd: string, task: string) => this.planIsolation(cwd, task),
 		create: (plan: IsolationPlan) => this.createIsolation(plan),
@@ -202,14 +201,6 @@ export class GitBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec, { exists: this.deps.exists });
-	}
-
-	childGuidance(): string {
-		return [
-			"VCS backend: git.",
-			"Use Git for all version-control state and mutations. Do not run jj commands.",
-			"Work only on the branch or worktree prepared by the parent, make incremental Git commits, and leave the working tree clean.",
-		].join(" ");
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {

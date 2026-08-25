@@ -13,7 +13,7 @@ import {
 } from "../shared/child-agent-runner.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
-import { vcsChildGuidance } from "../shared/vcs/guidance.ts";
+import { vcsPolicy } from "../shared/vcs/policy.ts";
 import type { RoleSpec } from "./types.ts";
 import { LIMITS } from "./types.ts";
 
@@ -63,7 +63,7 @@ export function buildFastImplementerGuidance(changeKind: ChangeKind, backend: Pi
 		readPromptAsset(PROMPTS_DIR, "implementer-fast.md"),
 		readPromptAsset(PLAYBOOKS_DIR, "engineering-principles.md"),
 		...(playbook ? [readPromptAsset(PLAYBOOKS_DIR, playbook)] : []),
-		vcsChildGuidance(backend.id),
+		vcsPolicy(backend.id).childGuidance,
 	].join("\n\n---\n\n");
 }
 

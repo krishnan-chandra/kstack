@@ -38,9 +38,7 @@ function fakeGitBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { cal
 	const calls: string[] = [];
 	return {
 		id: "git",
-		descriptor: { refNoun: "branch", workstreamNoun: "Git checkout", baseUpdateVerb: "merge" },
 		calls,
-		childGuidance: () => "VCS backend: git.",
 		preflight: async (cwd) => {
 			calls.push(`preflight:${cwd}`);
 			return { ok: true, workspaceRoot: cwd };
@@ -83,9 +81,7 @@ function fakeJjBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { call
 	const calls: string[] = [];
 	return {
 		id: "jj",
-		descriptor: { refNoun: "bookmark", workstreamNoun: "jj workspace", baseUpdateVerb: "merge" },
 		calls,
-		childGuidance: () => "VCS backend: jj.",
 		preflight: async (cwd) => {
 			calls.push(`preflight:${cwd}`);
 			return { ok: true, workspaceRoot: cwd };

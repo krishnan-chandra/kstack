@@ -8,6 +8,7 @@ import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
 import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
+import { vcsPolicy } from "../shared/vcs/policy.ts";
 import { runAgent } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
@@ -445,6 +446,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
 	const executeAgent = fx.runAgent ?? runAgent;
+	const policy = vcsPolicy(fx.backend.id);
 	const state: WorkflowState = {
 		workflowCwd: initialCwd,
 		workstreamCheckpoint: worktreePlan ? { ref: worktreePlan.ref, baseSha: worktreePlan.baseSha } : undefined,
@@ -551,9 +553,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						"Approve planner output?",
 						mode === "stack"
 							? `Review the Planner card above. Continue with ${implementerModel}, which creates a local ${fx.backend.id} stack?`
-							: fx.backend.id === "jj"
-								? `Review the Planner card above. Continue with ${implementerModel}, which creates a trunk-based jj change and task bookmark?`
-								: `Review the Planner card above. Continue with ${implementerModel}, which creates a dedicated branch and incremental local commits?`,
+							: `Review the Planner card above. Continue with ${implementerModel}, which ${policy.approvalSummary}?`,
 					);
 				},
 				runImplementer: async () => {
@@ -596,7 +596,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
 							fx.notify(`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.ref}).`, "info");
 						} else if (mode === "single" && !state.workstreamCheckpoint) {
-							fx.setStatus(`plan-implement: creating task ${fx.backend.descriptor.refNoun}…`);
+							fx.setStatus(`plan-implement: creating task ${policy.refNoun}…`);
 							const created = await fx.backend.createWorkstream(state.workflowCwd, task);
 							if (!created.ok)
 								return completeEarly({
@@ -606,7 +606,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 									error: created.error,
 								});
 							state.workstreamCheckpoint = created;
-							fx.notify(`Task ${fx.backend.descriptor.refNoun} created: ${created.ref}.`, "info");
+							fx.notify(`Task ${policy.refNoun} created: ${created.ref}.`, "info");
 						}
 						if (state.workstreamCheckpoint) {
 							writeFileSync(
