@@ -124,6 +124,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		cwd = ctx.cwd,
 		confirmation?: AutopilotConfirmation,
+		callerSignal?: AbortSignal,
 	): Promise<AutopilotResult> {
 		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({
 			status,
@@ -203,10 +204,16 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			return early("blocked", "another autopilot run started before confirmation completed");
 		}
 
-		const runSignal = lifecycle.runSignal(runToken);
-		if (!runSignal) {
+		const lifecycleSignal = lifecycle.runSignal(runToken);
+		if (!lifecycleSignal) {
 			lifecycle.endRun(runToken);
 			return early("aborted", "run signal is unavailable");
+		}
+
+		const runSignal = callerSignal ? AbortSignal.any([lifecycleSignal, callerSignal]) : lifecycleSignal;
+		if (runSignal.aborted) {
+			lifecycle.endRun(runToken);
+			return early("aborted", "caller aborted before run started");
 		}
 
 		let tempDir: string | undefined;
@@ -319,8 +326,8 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	// Listen for in-process API requests from the router or other extensions.
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
-		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd, confirmation) =>
-			runAutopilotCommand(mode, prNumber, ctx, cwd, confirmation),
+		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd, confirmation, signal) =>
+			runAutopilotCommand(mode, prNumber, ctx, cwd, confirmation, signal),
 		);
 	});
 }
