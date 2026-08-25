@@ -24,15 +24,13 @@ import { constants, realpathSync } from "node:fs";
 import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../shared/kstack-config.ts";
-import type { VcsBackend, VcsResult, WorkstreamSnapshot } from "../shared/vcs/backend.ts";
-import { vcsPolicy } from "../shared/vcs/policy.ts";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
 	attachFailedLogs,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
-	isForbiddenStagingPath,
 	replyToIssueComment,
 	replyToReviewComment,
 	resolveReviewThread,
@@ -63,7 +61,6 @@ import {
 } from "./types.ts";
 import { shouldForceAsk } from "./untrusted.ts";
 
-type PushResult = { kind: "pushed"; headSha?: string } | { kind: "unchanged" } | { kind: "failed"; error: string };
 export function repoPersistKey(cwd: string): string {
 	return createHash("sha256").update(realpathSync(cwd)).digest("hex").slice(0, 12);
 }
@@ -235,108 +232,6 @@ export async function runChildRole(
 		error: result.status === "aborted" ? `${label} was aborted.` : `${label} failed: ${result.error}`,
 		usage: result.usage,
 	};
-}
-
-export async function prepareMutationCheckout(
-	backend: VcsBackend,
-	cwd: string,
-	state: PRState,
-): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>> {
-	const policy = vcsPolicy(backend.id);
-	const [current, head, clean] = await Promise.all([
-		backend.currentRef(cwd),
-		backend.headSha(cwd),
-		backend.isWorkingCopyEmpty(cwd),
-	]);
-	if (!current.ok) return current;
-	const refName = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
-	if (refName !== state.headRef) {
-		const actual =
-			current.ref.kind === "no-bookmark"
-				? `jj change ${current.ref.changeId.slice(0, 12)} with no bookmark`
-				: (refName ?? "a detached HEAD");
-		return {
-			ok: false,
-			error: `Selected PR #${state.number} uses ${state.headRef}, but the current workstream is ${actual}. Open the matching ${policy.workstreamNoun} before retrying.`,
-		};
-	}
-	if (!head.ok || head.sha !== state.headSha) {
-		return {
-			ok: false,
-			error: `Local HEAD ${head.ok ? head.sha : "could not be read"} does not match PR #${state.number} head ${state.headSha}. Synchronize the PR worktree first.`,
-		};
-	}
-	if (!clean.ok) return clean;
-	if (!clean.empty) {
-		return {
-			ok: false,
-			error: `The ${policy.workstreamNoun} must be clean before pr-autopilot can mutate it.`,
-		};
-	}
-	const remoteHead = await backend.fetchRemoteHead(cwd, state.headRef);
-	if (!remoteHead.ok) return remoteHead;
-	if (remoteHead.sha !== state.headSha) {
-		return {
-			ok: false,
-			error: `The remote PR head advanced to ${remoteHead.sha}; refresh GitHub state before editing.`,
-		};
-	}
-	const captured = await backend.captureWorkstream(cwd);
-	if (!captured.ok) return captured;
-	return captured.snapshot.ref === state.headRef
-		? captured
-		: { ok: false, error: `The current workstream identity no longer names ${state.headRef}.` };
-}
-
-export async function doCommitAndPush(
-	backend: VcsBackend,
-	cwd: string,
-	expectedSnapshot: WorkstreamSnapshot,
-	prNumber: number,
-	fixerOutput: string,
-): Promise<PushResult> {
-	if (/\bVERIFY_FAIL\b/.test(fixerOutput)) {
-		return { kind: "failed", error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks." };
-	}
-
-	const [unchanged, changed] = await Promise.all([
-		backend.assertWorkstreamUnchanged(cwd, expectedSnapshot),
-		backend.changedPaths(cwd),
-	]);
-	if (!unchanged.ok) {
-		return {
-			kind: "failed",
-			error: `The fixer changed workstream identity: ${unchanged.error}`,
-		};
-	}
-	if (!changed.ok) return { kind: "failed", error: `Could not inspect fixer changes: ${changed.error}` };
-	const headRef = expectedSnapshot.ref;
-	const paths = changed.paths;
-	if (paths.length === 0) return { kind: "unchanged" };
-
-	const forbidden = paths.filter(isForbiddenStagingPath);
-	const allowed = paths.filter((p) => !isForbiddenStagingPath(p));
-	if (forbidden.length > 0) {
-		const restored = await backend.restorePaths(cwd, forbidden);
-		return {
-			kind: "failed",
-			error: `Fixer touched forbidden paths: ${forbidden.join(", ")}.${restored.ok ? " Those changes were restored." : ` Automatic restoration failed: ${restored.error}`}`,
-		};
-	}
-	if (allowed.length === 0) return { kind: "unchanged" };
-	const rewriteScope = await backend.rewriteScope?.assertSingleRef(cwd, headRef);
-	if (rewriteScope && !rewriteScope.ok) return { kind: "failed", error: rewriteScope.error };
-
-	const committed = await backend.recordPaths(
-		cwd,
-		allowed,
-		`Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
-	);
-	if (!committed.ok) return { kind: "failed", error: committed.error };
-	const pushed = await backend.publishRecordedChanges(cwd, headRef, { existingOnly: true });
-	if (!pushed.ok) return { kind: "failed", error: pushed.error };
-	const committedHead = await backend.headSha(cwd);
-	return committedHead.ok ? { kind: "pushed", headSha: committedHead.sha } : { kind: "pushed" };
 }
 
 export async function runCleanup(

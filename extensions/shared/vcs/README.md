@@ -49,6 +49,14 @@ fixer returns, Git mode requires the same branch and commit. jj mode requires
 the same bookmark, stable change ID, and parent commits, which permits normal
 snapshot changes but rejects a moved or replaced workstream.
 
+## PR mutation workflow
+
+`mutation.ts` validates that a checkout matches a PR head, proves the backend's
+rewrite scope, and owns fix and base-update publication. It checks rewrite scope
+again after any operation that can rewrite refs and before publication.
+PR Autopilot uses this workflow instead of sequencing mutation primitives.
+Callers outside `shared/vcs/` must not call `rewriteScope` directly.
+
 Before a jj push, the backend describes an otherwise-undescribed empty `@` as
 an automation checkpoint and moves the task bookmark to it. Implementation and
 fix commits remain in ancestors while later automation gets a clean change to

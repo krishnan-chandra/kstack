@@ -9,12 +9,10 @@ import { JjBackend } from "../shared/vcs/jj-backend.ts";
 import {
 	applyTriageGuardrails,
 	classifyBlockers,
-	doCommitAndPush,
 	fetchPRState,
 	loadPersistedState,
 	parseTriage,
 	persistPath,
-	prepareMutationCheckout,
 	runCleanup,
 	savePersistedState,
 	summarizeTriage,
@@ -31,8 +29,6 @@ import {
 	pickModel,
 } from "./pr-state.ts";
 import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
-
-const changeTemplate = 'change_id ++ "\\n"';
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
 	return {
@@ -220,226 +216,6 @@ describe("pr-autopilot state machine", () => {
 				null,
 			);
 			assert.match(describeBlockers(state), /unresolved threads \(1\)/);
-		});
-	});
-
-	describe("mutation checkout boundary", () => {
-		it("rejects a checkout on a different branch", async () => {
-			const exec: ExecFn = async (command, args) => {
-				if (command === "git" && args[0] === "branch") return { code: 0, stdout: "kstack/other\n", stderr: "" };
-				if (command === "git" && args[0] === "rev-parse")
-					return { code: 0, stdout: `${makePr().headSha}\n`, stderr: "" };
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const state = buildPRState(makePr(), [], [], null);
-			const result = await prepareMutationCheckout(new GitBackend(exec), "/repo", state);
-			assert.equal(result.ok, false);
-			if (!result.ok) assert.match(result.error, /current workstream is/);
-		});
-
-		it("accepts a clean jj head checkpoint with the PR bookmark at @", async () => {
-			const pr = makePr();
-			const exec: ExecFn = async (command, args) => {
-				assert.equal(command, "jj");
-				if (args.includes("bookmark") && args.includes("list")) {
-					return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
-				}
-				if (args.includes('if(empty, "true", "false")')) {
-					return { code: 0, stdout: "true", stderr: "" };
-				}
-				if (args.includes("log")) return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
-			assert.deepEqual(result, {
-				ok: true,
-				snapshot: { ref: pr.headRefName, token: `${pr.headRefName}@${pr.headSha}/parents:${pr.headSha}` },
-			});
-		});
-
-		it("rejects an advanced remote jj head without creating a merge", async () => {
-			const pr = makePr();
-			const advanced = "8".repeat(40);
-			const calls: string[] = [];
-			const exec: ExecFn = async (_command, args) => {
-				calls.push(args.join(" "));
-				if (args.includes("bookmark") && args.includes("list")) {
-					return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
-				}
-				if (args.includes('if(empty, "true", "false")')) {
-					return { code: 0, stdout: "true", stderr: "" };
-				}
-				if (args.includes(`${pr.headRefName}@origin`)) {
-					return { code: 0, stdout: `${advanced}\n`, stderr: "" };
-				}
-				if (args.includes("log")) return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
-			assert.equal(result.ok, false);
-			if (!result.ok) assert.match(result.error, new RegExp(advanced));
-			assert.equal(
-				calls.some((call) => call.includes(" new ")),
-				false,
-			);
-		});
-
-		it("rejects a jj PR head without an empty automation checkpoint", async () => {
-			const pr = makePr();
-			const exec: ExecFn = async (_command, args) => {
-				if (args.includes("bookmark") && args.includes("list")) {
-					return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
-				}
-				if (args.includes('if(empty, "true", "false")')) {
-					return { code: 0, stdout: "false", stderr: "" };
-				}
-				if (args.includes("--summary")) return { code: 0, stdout: "M src/index.ts\n", stderr: "" };
-				if (args.includes("log")) return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await prepareMutationCheckout(new JjBackend(exec), "/repo", buildPRState(pr, [], [], null));
-			assert.equal(result.ok, false);
-			if (!result.ok) assert.match(result.error, /must be clean/);
-		});
-
-		it("rejects a dirty selected checkout before running a fixer", async () => {
-			const pr = makePr();
-			const exec: ExecFn = async (_command, args) => {
-				if (args[0] === "branch") return { code: 0, stdout: `${pr.headRefName}\n`, stderr: "" };
-				if (args[0] === "rev-parse") return { code: 0, stdout: `${pr.headSha}\n`, stderr: "" };
-				if (args[0] === "status") return { code: 0, stdout: " M user-work.ts\n", stderr: "" };
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await prepareMutationCheckout(new GitBackend(exec), "/repo", buildPRState(pr, [], [], null));
-			assert.deepEqual(result, {
-				ok: false,
-				error: "The Git checkout must be clean before pr-autopilot can mutate it.",
-			});
-		});
-	});
-
-	describe("jj fixer publication", () => {
-		it("accepts jj snapshot SHA changes, commits the path diff, and pushes an empty checkpoint", async () => {
-			const expectedChangeId = "stable-change-id";
-			const edited = "2".repeat(40);
-			const checkpoint = "3".repeat(40);
-			let committed = false;
-			const calls: string[] = [];
-			const exec: ExecFn = async (_command, args) => {
-				calls.push(args.join(" "));
-				if (args.includes("bookmark") && args.includes("list")) {
-					return { code: 0, stdout: "feature\n", stderr: "" };
-				}
-				if (args.includes("--name-only")) return { code: 0, stdout: "src/fix.ts\n", stderr: "" };
-				if (args.includes("commit")) {
-					committed = true;
-					return { code: 0, stdout: "", stderr: "" };
-				}
-				if (args.includes('if(empty, "true", "false")')) {
-					return { code: 0, stdout: "true", stderr: "" };
-				}
-				if (args.includes(changeTemplate)) {
-					return { code: 0, stdout: `${expectedChangeId}\n`, stderr: "" };
-				}
-				if (args.includes("log")) {
-					return { code: 0, stdout: `${committed ? checkpoint : edited}\n`, stderr: "" };
-				}
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await doCommitAndPush(
-				new JjBackend(exec),
-				"/repo",
-				{ ref: "feature", token: `feature@${expectedChangeId}/parents:${edited}` },
-				42,
-				"VERIFY_OK",
-			);
-			assert.deepEqual(result, { kind: "pushed", headSha: checkpoint });
-			assert.ok(calls.some((call) => call.includes('commit cwd:"src/fix.ts" -m Autopilot PR #42')));
-			assert.ok(calls.includes("--no-pager bookmark set feature -r @"));
-			assert.ok(calls.includes("--no-pager git push --remote origin --bookmark feature"));
-		});
-
-		it("rejects a fixer that replaces the native jj change identity", async () => {
-			const exec: ExecFn = async (_command, args) => {
-				if (args.includes("bookmark") && args.includes("list")) {
-					return { code: 0, stdout: "feature\n", stderr: "" };
-				}
-				if (args.includes("--name-only")) return { code: 0, stdout: "src/fix.ts\n", stderr: "" };
-				if (args.includes(changeTemplate)) return { code: 0, stdout: "stable-change-id\n", stderr: "" };
-				if (args.includes("log")) return { code: 0, stdout: `${"9".repeat(40)}\n`, stderr: "" };
-				return { code: 0, stdout: "", stderr: "" };
-			};
-			const result = await doCommitAndPush(
-				new JjBackend(exec),
-				"/repo",
-				{ ref: "feature", token: `feature@stable-change-id/parents:${"1".repeat(40)}` },
-				42,
-				"VERIFY_OK",
-			);
-			assert.equal(result.kind, "failed");
-			if (result.kind === "failed") assert.match(result.error, /identity/);
-		});
-	});
-
-	describe("forbidden path restoration", () => {
-		const sha = makePr().headSha;
-		const identity = { ref: "kstack/fix-thing", token: `kstack/fix-thing@${sha}` };
-
-		function gitResponses(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>) {
-			const calls: string[] = [];
-			const exec: ExecFn = async (_command, args) => {
-				const key = args.join(" ");
-				calls.push(key);
-				const response = responses[key] ?? {};
-				return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
-			};
-			return { exec, calls };
-		}
-
-		function identityResponses(overrides: Record<string, { code?: number; stdout?: string; stderr?: string }> = {}) {
-			return {
-				"branch --show-current": { stdout: "kstack/fix-thing\n" },
-				"rev-parse HEAD": { stdout: `${sha}\n` },
-				"status --porcelain=v1 -z --untracked-files=all": { stdout: "?? .env.local\0" },
-				...overrides,
-			};
-		}
-
-		it("restores a forbidden path and does not commit or push", async () => {
-			const { exec, calls } = gitResponses(
-				identityResponses({
-					"restore --staged --worktree -- .env.local": {},
-				}),
-			);
-			const result = await doCommitAndPush(new GitBackend(exec), "/repo", identity, 42, "VERIFY_OK");
-			assert.deepEqual(result, {
-				kind: "failed",
-				error: "Fixer touched forbidden paths: .env.local. Those changes were restored.",
-			});
-			assert.ok(calls.includes("restore --staged --worktree -- .env.local"));
-			assert.equal(
-				calls.some((call) => call.startsWith("add ") || call.startsWith("commit ") || call.startsWith("push ")),
-				false,
-			);
-		});
-
-		it("includes the restoration error and does not commit or push", async () => {
-			const { exec, calls } = gitResponses(
-				identityResponses({
-					"restore --staged --worktree -- .env.local": { code: 1, stderr: "restore denied\n" },
-					"clean -f -- .env.local": { code: 1, stderr: "clean denied\n" },
-				}),
-			);
-			const result = await doCommitAndPush(new GitBackend(exec), "/repo", identity, 42, "VERIFY_OK");
-			assert.equal(result.kind, "failed");
-			if (result.kind === "failed") {
-				assert.match(result.error, /Fixer touched forbidden paths: \.env\.local/);
-				assert.match(result.error, /Automatic restoration failed: \.env\.local: restore denied/);
-			}
-			assert.equal(
-				calls.some((call) => call.startsWith("add ") || call.startsWith("commit ") || call.startsWith("push ")),
-				false,
-			);
 		});
 	});
 

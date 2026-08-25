@@ -29,23 +29,22 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveRepoName } from "../shared/github.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
+import { createPrMutation } from "../shared/vcs/mutation.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
 import {
 	applyThreadReplies,
 	applyTriageGuardrails,
-	doCommitAndPush,
 	fetchPRState,
 	loadPersistedState,
 	maxFixCycles,
 	parseTriage,
-	prepareMutationCheckout,
 	repoPersistKey,
 	runChildRole,
 	runCleanup,
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import { markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
+import { isForbiddenStagingPath, markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
 	buildFixerTask,
@@ -118,6 +117,7 @@ export async function runAutopilot(
 	const { config, exec, backend, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
 	const { setPhase, notify, confirm } = handlers;
 	const policy = vcsPolicy(backend.id);
+	const mutation = createPrMutation(backend);
 	let usage = emptyUsage();
 	const blockedReasons: string[] = [];
 	const blockedCodes: NonNullable<AutopilotResult["blockedCodes"]> = [];
@@ -349,72 +349,49 @@ export async function runAutopilot(
 			state.mergeStateStatus === "BEHIND"
 		) {
 			setPhase("merging-base", cycle);
-			const checkout = await prepareMutationCheckout(backend, cwd, state);
-			if (!checkout.ok) {
-				notify(checkout.error, "error");
-				return {
-					status: "blocked",
-					prState: state,
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: [checkout.error],
-					usage,
-				};
-			}
-			const rewriteScope = await backend.rewriteScope?.assertSingleRef(cwd, state.headRef);
-			if (rewriteScope && !rewriteScope.ok) {
-				notify(rewriteScope.error, "error");
-				return {
-					status: "blocked",
-					prState: state,
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: [rewriteScope.error],
-					usage,
-				};
-			}
 			const remoteBase = policy.remoteBaseDisplay(state.baseRef);
 			notify(
 				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Applying the backend's ${policy.baseUpdateVerb} update from ${remoteBase}. ${policy.baseUpdateDisclosure}`,
 				"info",
 			);
-			const merged = await backend.updateBase(cwd, state.baseRef);
-			switch (merged.kind) {
+			const updated = await mutation.updateBaseAndPublish(cwd, {
+				prNumber,
+				headRef: state.headRef,
+				headSha: state.headSha,
+				baseRef: state.baseRef,
+			});
+			switch (updated.kind) {
+				case "precondition-failed":
+					notify(updated.error, "error");
+					return {
+						status: "blocked",
+						prState: state,
+						mergeReady: false,
+						cyclesCompleted: cycle,
+						blockedReasons: [updated.error],
+						usage,
+					};
 				case "already-current":
 					notify(`${remoteBase} is already in the current workstream; refreshing GitHub state.`, "info");
 					cycle++;
 					continue;
-				case "clean": {
-					const scopeAfterUpdate = await backend.rewriteScope?.assertSingleRef(cwd, state.headRef);
-					if (scopeAfterUpdate && !scopeAfterUpdate.ok) {
-						blockedReasons.push(scopeAfterUpdate.error);
-						break;
-					}
-					const push = await backend.publishRecordedChanges(cwd, state.headRef, { existingOnly: true });
-					if (!push.ok) {
-						blockedReasons.push(`Could not publish the updated base: ${push.error}`);
-						break;
-					}
+				case "published":
 					notify(
-						`Applied the ${policy.baseUpdateVerb} update from ${remoteBase} and published ${merged.headSha.slice(0, 8)}.`,
+						`Applied the ${policy.baseUpdateVerb} update from ${remoteBase} and published ${updated.headSha.slice(0, 8)}.`,
 						"info",
 					);
 					verifiedHeadSha = null;
-					persisted = { ...persisted, headSha: merged.headSha };
+					persisted = { ...persisted, headSha: updated.headSha };
 					await ops.savePersistedState(persisted);
 					cycle++;
 					continue;
-				}
 				case "needs-human":
-					notify(merged.error, "error");
-					blockedReasons.push(merged.error);
-					break;
 				case "failed":
-					notify(merged.error, "error");
-					blockedReasons.push(merged.error);
+					notify(updated.error, "error");
+					blockedReasons.push(updated.error);
 					break;
 				default: {
-					const _exhaustive: never = merged;
+					const _exhaustive: never = updated;
 					return _exhaustive;
 				}
 			}
@@ -564,27 +541,19 @@ export async function runAutopilot(
 		if (fixThreads.length > 0 || (fixMode === "ci" && codeChecks.length > 0)) {
 			setPhase("fixing", cycle);
 			// The fixer edits the PR workspace, so validate the checkout only now.
-			const checkout = await prepareMutationCheckout(backend, cwd, state);
-			if (!checkout.ok) {
-				notify(checkout.error, "error");
+			const opened = await mutation.openCheckout(cwd, {
+				prNumber,
+				headRef: state.headRef,
+				headSha: state.headSha,
+			});
+			if (!opened.ok) {
+				notify(opened.error, "error");
 				return {
 					status: "blocked",
 					prState: state,
 					mergeReady: false,
 					cyclesCompleted: cycle,
-					blockedReasons: [checkout.error],
-					usage,
-				};
-			}
-			const rewriteScope = await backend.rewriteScope?.assertSingleRef(cwd, state.headRef);
-			if (rewriteScope && !rewriteScope.ok) {
-				notify(rewriteScope.error, "error");
-				return {
-					status: "blocked",
-					prState: state,
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: [rewriteScope.error],
+					blockedReasons: [opened.error],
 					usage,
 				};
 			}
@@ -617,7 +586,7 @@ export async function runAutopilot(
 			const confirmed = await confirm(
 				`Push fixes to PR #${prNumber}?`,
 				`Cycle ${cycle + 1} fixer (${selected.label}) completed.\n` +
-					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then publishing ${rewriteScope?.affectedRefs.join(", ") ?? state.headRef}.\n` +
+					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then publishing ${opened.checkout.affectedRefs.join(", ")}.\n` +
 					policy.fixPublicationDisclosure,
 			);
 			if (!confirmed) {
@@ -630,7 +599,15 @@ export async function runAutopilot(
 					usage,
 				};
 			}
-			const pushResult = await doCommitAndPush(backend, cwd, checkout.snapshot, prNumber, fixerOutput);
+			const pushResult = /\bVERIFY_FAIL\b/.test(fixerOutput)
+				? {
+						kind: "failed" as const,
+						error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks.",
+					}
+				: await mutation.publishFix(cwd, opened.checkout, {
+						message: `Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
+						isForbiddenPath: isForbiddenStagingPath,
+					});
 			switch (pushResult.kind) {
 				case "unchanged":
 					notify("Fixer found nothing to commit. Skipping push.", "warning");
