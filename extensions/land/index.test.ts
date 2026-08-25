@@ -9,22 +9,24 @@ describe("land registration", () => {
 		const events: string[] = [];
 		const renderers: string[] = [];
 		const lifecycleHandlers: Array<() => void> = [];
-		landExtension({
-			on: (name: string, handler: () => void) => {
-				events.push(name);
-				if (name === "session_start" || name === "session_shutdown") lifecycleHandlers.push(handler);
-			},
-			registerShortcut: (name: string) => {
-				shortcuts.push(name);
-			},
-			registerCommand: (name: string) => {
-				commands.push(name);
-			},
-			registerMessageRenderer: (name: string) => {
-				renderers.push(name);
-			},
-			events: { on: (name: string) => events.push(name) },
-		} as never);
+		landExtension(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+				on: (name: string, handler: () => void) => {
+					events.push(name);
+					if (name === "session_start" || name === "session_shutdown") lifecycleHandlers.push(handler);
+				},
+				registerShortcut: (name: string) => {
+					shortcuts.push(name);
+				},
+				registerCommand: (name: string) => {
+					commands.push(name);
+				},
+				registerMessageRenderer: (name: string) => {
+					renderers.push(name);
+				},
+				events: { on: (name: string) => events.push(name) },
+			} as never,
+		);
 		assert.deepEqual(commands, ["land"]);
 		assert.ok(shortcuts.includes("ctrl+shift+l"));
 		assert.deepEqual(renderers, ["land"]);

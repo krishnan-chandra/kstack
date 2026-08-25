@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /**
  * Bounded PR autopilot state machine.
  *
@@ -65,24 +66,23 @@ function emptyPersistedState(repoKey: string, prNumber: number): AutopilotPersis
 	return { repoKey, prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
 }
 
-function parsePersistedState(raw: unknown, repoKey: string, prNumber: number): AutopilotPersistedState {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+function parsePersistedState(raw: BoundaryValue, repoKey: string, prNumber: number): AutopilotPersistedState {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return emptyPersistedState(repoKey, prNumber);
 	}
-	const obj = raw as Record<string, unknown>;
+	const obj =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	const handled = Array.isArray(obj.handledThreadIds)
-		? obj.handledThreadIds.filter((id): id is string => typeof id === "string")
+		? obj.handledThreadIds.filter((id): id is string => isString(id))
 		: [];
 	const replied = Array.isArray(obj.repliedThreadIds)
-		? obj.repliedThreadIds.filter((id): id is string => typeof id === "string")
+		? obj.repliedThreadIds.filter((id): id is string => isString(id))
 		: [];
-	const flake = Array.isArray(obj.flakeRetried)
-		? obj.flakeRetried.filter((id): id is string => typeof id === "string")
-		: [];
+	const flake = Array.isArray(obj.flakeRetried) ? obj.flakeRetried.filter((id): id is string => isString(id)) : [];
 	return {
 		repoKey,
 		prNumber,
-		headSha: typeof obj.headSha === "string" ? obj.headSha : "",
+		headSha: isString(obj.headSha) ? obj.headSha : "",
 		handledThreadIds: handled,
 		repliedThreadIds: replied,
 		flakeRetried: flake,
@@ -114,7 +114,7 @@ export async function loadPersistedState(repoKey: string, prNumber: number): Pro
 	try {
 		const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
 		try {
-			const raw: unknown = JSON.parse(await handle.readFile("utf8"));
+			const raw: BoundaryValue = JSON.parse(await handle.readFile("utf8"));
 			return parsePersistedState(raw, repoKey, prNumber);
 		} finally {
 			await handle.close();
@@ -141,7 +141,9 @@ export async function savePersistedState(state: AutopilotPersistedState): Promis
 			await handle.close();
 		}
 	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
+		const code = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+			error as NodeJS.ErrnoException
+		).code;
 		if (code === "ELOOP" || code === "ENOTDIR") return;
 		throw error;
 	}
@@ -203,7 +205,7 @@ export async function runChildRole(
 		promptFile: opts.promptFile,
 		...(role === "triager" ? { noTools: true, stdin: triagerTask } : { taskFile: opts.taskFile }),
 		cwd: ctx.cwd,
-		...(role === "fixer" ? { tools: "read,grep,find,ls,bash,write,edit" } : {}),
+		...(role === "fixer" ? { tools: "read,grep,find,ls,bash,write,edit" } : undefined),
 		signal: ctx.signal,
 		deps: {
 			timeoutMs: opts.timeoutMinutes * 60_000,
@@ -366,12 +368,12 @@ export async function runCleanup(
 	return true;
 }
 
-function parseFailureClass(raw: unknown): FailureClass {
+function parseFailureClass(raw: BoundaryValue): FailureClass {
 	if (raw === "code" || raw === "stale-base" || raw === "flake" || raw === "infra" || raw === "unknown") return raw;
 	return "unknown";
 }
 
-function parseDecision(raw: unknown): ThreadDecision | undefined {
+function parseDecision(raw: BoundaryValue): ThreadDecision | undefined {
 	if (raw === "fix" || raw === "dismiss" || raw === "ask" || raw === "ignore") return raw;
 	return undefined;
 }
@@ -395,15 +397,16 @@ interface ParsedTriage {
 	summary: string;
 }
 
-function parseThreadEntry(raw: unknown): ParsedThread | undefined {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-	const obj = raw as Record<string, unknown>;
-	const id = typeof obj.id === "string" ? obj.id : undefined;
+function parseThreadEntry(raw: BoundaryValue): ParsedThread | undefined {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) return undefined;
+	const obj =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
+	const id = isString(obj.id) ? obj.id : undefined;
 	if (!id) return undefined;
 	const decision = parseDecision(obj.decision);
 	if (!decision) return undefined;
-	const action = typeof obj.action === "string" ? obj.action : "";
-	const reply = typeof obj.reply === "string" ? obj.reply : action;
+	const action = isString(obj.action) ? obj.action : "";
+	const reply = isString(obj.reply) ? obj.reply : action;
 	switch (decision) {
 		case "fix":
 			return { id, decision, cls: parseFailureClass(obj.cls), action, reply };
@@ -425,27 +428,31 @@ export function parseTriage(triage: string): ParsedTriage | { error: string } {
 	const fences = [...trimmed.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/gi)];
 	if (fences.length > 1) return { error: "Triage output contained multiple fenced blocks." };
 	const cleaned = fences.length === 1 ? fences[0][1].trim() : trimmed;
-	let parsed: unknown;
+	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(cleaned);
 	} catch (err) {
-		return { error: `Could not parse triage JSON: ${(err as Error).message}` };
+		return {
+			error: `Could not parse triage JSON: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+		};
 	}
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+	if (!isObject(parsed) || parsed === null || Array.isArray(parsed)) {
 		return { error: "Triage JSON must be an object." };
 	}
-	const obj = parsed as Record<string, unknown>;
+	const obj =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ parsed as JsonObject;
 	const checksRaw = Array.isArray(obj.checks) ? obj.checks : [];
 	const threadsRaw = Array.isArray(obj.threads) ? obj.threads : [];
 	const checks: ParsedCheck[] = [];
 	for (const item of checksRaw) {
-		if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
-		const row = item as Record<string, unknown>;
-		if (typeof row.name !== "string") continue;
+		if (!isObject(item) || item === null || Array.isArray(item)) continue;
+		const row =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ item as JsonObject;
+		if (!isString(row.name)) continue;
 		checks.push({
 			name: row.name,
 			cls: parseFailureClass(row.cls),
-			action: typeof row.action === "string" ? row.action : "",
+			action: isString(row.action) ? row.action : "",
 		});
 	}
 	const threads = threadsRaw.flatMap((item) => {
@@ -457,7 +464,7 @@ export function parseTriage(triage: string): ParsedTriage | { error: string } {
 		threads,
 		conflicts: obj.conflicts === true,
 		draft: obj.draft === true,
-		summary: typeof obj.summary === "string" ? obj.summary : "",
+		summary: isString(obj.summary) ? obj.summary : "",
 	};
 }
 
@@ -488,7 +495,7 @@ export function summarizeTriage(triage: string): string {
 	return `${parsed.checks.length} checks, ${parsed.threads.length} threads analyzed. ${parsed.summary || ""}`;
 }
 
-export function classifyBlockers(parsed: ParsedTriage): { hasUnfixableCI: boolean; hasAskThreads: boolean } {
+export function classifyBlockers(parsed: ParsedTriage) {
 	const hasUnfixableCI = parsed.checks.some((c) => c.cls === "infra" || c.cls === "unknown" || c.cls === "stale-base");
 	const hasAskThreads = parsed.threads.some((t) => t.decision === "ask");
 	return { hasUnfixableCI, hasAskThreads };

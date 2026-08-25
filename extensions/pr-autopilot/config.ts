@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /**
  * pr-autopilot configuration: discovery, validation, and tiny-model resolution.
  *
@@ -60,13 +61,14 @@ export const DEFAULT_TINY_MODELS: readonly AutopilotModelSpec[] = [
  * must be at most "low" (or absent, which defaults to "low").
  */
 function validateModelSpec(
-	raw: unknown,
+	raw: BoundaryValue,
 	index: number,
 ): { ok: true; spec: AutopilotModelSpec } | { ok: false; error: string } {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: `Model entry ${index} must be an object {label, model, thinking?}.` };
 	}
-	const value = raw as Record<string, unknown>;
+	const value =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	const fields = validateModelSpecFields(value, {
 		requireLabel: true,
 		allowedThinking: TINY_THINKING,
@@ -74,7 +76,10 @@ function validateModelSpec(
 			label: () => `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].`,
 			model: () => `Model entry ${index} (${value.label}): "model" must be "provider/model".`,
 			thinking: (thinking) =>
-				typeof thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(thinking)
+				isString(thinking) &&
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+					THINKING_LEVELS as readonly string[]
+				).includes(thinking)
 					? `Model entry ${index} (${value.label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`
 					: `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
 		},
@@ -101,11 +106,12 @@ interface ValidateConfigError {
 	error: string;
 }
 
-export function validateConfig(raw: unknown): ValidateConfigResult | ValidateConfigError {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+export function validateConfig(raw: BoundaryValue): ValidateConfigResult | ValidateConfigError {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: "pr-autopilot config must be a JSON object." };
 	}
-	const obj = raw as Record<string, unknown>;
+	const obj =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 
 	if (!Array.isArray(obj.models)) {
 		return { ok: false, error: '"models" must be an array of {label, model, thinking?}.' };

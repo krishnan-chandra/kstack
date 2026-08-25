@@ -134,7 +134,9 @@ describe("Graphite stack landing", () => {
 				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => ({
 					merged: true,
-					snapshot: { number } as never,
+					snapshot: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+						number,
+					} as never,
 				}),
 			},
 		);
@@ -202,7 +204,12 @@ describe("Graphite stack landing", () => {
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
 				realpath: (path) => path,
-				waitForMerge: async (_exec, _cwd, number) => ({ merged: true, snapshot: { number } as never }),
+				waitForMerge: async (_exec, _cwd, number) => ({
+					merged: true,
+					snapshot: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+						number,
+					} as never,
+				}),
 			},
 		);
 		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "landed");
@@ -401,7 +408,12 @@ describe("Graphite stack landing", () => {
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
 				realpath: (path) => path,
-				waitForMerge: async () => ({ merged: true, snapshot: { number: 20 } as never }),
+				waitForMerge: async () => ({
+					merged: true,
+					snapshot: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+						number: 20,
+					} as never,
+				}),
 			},
 		);
 		assert.equal(response.status, "stack");
@@ -470,7 +482,12 @@ describe("Graphite stack landing", () => {
 				waitForMerge: async (_exec, _cwd, number) => {
 					if (number === 12) throw new Error("GitHub unavailable");
 					bottomSettled = true;
-					return { merged: true, snapshot: { number } as never };
+					return {
+						merged: true,
+						snapshot: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+							number,
+						} as never,
+					};
 				},
 			},
 		);

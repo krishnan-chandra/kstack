@@ -46,7 +46,9 @@ type ModelMatch =
 	| { status: "ambiguous"; matches: HandoffModel[] };
 
 export function isHandoffEffortLevel(value: string): value is HandoffEffortLevel {
-	return (HANDOFF_EFFORT_LEVELS as readonly string[]).includes(value);
+	return /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+		HANDOFF_EFFORT_LEVELS as readonly string[]
+	).includes(value);
 }
 
 /**

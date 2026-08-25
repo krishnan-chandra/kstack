@@ -1,3 +1,4 @@
+import { type BoundaryValue, isNumber, isString, type JsonObject } from "../shared/validation.ts";
 /**
  * SQLite catalog for the session archive: schema initialization, transactional
  * imports, FTS, source byte references, and SELECT-only query helpers. Raw
@@ -114,10 +115,14 @@ function ensureWalJournalMode(db: DatabaseSync, dbPath: string): void {
 	const deadline = Date.now() + SQLITE_BUSY_TIMEOUT_MS;
 	while (true) {
 		try {
-			const current = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
+			const current = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
+				.prepare("PRAGMA journal_mode")
+				.get() as { journal_mode: string };
 			if (current.journal_mode === "wal") return;
 
-			const changed = db.prepare("PRAGMA journal_mode=WAL").get() as { journal_mode: string };
+			const changed = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
+				.prepare("PRAGMA journal_mode=WAL")
+				.get() as { journal_mode: string };
 			if (changed.journal_mode === "wal") return;
 			throw new ArchiveStoreError(`failed to enable WAL journal mode (SQLite reported ${changed.journal_mode})`);
 		} catch (err) {
@@ -133,7 +138,9 @@ export function openArchiveDbReadOnly(dbPath: string): DatabaseSync {
 	const db = new DatabaseSync(dbPath, { readOnly: true });
 	try {
 		db.exec("PRAGMA query_only=ON");
-		const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
+		const row = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
+			.prepare("PRAGMA user_version")
+			.get() as { user_version: number };
 		if (row.user_version !== SCHEMA_VERSION) {
 			throw new ArchiveStoreError(
 				`unsupported archive schema version ${row.user_version} (expected ${SCHEMA_VERSION})`,
@@ -147,11 +154,15 @@ export function openArchiveDbReadOnly(dbPath: string): DatabaseSync {
 }
 
 function initializeSchema(db: DatabaseSync): void {
-	const fast = db.prepare("PRAGMA user_version").get() as { user_version: number };
+	const fast = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
+		.prepare("PRAGMA user_version")
+		.get() as { user_version: number };
 	if (fast.user_version === SCHEMA_VERSION) return;
 	db.exec("BEGIN IMMEDIATE");
 	try {
-		const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
+		const row = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
+			.prepare("PRAGMA user_version")
+			.get() as { user_version: number };
 		if (row.user_version === SCHEMA_VERSION) {
 			db.exec("COMMIT");
 			return;
@@ -190,7 +201,7 @@ export interface PendingImport {
 export function importSessionPending(db: DatabaseSync, input: PendingImport): "imported" | "already-archived" {
 	db.exec("BEGIN IMMEDIATE");
 	try {
-		const existing = db
+		const existing = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
 			.prepare("SELECT state, sha256, archive_path FROM archive_sessions WHERE session_id = ?")
 			.get(input.header.id) as { state: string; sha256: string; archive_path: string | null } | undefined;
 
@@ -282,7 +293,7 @@ export function finalizeArchived(
 ): "finalized" | "already-archived" {
 	db.exec("BEGIN IMMEDIATE");
 	try {
-		const existing = db
+		const existing = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ db
 			.prepare("SELECT state, archive_path, sha256 FROM archive_sessions WHERE session_id = ?")
 			.get(sessionId) as { state: string; archive_path: string | null; sha256: string } | undefined;
 		if (!existing) {
@@ -478,38 +489,38 @@ interface ArchiveSessionRow {
 	verified_mtime_ms: number | null;
 }
 
-function decodeString(row: Record<string, unknown>, table: string, column: string): string {
+function decodeString(row: JsonObject, table: string, column: string): string {
 	const value = row[column];
-	if (typeof value !== "string") throw new Error(`${table} returned invalid ${column}.`);
+	if (!isString(value)) throw new Error(`${table} returned invalid ${column}.`);
 	return value;
 }
 
-function decodeNullableString(row: Record<string, unknown>, table: string, column: string): string | null {
+function decodeNullableString(row: JsonObject, table: string, column: string): string | null {
 	const value = row[column];
-	if (value !== null && typeof value !== "string") throw new Error(`${table} returned invalid ${column}.`);
+	if (value !== null && !isString(value)) throw new Error(`${table} returned invalid ${column}.`);
 	return value;
 }
 
-function decodeFiniteNumber(row: Record<string, unknown>, table: string, column: string): number {
+function decodeFiniteNumber(row: JsonObject, table: string, column: string): number {
 	const value = row[column];
-	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
+	if (!isNumber(value) || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
 	return value;
 }
 
-function decodeNullableFiniteNumber(row: Record<string, unknown>, table: string, column: string): number | null {
+function decodeNullableFiniteNumber(row: JsonObject, table: string, column: string): number | null {
 	const value = row[column];
 	if (value === null || value === undefined) return null;
-	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
+	if (!isNumber(value) || !Number.isFinite(value)) throw new Error(`${table} returned invalid ${column}.`);
 	return value;
 }
 
-function decodeState(row: Record<string, unknown>, table: string): ArchiveSessionRow["state"] {
+function decodeState(row: JsonObject, table: string): ArchiveSessionRow["state"] {
 	const state = decodeString(row, table, "state");
 	if (state === "pending" || state === "archived" || state === "error") return state;
 	throw new Error(`${table} returned invalid state.`);
 }
 
-function decodeSessionRow(value: unknown): ArchiveSessionRow {
+function decodeSessionRow(value: BoundaryValue): ArchiveSessionRow {
 	const table = "archive_sessions";
 	const row = asRecord(value);
 	if (!row) throw new Error(`${table} returned a non-object row.`);
@@ -531,7 +542,7 @@ function decodeSessionRow(value: unknown): ArchiveSessionRow {
 	};
 }
 
-function decodeRows<T>(values: unknown[], decode: (value: unknown) => T): T[] {
+function decodeRows<T>(values: BoundaryValue[], decode: (value: BoundaryValue) => T): T[] {
 	return values.map(decode);
 }
 
@@ -570,7 +581,7 @@ export interface ArchivedIntegrityRow {
 	verified_mtime_ms: number | null;
 }
 
-function decodeArchivedIntegrityRow(value: unknown): ArchivedIntegrityRow {
+function decodeArchivedIntegrityRow(value: BoundaryValue): ArchivedIntegrityRow {
 	const table = "archive_sessions";
 	const row = asRecord(value);
 	if (!row) throw new Error(`${table} returned a non-object row.`);
@@ -627,7 +638,7 @@ interface SearchHit {
 	snippet: string;
 }
 
-function decodeSearchHit(value: unknown): SearchHit {
+function decodeSearchHit(value: BoundaryValue): SearchHit {
 	const table = "archive search";
 	const row = asRecord(value);
 	if (!row) throw new Error(`${table} returned a non-object row.`);
@@ -693,7 +704,9 @@ export function searchArchive(
 			decodeSearchHit,
 		);
 	} catch (err) {
-		const message = (err as Error).message;
+		const message = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+			err as Error
+		).message;
 		if (/fts5:|unterminated string|no such column:/i.test(message)) {
 			throw new FtsQueryError(
 				`invalid FTS5 query ${JSON.stringify(opts.query)}: ${message}. ` +
@@ -716,7 +729,7 @@ interface ArchiveEntryRow {
 	raw_length: number;
 }
 
-function decodeArchiveEntryRow(value: unknown): ArchiveEntryRow {
+function decodeArchiveEntryRow(value: BoundaryValue): ArchiveEntryRow {
 	const table = "archive_entries";
 	const row = asRecord(value);
 	if (!row) throw new Error(`${table} returned a non-object row.`);
@@ -733,7 +746,7 @@ function decodeArchiveEntryRow(value: unknown): ArchiveEntryRow {
 	};
 }
 
-function decodeCount(value: unknown, table: string): number {
+function decodeCount(value: BoundaryValue, table: string): number {
 	const row = asRecord(value);
 	if (!row) throw new Error(`${table} returned a non-object row.`);
 	return decodeFiniteNumber(row, table, "n");

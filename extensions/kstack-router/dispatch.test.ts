@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { LAND_REQUEST_EVENT } from "../land/api.ts";
 import { PLAN_IMPLEMENT_REQUEST_EVENT } from "../plan-implement/api.ts";
 import { PRAUTOPILOT_REQUEST_EVENT } from "../pr-autopilot/api.ts";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { dispatchRoute, getRestrictedTools } from "./dispatch.ts";
 import { RouterLifecycle } from "./lifecycle.ts";
 
@@ -53,8 +54,9 @@ describe("dispatchRoute", () => {
 		return { lifecycle, session, token };
 	}
 
-	const pi = {} as ExtensionAPI;
-	const ctx = {} as ExtensionCommandContext;
+	const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionAPI;
+	const ctx =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext;
 
 	it("fails closed for active-session routes (handled by the command handler)", async () => {
 		const { lifecycle, token } = setup();
@@ -79,7 +81,7 @@ describe("dispatchRoute", () => {
 
 	it("keeps current fast-change dispatch in the active session", async () => {
 		const { lifecycle, token } = setup();
-		const bus: ExtensionAPI = {
+		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: {
 				emit(name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
 					assert.equal(name, PLAN_IMPLEMENT_REQUEST_EVENT);
@@ -96,7 +98,7 @@ describe("dispatchRoute", () => {
 
 	it("reports a current-session fast-change dispatch failure", async () => {
 		const { lifecycle, token } = setup();
-		const bus: ExtensionAPI = {
+		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: {
 				emit(_name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
 					value.claimed = true;
@@ -112,7 +114,7 @@ describe("dispatchRoute", () => {
 
 	it("keeps worktree fast-change dispatch in the parent session", async () => {
 		const { lifecycle, token } = setup();
-		const bus: ExtensionAPI = {
+		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: {
 				emit(_name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
 					value.claimed = true;
@@ -128,10 +130,10 @@ describe("dispatchRoute", () => {
 
 	it("dispatches pr-autopilot through the typed request channel", async () => {
 		const { lifecycle, token } = setup();
-		const seen: unknown[] = [];
-		const bus: ExtensionAPI = {
+		const seen: BoundaryValue[] = [];
+		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: {
-				emit(name: string, value: { payload: unknown; claimed: boolean; completion?: Promise<unknown> }) {
+				emit(name: string, value: { payload: BoundaryValue; claimed: boolean; completion?: Promise<unknown> }) {
 					assert.equal(name, PRAUTOPILOT_REQUEST_EVENT);
 					seen.push(value.payload);
 					value.claimed = true;
@@ -148,7 +150,9 @@ describe("dispatchRoute", () => {
 			token,
 			lifecycle,
 			bus,
-			{ cwd: "/repo" } as ExtensionCommandContext,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+				cwd: "/repo",
+			} as ExtensionCommandContext,
 			{ route: "pr-autopilot", mode: "drive" },
 		);
 		assert.equal(result.status, "dispatched");
@@ -157,10 +161,10 @@ describe("dispatchRoute", () => {
 
 	it("dispatches land with the exact target, readiness, and method", async () => {
 		const { lifecycle, token } = setup();
-		const seen: unknown[] = [];
-		const bus: ExtensionAPI = {
+		const seen: BoundaryValue[] = [];
+		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: {
-				emit(name: string, value: { payload: unknown; claimed: boolean; completion?: Promise<unknown> }) {
+				emit(name: string, value: { payload: BoundaryValue; claimed: boolean; completion?: Promise<unknown> }) {
 					assert.equal(name, LAND_REQUEST_EVENT);
 					seen.push(value.payload);
 					value.claimed = true;
@@ -177,7 +181,9 @@ describe("dispatchRoute", () => {
 			token,
 			lifecycle,
 			bus,
-			{ cwd: "/work" } as ExtensionCommandContext,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+				cwd: "/work",
+			} as ExtensionCommandContext,
 			{ route: "land", prNumber: 42, readiness: "watch", method: "squash" },
 		);
 		assert.equal(result.status, "dispatched");
@@ -197,7 +203,9 @@ describe("dispatchRoute", () => {
 	it("fails closed when a post-PR request is missing or mismatched", async () => {
 		const { lifecycle, token } = setup();
 		const emit = () => assert.fail("must not emit");
-		const bus = { events: { emit } } as never;
+		const bus = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			events: { emit },
+		} as never;
 		const missing = await dispatchRoute("pr-autopilot", "", undefined, false, "generic", token, lifecycle, bus, ctx);
 		assert.equal(missing.status, "failed");
 		const mismatched = await dispatchRoute("land", "", undefined, false, "generic", token, lifecycle, bus, ctx, {
@@ -209,7 +217,9 @@ describe("dispatchRoute", () => {
 
 	it("reports an unavailable post-PR handler", async () => {
 		const { lifecycle, token } = setup();
-		const bus = { events: { emit() {} } } as never;
+		const bus = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			events: { emit() {} },
+		} as never;
 		const result = await dispatchRoute(
 			"pr-autopilot",
 			"",
@@ -219,7 +229,9 @@ describe("dispatchRoute", () => {
 			token,
 			lifecycle,
 			bus,
-			{ cwd: "/repo" } as ExtensionCommandContext,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+				cwd: "/repo",
+			} as ExtensionCommandContext,
 			{ route: "pr-autopilot", mode: "check", prNumber: 3 },
 		);
 		assert.equal(result.status, "failed");

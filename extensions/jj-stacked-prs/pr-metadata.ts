@@ -1,3 +1,4 @@
+import { type BoundaryValue, isString } from "../shared/validation.ts";
 /** Bounded slice evidence and write-pr metadata generation. */
 
 import { type Api, type Model, type Usage, uuidv7 } from "@earendil-works/pi-ai";
@@ -293,13 +294,13 @@ function canonicalizeSectionSpacing(body: string): string {
 }
 
 export function parsePrMetadataResponse(text: string, repositoryTemplate?: RepositoryPrTemplate): PrMetadata {
-	let value: unknown;
+	let value: BoundaryValue;
 	try {
 		value = JSON.parse(extractJsonPayload(text));
 	} catch {
 		throw new Error("PR metadata model did not return valid JSON.");
 	}
-	if (!isRecord(value) || typeof value.title !== "string" || typeof value.body !== "string") {
+	if (!isRecord(value) || !isString(value.title) || !isString(value.body)) {
 		throw new Error("PR metadata JSON must contain string title and body fields.");
 	}
 	const title = value.title.trim();
@@ -373,10 +374,7 @@ interface MetadataModelDeps {
 	onProgress?: (bookmark: string) => void;
 }
 
-export function createModelMetadataGenerator(
-	run: ProcessRunner,
-	deps: MetadataModelDeps,
-): { generate: PrMetadataGenerator; usage: () => Usage | undefined } {
+export function createModelMetadataGenerator(run: ProcessRunner, deps: MetadataModelDeps) {
 	let totalUsage: Usage | undefined;
 	const completeText = async (
 		request: PrMetadataRequest,
@@ -389,7 +387,7 @@ export function createModelMetadataGenerator(
 				signal: request.signal,
 				cacheRetention: "none",
 				sessionId: uuidv7(),
-				...(deps.thinkingLevel === "off" || !deps.thinkingLevel ? {} : { reasoning: deps.thinkingLevel }),
+				...(deps.thinkingLevel === "off" || !deps.thinkingLevel ? undefined : { reasoning: deps.thinkingLevel }),
 			},
 		);
 		totalUsage = addUsage(totalUsage, response.usage);
@@ -397,7 +395,7 @@ export function createModelMetadataGenerator(
 			throw new Error(response.errorMessage || `Metadata model stopped with ${response.stopReason}.`);
 		}
 		return response.content
-			.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+			.filter((part): part is { type: "text"; text: string } => part.type === "text" && isString(part.text))
 			.map((part) => part.text)
 			.join("\n");
 	};
@@ -407,7 +405,7 @@ export function createModelMetadataGenerator(
 		timestamp: Date.now(),
 	});
 	return {
-		generate: async (request) => {
+		generate: async (request: Parameters<PrMetadataGenerator>[0]) => {
 			if (!deps.hasConfiguredAuth(deps.model)) {
 				throw new Error("The active Pi model is unavailable or has no configured authentication.");
 			}

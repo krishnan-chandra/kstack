@@ -141,7 +141,7 @@ export async function runFastWorktree(
 			error: error instanceof Error ? error.message : String(error),
 			branch,
 			cwd,
-			...(childSession ? { session: childSession } : {}),
+			...(childSession ? { session: childSession } : undefined),
 		};
 	} finally {
 		if (temp) rmSync(temp, { recursive: true, force: true });

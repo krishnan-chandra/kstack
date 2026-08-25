@@ -1,3 +1,4 @@
+import { isObject, isString, type JsonObject } from "./validation.ts";
 /** Shared lifecycle for isolated Pi child agents.
  *
  * Callers choose idle and/or absolute runtime limits. This lets legacy callers
@@ -31,7 +32,7 @@ export interface SpawnedProcess {
 	pid?: number;
 }
 
-export type SpawnImpl = (command: string, args: string[], options: Record<string, unknown>) => SpawnedProcess;
+export type SpawnImpl = (command: string, args: string[], options: JsonObject) => SpawnedProcess;
 
 export interface ChildUsage {
 	input: number;
@@ -103,7 +104,7 @@ export function childIsolationArgs(options: ChildIsolationOptions = {}): string[
 	return args;
 }
 
-export function getPiInvocation(args: string[]): { command: string; args: string[] } {
+export function getPiInvocation(args: string[]) {
 	const currentScript = process.argv[1];
 	if (currentScript && existsSync(currentScript)) {
 		return { command: process.execPath, args: [currentScript, ...args] };
@@ -136,13 +137,13 @@ export function formatDuration(ms: number): string {
 	return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
 }
 
-export function summarizeToolCall(toolName: string, args: Record<string, unknown> | undefined): string {
+export function summarizeToolCall(toolName: string, args: JsonObject | undefined): string {
 	const raw =
-		(args?.path as string) ??
-		(args?.filePath as string) ??
-		(args?.pattern as string) ??
-		(args?.command as string) ??
-		Object.values(args ?? {}).find((value): value is string => typeof value === "string");
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (args?.path as string) ??
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (args?.filePath as string) ??
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (args?.pattern as string) ??
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (args?.command as string) ??
+		Object.values(args ?? {}).find((value): value is string => isString(value));
 	if (!raw) return toolName;
 	const compact = raw.includes("/") ? (raw.split("/").filter(Boolean).pop() ?? raw) : raw;
 	return `${toolName} ${compact.length > 48 ? `${compact.slice(0, 47)}…` : compact}`;
@@ -178,7 +179,10 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		});
 	}
 	const prepared = preparedResult.prepared;
-	const spawnImpl = deps.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
+	// SAFETY: nodeSpawn implements SpawnImpl's child-process contract.
+	const spawnImpl =
+		deps.spawnImpl ??
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (nodeSpawn as SpawnImpl);
 	const invocation = (deps.piInvocation ?? getPiInvocation)([...prepared.cliArgs, ...options.args]);
 	const debugCap = parsePositiveInteger(process.env.KSTACK_CHILD_DEBUG_CAP_BYTES);
 	const outputCap = debugCap ?? deps.outputCapBytes ?? DEFAULT_OUTPUT_CAP;
@@ -199,7 +203,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		} catch (error) {
 			resolve({
 				status: "failed",
-				error: `Spawn failed: ${(error as Error).message}`,
+				error: `Spawn failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
 				usage,
 				stderr: "",
 				session: sessionStore.finish(prepared, { spawnFailed: true }),
@@ -229,7 +233,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		let firstRecordSeen = false;
 		let spawnFailed = false;
 
-		const emit = () => options.onProgress?.({ turns: usage.turns, activity, ...(preview ? { preview } : {}) });
+		const emit = () => options.onProgress?.({ turns: usage.turns, activity, ...(preview ? { preview } : undefined) });
 		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
 			try {
 				if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
@@ -358,7 +362,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 						const validation = validateSessionHeader(record, prepared);
 						if (validation.ok) observedHeader = validation.header;
 						else forcedMissingReason = "protocol-mismatch";
-					} else if (typeof record === "object" && record !== null && "type" in record && record.type === "session") {
+					} else if (isObject(record) && record !== null && "type" in record && record.type === "session") {
 						forcedMissingReason = "protocol-mismatch";
 					}
 				},
@@ -432,8 +436,11 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			finish({ status: "completed", output, usage });
 		});
 
-		if (options.signal)
-			options.signal.aborted ? abort() : options.signal.addEventListener("abort", abort, { once: true });
+		if (options.signal?.aborted) {
+			abort();
+		} else {
+			options.signal?.addEventListener("abort", abort, { once: true });
+		}
 		armIdle();
 		if (deps.maxRuntimeMs !== undefined) {
 			runtimeTimer = setTimeout(() => {

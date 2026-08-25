@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, type JsonObject } from "../shared/validation.ts";
 /** Router configuration from kstack.json. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
@@ -12,19 +13,23 @@ import { DEFAULTS, type RouterConfig } from "./types.ts";
 
 export type ConfigLoad = SharedConfigLoad<RouterConfig>;
 
-export function validateRouterConfig(raw: unknown): { ok: true; config: RouterConfig } | { ok: false; error: string } {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+export function validateRouterConfig(
+	raw: BoundaryValue,
+): { ok: true; config: RouterConfig } | { ok: false; error: string } {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: "kstack-router config must be a JSON object." };
 	}
 
-	const obj = raw as Record<string, unknown>;
+	const obj =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	const config: RouterConfig = {};
 
 	if (obj.classifier !== undefined) {
-		if (typeof obj.classifier !== "object" || obj.classifier === null || Array.isArray(obj.classifier)) {
+		if (!isObject(obj.classifier) || obj.classifier === null || Array.isArray(obj.classifier)) {
 			return { ok: false, error: '"kstack-router.classifier" must be an object {"model": "...", "thinking"?}.' };
 		}
-		const classifier = obj.classifier as Record<string, unknown>;
+		const classifier =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ obj.classifier as JsonObject;
 		const fields = validateModelSpecFields(classifier, {
 			requireLabel: false,
 			errors: {

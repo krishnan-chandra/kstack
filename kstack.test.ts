@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerKstackExtensions } from "./kstack.ts";
 
 test("registerKstackExtensions preserves order and rejects a partial load", async () => {
 	const loaded: string[] = [];
+	// SAFETY: This test double implements the registration methods exercised before the expected partial-load failure.
 	const pi = {
 		registerShortcut() {},
 		on() {},
-	} as unknown as ExtensionAPI;
+	} as never;
 
 	await assert.rejects(
 		registerKstackExtensions(pi, [

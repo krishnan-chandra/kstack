@@ -114,7 +114,7 @@ function verdictSession(
 		label,
 		role,
 		kind: "missing",
-		...(session?.id ? { id: session.id } : {}),
+		...(session?.id ? { id: session.id } : undefined),
 		reason: session?.reason ?? "not-reported",
 	};
 }
@@ -183,8 +183,8 @@ export async function runReviewPipeline(
 						if (fx.isCurrent())
 							dashboard?.progress(label, {
 								turns,
-								...(activity ? { activity } : {}),
-								...(preview !== undefined ? { preview } : {}),
+								...(activity ? { activity } : undefined),
+								...(preview !== undefined ? { preview } : undefined),
 							});
 					},
 					onEvent: (event) => {
@@ -199,7 +199,7 @@ export async function runReviewPipeline(
 						dashboard?.complete(spec.label, {
 							status: result.status,
 							turns: result.usage?.turns,
-							...(result.status === "failed" ? { error: result.error } : {}),
+							...(result.status === "failed" ? { error: result.error } : undefined),
 						});
 						dashboard?.note(
 							spec.label,
@@ -265,8 +265,8 @@ export async function runReviewPipeline(
 				if (fx.isCurrent())
 					dashboard?.progress("lead", {
 						turns,
-						...(activity ? { activity } : {}),
-						...(preview !== undefined ? { preview } : {}),
+						...(activity ? { activity } : undefined),
+						...(preview !== undefined ? { preview } : undefined),
 					});
 			},
 			onEvent: (event) => {
@@ -278,7 +278,7 @@ export async function runReviewPipeline(
 			dashboard?.complete("lead", {
 				status: synthesisResult.status,
 				turns: synthesisResult.usage?.turns,
-				...(synthesisResult.status === "failed" ? { error: synthesisResult.error } : {}),
+				...(synthesisResult.status === "failed" ? { error: synthesisResult.error } : undefined),
 			});
 			dashboard?.note(
 				"lead",
@@ -302,7 +302,7 @@ export async function runReviewPipeline(
 				label: result.label,
 				model: result.model,
 				status: result.status,
-				...(result.status === "failed" ? { error: result.error } : {}),
+				...(result.status === "failed" ? { error: result.error } : undefined),
 			})),
 			synthesisModel: synthesis.cliId,
 			truncated: scope.truncated || truncated,

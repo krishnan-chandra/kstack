@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
+import type { BoundaryValue, JsonObject } from "../shared/validation.ts";
 import { buildClassifierChildArgs, runClassifier, type SpawnedProcess } from "./classifier-runner.ts";
 import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
 
 const ID = "00000000-0000-4000-8000-000000000001";
 const sessionStore = {
-	prepare: (_identity: unknown, cwd: string) => ({
+	prepare: (_identity: BoundaryValue, cwd: string) => ({
 		ok: true as const,
 		prepared: {
 			id: ID,
@@ -42,8 +43,12 @@ class FakeStdin {
 
 class FakeProcess implements SpawnedProcess {
 	stdin = new FakeStdin();
-	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
-	stderr = new EventEmitter() as SpawnedProcess["stderr"] & EventEmitter;
+	stdout =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stdout"] &
+			EventEmitter;
+	stderr =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stderr"] &
+			EventEmitter;
 	private events = new EventEmitter();
 	killed = false;
 	kills: string[] = [];
@@ -80,7 +85,7 @@ class FakeProcess implements SpawnedProcess {
 	}
 }
 
-function assistantEvent(text: string, usage: Record<string, unknown> = {}): string {
+function assistantEvent(text: string, usage: JsonObject = {}): string {
 	return `${JSON.stringify({
 		type: "message_end",
 		message: {
@@ -91,7 +96,7 @@ function assistantEvent(text: string, usage: Record<string, unknown> = {}): stri
 	})}\n`;
 }
 
-function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
+function options(process: FakeProcess, extra: Partial<Parameters<typeof runClassifier>[0]> = {}) {
 	return {
 		model: "provider/model",
 		task: "sensitive-task-content",

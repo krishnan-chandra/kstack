@@ -72,7 +72,8 @@ function titleContract(
 	const requiresConventionalTitle =
 		/conventional commits?/i.test(source) || /`type(?:\(scope\))?!?: description`/i.test(source);
 	const wordMatch = source.match(/at least\s+(\d+|one|two|three|four|five)\s+words?\s+after\s+the\s+colon/i);
-	const namedNumbers: Readonly<Record<string, number>> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+	type NamedNumbers = Readonly<Record<string, number>>;
+	const namedNumbers: NamedNumbers = { one: 1, two: 2, three: 3, four: 4, five: 5 };
 	const rawMinimum = wordMatch?.[1]?.toLowerCase();
 	let minimumDescriptionWords: number | undefined;
 	if (rawMinimum !== undefined) {

@@ -59,7 +59,7 @@ describe("pr-autopilot config", () => {
 	it("rejects duplicate labels and models", () => {
 		const base = { thinking: "low" };
 		assert.match(
-			(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 				validateConfig({
 					models: [
 						{ ...base, label: "a", model: "openai/m1" },
@@ -70,7 +70,7 @@ describe("pr-autopilot config", () => {
 			/Duplicate model label/,
 		);
 		assert.match(
-			(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 				validateConfig({
 					models: [
 						{ ...base, label: "a", model: "openai/m1" },
@@ -85,7 +85,7 @@ describe("pr-autopilot config", () => {
 	it("rejects invalid model ids, timeouts, and concurrency", () => {
 		const base = { thinking: "low" };
 		assert.match(
-			(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 				validateConfig({
 					models: [
 						{ ...base, label: "a", model: "bad" },
@@ -96,7 +96,7 @@ describe("pr-autopilot config", () => {
 			/provider\/model/,
 		);
 		assert.match(
-			(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 				validateConfig({
 					models: [
 						{ ...base, label: "a", model: "openai/m1" },
@@ -108,7 +108,7 @@ describe("pr-autopilot config", () => {
 			/between 1 and 15/,
 		);
 		assert.match(
-			(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 				validateConfig({
 					models: [
 						{ ...base, label: "a", model: "openai/m1" },
@@ -120,7 +120,7 @@ describe("pr-autopilot config", () => {
 			/between 1 and 5/,
 		);
 		assert.match(
-			(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 				validateConfig({
 					models: [
 						{ ...base, label: "a", model: "openai/m1" },

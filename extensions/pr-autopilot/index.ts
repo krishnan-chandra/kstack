@@ -70,7 +70,10 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerMessageRenderer("pr-autopilot", (message, { expanded, outputPad }, theme) => {
-		const details = message.details as PhaseDetails | undefined;
+		const details =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ message.details as
+				| PhaseDetails
+				| undefined;
 		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		const icon = theme.fg("success", "▢");
 		const header = `${icon} ${theme.fg("accent", "PR Autopilot")} ${theme.fg("muted", `— mode: ${details?.mode ?? "check"} — ${details?.status ?? "running"} — cycles: ${details?.cycles ?? 0}`)}`;

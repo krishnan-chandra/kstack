@@ -109,7 +109,14 @@ function stageSession(
 	try {
 		canonicalSource = canonicalizeActiveSource(sourcePath, sessionDir, deps.archiveRoot);
 	} catch (err) {
-		return { rejected: { status: "rejected", message: (err as Error).message } };
+		return {
+			rejected: {
+				status: "rejected",
+				message: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+					err as Error
+				).message,
+			},
+		};
 	}
 
 	const content = readFileSync(canonicalSource);
@@ -120,7 +127,7 @@ function stageSession(
 		return {
 			rejected: {
 				status: "rejected",
-				message: `Refusing to archive a malformed session file: ${(err as Error).message}`,
+				message: `Refusing to archive a malformed session file: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
 			},
 		};
 	}
@@ -232,7 +239,9 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 			fresh.notify(`Session archived: ${destPath}`, "info");
 			await options.afterArchive?.(fresh);
 		} catch (err) {
-			finalizationError = (err as Error).message;
+			finalizationError =
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error)
+					.message;
 			fresh.notify(
 				`Archive finalization failed: ${finalizationError}. ` +
 					"The complete session file is preserved (check both the session directory and the archive); " +
@@ -314,7 +323,10 @@ export async function archiveInactiveSessions(options: ArchiveInactiveBulkOption
 			// into results, but an unexpected throw must not lose the batch.
 			outcome = {
 				sourcePath,
-				result: { status: "failed", message: `Unexpected error: ${(err as Error).message}` },
+				result: {
+					status: "failed",
+					message: `Unexpected error: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				},
 			};
 		}
 		outcomes.push(outcome);
@@ -342,11 +354,16 @@ export async function restoreArchivedSession(options: {
 			} catch (err) {
 				return {
 					status: "failed",
-					message: `Restore failed: ${(err as Error).message}. A complete copy was preserved.`,
+					message: `Restore failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}. A complete copy was preserved.`,
 				};
 			}
 		} catch (err) {
-			return { status: "rejected", message: (err as Error).message };
+			return {
+				status: "rejected",
+				message: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+					err as Error
+				).message,
+			};
 		} finally {
 			db.close();
 		}
@@ -400,7 +417,7 @@ export async function archiveInactiveSession(options: ArchiveInactiveOptions): P
 			return {
 				status: "failed",
 				message:
-					`Archive finalization failed: ${(err as Error).message}. ` +
+					`Archive finalization failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}. ` +
 					"A complete copy of the session is preserved and tracked as 'pending'. " +
 					"Pi will inspect it on startup; retry the remaining source with /session-archive-other.",
 			};

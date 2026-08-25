@@ -111,7 +111,9 @@ describe("readHandoffHistory", () => {
 		let reads = 0;
 		const fsImpl: HandoffHistoryFs = {
 			statSync,
-			readFileSync: ((...args: Parameters<typeof readFileSync>) => {
+			readFileSync: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ((
+				...args: Parameters<typeof readFileSync>
+			) => {
 				reads++;
 				return readFileSync(...args);
 			}) as typeof readFileSync,

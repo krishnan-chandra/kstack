@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Capability probe and typed publication request channels. */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -50,15 +51,15 @@ const capabilityChannel = createRequestChannel<CapabilityPayload, JjStackCapabil
 	event: JJ_STACK_CAPABILITIES_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is CapabilityPayload =>
-		typeof value === "object" && value !== null && "schemaVersion" in value && value.schemaVersion === SCHEMA_VERSION,
+		isObject(value) && value !== null && "schemaVersion" in value && value.schemaVersion === SCHEMA_VERSION,
 });
 
 const publicationChannel = createRequestChannel<PublicationPayload, StackPublicationOutcome, 1>({
 	event: JJ_STACK_PUBLICATION_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is PublicationPayload => {
-		if (typeof value !== "object" || value === null || !("input" in value) || !("ctx" in value)) return false;
-		if (typeof value.ctx !== "object" || value.ctx === null) return false;
+		if (!isObject(value) || value === null || !("input" in value) || !("ctx" in value)) return false;
+		if (!isObject(value.ctx) || value.ctx === null) return false;
 		return isPublicationInput(value.input);
 	},
 });
@@ -67,17 +68,17 @@ const landingChannel = createRequestChannel<LandingPayload, StackPrefixLandOutco
 	event: JJ_STACK_LANDING_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is LandingPayload => {
-		if (typeof value !== "object" || value === null || !("input" in value) || !("ctx" in value)) return false;
-		if (typeof value.ctx !== "object" || value.ctx === null) return false;
+		if (!isObject(value) || value === null || !("input" in value) || !("ctx" in value)) return false;
+		if (!isObject(value.ctx) || value.ctx === null) return false;
 		return isLandingInput(value.input);
 	},
 });
 
-export function isJjStackCapabilitiesRequest(value: unknown): value is JjStackCapabilitiesRequest {
+export function isJjStackCapabilitiesRequest(value: BoundaryValue): value is JjStackCapabilitiesRequest {
 	return capabilityChannel.isRequest(value);
 }
 
-export function claimJjStackCapabilities(value: unknown, run: () => Promise<JjStackCapabilities>): boolean {
+export function claimJjStackCapabilities(value: BoundaryValue, run: () => Promise<JjStackCapabilities>): boolean {
 	return capabilityChannel.claim(value, () => run());
 }
 
@@ -87,12 +88,12 @@ export function requestJjStackCapabilities(
 	return capabilityChannel.request(pi, { schemaVersion: SCHEMA_VERSION });
 }
 
-export function isJjStackPublicationRequest(value: unknown): value is JjStackPublicationRequest {
+export function isJjStackPublicationRequest(value: BoundaryValue): value is JjStackPublicationRequest {
 	return publicationChannel.isRequest(value);
 }
 
 export function claimStackPublication(
-	value: unknown,
+	value: BoundaryValue,
 	run: (input: StackPublicationRequestInput, ctx: ExtensionCommandContext) => Promise<StackPublicationOutcome>,
 ): boolean {
 	return publicationChannel.claim(value, ({ input, ctx }) => run(input, ctx));
@@ -106,12 +107,12 @@ export function requestStackPublication(
 	return publicationChannel.request(pi, { input, ctx });
 }
 
-export function isJjStackLandingRequest(value: unknown): value is JjStackLandingRequest {
+export function isJjStackLandingRequest(value: BoundaryValue): value is JjStackLandingRequest {
 	return landingChannel.isRequest(value);
 }
 
 export function claimStackLanding(
-	value: unknown,
+	value: BoundaryValue,
 	run: (input: StackLandingRequestInput, ctx: ExtensionContext) => Promise<StackPrefixLandOutcome>,
 ): boolean {
 	return landingChannel.claim(value, ({ input, ctx }) => run(input, ctx));
@@ -125,10 +126,11 @@ export function requestStackLanding(
 	return landingChannel.request(pi, { input, ctx });
 }
 
-function isPublicationInput(value: unknown): value is StackPublicationRequestInput {
-	if (typeof value !== "object" || value === null || !("repositoryPath" in value)) return false;
-	const input = value as Record<string, unknown>;
-	if (typeof input.repositoryPath !== "string" || input.repositoryPath.length === 0) return false;
+function isPublicationInput(value: BoundaryValue): value is StackPublicationRequestInput {
+	if (!isObject(value) || value === null || !("repositoryPath" in value)) return false;
+	const input =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as JsonObject;
+	if (!isString(input.repositoryPath) || input.repositoryPath.length === 0) return false;
 	if (input.trunkRevset !== undefined && !optionalName(input.trunkRevset, MAX_REVSET_CHARS)) return false;
 	if (input.topBookmark !== undefined && !optionalName(input.topBookmark, MAX_NAME_CHARS)) return false;
 	if (input.remote !== undefined && !optionalName(input.remote, MAX_NAME_CHARS)) return false;
@@ -136,10 +138,11 @@ function isPublicationInput(value: unknown): value is StackPublicationRequestInp
 	return true;
 }
 
-function isLandingInput(value: unknown): value is StackLandingRequestInput {
-	if (typeof value !== "object" || value === null || !("repositoryPath" in value)) return false;
-	const input = value as Record<string, unknown>;
-	if (typeof input.repositoryPath !== "string" || input.repositoryPath.length === 0) return false;
+function isLandingInput(value: BoundaryValue): value is StackLandingRequestInput {
+	if (!isObject(value) || value === null || !("repositoryPath" in value)) return false;
+	const input =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as JsonObject;
+	if (!isString(input.repositoryPath) || input.repositoryPath.length === 0) return false;
 	if (!Number.isSafeInteger(input.prNumber) || Number(input.prNumber) <= 0) return false;
 	if (!optionalName(input.headBookmark, MAX_NAME_CHARS)) return false;
 	if (input.readiness !== "check" && input.readiness !== "watch") return false;
@@ -147,6 +150,6 @@ function isLandingInput(value: unknown): value is StackLandingRequestInput {
 	return true;
 }
 
-function optionalName(value: unknown, max: number): value is string {
-	return typeof value === "string" && value.length > 0 && value.length <= max && !/[\0\n\r]/.test(value);
+function optionalName(value: BoundaryValue, max: number): value is string {
+	return isString(value) && value.length > 0 && value.length <= max && !/[\0\n\r]/.test(value);
 }

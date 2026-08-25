@@ -4,8 +4,12 @@ import { describe, it } from "node:test";
 import { runCommand, type SpawnedProcess } from "./process.ts";
 
 class FakeProcess implements SpawnedProcess {
-	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
-	stderr = new EventEmitter() as SpawnedProcess["stderr"] & EventEmitter;
+	stdout =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stdout"] &
+			EventEmitter;
+	stderr =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stderr"] &
+			EventEmitter;
 	private events = new EventEmitter();
 	kills: string[] = [];
 	pid = 4242;
@@ -27,7 +31,12 @@ class FakeProcess implements SpawnedProcess {
 		this.kills.push(signal);
 		if (!this.closeOnKill) return false;
 		if (signal === "SIGTERM" && this.ignoreTerm) return true;
-		queueMicrotask(() => this.emitClose(null, signal as NodeJS.Signals));
+		queueMicrotask(() =>
+			this.emitClose(
+				null,
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ signal as NodeJS.Signals,
+			),
+		);
 		return true;
 	}
 	emitClose(code: number | null, signal: NodeJS.Signals | null = null): void {

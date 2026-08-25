@@ -4,6 +4,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { BoundaryValue } from "../../../extensions/shared/validation.ts";
 import { planManagedWorktree } from "../../../extensions/shared/vcs/worktree-plan.ts";
 import { createSkillExec } from "./git-exec.ts";
 
@@ -108,8 +109,8 @@ function isMain(): boolean {
 
 if (isMain()) {
 	main(process.argv.slice(2))
-		.catch((error: unknown) => {
-			printError(error instanceof Error ? error.message : String(error));
+		.catch((cause: BoundaryValue) => {
+			printError(cause instanceof Error ? cause.message : String(cause));
 			return 1;
 		})
 		.then((code) => {

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { VcsBackend } from "../shared/vcs/backend.ts";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { applyThreadReplies, parseTriage } from "./autopilot-operations.ts";
 import { type DriverOps, runAutopilot } from "./driver.ts";
@@ -191,7 +191,7 @@ async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 	};
 }
 
-function triage(options: { checks?: unknown[]; threads?: unknown[] } = {}): string {
+function triage(options: { checks?: BoundaryValue[]; threads?: BoundaryValue[] } = {}): string {
 	return JSON.stringify({
 		checks: options.checks ?? [],
 		threads: options.threads ?? [],
@@ -416,10 +416,10 @@ test("cleanup mode never resolves the repository", async (t) => {
 		calls.push(`${command} ${args.join(" ")}`);
 		return { code: 0, stdout: "", stderr: "" };
 	};
-	const backend = {
+	const backend = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		id: "jj",
 		preflight: async () => ({ ok: true, workspaceRoot: cwd }),
-	} as unknown as VcsBackend;
+	} as never;
 	const result = await runAutopilot(
 		"cleanup",
 		{
@@ -457,10 +457,7 @@ function makeThreadState(threads: ReviewThread[]): PRState {
 	};
 }
 
-function makeReplyExec(overrides: { replyCode?: number; resolveCode?: number; issueReplyCode?: number } = {}): {
-	exec: ExecFn;
-	calls: string[];
-} {
+function makeReplyExec(overrides: { replyCode?: number; resolveCode?: number; issueReplyCode?: number } = {}) {
 	const calls: string[] = [];
 	const exec: ExecFn = async (command, args) => {
 		const key = `${command} ${args.join(" ")}`;

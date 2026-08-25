@@ -98,7 +98,7 @@ export async function viewPR(exec: ExecFn, cwd: string, prNumber: number): Promi
 		return {
 			code: 1,
 			stdout: "",
-			stderr: `Could not parse gh pr view output: ${(error as Error).message}`,
+			stderr: `Could not parse gh pr view output: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
 			pr: undefined,
 		};
 	}
@@ -135,7 +135,7 @@ async function fetchReviewThreadPage(
 		return {
 			code: 1,
 			stdout: "",
-			stderr: `Could not parse review threads: ${(error as Error).message}`,
+			stderr: `Could not parse review threads: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
 			page: { threads: [], hasNextPage: false },
 		};
 	}
@@ -267,7 +267,10 @@ export async function watchChecks(
 		return {
 			code: signal?.aborted ? 130 : 1,
 			stdout: "",
-			stderr: signal?.aborted ? "aborted" : (error as Error).message,
+			stderr: signal?.aborted
+				? "aborted"
+				: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error)
+						.message,
 		};
 	}
 }

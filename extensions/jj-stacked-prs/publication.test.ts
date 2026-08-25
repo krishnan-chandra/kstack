@@ -33,8 +33,12 @@ function snapshot(overrides: Partial<Parameters<typeof buildPublicationPlan>[0]>
 		defaultBranch: "main",
 		slices: [slice("feat1", null, ["aaa"], "feat: aaa")],
 		localBookmarks: [{ name: "feat1", commitId: "aaa-commit" }],
-		remoteBookmarks: [] as { name: string; commitId: string }[],
-		openPrs: [] as OpenPullRequest[],
+		remoteBookmarks: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as {
+			name: string;
+			commitId: string;
+		}[],
+		openPrs:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as OpenPullRequest[],
 		...overrides,
 	};
 }
@@ -333,7 +337,14 @@ describe("navigation comments", () => {
 		]);
 		assert.deepEqual(
 			findNavigationAncestors(
-				[{ bookmark: "feat2", existingPr: { number: 11 } as OpenPullRequest }],
+				[
+					{
+						bookmark: "feat2",
+						existingPr: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+							number: 11,
+						} as OpenPullRequest,
+					},
+				],
 				[
 					{ prNumber: 10, bookmark: "feat1", base: "main", status: "merged" },
 					{ prNumber: 11, bookmark: "feat2", base: "feat1", status: "open" },

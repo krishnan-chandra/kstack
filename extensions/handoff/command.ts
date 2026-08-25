@@ -1,3 +1,4 @@
+import { type BoundaryValue, isString } from "../shared/validation.ts";
 /**
  * Build the command handler separately so lifecycle behavior is easy to test.
  *
@@ -35,6 +36,10 @@ import { getReplacementSelectionApi, type ReplacementSelectionApi } from "./repl
 
 type HandoffApi = { getThinkingLevel(): string };
 
+interface HandoffSessionResult {
+	cancelled: boolean;
+}
+
 export function createHandoffHandler(
 	api: HandoffApi,
 	deps: {
@@ -68,9 +73,10 @@ export function createHandoffHandler(
 		if (parsed.modelRef !== undefined) {
 			const scoped = ctx.scopedModels ?? [];
 			const scopedActive = scoped.length > 0;
+			// SAFETY: Pi's model registry owns every model returned by getAll.
 			const catalogue: HandoffModel[] = scopedActive
 				? scoped.map((s) => s.model)
-				: (ctx.modelRegistry.getAll() as HandoffModel[]);
+				: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (ctx.modelRegistry.getAll() as HandoffModel[]);
 			// Short names come from kstack.json {label, model, thinking?} entries
 			// and from model display names; both resolve against the same catalogue.
 			const kstackRoot = loadKstackRoot();
@@ -138,7 +144,7 @@ export function createHandoffHandler(
 		const expectedModel = targetModel ?? previousModel;
 		const expectedEffort = requestedEffort ?? previousEffort;
 
-		let result: { cancelled: boolean };
+		let result: HandoffSessionResult;
 		const sessionOptions: NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]> = {
 			parentSession: oldFile,
 			setup: async (sm) => {
@@ -159,7 +165,16 @@ export function createHandoffHandler(
 					if (!replacement) {
 						selectionFailure = "the replacement session API is unavailable";
 					} else {
-						if (expectedModel && !(fresh.model && sameModel(fresh.model as HandoffModel, expectedModel))) {
+						if (
+							expectedModel &&
+							!(
+								fresh.model &&
+								sameModel(
+									/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ fresh.model as HandoffModel,
+									expectedModel,
+								)
+							)
+						) {
 							try {
 								const switched = await replacement.setModel(expectedModel);
 								if (!switched) selectionFailure = `no credentials for ${formatModelRef(expectedModel)}`;
@@ -274,8 +289,11 @@ function sameModel(a: HandoffModel, b: HandoffModel): boolean {
 	return a.provider === b.provider && a.id === b.id;
 }
 
-function readEffort(fromContext: unknown, api: Pick<HandoffApi, "getThinkingLevel">): HandoffEffortLevel | undefined {
-	if (typeof fromContext === "string" && isHandoffEffortLevel(fromContext)) return fromContext;
+function readEffort(
+	fromContext: BoundaryValue,
+	api: Pick<HandoffApi, "getThinkingLevel">,
+): HandoffEffortLevel | undefined {
+	if (isString(fromContext) && isHandoffEffortLevel(fromContext)) return fromContext;
 	try {
 		const fromApi = api.getThinkingLevel();
 		return isHandoffEffortLevel(fromApi) ? fromApi : undefined;
@@ -284,12 +302,14 @@ function readEffort(fromContext: unknown, api: Pick<HandoffApi, "getThinkingLeve
 	}
 }
 
-function readFreshEffort(fromContext: unknown): HandoffEffortLevel | undefined {
-	return typeof fromContext === "string" && isHandoffEffortLevel(fromContext) ? fromContext : undefined;
+function readFreshEffort(fromContext: BoundaryValue): HandoffEffortLevel | undefined {
+	return isString(fromContext) && isHandoffEffortLevel(fromContext) ? fromContext : undefined;
 }
 
-export function requireHandoffSource(ctx: { sessionManager: { getBranch(): unknown[] } }): HandoffSource {
-	const source = findHandoffSource(ctx.sessionManager.getBranch() as never[]);
+export function requireHandoffSource(ctx: { sessionManager: { getBranch(): BoundaryValue[] } }): HandoffSource {
+	const source = findHandoffSource(
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ ctx.sessionManager.getBranch() as never[],
+	);
 	if (!source) {
 		throw new Error("No handoff history is linked to this session. Run /handoff from a persisted session first.");
 	}

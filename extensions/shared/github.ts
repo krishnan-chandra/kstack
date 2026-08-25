@@ -1,10 +1,11 @@
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 import { asRecord } from "./narrow.ts";
+import { type BoundaryValue, isBoolean, isNumber, isString } from "./validation.ts";
 
 /** Merge methods Kstack permits anywhere; merge commits are never allowed. */
 export type MergeMethod = "squash" | "rebase";
 
-export function isMergeMethod(value: unknown): value is MergeMethod {
+export function isMergeMethod(value: BoundaryValue): value is MergeMethod {
 	return value === "squash" || value === "rebase";
 }
 
@@ -87,7 +88,7 @@ export async function resolveRepoName(exec: ExecFn, cwd: string, signal?: AbortS
 	return (await resolveRepoNameResult(exec, cwd, signal)).repo;
 }
 
-function parseJson(text: string): unknown {
+function parseJson(text: string): BoundaryValue {
 	try {
 		return JSON.parse(text);
 	} catch {
@@ -121,7 +122,7 @@ export async function getRepository(
 		);
 	const value = asRecord(parseJson(out.stdout));
 	const branch = asRecord(value?.defaultBranchRef);
-	if (typeof value?.nameWithOwner !== "string" || typeof branch?.name !== "string")
+	if (!isString(value?.nameWithOwner) || !isString(branch?.name))
 		throw new Error("GitHub repository response is missing identity/default branch.");
 	const allowedMethods: MergeMethod[] = [];
 	// Kstack policy: merge commits are never allowed
@@ -155,13 +156,13 @@ export async function getPullRequest(
 	const commit = asRecord(value?.mergeCommit);
 	if (
 		value?.number !== number ||
-		typeof value.url !== "string" ||
-		typeof value.title !== "string" ||
+		!isString(value.url) ||
+		!isString(value.title) ||
 		!["OPEN", "CLOSED", "MERGED"].includes(String(value.state)) ||
-		typeof value.isDraft !== "boolean" ||
-		typeof value.headRefName !== "string" ||
-		typeof value.baseRefName !== "string" ||
-		typeof value.headRefOid !== "string" ||
+		!isBoolean(value.isDraft) ||
+		!isString(value.headRefName) ||
+		!isString(value.baseRefName) ||
+		!isString(value.headRefOid) ||
 		!SHA.test(value.headRefOid)
 	)
 		throw new Error(`PR #${number} response failed validation.`);
@@ -169,15 +170,16 @@ export async function getPullRequest(
 		number,
 		url: value.url,
 		title: value.title,
-		state: value.state as PullRequestSnapshot["state"],
+		state:
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value.state as PullRequestSnapshot["state"],
 		isDraft: value.isDraft,
 		headRef: value.headRefName,
 		baseRef: value.baseRefName,
 		headOid: value.headRefOid,
 		mergeable: String(value.mergeable),
 		mergeStateStatus: String(value.mergeStateStatus),
-		mergedAt: typeof value.mergedAt === "string" ? value.mergedAt : null,
-		mergeCommitOid: typeof commit?.oid === "string" ? commit.oid : null,
+		mergedAt: isString(value.mergedAt) ? value.mergedAt : null,
+		mergeCommitOid: isString(commit?.oid) ? commit.oid : null,
 	};
 }
 
@@ -207,7 +209,7 @@ export async function findOpenPullRequestByHead(
 	if (matches.length !== 1)
 		throw new Error(`Expected exactly one open PR with head ${headRef}; found ${matches.length}.`);
 	const match = asRecord(matches[0]);
-	if (!match || typeof match.number !== "number") throw new Error("GitHub PR list response failed validation.");
+	if (!match || !isNumber(match.number)) throw new Error("GitHub PR list response failed validation.");
 	return match.number;
 }
 

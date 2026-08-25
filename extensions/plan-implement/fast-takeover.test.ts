@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	buildFastKickoff,
 	checkFastSettlement,
@@ -107,7 +108,7 @@ describe("takeover workstream preparation", () => {
 
 describe("takeover settlement", () => {
 	it("requires and reports a new committed revision", async () => {
-		let expected: unknown;
+		let expected: BoundaryValue;
 		const result = await verifyFastRun(run, {
 			verifyRecordedWorkstream: async (_cwd, value) => {
 				expected = value;

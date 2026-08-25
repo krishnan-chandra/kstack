@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
 /** Typed in-process contract for invoking panel-review from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -18,36 +19,30 @@ const channel = createRequestChannel<PanelReviewPayload, PanelReviewOutcome, 2>(
 	event: PANEL_REVIEW_REQUEST_EVENT,
 	schemaVersion: 2,
 	isPayload: (value): value is PanelReviewPayload => {
-		if (typeof value !== "object" || value === null || !("options" in value) || !("ctx" in value)) return false;
+		if (!isObject(value) || value === null || !("options" in value) || !("ctx" in value)) return false;
 		const options = value.options;
 		return (
-			typeof options === "object" &&
+			isObject(options) &&
 			options !== null &&
 			!Array.isArray(options) &&
-			(!("base" in options) || options.base === undefined || typeof options.base === "string") &&
-			(!("intent" in options) || options.intent === undefined || typeof options.intent === "string") &&
-			(!("repositoryPath" in options) ||
-				options.repositoryPath === undefined ||
-				typeof options.repositoryPath === "string") &&
-			(!("approvedPlan" in options) ||
-				options.approvedPlan === undefined ||
-				typeof options.approvedPlan === "string") &&
-			(!("executionLedger" in options) ||
-				options.executionLedger === undefined ||
-				typeof options.executionLedger === "string") &&
-			typeof value.ctx === "object" &&
+			(!("base" in options) || options.base === undefined || isString(options.base)) &&
+			(!("intent" in options) || options.intent === undefined || isString(options.intent)) &&
+			(!("repositoryPath" in options) || options.repositoryPath === undefined || isString(options.repositoryPath)) &&
+			(!("approvedPlan" in options) || options.approvedPlan === undefined || isString(options.approvedPlan)) &&
+			(!("executionLedger" in options) || options.executionLedger === undefined || isString(options.executionLedger)) &&
+			isObject(value.ctx) &&
 			value.ctx !== null
 		);
 	},
 });
 
 /* exported: request-channel contract */
-export function isPanelReviewRequest(value: unknown): value is PanelReviewRequest {
+export function isPanelReviewRequest(value: BoundaryValue): value is PanelReviewRequest {
 	return channel.isRequest(value);
 }
 
 export function claimPanelReviewRequest(
-	value: unknown,
+	value: BoundaryValue,
 	run: (options: PanelArgs, ctx: ExtensionCommandContext) => Promise<PanelReviewOutcome>,
 ): boolean {
 	return channel.claim(value, ({ options, ctx }) => run(options, ctx));

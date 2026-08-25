@@ -484,7 +484,9 @@ describe("inspectArchiveIntegrity caching", () => {
 		let hashCalls = 0;
 		const issues = inspectArchiveIntegrity(tree.dbPath, {
 			fileStat: () => {
-				const err = new Error("permission denied") as NodeJS.ErrnoException;
+				const err = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new Error(
+					"permission denied",
+				) as NodeJS.ErrnoException;
 				err.code = "EACCES";
 				throw err;
 			},

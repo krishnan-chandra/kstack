@@ -1,3 +1,4 @@
+import { type BoundaryValue, isBoolean, isNumber, isString } from "../shared/validation.ts";
 /**
  * Pure parsing and formatting of GitHub CLI output.
  *
@@ -20,16 +21,16 @@ function isAutomationComment(body: string): boolean {
 	return body.includes(AUTOPILOT_REPLY_MARKER) || body.includes(KSTACK_COMMENT_MARKER);
 }
 
-function asString(value: unknown): string | undefined {
-	return typeof value === "string" && value.length > 0 ? value : undefined;
+function asString(value: BoundaryValue): string | undefined {
+	return isString(value) && value.length > 0 ? value : undefined;
 }
 
-function asNumber(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function asNumber(value: BoundaryValue): number | undefined {
+	return isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-function asBoolean(value: unknown): boolean | undefined {
-	return typeof value === "boolean" ? value : undefined;
+function asBoolean(value: BoundaryValue): boolean | undefined {
+	return isBoolean(value) ? value : undefined;
 }
 
 function splitRepo(repo: string): { owner: string; name: string } | undefined {
@@ -40,7 +41,7 @@ function splitRepo(repo: string): { owner: string; name: string } | undefined {
 
 /** Parse `gh pr list --json number` and return the lowest number. */
 export function pickLowestPrNumber(stdout: string): number | undefined {
-	let parsed: unknown;
+	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(stdout);
 	} catch {
@@ -58,8 +59,8 @@ export function pickLowestPrNumber(stdout: string): number | undefined {
 	return numbers[0];
 }
 
-export function parseMergeStateStatus(raw: unknown): MergeStateStatus {
-	if (typeof raw !== "string") return "UNKNOWN";
+export function parseMergeStateStatus(raw: BoundaryValue): MergeStateStatus {
+	if (!isString(raw)) return "UNKNOWN";
 	switch (raw.toUpperCase()) {
 		case "CLEAN":
 			return "CLEAN";
@@ -95,7 +96,7 @@ export interface GHPrJson {
 	commits?: Array<{ oid: string }>;
 }
 
-function parseGHPr(raw: unknown): GHPrJson | undefined {
+function parseGHPr(raw: BoundaryValue): GHPrJson | undefined {
 	if (!isRecord(raw)) return undefined;
 	const number = asNumber(raw.number);
 	if (number === undefined || number < 1) return undefined;
@@ -141,9 +142,9 @@ export interface GraphqlPage {
 	endCursor?: string;
 }
 
-function parseGraphqlComment(raw: unknown): GraphqlComment | undefined {
+function parseGraphqlComment(raw: BoundaryValue): GraphqlComment | undefined {
 	if (!isRecord(raw)) return undefined;
-	const body = typeof raw.body === "string" ? raw.body : "";
+	const body = isString(raw.body) ? raw.body : "";
 	const author = isRecord(raw.author) ? asString(raw.author.login) : undefined;
 	const databaseId = asNumber(raw.databaseId);
 	return {
@@ -157,7 +158,7 @@ function parseGraphqlComment(raw: unknown): GraphqlComment | undefined {
 }
 
 /** Parse one page of the reviewThreads GraphQL response. */
-export function parseReviewThreadsPage(raw: unknown): GraphqlPage {
+export function parseReviewThreadsPage(raw: BoundaryValue): GraphqlPage {
 	if (!isRecord(raw)) return { threads: [], hasNextPage: false };
 	const data = isRecord(raw.data) ? raw.data : raw;
 	const repository = isRecord(data.repository) ? data.repository : undefined;
@@ -213,21 +214,21 @@ interface RawIssueComment {
 }
 
 export function parseIssueComments(stdout: string): RawIssueComment[] {
-	let parsed: unknown;
+	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(stdout);
 	} catch {
 		return [];
 	}
 	if (!Array.isArray(parsed)) return [];
-	const items: unknown[] = parsed.every(Array.isArray) ? parsed.flat() : parsed;
+	const items: BoundaryValue[] = parsed.every(Array.isArray) ? parsed.flat() : parsed;
 	const comments: RawIssueComment[] = [];
 	for (const item of items) {
 		if (!isRecord(item)) continue;
 		const id = asNumber(item.id);
 		if (id === undefined || !Number.isInteger(id) || id < 1) continue;
 		const user = isRecord(item.user) ? asString(item.user.login) : asString(item.commenter);
-		const body = typeof item.body === "string" ? item.body : "";
+		const body = isString(item.body) ? item.body : "";
 		if (isAutomationComment(body)) continue;
 		comments.push({
 			id,
@@ -278,7 +279,7 @@ function parseCheckState(state: string | undefined, bucket: string | undefined):
 export function parsePrChecksJson(stdout: string): CheckRun[] {
 	const trimmed = stdout.trim();
 	if (!trimmed) return [];
-	let parsed: unknown;
+	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(trimmed);
 	} catch {

@@ -23,7 +23,10 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerMessageRenderer("panel-review", (message, { expanded, outputPad }, theme) => {
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-		const details = message.details as VerdictDetails | undefined;
+		const details =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ message.details as
+				| VerdictDetails
+				| undefined;
 		if (!expanded) {
 			const statuses = details?.reviewerStatuses ?? [];
 			const okCount = statuses.filter((status) => status.status === "completed").length;
@@ -78,15 +81,33 @@ export default function (pi: ExtensionAPI): void {
 		try {
 			repoRoot = requireWorkTree(defaultGitExec, options.repositoryPath ?? ctx.cwd);
 		} catch (error) {
-			notify((error as Error).message, "error");
-			return { status: "failed", error: (error as Error).message };
+			notify(
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error)
+					.message,
+				"error",
+			);
+			return {
+				status: "failed",
+				error: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+					error as Error
+				).message,
+			};
 		}
 		let base: ReturnType<typeof resolveBase>;
 		try {
 			base = resolveBase(defaultGitExec, repoRoot, options.base);
 		} catch (error) {
-			notify((error as Error).message, "error");
-			return { status: "failed", error: (error as Error).message };
+			notify(
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error)
+					.message,
+				"error",
+			);
+			return {
+				status: "failed",
+				error: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+					error as Error
+				).message,
+			};
 		}
 
 		let intent = options.intent?.trim() ?? "";

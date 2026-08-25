@@ -1,3 +1,4 @@
+import { isString } from "../shared/validation.ts";
 /** Pure argument parser for the /kstack command. */
 
 import { isMergeMethod } from "../shared/github.ts";
@@ -49,7 +50,7 @@ export function parseArgs(input: string): ArgsParse {
 	if (!trimmed) return { ok: true, args: { task: "" } };
 
 	const tokens = tokenize(trimmed);
-	if (typeof tokens === "string") return { ok: false, error: tokens };
+	if (isString(tokens)) return { ok: false, error: tokens };
 
 	let route: string | undefined;
 	let delivery: DeliveryRecommendation;
@@ -176,10 +177,13 @@ export function parseArgs(input: string): ArgsParse {
 		};
 	}
 
+	// SAFETY: route was accepted only after membership in the route ID set.
 	return {
 		ok: true,
 		args: {
-			route: route ? (route as RouterArgs["route"]) : undefined,
+			route: route
+				? /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (route as RouterArgs["route"])
+				: undefined,
 			delivery,
 			worktree,
 			changeKind,

@@ -47,7 +47,7 @@ const ALL_FLAGS = [
  * that token itself. A trailing space means the previous token is complete
  * and a new, empty token is starting.
  */
-function splitLastToken(prefix: string): { base: string; token: string } {
+function splitLastToken(prefix: string) {
 	let start = prefix.length;
 	while (start > 0) {
 		const char = prefix[start - 1];

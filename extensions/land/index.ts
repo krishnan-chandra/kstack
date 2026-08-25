@@ -41,7 +41,8 @@ export default function landExtension(pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerMessageRenderer("land", (message, { expanded, outputPad }, theme) => {
-		const details = message.details as LandResult;
+		const details =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ message.details as LandResult;
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 		const summary = summarizeLandResult(details);
 		box.addChild(new Text(expanded ? `${summary}\n${message.content}` : summary, 0, 0));

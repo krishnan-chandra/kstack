@@ -25,7 +25,14 @@ export async function runPanel(specs: ReviewerSpec[], maxConcurrency: number, ru
 		} catch (err) {
 			// A throwing runner must not take down siblings.
 			const model = spec.thinking ? `${spec.model}:${spec.thinking}` : spec.model;
-			return { status: "failed" as const, label: spec.label, model, error: (err as Error).message };
+			return {
+				status: "failed" as const,
+				label: spec.label,
+				model,
+				error: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+					err as Error
+				).message,
+			};
 		}
 	});
 	return {

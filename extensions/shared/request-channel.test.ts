@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "./request-channel.ts";
+import { type BoundaryValue, isObject, isString } from "./validation.ts";
 
 interface Payload {
 	value: string;
@@ -11,18 +12,18 @@ const channel = createRequestChannel<Payload, string, 2>({
 	event: "test:request",
 	schemaVersion: 2,
 	isPayload: (value): value is Payload =>
-		typeof value === "object" && value !== null && "value" in value && typeof value.value === "string",
+		isObject(value) && value !== null && "value" in value && isString(value.value),
 });
 
-function fakePi(listener?: (value: unknown) => void): ExtensionAPI {
-	return {
+function fakePi(listener?: (value: BoundaryValue) => void): ExtensionAPI {
+	return /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		events: {
-			emit: (event: string, value: unknown) => {
+			emit: (event: string, value: BoundaryValue) => {
 				assert.equal(event, "test:request");
 				listener?.(value);
 			},
 		},
-	} as unknown as ExtensionAPI;
+	} as ExtensionAPI;
 }
 
 test("claims a valid request exactly once", async () => {

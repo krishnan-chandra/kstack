@@ -10,7 +10,7 @@ function host(options: { text: string; disableSubmit?: boolean; followUpHandler?
 	if (options.followUpHandler) {
 		handlers.set("app.message.followUp", options.followUpHandler);
 	}
-	const swapHost = {
+	const swapHost = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		disableSubmit: options.disableSubmit ?? false,
 		getText: () => editorText,
 		getExpandedText: () => editorText,

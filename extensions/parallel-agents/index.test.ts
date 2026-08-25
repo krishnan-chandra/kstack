@@ -3,12 +3,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { BoundaryValue } from "../shared/validation.ts";
 import parallelAgentsExtension, { nestedUsage } from "./index.ts";
 
 interface RegisteredTool {
 	name: string;
-	execute: (...args: unknown[]) => Promise<unknown>;
+	execute: (...args: BoundaryValue[]) => Promise<BoundaryValue>;
 }
 
 const session = { kind: "missing", reason: "not-reported" } as const;
@@ -17,7 +17,7 @@ describe("parallel-agents extension", () => {
 	it("registers the model-callable tool and shutdown cleanup", () => {
 		let tool: RegisteredTool | undefined;
 		const handlers = new Map<string, () => void>();
-		const pi = {
+		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			registerShortcut() {},
 			registerTool(value: RegisteredTool) {
 				tool = value;
@@ -25,7 +25,7 @@ describe("parallel-agents extension", () => {
 			on(event: string, handler: () => void) {
 				handlers.set(event, handler);
 			},
-		} as unknown as ExtensionAPI;
+		} as never;
 		parallelAgentsExtension(pi);
 		assert.equal(tool?.name, "parallel_agents");
 		assert.ok(handlers.has("session_shutdown"));
@@ -34,13 +34,13 @@ describe("parallel-agents extension", () => {
 	it("rejects a writable Arena task in the current repository before spawning", async () => {
 		let tool: RegisteredTool | undefined;
 		const root = mkdtempSync(join(tmpdir(), "parallel-agents-test-"));
-		const pi = {
+		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			registerShortcut() {},
 			registerTool(value: RegisteredTool) {
 				tool = value;
 			},
 			on() {},
-		} as unknown as ExtensionAPI;
+		} as never;
 		parallelAgentsExtension(pi);
 		assert.ok(tool);
 		await assert.rejects(

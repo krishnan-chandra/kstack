@@ -302,7 +302,7 @@ test("a reconstructed confirmation object does not skip confirmMerge", async () 
 			target: { kind: "single", prNumber: 7 },
 			readiness: "check",
 			method: "squash",
-			confirmation: {} as never,
+			confirmation: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
 		},
 		runDeps,
 	);

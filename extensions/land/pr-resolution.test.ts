@@ -4,11 +4,28 @@ import type { CurrentRef } from "../shared/vcs/backend.ts";
 import { resolveImplicitPr } from "./pr-resolution.ts";
 
 function refs(kind: CurrentRef["kind"], extra: Partial<CurrentRef> = {}): CurrentRef {
-	if (kind === "branch") return { kind, name: "kstack/fix-thing", ...extra } as CurrentRef;
-	if (kind === "bookmark") return { kind, name: "kstack/fix-thing", ...extra } as CurrentRef;
+	if (kind === "branch")
+		return /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			kind,
+			name: "kstack/fix-thing",
+			...extra,
+		} as CurrentRef;
+	if (kind === "bookmark")
+		return /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			kind,
+			name: "kstack/fix-thing",
+			...extra,
+		} as CurrentRef;
 	if (kind === "no-bookmark")
-		return { kind, changeId: "0123456789abcdef0123456789abcdef01234567", ...extra } as CurrentRef;
-	return { kind, ...extra } as CurrentRef;
+		return /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			kind,
+			changeId: "0123456789abcdef0123456789abcdef01234567",
+			...extra,
+		} as CurrentRef;
+	return /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+		kind,
+		...extra,
+	} as CurrentRef;
 }
 
 describe("resolveImplicitPr", () => {

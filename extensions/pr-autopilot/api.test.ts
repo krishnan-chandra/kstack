@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	claimPrAutopilotRequest,
 	PRAUTOPILOT_REQUEST_EVENT,
@@ -20,12 +21,12 @@ const outcome: AutopilotResult = {
 const ctx = { cwd: "/repo" };
 
 function fakeBus() {
-	const listeners: Array<(value: unknown) => void> = [];
-	const emitted: unknown[] = [];
+	const listeners: Array<(value: BoundaryValue) => void> = [];
+	const emitted: BoundaryValue[] = [];
 	const pi = {
 		events: {
-			on: (_name: string, listener: (value: unknown) => void) => listeners.push(listener),
-			emit: (name: string, value: unknown) => {
+			on: (_name: string, listener: (value: BoundaryValue) => void) => listeners.push(listener),
+			emit: (name: string, value: BoundaryValue) => {
 				assert.equal(name, PRAUTOPILOT_REQUEST_EVENT);
 				emitted.push(value);
 				for (const listener of listeners) listener(value);
@@ -37,14 +38,20 @@ function fakeBus() {
 
 test("claimed request with an explicit PR forwards mode, PR, cwd, and context", async () => {
 	const { pi } = fakeBus();
-	const seen: Array<{ mode: string; prNumber: number | undefined; cwd: string; ctx: unknown }> = [];
+	const seen: Array<{ mode: string; prNumber: number | undefined; cwd: string; ctx: BoundaryValue }> = [];
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) =>
 		claimPrAutopilotRequest(value, async (mode, prNumber, requestCtx, cwd) => {
 			seen.push({ mode, prNumber, cwd, ctx: requestCtx });
 			return outcome;
 		}),
 	);
-	const result = await requestPrAutopilot(pi as never, "drive", 42, ctx as never, "/repo");
+	const result = await requestPrAutopilot(
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+		"drive",
+		42,
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		"/repo",
+	);
 	assert.deepEqual(result, { handled: true, outcome });
 	assert.deepEqual(seen, [{ mode: "drive", prNumber: 42, cwd: "/repo", ctx }]);
 });
@@ -58,7 +65,13 @@ test("claimed request with no PR forwards undefined and succeeds", async () => {
 			return outcome;
 		}),
 	);
-	const result = await requestPrAutopilot(pi as never, "check", undefined, ctx as never, "/repo");
+	const result = await requestPrAutopilot(
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+		"check",
+		undefined,
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		"/repo",
+	);
 	assert.deepEqual(result, { handled: true, outcome });
 	assert.deepEqual(seen, [undefined]);
 });
@@ -68,14 +81,32 @@ test("invalid supplied PR is rejected before emission", async () => {
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, () => {
 		assert.fail("invalid PR must not emit");
 	});
-	assert.deepEqual(await requestPrAutopilot(pi as never, "check", 0, ctx as never, "/repo"), { handled: false });
-	assert.deepEqual(await requestPrAutopilot(pi as never, "check", 1.5, ctx as never, "/repo"), { handled: false });
+	assert.deepEqual(
+		await requestPrAutopilot(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+			"check",
+			0,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			"/repo",
+		),
+		{ handled: false },
+	);
+	assert.deepEqual(
+		await requestPrAutopilot(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+			"check",
+			1.5,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			"/repo",
+		),
+		{ handled: false },
+	);
 	assert.equal(emitted.length, 0);
 });
 
 test("a minted confirmation passes through the request channel", async () => {
 	const { pi } = fakeBus();
-	const seen: unknown[] = [];
+	const seen: BoundaryValue[] = [];
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) =>
 		claimPrAutopilotRequest(value, async (_mode, _prNumber, _ctx, _cwd, confirmation) => {
 			seen.push(confirmation);
@@ -83,7 +114,14 @@ test("a minted confirmation passes through the request channel", async () => {
 		}),
 	);
 	const confirmation = issueAutopilotConfirmation();
-	const result = await requestPrAutopilot(pi as never, "watch", 7, ctx as never, "/repo", confirmation);
+	const result = await requestPrAutopilot(
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+		"watch",
+		7,
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		"/repo",
+		confirmation,
+	);
 	assert.deepEqual(result, { handled: true, outcome });
 	assert.deepEqual(seen, [confirmation]);
 });
@@ -95,20 +133,41 @@ test("a forged confirmation object is rejected as an invalid payload", async () 
 			assert.fail("a forged confirmation must not be claimed");
 		}),
 	);
-	const forged = { confirmed: true } as never;
-	assert.deepEqual(await requestPrAutopilot(pi as never, "watch", 7, ctx as never, "/repo", forged), {
-		handled: false,
-	});
+	const forged = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+		confirmed: true,
+	} as never;
+	assert.deepEqual(
+		await requestPrAutopilot(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+			"watch",
+			7,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			"/repo",
+			forged,
+		),
+		{
+			handled: false,
+		},
+	);
 });
 
 test("unclaimed request reports unavailable", async () => {
 	const pi = { events: { emit: () => {} } };
-	assert.deepEqual(await requestPrAutopilot(pi as never, "watch", 7, ctx as never, "/repo"), { handled: false });
+	assert.deepEqual(
+		await requestPrAutopilot(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+			"watch",
+			7,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			"/repo",
+		),
+		{ handled: false },
+	);
 });
 
 test("a second claim attempt does not settle the request twice", async () => {
 	let runs = 0;
-	const envelope = {
+	const envelope = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		schemaVersion: 1,
 		payload: { mode: "threads" as const, prNumber: 9, ctx, cwd: "/repo" },
 		claimed: false,

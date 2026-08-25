@@ -1,3 +1,4 @@
+import type { JsonObject } from "../shared/validation.ts";
 /** Shared fixtures for session-archive tests. */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 
 export const TEST_SESSION_ID = "019ff001-deb2-7696-997e-8684026835d1";
 
-export function sessionJsonl(entries: Record<string, unknown>[], header: Record<string, unknown> = {}): string {
+export function sessionJsonl(entries: JsonObject[], header: JsonObject = {}): string {
 	const head = {
 		type: "session",
 		version: 3,
@@ -21,17 +22,17 @@ export function sessionJsonl(entries: Record<string, unknown>[], header: Record<
 export function messageEntry(
 	id: string,
 	parentId: string | null,
-	message: Record<string, unknown>,
-	extra: Record<string, unknown> = {},
-): Record<string, unknown> {
+	message: JsonObject,
+	extra: JsonObject = {},
+): JsonObject {
 	return { type: "message", id, parentId, timestamp: "2026-08-11T08:49:00.000Z", message, ...extra };
 }
 
-export function userMessage(text: string): Record<string, unknown> {
+export function userMessage(text: string): JsonObject {
 	return { role: "user", content: [{ type: "text", text }], timestamp: 1786438183624 };
 }
 
-export function assistantMessage(text: string): Record<string, unknown> {
+export function assistantMessage(text: string): JsonObject {
 	return {
 		role: "assistant",
 		content: [
@@ -55,7 +56,7 @@ export function assistantMessage(text: string): Record<string, unknown> {
 }
 
 /** Minimal realistic session covering every searchable entry kind. */
-export function richSessionJsonl(header: Record<string, unknown> = {}): string {
+export function richSessionJsonl(header: JsonObject = {}): string {
 	return sessionJsonl(
 		[
 			{

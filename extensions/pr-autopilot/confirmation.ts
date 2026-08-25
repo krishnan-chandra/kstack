@@ -1,3 +1,5 @@
+import { type BoundaryValue, isObject } from "../shared/validation.ts";
+
 /** In-process confirmation capability for trusted pr-autopilot callers. */
 
 // Pi gives each extension a separate module graph. The global registry keeps the marker stable across those graphs.
@@ -12,11 +14,6 @@ export function issueAutopilotConfirmation(): AutopilotConfirmation {
 	return { [AUTOPILOT_CONFIRMATION]: true };
 }
 
-export function isAutopilotConfirmation(value: unknown): value is AutopilotConfirmation {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		AUTOPILOT_CONFIRMATION in value &&
-		value[AUTOPILOT_CONFIRMATION] === true
-	);
+export function isAutopilotConfirmation(value: BoundaryValue): value is AutopilotConfirmation {
+	return isObject(value) && value !== null && AUTOPILOT_CONFIRMATION in value && value[AUTOPILOT_CONFIRMATION] === true;
 }

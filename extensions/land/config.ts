@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../shared/validation.ts";
 /**
  * Land per-repository merge configuration.
  *
@@ -27,7 +28,9 @@ export interface LandConfig {
 	repos: Record<string, MergeMethod>;
 }
 
-export function validateLandConfig(value: unknown): { ok: true; config: LandConfig } | { ok: false; error: string } {
+export function validateLandConfig(
+	value: BoundaryValue,
+): { ok: true; config: LandConfig } | { ok: false; error: string } {
 	if (!isRecord(value)) {
 		return { ok: false, error: '"land" must be an object.' };
 	}

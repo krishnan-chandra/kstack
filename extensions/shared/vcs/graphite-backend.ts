@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../validation.ts";
 /** Graphite implementation of the semantic VCS contract. */
 
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
@@ -31,7 +32,7 @@ interface GraphiteBackendDeps {
 	acquireLock?: typeof acquirePublicationLock;
 }
 
-function failure(error: unknown): ExecFnResult {
+function failure(error: BoundaryValue): ExecFnResult {
 	return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
 }
 
@@ -252,7 +253,12 @@ export class GraphiteBackend implements VcsBackend {
 			try {
 				(this.deps.unlink ?? unlinkSync)(join(cwd, path));
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				if (
+					/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+						error as NodeJS.ErrnoException
+					).code === "ENOENT"
+				)
+					continue;
 				return {
 					ok: false,
 					error: `Could not remove untracked path ${path}: ${error instanceof Error ? error.message : String(error)}`,

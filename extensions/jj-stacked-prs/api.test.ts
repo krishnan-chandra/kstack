@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	claimJjStackCapabilities,
 	claimStackLanding,
@@ -21,11 +22,11 @@ const outcome: StackPublicationOutcome = { status: "declined" };
 
 describe("jj-stack request channels", () => {
 	it("claims capabilities synchronously and reports an unloaded extension", async () => {
-		const listeners: Array<(value: unknown) => void> = [];
+		const listeners: Array<(value: BoundaryValue) => void> = [];
 		const pi = {
 			events: {
-				on: (_name: string, listener: (value: unknown) => void) => listeners.push(listener),
-				emit: (name: string, value: unknown) => {
+				on: (_name: string, listener: (value: BoundaryValue) => void) => listeners.push(listener),
+				emit: (name: string, value: BoundaryValue) => {
 					assert.equal(name, JJ_STACK_CAPABILITIES_EVENT);
 					for (const listener of listeners) listener(value);
 				},
@@ -42,21 +43,33 @@ describe("jj-stack request channels", () => {
 		pi.events.on(JJ_STACK_CAPABILITIES_EVENT, (value) =>
 			claimJjStackCapabilities(value, async () => JJ_STACK_CAPABILITIES),
 		);
-		assert.deepEqual(await requestJjStackCapabilities(pi as never), {
-			handled: true,
-			outcome: JJ_STACK_CAPABILITIES,
-		});
-		assert.deepEqual(await requestJjStackCapabilities({ events: { emit: () => {} } } as never), {
-			handled: false,
-		});
+		assert.deepEqual(
+			await requestJjStackCapabilities(
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+			),
+			{
+				handled: true,
+				outcome: JJ_STACK_CAPABILITIES,
+			},
+		);
+		assert.deepEqual(
+			await requestJjStackCapabilities(
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+					events: { emit: () => {} },
+				} as never,
+			),
+			{
+				handled: false,
+			},
+		);
 	});
 
 	it("claims stack-prefix landing and rejects malformed payloads", async () => {
-		const listeners: Array<(value: unknown) => void> = [];
+		const listeners: Array<(value: BoundaryValue) => void> = [];
 		const pi = {
 			events: {
-				on: (_name: string, listener: (value: unknown) => void) => listeners.push(listener),
-				emit: (name: string, value: unknown) => {
+				on: (_name: string, listener: (value: BoundaryValue) => void) => listeners.push(listener),
+				emit: (name: string, value: BoundaryValue) => {
 					assert.equal(name, JJ_STACK_LANDING_EVENT);
 					for (const listener of listeners) listener(value);
 				},
@@ -65,9 +78,9 @@ describe("jj-stack request channels", () => {
 		pi.events.on(JJ_STACK_LANDING_EVENT, (value) => claimStackLanding(value, async () => ({ status: "not-stack" })));
 		assert.deepEqual(
 			await requestStackLanding(
-				pi as never,
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
 				{ repositoryPath: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
-				{} as never,
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
 			),
 			{ handled: true, outcome: { status: "not-stack" } },
 		);
@@ -85,18 +98,22 @@ describe("jj-stack request channels", () => {
 	});
 
 	it("claims publication once and rejects malformed payloads", async () => {
-		const listeners: Array<(value: unknown) => void> = [];
+		const listeners: Array<(value: BoundaryValue) => void> = [];
 		const pi = {
 			events: {
-				on: (_name: string, listener: (value: unknown) => void) => listeners.push(listener),
-				emit: (name: string, value: unknown) => {
+				on: (_name: string, listener: (value: BoundaryValue) => void) => listeners.push(listener),
+				emit: (name: string, value: BoundaryValue) => {
 					assert.equal(name, JJ_STACK_PUBLICATION_EVENT);
 					for (const listener of listeners) listener(value);
 				},
 			},
 		};
 		pi.events.on(JJ_STACK_PUBLICATION_EVENT, (value) => claimStackPublication(value, async () => outcome));
-		const result = await requestStackPublication(pi as never, { repositoryPath: "/repo" }, {} as never);
+		const result = await requestStackPublication(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+			{ repositoryPath: "/repo" },
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
+		);
 		assert.deepEqual(result, { handled: true, outcome });
 		assert.equal(
 			isJjStackPublicationRequest({

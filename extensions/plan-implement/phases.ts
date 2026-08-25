@@ -41,6 +41,11 @@ export interface PhaseEffects {
 	dashboard?: PlanPipelineDashboard;
 }
 
+interface WorkflowState {
+	workflowCwd: string;
+	workstreamCheckpoint?: WorkstreamCheckpoint;
+}
+
 export interface ApprovedWorkflowOptions {
 	task: string;
 	mode: DeliveryMode;
@@ -440,7 +445,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
 	const executeAgent = fx.runAgent ?? runAgent;
-	const state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint } = {
+	const state: WorkflowState = {
 		workflowCwd: initialCwd,
 		workstreamCheckpoint: worktreePlan ? { ref: worktreePlan.ref, baseSha: worktreePlan.baseSha } : undefined,
 	};
@@ -707,7 +712,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								)
 							: {
 									...buildPanelReviewOptions(task, outcome.planner.output, outcome.implementer.executionLedger),
-									...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: state.workflowCwd } : {}),
+									...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: state.workflowCwd } : undefined),
 								};
 			}
 		} finally {
@@ -736,7 +741,11 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						request.outcome.status === "failed" ? "warning" : "info",
 					);
 			} catch (error) {
-				if (fx.isCurrent()) fx.notify(`panel-review request failed: ${(error as Error).message}`, "error");
+				if (fx.isCurrent())
+					fx.notify(
+						`panel-review request failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
+						"error",
+					);
 			}
 		}
 	} finally {

@@ -1,3 +1,4 @@
+import { isString } from "../shared/validation.ts";
 /** Registration and rendering for the router's persistent decision card. */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -20,7 +21,10 @@ export interface RouteCardDetails {
 
 export function registerRouteCardRenderer(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer("kstack-route", (message, { expanded, outputPad }, theme) => {
-		const details = message.details as RouteCardDetails | undefined;
+		const details =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ message.details as
+				| RouteCardDetails
+				| undefined;
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 		if (!expanded) {
 			const header =
@@ -48,7 +52,7 @@ export function registerRouteCardRenderer(pi: ExtensionAPI): void {
 			...(details?.overrode ? [theme.fg("warning", "User overrode recommendation")] : []),
 			...(details?.dispatchStatus ? [`Status: ${details.dispatchStatus}`] : []),
 			"",
-			typeof message.content === "string" ? message.content : "(structured content)",
+			isString(message.content) ? message.content : "(structured content)",
 		];
 		box.addChild(new Text(lines.join("\n"), 0, 0));
 		return box;

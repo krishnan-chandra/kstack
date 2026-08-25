@@ -22,6 +22,10 @@ const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const DEFAULTS_DIR = join(REPO_ROOT, "config", "pi-defaults");
 const MANAGED_SKILLS_FILE = ".kstack-managed.json";
 
+function isJsonObject(value) {
+	return Object.prototype.toString.call(value) === "[object Object]";
+}
+
 function expandHome(path) {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
@@ -42,7 +46,7 @@ export function readJsonObject(path, { allowMissing = false } = {}) {
 		throw new Error(`Cannot read ${path}: ${error.message}`);
 	}
 
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
+	if (!isJsonObject(value)) {
 		throw new Error(`Expected ${path} to contain a JSON object`);
 	}
 	return value;

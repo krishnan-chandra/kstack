@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { modelCliId, splitModelRef, validateModelSpecFields } from "./model-spec.ts";
+import type { BoundaryValue } from "./validation.ts";
 
 test("formats a model id without a thinking level", () => {
 	assert.equal(modelCliId({ model: "anthropic/claude-opus-4-6" }), "anthropic/claude-opus-4-6");
@@ -22,9 +23,9 @@ test("preserves extra model-id path segments", () => {
 });
 
 const errors = {
-	label: (value: unknown) => `label:${String(value)}`,
-	model: (value: unknown) => `model:${String(value)}`,
-	thinking: (value: unknown) => `thinking:${String(value)}`,
+	label: (value: BoundaryValue) => `label:${String(value)}`,
+	model: (value: BoundaryValue) => `model:${String(value)}`,
+	thinking: (value: BoundaryValue) => `thinking:${String(value)}`,
 };
 
 test("validates required labels and provider/model ids", () => {

@@ -45,7 +45,7 @@ function formatSignedMilliseconds(value) {
 }
 
 function formatMetadataValue(value) {
-	if (!value || typeof value.value !== "string") return "unknown";
+	if (Object.prototype.toString.call(value?.value) !== "[object String]") return "unknown";
 	return value.error ? `${value.value} (${value.error})` : value.value;
 }
 

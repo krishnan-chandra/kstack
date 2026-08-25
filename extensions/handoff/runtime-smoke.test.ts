@@ -15,6 +15,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { isString } from "../shared/validation.ts";
 
 const HANDOFF_EXTENSION = resolve(import.meta.dirname, "index.ts");
 
@@ -117,7 +118,7 @@ test("handoff applies an explicit model across isolated replacement module graph
 						withSession: async (fresh) => {
 							const sendUserMessage = fresh.sendUserMessage;
 							fresh.sendUserMessage = async (content) => {
-								submittedPrompts.push(typeof content === "string" ? content : "[multimodal prompt]");
+								submittedPrompts.push(isString(content) ? content : "[multimodal prompt]");
 							};
 							try {
 								await options?.withSession?.(fresh);

@@ -86,12 +86,9 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		};
 	}
 
-	function metadataGenerator(ctx: ExtensionContext): {
-		generate: PrMetadataGenerator;
-		usage: () => Usage | undefined;
-	} {
+	function metadataGenerator(ctx: ExtensionContext) {
 		return {
-			generate: async (request) => {
+			generate: async (request: Parameters<PrMetadataGenerator>[0]) => {
 				ctx.ui.setStatus("jj-stack", `writing PR metadata: ${request.bookmark}`);
 				return generateDeterministicPrMetadata(run, request);
 			},
@@ -99,13 +96,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		};
 	}
 
-	function publicationDeps(
-		ctx: ExtensionContext,
-		signal: AbortSignal,
-	): {
-		deps: OrchestratorDeps;
-		usage: () => Usage | undefined;
-	} {
+	function publicationDeps(ctx: ExtensionContext, signal: AbortSignal) {
 		const metadata = metadataGenerator(ctx);
 		return {
 			deps: { run, ui: uiFrom(ctx), signal, generatePrMetadata: metadata.generate },

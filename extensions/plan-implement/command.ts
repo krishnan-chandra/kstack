@@ -159,8 +159,8 @@ function boundedPanelIntent(task: string): string {
 function addPlanReviewContext(options: PanelArgs, approvedPlan?: string, executionLedger?: string): PanelArgs {
 	return {
 		...options,
-		...(approvedPlan !== undefined ? { approvedPlan } : {}),
-		...(executionLedger !== undefined ? { executionLedger } : {}),
+		...(approvedPlan !== undefined ? { approvedPlan } : undefined),
+		...(executionLedger !== undefined ? { executionLedger } : undefined),
 	};
 }
 

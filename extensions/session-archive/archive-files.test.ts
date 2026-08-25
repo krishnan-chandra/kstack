@@ -12,6 +12,7 @@ import {
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { getAgentDir } from "../shared/kstack-config.ts";
+import { isNumber } from "../shared/validation.ts";
 import {
 	ArchiveFileError,
 	archiveDestination,
@@ -147,7 +148,9 @@ describe("moveToArchive", () => {
 		const source = tree.writeSession(TEST_SESSION_ID, content);
 		const dest = archiveDestination(tree.archiveRoot, TEST_SESSION_ID, "2026-08-11T08:48:02.226Z");
 		const exdev = () => {
-			const err = new Error("cross-device") as NodeJS.ErrnoException;
+			const err = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new Error(
+				"cross-device",
+			) as NodeJS.ErrnoException;
 			err.code = "EXDEV";
 			throw err;
 		};
@@ -181,7 +184,9 @@ describe("moveToArchive", () => {
 		const source = tree.writeSession(TEST_SESSION_ID, content);
 		const dest = archiveDestination(tree.archiveRoot, TEST_SESSION_ID, "2026-08-11T08:48:02.226Z");
 		const eperm = () => {
-			const err = new Error("not permitted") as NodeJS.ErrnoException;
+			const err = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new Error(
+				"not permitted",
+			) as NodeJS.ErrnoException;
 			err.code = "EPERM";
 			throw err;
 		};
@@ -257,7 +262,7 @@ describe("fileStat", () => {
 		const path = tree.writeSession(TEST_SESSION_ID, content);
 		const { size, mtimeMs } = fileStat(path);
 		assert.equal(size, content.length);
-		assert.ok(typeof mtimeMs === "number" && Number.isFinite(mtimeMs) && mtimeMs > 0);
+		assert.ok(isNumber(mtimeMs) && Number.isFinite(mtimeMs) && mtimeMs > 0);
 	});
 });
 

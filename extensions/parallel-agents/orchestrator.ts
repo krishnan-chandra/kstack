@@ -43,7 +43,7 @@ export async function runParallelAgents(options: {
 		deps.pane?.complete(task.label, {
 			status: result.status,
 			turns: result.usage.turns,
-			...(result.status === "failed" ? { error: result.error } : {}),
+			...(result.status === "failed" ? { error: result.error } : undefined),
 		});
 		deps.pane?.note(task.label, `Child ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`);
 		return result;

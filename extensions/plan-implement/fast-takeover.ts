@@ -1,3 +1,4 @@
+import { type BoundaryValue, isString } from "../shared/validation.ts";
 /** Current-session takeover for `--fast`: pending-run tracking, commit verification, and kickoff construction. */
 
 import { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
@@ -26,33 +27,32 @@ export interface FastPendingRun {
 }
 
 interface EntryLike {
-	type?: unknown;
-	customType?: unknown;
-	data?: unknown;
+	type?: BoundaryValue;
+	customType?: BoundaryValue;
+	data?: BoundaryValue;
 }
 
-function readPendingRun(value: unknown): FastPendingRun | undefined {
+function readPendingRun(value: BoundaryValue): FastPendingRun | undefined {
 	if (!isRecord(value) || !isRecord(value.checkpoint)) return undefined;
 	if (
 		value.schemaVersion !== 1 ||
-		typeof value.runId !== "string" ||
+		!isString(value.runId) ||
 		value.runId.length === 0 ||
 		value.runId.length > 128 ||
-		typeof value.task !== "string" ||
+		!isString(value.task) ||
 		Buffer.byteLength(value.task, "utf8") > LIMITS.taskBytes ||
-		typeof value.changeKind !== "string" ||
+		!isString(value.changeKind) ||
 		!isChangeKind(value.changeKind) ||
 		(value.backend !== "git" && value.backend !== "jj" && value.backend !== "graphite") ||
-		typeof value.cwd !== "string" ||
+		!isString(value.cwd) ||
 		value.cwd.length === 0 ||
-		typeof value.checkpoint.ref !== "string" ||
+		!isString(value.checkpoint.ref) ||
 		value.checkpoint.ref.length === 0 ||
-		typeof value.checkpoint.baseSha !== "string" ||
+		!isString(value.checkpoint.baseSha) ||
 		value.checkpoint.baseSha.length === 0 ||
 		(value.implementerModel !== undefined &&
-			(typeof value.implementerModel !== "string" || value.implementerModel.length === 0)) ||
-		(value.previousModel !== undefined &&
-			(typeof value.previousModel !== "string" || value.previousModel.length === 0)) ||
+			(!isString(value.implementerModel) || value.implementerModel.length === 0)) ||
+		(value.previousModel !== undefined && (!isString(value.previousModel) || value.previousModel.length === 0)) ||
 		(value.previousThinking !== undefined && !isThinkingLevel(value.previousThinking))
 	) {
 		return undefined;
@@ -65,9 +65,9 @@ function readPendingRun(value: unknown): FastPendingRun | undefined {
 		backend: value.backend,
 		cwd: value.cwd,
 		checkpoint: { ref: value.checkpoint.ref, baseSha: value.checkpoint.baseSha },
-		...(typeof value.implementerModel === "string" ? { implementerModel: value.implementerModel } : {}),
-		...(typeof value.previousModel === "string" ? { previousModel: value.previousModel } : {}),
-		...(isThinkingLevel(value.previousThinking) ? { previousThinking: value.previousThinking } : {}),
+		...(isString(value.implementerModel) ? { implementerModel: value.implementerModel } : undefined),
+		...(isString(value.previousModel) ? { previousModel: value.previousModel } : undefined),
+		...(isThinkingLevel(value.previousThinking) ? { previousThinking: value.previousThinking } : undefined),
 	};
 }
 
@@ -78,7 +78,7 @@ export function findPendingFastRun(entries: readonly EntryLike[]): FastPendingRu
 		const entry = entries[index];
 		if (entry?.type !== "custom") continue;
 		if (entry.customType === FAST_IMPLEMENT_RUN_COMPLETE_ENTRY && isRecord(entry.data)) {
-			if (typeof entry.data.runId === "string") completed.add(entry.data.runId);
+			if (isString(entry.data.runId)) completed.add(entry.data.runId);
 			continue;
 		}
 		if (entry.customType !== FAST_IMPLEMENT_RUN_ENTRY) continue;

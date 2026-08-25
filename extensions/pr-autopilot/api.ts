@@ -1,6 +1,7 @@
 /** Typed in-process contract for invoking PR autopilot from another extension. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotMode, AutopilotResult } from "./types.ts";
 
@@ -19,11 +20,11 @@ interface PrAutopilotPayload {
 	confirmation?: AutopilotConfirmation;
 }
 
-function isPositivePr(value: unknown): value is number {
+function isPositivePr(value: BoundaryValue): value is number {
 	return Number.isSafeInteger(value) && Number(value) > 0;
 }
 
-function isOptionalPr(value: unknown): value is number | undefined {
+function isOptionalPr(value: BoundaryValue): value is number | undefined {
 	return value === undefined || isPositivePr(value);
 }
 
@@ -34,27 +35,27 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 	event: PRAUTOPILOT_REQUEST_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is PrAutopilotPayload =>
-		typeof value === "object" &&
+		isObject(value) &&
 		value !== null &&
 		"mode" in value &&
-		MODES.has(typeof value.mode === "string" ? value.mode : "") &&
+		MODES.has(isString(value.mode) ? value.mode : "") &&
 		(!("prNumber" in value) || isOptionalPr(value.prNumber)) &&
 		(!("confirmation" in value) || value.confirmation === undefined || isAutopilotConfirmation(value.confirmation)) &&
 		"ctx" in value &&
-		typeof value.ctx === "object" &&
+		isObject(value.ctx) &&
 		value.ctx !== null &&
 		"cwd" in value &&
-		typeof value.cwd === "string" &&
+		isString(value.cwd) &&
 		value.cwd.length > 0,
 });
 
 /* exported: request-channel contract */
-export function isPrAutopilotRequest(value: unknown): value is PrAutopilotRequest {
+export function isPrAutopilotRequest(value: BoundaryValue): value is PrAutopilotRequest {
 	return channel.isRequest(value);
 }
 
 export function claimPrAutopilotRequest(
-	value: unknown,
+	value: BoundaryValue,
 	run: (
 		mode: AutopilotMode,
 		prNumber: number | undefined,
@@ -77,5 +78,11 @@ export function requestPrAutopilot(
 	confirmation?: AutopilotConfirmation,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
 	if (prNumber !== undefined && !isPositivePr(prNumber)) return Promise.resolve({ handled: false });
-	return channel.request(pi, { mode, prNumber, ctx, cwd, ...(confirmation === undefined ? {} : { confirmation }) });
+	return channel.request(pi, {
+		mode,
+		prNumber,
+		ctx,
+		cwd,
+		...(confirmation === undefined ? undefined : { confirmation }),
+	});
 }

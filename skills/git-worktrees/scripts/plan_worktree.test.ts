@@ -81,6 +81,7 @@ describe("plan_worktree CLI", () => {
 		const repo = await initRepo(root);
 		const result = await runCli(["--repo", repo, "--root", join(root, "managed"), "--task", "Add archive search"]);
 		assert.equal(result.code, 0, result.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const plan = JSON.parse(result.stdout) as { base_ref: string; base_sha: string; branch: string; slug: string };
 		assert.match(plan.base_ref, /^(HEAD|refs\/heads\/(main|master))$/);
 		assert.equal(plan.base_sha.length, 40);
@@ -94,11 +95,13 @@ describe("plan_worktree CLI", () => {
 		const managed = join(root, "managed");
 		const first = await runCli(["--repo", repo, "--root", managed, "--task", "change"]);
 		assert.equal(first.code, 0, first.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const plan = JSON.parse(first.stdout) as { branch: string; path: string };
 		assert.equal(plan.branch, "kstack/change");
 		assert.equal((await git(repo, ["branch", "kstack/change"])).code, 0);
 		const second = await runCli(["--repo", repo, "--root", managed, "--task", "change"]);
 		assert.equal(second.code, 0, second.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const next = JSON.parse(second.stdout) as { branch: string; slug: string };
 		assert.equal(next.branch, "kstack/change-2");
 		assert.equal(next.slug, "change-2");
@@ -110,6 +113,7 @@ describe("plan_worktree CLI", () => {
 		const managed = join(root, "elsewhere");
 		const result = await runCli(["--repo", repo, "--root", managed, "--task", "change"]);
 		assert.equal(result.code, 0, result.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const plan = JSON.parse(result.stdout) as { managed_root: string; path: string };
 		assert.equal(plan.managed_root, managed);
 		assert.equal(dirname(dirname(plan.path)), managed);

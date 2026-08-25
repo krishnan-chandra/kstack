@@ -1,5 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { fallbackTerminalText, sanitizeDisplayText, type TerminalText } from "./terminal-text.ts";
+import type { BoundaryValue } from "./validation.ts";
 
 export type DashboardStatus = "queued" | "running" | "completed" | "failed" | "aborted";
 
@@ -21,13 +22,13 @@ export interface DashboardTheme {
 	fg(color: string, text: string): string;
 }
 
-export const STATUS_ICON: Record<DashboardStatus, { icon: string; color: string }> = {
+export const STATUS_ICON = {
 	queued: { icon: "○", color: "dim" },
 	running: { icon: "●", color: "accent" },
 	completed: { icon: "✓", color: "success" },
 	failed: { icon: "✗", color: "error" },
 	aborted: { icon: "⊘", color: "warning" },
-};
+} satisfies Record<DashboardStatus, { icon: string; color: string }>;
 
 export function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
 	if (row.startedAt === undefined) return undefined;
@@ -115,7 +116,7 @@ export class LiveDashboardStore {
 		return this.rows;
 	}
 
-	summary(): { total: number; completed: number; failed: number; aborted: number; running: number } {
+	summary() {
 		let completed = 0;
 		let failed = 0;
 		let aborted = 0;
@@ -213,7 +214,7 @@ class LiveDashboardComponent implements Component {
 }
 
 interface WidgetUi {
-	setWidget(key: string, content: unknown): void;
+	setWidget(key: string, content: BoundaryValue): void;
 }
 
 export function mountLiveDashboard(

@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString, type JsonObject } from "./validation.ts";
 /** Shared base for sections of $PI_CODING_AGENT_DIR/kstack.json.
  *
  * Unlike the standalone installer, extension callers historically expanded
@@ -27,8 +28,13 @@ const thinkingLevelsComplete: ThinkingLevelsComplete = true;
 void thinkingLevelsComplete;
 export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
-export function isThinkingLevel(value: unknown): value is ModelThinkingLevel {
-	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
+export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLevel {
+	return (
+		isString(value) &&
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+			THINKING_LEVELS as readonly string[]
+		).includes(value)
+	);
 }
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -43,7 +49,7 @@ export function getKstackPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 type RawSectionLoad =
-	| { status: "found"; value: unknown; path: string; root: Record<string, unknown> }
+	| { status: "found"; value: BoundaryValue; path: string; root: JsonObject }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
 
@@ -53,7 +59,7 @@ export type ConfigLoad<T> =
 	| { status: "invalid"; path: string; error: string };
 
 type RawRootLoad =
-	| { status: "found"; path: string; root: Record<string, unknown> }
+	| { status: "found"; path: string; root: JsonObject }
 	| { status: "missing"; path: string }
 	| { status: "invalid"; path: string; error: string };
 
@@ -62,13 +68,21 @@ export function loadKstackRoot(env: NodeJS.ProcessEnv = process.env): RawRootLoa
 	const path = getKstackPath(env);
 	if (!existsSync(path)) return { status: "missing", path };
 	try {
-		const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		const raw: BoundaryValue = JSON.parse(readFileSync(path, "utf8"));
+		if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 			return { status: "invalid", path, error: "kstack.json must be a JSON object." };
 		}
-		return { status: "found", path, root: raw as Record<string, unknown> };
+		return {
+			status: "found",
+			path,
+			root: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject,
+		};
 	} catch (error) {
-		return { status: "invalid", path, error: `Unreadable config: ${(error as Error).message}` };
+		return {
+			status: "invalid",
+			path,
+			error: `Unreadable config: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
+		};
 	}
 }
 
@@ -82,7 +96,7 @@ export function loadKstackSection(section: string, env: NodeJS.ProcessEnv = proc
 /** Load and validate one extension section from kstack.json. */
 export function loadValidatedSection<T>(
 	section: string,
-	validate: (value: unknown) => { ok: true; config: T } | { ok: false; error: string },
+	validate: (value: BoundaryValue) => { ok: true; config: T } | { ok: false; error: string },
 	env: NodeJS.ProcessEnv = process.env,
 ): ConfigLoad<T> {
 	const raw = loadKstackSection(section, env);

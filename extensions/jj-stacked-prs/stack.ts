@@ -1,9 +1,10 @@
+import { type BoundaryValue, isObject } from "../shared/validation.ts";
 /** Pure blocker detection, top inference, and PR-slice derivation. */
 
 import { type StackBlocker, type StackCommit, type StackSlice, TRUNK_BOOKMARK_NAMES } from "./types.ts";
 
-export function parseConcatenatedJson(text: string): unknown[] {
-	const objects: unknown[] = [];
+export function parseConcatenatedJson(text: string): BoundaryValue[] {
+	const objects: BoundaryValue[] = [];
 	let index = 0;
 	while (index < text.length) {
 		while (index < text.length && text[index] !== "{" && text[index] !== "[") index++;
@@ -11,8 +12,8 @@ export function parseConcatenatedJson(text: string): unknown[] {
 		const end = jsonValueEnd(text, index);
 		if (end === undefined) break;
 		try {
-			const value: unknown = JSON.parse(text.slice(index, end));
-			if (typeof value === "object" && value !== null) objects.push(value);
+			const value: BoundaryValue = JSON.parse(text.slice(index, end));
+			if (isObject(value) && value !== null) objects.push(value);
 		} catch {
 			break;
 		}
@@ -255,7 +256,7 @@ export function detectBlockers(input: {
 	return blockers;
 }
 
-export function truncateStack<T>(items: readonly T[], maxStack: number): { items: T[]; truncated: boolean } {
+export function truncateStack<T>(items: readonly T[], maxStack: number) {
 	if (items.length <= maxStack) return { items: [...items], truncated: false };
 	return { items: items.slice(0, maxStack), truncated: true };
 }

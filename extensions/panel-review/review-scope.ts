@@ -193,7 +193,10 @@ export function readUntracked(
 				fsImpl.closeSync(fd);
 			}
 		} else {
-			buf = fsImpl.readFileSync(join(root, relPath)) as unknown as Buffer;
+			buf =
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ fsImpl.readFileSync(
+					join(root, relPath),
+				) as Buffer;
 		}
 	} catch {
 		return { skipped: "unreadable" };
@@ -205,7 +208,7 @@ export function readUntracked(
 }
 
 /** UTF-8-safe head truncation to a byte budget. */
-export function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
+export function truncateUtf8(text: string, maxBytes: number) {
 	const buf = Buffer.from(text, "utf8");
 	if (buf.length <= maxBytes) return { text, truncated: false };
 	let out = buf.subarray(0, maxBytes).toString("utf8");

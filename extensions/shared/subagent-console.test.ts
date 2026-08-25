@@ -18,6 +18,7 @@ import {
 } from "./subagent-console.ts";
 import { fallbackTerminalText, stripTerminalSequencesFallback, type TerminalText } from "./terminal-text.ts";
 import type { TranscriptEntry } from "./transcript-store.ts";
+import type { BoundaryValue } from "./validation.ts";
 
 const fakeTheme: DashboardTheme = {
 	fg: (_color: string, text: string) => text,
@@ -606,16 +607,21 @@ describe("openSubagentConsole", () => {
 		const dashboard = makeDashboard([makeRow("r1", "alpha", "model-a")]);
 		const transcripts = makeTranscripts();
 
-		let customOptions: unknown;
+		let customOptions: BoundaryValue;
 		const ctx = {
 			ui: {
-				custom: async (_factory: unknown, options: unknown) => {
+				custom: async (_factory: BoundaryValue, options: BoundaryValue) => {
 					customOptions = options;
 				},
 			},
 		};
 
-		const result = openSubagentConsole(ctx as never, dashboard, transcripts, { text: fakeText, copy: COPY });
+		const result = openSubagentConsole(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			dashboard,
+			transcripts,
+			{ text: fakeText, copy: COPY },
+		);
 		assert.deepEqual(customOptions, {
 			overlay: true,
 			overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left", margin: 0 },

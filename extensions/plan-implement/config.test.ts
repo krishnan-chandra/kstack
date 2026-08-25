@@ -29,14 +29,23 @@ describe("plan-implement config", () => {
 	it("rejects low planner thinking, same models, and invalid timeouts", () => {
 		const base = { planner: { model: "a/planner", thinking: "high" }, implementer: { model: "b/worker" } };
 		assert.match(
-			(validateConfig({ ...base, planner: { ...base.planner, thinking: "low" } }) as { error: string }).error,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+				validateConfig({ ...base, planner: { ...base.planner, thinking: "low" } }) as { error: string }
+			).error,
 			/high, xhigh, or max/,
 		);
 		assert.match(
-			(validateConfig({ ...base, implementer: { model: "a/planner" } }) as { error: string }).error,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+				validateConfig({ ...base, implementer: { model: "a/planner" } }) as { error: string }
+			).error,
 			/different models/,
 		);
-		assert.match((validateConfig({ ...base, timeoutMinutes: 0 }) as { error: string }).error, /1 to 60/);
+		assert.match(
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+				validateConfig({ ...base, timeoutMinutes: 0 }) as { error: string }
+			).error,
+			/1 to 60/,
+		);
 	});
 
 	it("resolves configured models only when both are available", () => {

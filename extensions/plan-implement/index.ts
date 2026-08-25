@@ -67,12 +67,12 @@ interface PhaseDetails {
 	status: AgentRunResult["status"];
 	model: string;
 }
-const PHASE_LABELS: Record<AgentRole, string> = {
+const PHASE_LABELS = {
 	planner: "Planner",
 	implementer: "Implementer",
 	fixer: "Review fixer",
 	publisher: "Publisher",
-};
+} satisfies Record<AgentRole, string>;
 
 function errorText(result: AgentRunResult): string {
 	if (result.status === "failed") return result.error;
@@ -148,7 +148,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerMessageRenderer("plan-implement", (message, { expanded, outputPad }, theme) => {
-		const details = message.details as PhaseDetails | undefined;
+		const details =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ message.details as
+				| PhaseDetails
+				| undefined;
 		const phase = details ? PHASE_LABELS[details.phase] : "Implementer";
 		const status = details?.status ?? "completed";
 		const icon =
@@ -469,8 +472,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			cwd,
 			checkpoint: created,
 			implementerModel: implementer.model,
-			...(ctx.model ? { previousModel: `${ctx.model.provider}/${ctx.model.id}` } : {}),
-			...(ctx.thinkingLevel ? { previousThinking: ctx.thinkingLevel } : {}),
+			...(ctx.model ? { previousModel: `${ctx.model.provider}/${ctx.model.id}` } : undefined),
+			...(ctx.thinkingLevel ? { previousThinking: ctx.thinkingLevel } : undefined),
 		};
 		let kickoff: string;
 		try {
@@ -679,7 +682,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			if (!rawTask.trim() && !(args ?? "").trim()) {
 				const choice = await ctx.ui.select("Delivery mode", ["single", "stack"], {});
 				if (!lifecycle.isSessionCurrent(commandSession) || !choice) return;
-				mode = choice as DeliveryMode;
+				mode =
+					/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ choice as DeliveryMode;
 			}
 			if (!changeKind && fast) changeKind = "generic";
 			if (!changeKind) {

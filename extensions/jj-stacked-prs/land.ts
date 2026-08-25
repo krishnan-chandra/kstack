@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../shared/validation.ts";
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
 import { isMergeMethod } from "../shared/github.ts";
@@ -465,13 +466,7 @@ async function runLandLoop(
 	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, completedMutations);
 	let preparedFirstIteration = true;
 
-	const progress = (): {
-		frontiers: StackLandFrontier[];
-		remainingBookmarks: string[];
-		completedMutations: string[];
-		warnings: string[];
-		recoveryOperationIds: string[];
-	} => ({
+	const progress = () => ({
 		frontiers: [...frontiers],
 		remainingBookmarks,
 		completedMutations: [...completedMutations],
@@ -774,10 +769,10 @@ async function settleWorkingCopyOnTrunk(
 	}
 }
 
-function isIndeterminate(error: unknown): boolean {
+function isIndeterminate(error: BoundaryValue): boolean {
 	return (error instanceof JjError || error instanceof GitHubError) && error.kind === "indeterminate";
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: BoundaryValue): string {
 	return error instanceof Error ? error.message : String(error);
 }

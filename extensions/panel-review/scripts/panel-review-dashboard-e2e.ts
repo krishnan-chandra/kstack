@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../../shared/validation.ts";
 /**
  * End-to-end wiring harness for the panel-review live dashboard.
  *
@@ -106,7 +107,7 @@ const ctx = {
 		confirm: async () => true,
 		editor: async (_t: string, prefill: string) => prefill,
 		setStatus: (key: string, v: string | undefined) => statuses.set(key, v),
-		setWidget: (key: string, content: unknown) => {
+		setWidget: (key: string, content: BoundaryValue) => {
 			if (content === undefined) {
 				widgets.delete(key);
 				component?.dispose?.();
@@ -114,7 +115,9 @@ const ctx = {
 				return;
 			}
 			widgets.set(key, content);
-			component = (content as (tui: unknown, theme: unknown) => typeof component)(
+			component = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+				content as (tui: BoundaryValue, theme: BoundaryValue) => typeof component
+			)(
 				{
 					requestRender: () => {
 						renders++;
@@ -134,14 +137,14 @@ const ctx = {
 	model: { provider: "fake", id: "model-x" },
 };
 
-let handler: ((args: string, c: unknown) => Promise<void>) | undefined;
+let handler: ((args: string, c: BoundaryValue) => Promise<void>) | undefined;
 let sentMessage: { content: string } | undefined;
 const pi = {
 	registerShortcut: () => {},
 	registerMessageRenderer: () => {},
 	events: { on: () => {} },
 	on: () => {},
-	registerCommand(_name: string, desc: { handler: (args: string, c: unknown) => Promise<void> }) {
+	registerCommand(_name: string, desc: { handler: (args: string, c: BoundaryValue) => Promise<void> }) {
 		handler = desc.handler;
 	},
 	sendMessage: (m: { content: string }) => {
@@ -149,7 +152,7 @@ const pi = {
 	},
 };
 const { default: register } = await import("../index.ts");
-register(pi as never);
+register(/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never);
 assert.ok(handler, "command registered");
 
 await handler("--base HEAD verify-dashboard", ctx);

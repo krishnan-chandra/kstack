@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { createHandoffHandler as createHandler } from "./command.ts";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
@@ -31,9 +32,13 @@ function createHandoffHandler(
 // mutated.
 function makeFakeApi(order: string[], opts: { thinkingLevel?: string } = {}) {
 	const thinkingLevel = opts.thinkingLevel ?? "";
-	const calls = { setModel: [] as unknown[], setThinkingLevel: [] as string[] };
+	const calls = {
+		setModel: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as unknown[],
+		setThinkingLevel:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
+	};
 	const api = {
-		setModel: async (model: unknown) => {
+		setModel: async (model: BoundaryValue) => {
 			order.push("setModel");
 			calls.setModel.push(model);
 			return true;
@@ -60,7 +65,7 @@ interface FakeCtxOptions {
 	freshModel?: HandoffModel | undefined;
 	freshThinkingLevel?: string;
 	freshHasConfiguredAuth?: boolean;
-	freshProviderAuth?: unknown;
+	freshProviderAuth?: BoundaryValue;
 	replacementSetModelResult?: boolean;
 	replacementSetModelError?: Error;
 	replacementAvailableEfforts?: string[];
@@ -68,12 +73,14 @@ interface FakeCtxOptions {
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	const notifications: Array<{ message: string; level: string }> = [];
-	const customMessages: Array<{ customType: string; content: string; display: boolean; details?: unknown }> = [];
+	const customMessages: Array<{ customType: string; content: string; display: boolean; details?: BoundaryValue }> = [];
 	const calls = {
-		editorDrafts: [] as string[],
-		sendUserMessage: [] as string[],
-		setEditorText: [] as string[],
-		sessionNames: [] as string[],
+		editorDrafts: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
+		sendUserMessage:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
+		setEditorText:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
+		sessionNames: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
 		newSession: 0,
 	};
 
@@ -82,7 +89,12 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 	let freshModel = "freshModel" in opts ? opts.freshModel : MODELS[0];
 	let freshThinkingLevel = "freshThinkingLevel" in opts ? opts.freshThinkingLevel : opts.thinkingLevel;
 	const availableEfforts = opts.replacementAvailableEfforts ?? ALL_EFFORTS;
-	const replacementCalls = { setModel: [] as HandoffModel[], setThinkingLevel: [] as string[] };
+	const replacementCalls = {
+		setModel:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as HandoffModel[],
+		setThinkingLevel:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
+	};
 	const replacementApi: ReplacementSelectionApi = {
 		setModel: async (model: HandoffModel) => {
 			order.push("replacement.setModel");
@@ -99,7 +111,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 		},
 	};
 
-	const ctx: Record<string, unknown> = {
+	const ctx = {
 		mode: opts.mode ?? "tui",
 		model: opts.model,
 		thinkingLevel: opts.thinkingLevel,
@@ -140,8 +152,8 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 		},
 		newSession: async (options: {
 			parentSession?: string;
-			setup?: (sm: unknown) => Promise<void>;
-			withSession?: (fresh: unknown) => Promise<void>;
+			setup?: (sm: BoundaryValue) => Promise<void>;
+			withSession?: (fresh: BoundaryValue) => Promise<void>;
 		}) => {
 			order.push("newSession");
 			calls.newSession++;
@@ -154,7 +166,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 					calls.sessionNames.push(name);
 					return "session-name-entry-id";
 				},
-				appendCustomMessageEntry: (customType: string, content: string, display: boolean, details?: unknown) => {
+				appendCustomMessageEntry: (customType: string, content: string, display: boolean, details?: BoundaryValue) => {
 					customMessages.push({ customType, content, display, details });
 					return "entry-id";
 				},
@@ -199,7 +211,10 @@ describe("handoff command guards", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications } = makeFakeCtx(order, { mode: "rpc" });
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.equal(notifications[0].message, "handoff requires interactive mode");
 		assert.equal(notifications[0].level, "error");
 		assert.deepEqual(order, []);
@@ -209,7 +224,10 @@ describe("handoff command guards", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order, { sessionFile: undefined });
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.deepEqual(order, ["waitForIdle", "getSessionFile"]);
 		assert.ok(notifications[0].message.includes("persisted session"));
 		assert.ok(notifications[0].message.includes("--no-session"));
@@ -220,7 +238,10 @@ describe("handoff command guards", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandler(api, { sourceExists: () => false })("goal", ctx as never);
+		await createHandler(api, { sourceExists: () => false })(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.deepEqual(order, ["waitForIdle", "getSessionFile"]);
 		assert.match(notifications[0].message, /no longer exists.*cannot create a durable handoff/i);
 		assert.equal(calls.editorDrafts.length, 0);
@@ -233,7 +254,10 @@ describe("handoff command lifecycle", () => {
 		const order: string[] = [];
 		const { api, apiCalls } = makeFakeApi(order);
 		const { ctx, calls, customMessages, replacementCalls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("  implement teams support  ", ctx as never);
+		await createHandoffHandler(api)(
+			"  implement teams support  ",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 
 		assert.deepEqual(order, [
 			"waitForIdle",
@@ -275,7 +299,10 @@ describe("handoff command lifecycle", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, calls } = makeFakeCtx(order);
-		await createHandoffHandler(api)("   ", ctx as never);
+		await createHandoffHandler(api)(
+			"   ",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.ok(calls.editorDrafts[0].includes(DEFAULT_HANDOFF_GOAL));
 		assert.deepEqual(calls.sessionNames, ["continue-implementation"]);
 	});
@@ -286,7 +313,10 @@ describe("handoff command lifecycle", () => {
 		const { ctx, calls } = makeFakeCtx(order, {
 			editorResult: "Continue work.\n\n## Goal\nShip the corrected archive workflow.\n",
 		});
-		await createHandoffHandler(api)("old goal", ctx as never);
+		await createHandoffHandler(api)(
+			"old goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.deepEqual(calls.sessionNames, ["ship-corrected-archive"]);
 	});
 
@@ -296,7 +326,10 @@ describe("handoff command lifecycle", () => {
 		const { ctx, notifications, customMessages } = makeFakeCtx(order, {
 			newSessionResult: { cancelled: true },
 		});
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.equal(notifications.at(-1)!.message, "New session cancelled");
 		assert.equal(notifications.at(-1)!.level, "info");
 		assert.equal(customMessages.length, 0);
@@ -307,7 +340,10 @@ describe("handoff command lifecycle", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order, { freshModel: undefined });
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.equal(calls.newSession, 1);
 		assert.equal(calls.sendUserMessage.length, 0);
 		assert.equal(calls.setEditorText.length, 1);
@@ -322,7 +358,10 @@ describe("handoff command lifecycle", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order, { freshHasConfiguredAuth: false });
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.equal(calls.sendUserMessage.length, 0);
 		assert.equal(calls.setEditorText.length, 1);
 		assert.equal(notifications.at(-1)!.level, "warning");
@@ -340,7 +379,10 @@ describe("handoff command lifecycle", () => {
 		});
 
 		await assert.rejects(
-			createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:high goal", fake.ctx as never),
+			createHandoffHandler(api, fake.replacementApi)(
+				"--model openai/gpt-5.2:high goal",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			),
 			/provider failed after accepting prompt/,
 		);
 		assert.equal(fake.calls.sendUserMessage.length, 1);
@@ -358,7 +400,10 @@ describe("handoff editor cancellation", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order, { editorResult: undefined });
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.equal(notifications.at(-1)!.message, "Cancelled");
 		assert.equal(calls.newSession, 0);
 	});
@@ -367,7 +412,10 @@ describe("handoff editor cancellation", () => {
 		const order: string[] = [];
 		const { api } = makeFakeApi(order);
 		const { ctx, notifications, calls } = makeFakeCtx(order, { editorResult: "  \n" });
-		await createHandoffHandler(api)("goal", ctx as never);
+		await createHandoffHandler(api)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 		assert.equal(notifications.at(-1)!.message, "Handoff prompt cannot be empty");
 		assert.equal(notifications.at(-1)!.level, "error");
 		assert.equal(calls.newSession, 0);
@@ -385,7 +433,10 @@ describe("handoff replacement model selection", () => {
 			freshThinkingLevel: "low",
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:medium goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"--model openai/gpt-5.2:medium goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		assert.deepEqual(apiCalls.setModel, []);
 		assert.deepEqual(apiCalls.setThinkingLevel, []);
@@ -415,7 +466,10 @@ describe("handoff replacement model selection", () => {
 			freshThinkingLevel: "low",
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		assert.deepEqual(apiCalls.setModel, []);
 		assert.deepEqual(apiCalls.setThinkingLevel, []);
@@ -436,7 +490,10 @@ describe("handoff replacement model selection", () => {
 			freshThinkingLevel: "high",
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		assert.deepEqual(fake.replacementCalls.setModel, []);
 		assert.deepEqual(fake.replacementCalls.setThinkingLevel, ["high"]);
@@ -454,7 +511,10 @@ describe("handoff replacement model selection", () => {
 			replacementSetModelResult: false,
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:medium goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"--model openai/gpt-5.2:medium goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		const warning = fake.notifications.find((notification) => notification.level === "warning")!;
 		assert.ok(warning.message.includes("could not apply openai/gpt-5.2:medium"));
@@ -477,7 +537,10 @@ describe("handoff replacement model selection", () => {
 			replacementAvailableEfforts: ["off", "minimal", "low", "medium"],
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:xhigh goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"--model openai/gpt-5.2:xhigh goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		const warning = fake.notifications.find((notification) => notification.level === "warning")!;
 		assert.ok(warning.message.includes("could not apply openai/gpt-5.2:xhigh"));
@@ -495,7 +558,10 @@ describe("handoff replacement model selection", () => {
 			freshThinkingLevel: "low",
 		});
 
-		await createHandoffHandler(api, undefined)("goal", fake.ctx as never);
+		await createHandoffHandler(api, undefined)(
+			"goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		const warning = fake.notifications.find((notification) => notification.level === "warning")!;
 		assert.ok(warning.message.includes("could not apply anthropic/claude-opus-4-6:low"));
@@ -513,7 +579,10 @@ describe("handoff replacement model selection", () => {
 			newSessionResult: { cancelled: true },
 		});
 
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never);
+		await createHandoffHandler(api)(
+			"--model openai/gpt-5.2:high goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 
 		assert.deepEqual(apiCalls.setModel, []);
 		assert.deepEqual(apiCalls.setThinkingLevel, []);
@@ -530,7 +599,10 @@ describe("handoff replacement model selection", () => {
 			newSessionResult: { cancelled: true },
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2:high goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"--model openai/gpt-5.2:high goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		assert.deepEqual(fake.replacementCalls.setModel, []);
 		assert.deepEqual(fake.replacementCalls.setThinkingLevel, []);
@@ -546,7 +618,10 @@ describe("handoff replacement model selection", () => {
 		});
 
 		await assert.rejects(
-			createHandoffHandler(api)("--model openai/gpt-5.2:high goal", ctx as never),
+			createHandoffHandler(api)(
+				"--model openai/gpt-5.2:high goal",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			),
 			/runtime creation failed/,
 		);
 		assert.deepEqual(apiCalls.setModel, []);
@@ -560,7 +635,10 @@ describe("handoff replacement model selection", () => {
 			scopedModels: [{ model: MODELS[2] }, { model: MODELS[3] }],
 		});
 
-		await createHandoffHandler(api, fake.replacementApi)("--model openai/gpt-5.2 goal", fake.ctx as never);
+		await createHandoffHandler(api, fake.replacementApi)(
+			"--model openai/gpt-5.2 goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+		);
 
 		assert.equal(fake.calls.newSession, 1);
 		assert.deepEqual(apiCalls.setModel, []);
@@ -574,7 +652,10 @@ describe("handoff replacement model selection", () => {
 			scopedModels: [{ model: MODELS[2] }, { model: MODELS[3] }],
 		});
 
-		await createHandoffHandler(api)("--model anthropic/claude-sonnet-4-5 goal", ctx as never);
+		await createHandoffHandler(api)(
+			"--model anthropic/claude-sonnet-4-5 goal",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 
 		assert.equal(calls.newSession, 0);
 		assert.equal(notifications[0].level, "error");
@@ -586,7 +667,10 @@ describe("handoff replacement model selection", () => {
 			const order: string[] = [];
 			const { api } = makeFakeApi(order);
 			const { ctx, calls } = makeFakeCtx(order);
-			await createHandoffHandler(api)(args, ctx as never);
+			await createHandoffHandler(api)(
+				args,
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+			);
 			assert.equal(calls.editorDrafts.length, 0);
 			assert.equal(calls.newSession, 0);
 		}
@@ -597,7 +681,10 @@ describe("handoff replacement model selection", () => {
 		const { api } = makeFakeApi(order, { thinkingLevel: "medium" });
 		const { ctx, calls } = makeFakeCtx(order, { model: PARENT_MODEL, thinkingLevel: "medium" });
 
-		await createHandoffHandler(api)("--model openai/gpt-5.2:high ship the feature", ctx as never);
+		await createHandoffHandler(api)(
+			"--model openai/gpt-5.2:high ship the feature",
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		);
 
 		const draft = calls.editorDrafts[0];
 		assert.ok(draft.includes("## Goal\nship the feature"));

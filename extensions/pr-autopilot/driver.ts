@@ -1,3 +1,4 @@
+import { isString } from "../shared/validation.ts";
 /**
  * Bounded PR autopilot state machine.
  *
@@ -171,7 +172,7 @@ export async function runAutopilot(
 			await resolveRepoOnce(),
 		);
 		setPhase("idle");
-		if (typeof state === "string") {
+		if (isString(state)) {
 			notify(state, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [state], usage };
 		}
@@ -186,7 +187,7 @@ export async function runAutopilot(
 			},
 			await resolveRepoOnce(),
 		);
-		if (typeof verified === "string") {
+		if (isString(verified)) {
 			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [verified], usage };
 		}
 		setPhase("idle");
@@ -283,7 +284,7 @@ export async function runAutopilot(
 			},
 			await resolveRepoOnce(),
 		);
-		if (typeof settled === "string") {
+		if (isString(settled)) {
 			notify(settled, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [settled], usage };
 		}
@@ -325,7 +326,7 @@ export async function runAutopilot(
 		}
 
 		const fetched = await refresh();
-		if (typeof fetched === "string") {
+		if (isString(fetched)) {
 			notify(fetched, "error");
 			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [fetched], usage };
 		}
@@ -441,7 +442,7 @@ export async function runAutopilot(
 				notify(`CI watch ended: ${watched.stderr.trim() || "a check failed or the watch timed out"}.`, "warning");
 			}
 			const afterWatch = await refresh();
-			if (typeof afterWatch === "string") {
+			if (isString(afterWatch)) {
 				notify(afterWatch, "error");
 				return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [afterWatch], usage };
 			}
@@ -668,7 +669,7 @@ export async function runAutopilot(
 		if (mode === "threads") {
 			const recheck = await refresh();
 			setPhase("idle", cycle + 1);
-			if (typeof recheck === "string") {
+			if (isString(recheck)) {
 				return {
 					status: "incomplete",
 					mergeReady: false,

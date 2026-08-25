@@ -4,6 +4,7 @@ import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	ArchiveStoreError,
 	beginRestore,
@@ -66,7 +67,9 @@ describe("archive-store", () => {
 			assert.equal(getSessionRow(db, TEST_SESSION_ID), undefined);
 			assert.deepEqual(listRestoreJournals(db), []);
 			assert.equal(
-				(db.prepare("SELECT COUNT(*) AS count FROM archive_entries_fts_docsize").get() as { count: number }).count,
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+					db.prepare("SELECT COUNT(*) AS count FROM archive_entries_fts_docsize").get() as { count: number }
+				).count,
 				0,
 			);
 		} finally {
@@ -77,7 +80,9 @@ describe("archive-store", () => {
 	it("initializes an empty database and reopens it", () => {
 		const tree = makeTempTree();
 		const db = openArchiveDb(tree.dbPath);
-		const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
+		const version = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ db
+			.prepare("PRAGMA user_version")
+			.get() as { user_version: number };
 		assert.equal(version.user_version, 3);
 		db.exec("PRAGMA foreign_keys=ON");
 		assert.ok(existsSync(tree.dbPath));
@@ -85,10 +90,15 @@ describe("archive-store", () => {
 		// Second open: schema already present, no error.
 		const again = openArchiveDb(tree.dbPath);
 		try {
-			const sessionColumns = again.prepare("PRAGMA table_info(archive_sessions)").all() as unknown as {
-				name: string;
-			}[];
-			const entryColumns = again.prepare("PRAGMA table_info(archive_entries)").all() as unknown as { name: string }[];
+			const sessionColumns =
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ again
+					.prepare("PRAGMA table_info(archive_sessions)")
+					.all() as {
+					name: string;
+				}[];
+			const entryColumns = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ again
+				.prepare("PRAGMA table_info(archive_entries)")
+				.all() as { name: string }[];
 			assert.ok(!sessionColumns.some((column) => column.name === "header_raw_json"));
 			assert.ok(!entryColumns.some((column) => column.name === "raw_json"));
 			assert.ok(entryColumns.some((column) => column.name === "raw_offset"));
@@ -126,7 +136,12 @@ describe("archive-store", () => {
 		writable.close();
 		const readOnly = openArchiveDbReadOnly(tree.dbPath);
 		try {
-			assert.equal((readOnly.prepare("PRAGMA query_only").get() as { query_only: number }).query_only, 1);
+			assert.equal(
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+					readOnly.prepare("PRAGMA query_only").get() as { query_only: number }
+				).query_only,
+				1,
+			);
 			assert.throws(() => readOnly.exec("DELETE FROM archive_sessions"), /read.?only/i);
 		} finally {
 			readOnly.close();
@@ -267,7 +282,7 @@ describe("archive-store", () => {
 			db.exec("DROP TABLE archive_entries_fts");
 			assert.throws(
 				() => searchArchive(db, { query: "valid" }),
-				(error: unknown) =>
+				(error: BoundaryValue) =>
 					error instanceof Error && !(error instanceof FtsQueryError) && /no such table/.test(error.message),
 			);
 		} finally {
@@ -494,7 +509,7 @@ describe("archive-store", () => {
 				/different pending archive operation/,
 			);
 			const matchCount = (query: string) =>
-				(
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
 					db.prepare("SELECT COUNT(*) AS n FROM archive_entries_fts WHERE archive_entries_fts MATCH ?").get(query) as {
 						n: number;
 					}

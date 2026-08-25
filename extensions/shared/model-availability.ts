@@ -1,8 +1,9 @@
+import type { BoundaryValue } from "./validation.ts";
 /** Model availability checks for child Pi processes started with --no-extensions. */
 
 export interface ChildModelRegistry {
-	find(provider: string, modelId: string): unknown | undefined;
-	hasConfiguredAuth(model: unknown): boolean;
+	find(provider: string, modelId: string): BoundaryValue | undefined;
+	hasConfiguredAuth(model: BoundaryValue): boolean;
 	getRegisteredProviderIds(): readonly string[];
 }
 

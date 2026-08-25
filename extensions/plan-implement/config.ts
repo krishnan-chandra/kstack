@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, type JsonObject } from "../shared/validation.ts";
 /** Unified kstack.json configuration and role-model resolution. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
@@ -31,13 +32,14 @@ export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [
 export type ConfigLoad = SharedConfigLoad<PlanImplementConfig>;
 
 function validateRole(
-	raw: unknown,
+	raw: BoundaryValue,
 	role: "planner" | "implementer",
 ): { ok: true; spec: RoleSpec } | { ok: false; error: string } {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: `"${role}" must be {"model":"provider/model","thinking"?}.` };
 	}
-	const value = raw as Record<string, unknown>;
+	const value =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	const fields = validateModelSpecFields(value, {
 		requireLabel: false,
 		errors: {
@@ -54,11 +56,14 @@ function validateRole(
 	return { ok: true, spec: { model: fields.model, thinking } };
 }
 
-export function validateConfig(raw: unknown): { ok: true; config: PlanImplementConfig } | { ok: false; error: string } {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+export function validateConfig(
+	raw: BoundaryValue,
+): { ok: true; config: PlanImplementConfig } | { ok: false; error: string } {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: "plan-implement config must be a JSON object." };
 	}
-	const value = raw as Record<string, unknown>;
+	const value =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	const planner = validateRole(value.planner, "planner");
 	if (!planner.ok) return planner;
 	const implementer = validateRole(value.implementer, "implementer");

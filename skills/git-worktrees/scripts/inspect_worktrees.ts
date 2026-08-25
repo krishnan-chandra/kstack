@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExecFn } from "../../../extensions/shared/git-exec.ts";
+import { type BoundaryValue, isObject, isString } from "../../../extensions/shared/validation.ts";
 import { resolveIsolationBase } from "../../../extensions/shared/vcs/worktree-plan.ts";
 import { createSkillExec } from "./git-exec.ts";
 
@@ -43,6 +44,11 @@ interface ParsedArgs {
 	root: string;
 	maximum: number;
 	timeoutSeconds: number;
+}
+
+interface EncodedInspectionOutput {
+	body: string;
+	overflow: boolean;
 }
 
 function expandUserPath(value: string): string {
@@ -118,26 +124,23 @@ export function parseWorktreePorcelainZ(data: Buffer): PorcelainRecord[] {
 	return records;
 }
 
-function sortKeys(value: unknown): unknown {
+function sortKeys(value: BoundaryValue): BoundaryValue {
 	if (Array.isArray(value)) return value.map(sortKeys);
-	if (value && typeof value === "object") {
-		const record = value as Record<string, unknown>;
-		const sorted: Record<string, unknown> = {};
-		for (const key of Object.keys(record).sort()) {
-			sorted[key] = sortKeys(record[key]);
-		}
-		return sorted;
-	}
-	return value;
+	if (!isObject(value)) return value;
+	return Object.fromEntries(
+		Object.keys(value)
+			.sort()
+			.map((key) => [key, sortKeys(Object.getOwnPropertyDescriptor(value, key)?.value)]),
+	);
 }
 
 export function encodeInspectionOutput(payload: {
 	managed_root: string;
 	candidate_count: number;
-	worktrees: unknown[];
-	orphans: unknown[];
+	worktrees: BoundaryValue[];
+	orphans: BoundaryValue[];
 	truncated: boolean;
-}): { body: string; overflow: boolean } {
+}): EncodedInspectionOutput {
 	const encoded = `${JSON.stringify(sortKeys(payload), null, 2)}\n`;
 	if (Buffer.byteLength(encoded, "utf8") > OUTPUT_CAP) {
 		return {
@@ -209,7 +212,7 @@ async function inspectCandidate(exec: ExecFn, path: string, timeoutMs: number): 
 	const authoritative =
 		parseWorktreePorcelainZ(Buffer.from(listing.stdout)).find((record) => {
 			const worktree = record.worktree;
-			if (typeof worktree !== "string" || !worktree) return false;
+			if (!isString(worktree) || !worktree) return false;
 			try {
 				return realpathSync(worktree) === canonical;
 			} catch {
@@ -319,8 +322,8 @@ function isMain(): boolean {
 
 if (isMain()) {
 	main(process.argv.slice(2))
-		.catch((error: unknown) => {
-			printError(error instanceof Error ? error.message : String(error));
+		.catch((cause: BoundaryValue) => {
+			printError(cause instanceof Error ? cause.message : String(cause));
 			return 1;
 		})
 		.then((code) => {

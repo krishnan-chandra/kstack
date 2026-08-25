@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../validation.ts";
 /** Git implementation of K-Stack's repository-mutation contract. */
 
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
@@ -27,7 +28,7 @@ interface GitBackendDeps {
 	managedRoot?: string;
 }
 
-function failure(error: unknown): ExecFnResult {
+function failure(error: BoundaryValue): ExecFnResult {
 	return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
 }
 

@@ -1,4 +1,5 @@
 import { loadKstackSection } from "../kstack-config.ts";
+import { type BoundaryValue, isObject, type JsonObject } from "../validation.ts";
 
 /* exported: shared VCS backend contract */
 export type VcsBackendId = "git" | "jj" | "graphite";
@@ -11,9 +12,11 @@ export interface VcsBackendConfig {
 
 const DEFAULT_BACKEND: VcsBackendId = "git";
 
-function parseBackend(value: unknown): VcsBackendId | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const backend = (value as Record<string, unknown>).backend;
+function parseBackend(value: BoundaryValue): VcsBackendId | undefined {
+	if (!isObject(value) || value === null || Array.isArray(value)) return undefined;
+	const backend = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+		value as JsonObject
+	).backend;
 	return backend === "git" || backend === "jj" || backend === "graphite" ? backend : undefined;
 }
 

@@ -4,6 +4,7 @@ import type { ChildEvent } from "./child-agent-runner.ts";
 import { LiveDashboardStore, mountLiveDashboard } from "./live-dashboard.ts";
 import { type OpenSubagentConsoleResult, openSubagentConsole } from "./subagent-console.ts";
 import { ChildTranscriptStore } from "./transcript-store.ts";
+import { type BoundaryValue, isFunction, isObject } from "./validation.ts";
 
 const HOST_SYMBOL = Symbol.for("kstack.agent-pane-host");
 const WIDGET_KEY = "kstack-agent-pane";
@@ -199,22 +200,22 @@ class AgentPaneHostImpl implements AgentPaneHost {
 	}
 }
 
-function isAgentPaneHost(value: unknown): value is AgentPaneHost {
+function isAgentPaneHost(value: BoundaryValue): value is AgentPaneHost {
 	return (
-		typeof value === "object" &&
+		isObject(value) &&
 		value !== null &&
 		"startRun" in value &&
-		typeof value.startRun === "function" &&
+		isFunction(value.startRun) &&
 		"resetSession" in value &&
-		typeof value.resetSession === "function"
+		isFunction(value.resetSession)
 	);
 }
 
 /** Return the one pane host shared by every extension loaded on this Pi instance. */
 export function getAgentPaneHost(pi: ExtensionAPI): AgentPaneHost {
-	const existing = Reflect.get(pi, HOST_SYMBOL);
+	const existing: BoundaryValue = Object.getOwnPropertyDescriptor(pi, HOST_SYMBOL)?.value;
 	if (isAgentPaneHost(existing)) return existing;
 	const host = new AgentPaneHostImpl(pi);
-	Reflect.set(pi, HOST_SYMBOL, host);
+	Object.defineProperty(pi, HOST_SYMBOL, { configurable: true, value: host });
 	return host;
 }

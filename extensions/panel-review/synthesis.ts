@@ -43,7 +43,7 @@ export function buildSynthesisInput(opts: {
 	executionLedger?: string;
 	aggregateCapBytes?: number;
 	perReportCapBytes?: number;
-}): { input: string; truncated: boolean } {
+}) {
 	const aggregateCap = opts.aggregateCapBytes ?? LIMITS.synthesisInputBytes;
 	const perReportCap = opts.perReportCapBytes ?? LIMITS.reviewerOutputBytes;
 	const { scope } = opts;

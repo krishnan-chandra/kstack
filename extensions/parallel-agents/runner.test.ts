@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { buildParallelAgentArgs, runParallelAgent } from "./runner.ts";
 
 const baseTask = {
@@ -39,7 +40,7 @@ describe("parallel agent child arguments", () => {
 			task: { ...baseTask, access: "read-only" },
 			onEvent: (event) => events.push(event),
 			deps: {
-				spawnImpl: (() => {
+				spawnImpl: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (() => {
 					const events = new EventEmitter();
 					const stdout = new EventEmitter();
 					queueMicrotask(() => {
@@ -55,7 +56,7 @@ describe("parallel agent child arguments", () => {
 						stdout,
 						stderr: new EventEmitter(),
 						stdin: { write: () => true, end() {} },
-						on: (event: string, listener: (...args: unknown[]) => void) => events.on(event, listener),
+						on: (event: string, listener: (...args: BoundaryValue[]) => void) => events.on(event, listener),
 						kill: () => true,
 					};
 				}) as never,

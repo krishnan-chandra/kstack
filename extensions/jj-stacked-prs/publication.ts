@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, type JsonObject } from "../shared/validation.ts";
 /** Pure snapshot identity and publication-action planning. */
 
 import { createHash } from "node:crypto";
@@ -196,10 +197,11 @@ export function displayPlanId(planId: string, chars = 16): string {
 	return planId.length <= chars ? planId : planId.slice(0, chars);
 }
 
-function stableStringify(value: unknown): string {
-	if (value === null || typeof value !== "object") return JSON.stringify(value);
+function stableStringify(value: BoundaryValue): string {
+	if (value === null || !isObject(value)) return JSON.stringify(value);
 	if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-	const record = value as Record<string, unknown>;
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as JsonObject;
 	const keys = Object.keys(record).sort();
 	return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
 }

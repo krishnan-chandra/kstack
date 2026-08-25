@@ -11,6 +11,7 @@ import {
 	loadValidatedSection,
 	MODEL_ID_RE,
 } from "./kstack-config.ts";
+import { type BoundaryValue, isString } from "./validation.ts";
 
 describe("shared kstack config", () => {
 	it("uses the default agent directory", () => assert.equal(getAgentDir({}), join(homedir(), ".pi", "agent")));
@@ -34,10 +35,8 @@ describe("shared kstack config", () => {
 		const dir = mkdtempSync(join(tmpdir(), "kstack-config-"));
 		const env = { PI_CODING_AGENT_DIR: dir };
 		const path = join(dir, "kstack.json");
-		const validate = (value: unknown) =>
-			typeof value === "string"
-				? { ok: true as const, config: value }
-				: { ok: false as const, error: "must be a string" };
+		const validate = (value: BoundaryValue) =>
+			isString(value) ? { ok: true as const, config: value } : { ok: false as const, error: "must be a string" };
 
 		writeFileSync(path, '{"valid":"ok","invalid":42}');
 		assert.deepEqual(loadValidatedSection("valid", validate, env), { status: "loaded", config: "ok", path });

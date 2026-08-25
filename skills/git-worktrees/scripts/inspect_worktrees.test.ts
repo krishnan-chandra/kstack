@@ -103,6 +103,7 @@ describe("inspect_worktrees CLI", () => {
 		symlinkSync(outside, join(namespace, "escape"));
 		const result = await runNode(INSPECTOR, ["--root", managed]);
 		assert.equal(result.code, 0, result.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const payload = JSON.parse(result.stdout) as {
 			worktrees: unknown[];
 			orphans: Array<{ reason: string }>;
@@ -119,6 +120,7 @@ describe("inspect_worktrees CLI", () => {
 		mkdirSync(join(namespace, "two"));
 		const result = await runNode(INSPECTOR, ["--root", managed, "--max", "1"]);
 		assert.equal(result.code, 0, result.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const payload = JSON.parse(result.stdout) as {
 			candidate_count: number;
 			truncated: boolean;
@@ -139,6 +141,7 @@ describe("inspect_worktrees CLI", () => {
 			candidate_count: 1,
 		});
 		assert.equal(encoded.overflow, true);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const payload = JSON.parse(encoded.body) as {
 			error: string;
 			truncated: boolean;
@@ -157,6 +160,7 @@ describe("inspect_worktrees CLI", () => {
 		const managed = join(root, "managed");
 		const planned = await runNode(PLANNER, ["--repo", repo, "--root", managed, "--task", "change"]);
 		assert.equal(planned.code, 0, planned.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const plan = JSON.parse(planned.stdout) as { branch: string; path: string; base_sha: string };
 		assert.equal(plan.branch, "kstack/change");
 		mkdirSync(dirname(plan.path), { recursive: true });
@@ -164,6 +168,7 @@ describe("inspect_worktrees CLI", () => {
 		writeFileSync(join(plan.path, "new.txt"), "untracked\n");
 		const result = await runNode(INSPECTOR, ["--root", managed]);
 		assert.equal(result.code, 0, result.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const payload = JSON.parse(result.stdout) as {
 			orphans: unknown[];
 			worktrees: Array<{
@@ -185,12 +190,14 @@ describe("inspect_worktrees CLI", () => {
 		const managed = join(root, "managed");
 		const planned = await runNode(PLANNER, ["--repo", repo, "--root", managed, "--task", "change"]);
 		assert.equal(planned.code, 0, planned.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const plan = JSON.parse(planned.stdout) as { path: string; base_ref: string };
 		assert.equal(plan.base_ref, "HEAD");
 		mkdirSync(dirname(plan.path), { recursive: true });
 		assert.equal((await git(repo, ["worktree", "add", "-q", "-b", "kstack/change", plan.path, "HEAD"])).code, 0);
 		const result = await runNode(INSPECTOR, ["--root", managed]);
 		assert.equal(result.code, 0, result.stderr);
+		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
 		const payload = JSON.parse(result.stdout) as {
 			worktrees: Array<{ base_ref: string; base_sha: string }>;
 		};

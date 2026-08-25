@@ -31,10 +31,12 @@ function fixture(source = genericTemplate) {
 function document(title = "Improve pull request validation") {
 	return {
 		title,
-		summaryBullets: ["Use the repository pull-request template."] as [string],
-		reviewSteps: [{ label: "Publication", description: "Verify template conformance before mutation." }] as [
-			{ label: string; description: string },
-		],
+		summaryBullets: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [
+			"Use the repository pull-request template.",
+		] as [string],
+		reviewSteps: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [
+			{ label: "Publication", description: "Verify template conformance before mutation." },
+		] as [{ label: string; description: string }],
 	};
 }
 

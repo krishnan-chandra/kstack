@@ -1,3 +1,4 @@
+import { type BoundaryValue, isBoolean, isString } from "../shared/validation.ts";
 /** Verified, parent-owned native Graphite stack landing. */
 
 import { createHash } from "node:crypto";
@@ -55,9 +56,9 @@ function diagnostic(result: ExecFnResult): string {
 	return result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`;
 }
 
-function safeRef(value: unknown): value is string {
+function safeRef(value: BoundaryValue): value is string {
 	return (
-		typeof value === "string" &&
+		isString(value) &&
 		value.length > 0 &&
 		value.length <= 240 &&
 		REF_RE.test(value) &&
@@ -83,7 +84,7 @@ async function run(
 }
 
 function parseOpenPullRequests(raw: string): GraphitePullRequest[] | undefined {
-	let value: unknown;
+	let value: BoundaryValue;
 	try {
 		value = JSON.parse(raw);
 	} catch {
@@ -97,11 +98,11 @@ function parseOpenPullRequests(raw: string): GraphitePullRequest[] | undefined {
 			!item ||
 			!Number.isSafeInteger(item.number) ||
 			Number(item.number) <= 0 ||
-			typeof item.url !== "string" ||
+			!isString(item.url) ||
 			!safeRef(item.headRefName) ||
 			!safeRef(item.baseRefName) ||
 			!SHA_RE.test(String(item.headRefOid)) ||
-			typeof item.isDraft !== "boolean"
+			!isBoolean(item.isDraft)
 		)
 			return undefined;
 		result.push({

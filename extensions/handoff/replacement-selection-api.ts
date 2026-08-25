@@ -1,3 +1,4 @@
+import { type BoundaryValue, isFunction, isObject } from "../shared/validation.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
 
 /** Minimal replacement-owned API needed to apply a handoff selection. */
@@ -12,11 +13,11 @@ export interface ReplacementSelectionApi {
 // IDs keep independent SDK runtimes from overwriting one another.
 const REPLACEMENT_SELECTION_APIS = Symbol.for("kstack.handoff.replacement-selection-apis.v1");
 
-function getRegistry(): Map<unknown, unknown> {
-	const current: unknown = Reflect.get(globalThis, REPLACEMENT_SELECTION_APIS);
+function getRegistry(): Map<BoundaryValue, BoundaryValue> {
+	const current: BoundaryValue = Object.getOwnPropertyDescriptor(globalThis, REPLACEMENT_SELECTION_APIS)?.value;
 	if (current instanceof Map) return current;
-	const created = new Map<unknown, unknown>();
-	Reflect.set(globalThis, REPLACEMENT_SELECTION_APIS, created);
+	const created = new Map<BoundaryValue, BoundaryValue>();
+	Object.defineProperty(globalThis, REPLACEMENT_SELECTION_APIS, { configurable: true, value: created });
 	return created;
 }
 
@@ -33,18 +34,18 @@ export function unbindReplacementSelectionApi(sessionId: string, api: Replacemen
 
 /** Read one session's published API, validating the process-global boundary. */
 export function getReplacementSelectionApi(sessionId: string): ReplacementSelectionApi | undefined {
-	const value: unknown = getRegistry().get(sessionId);
-	if (typeof value !== "object" || value === null) return undefined;
-	const setModel: unknown = Reflect.get(value, "setModel");
-	const setThinkingLevel: unknown = Reflect.get(value, "setThinkingLevel");
-	if (typeof setModel !== "function" || typeof setThinkingLevel !== "function") return undefined;
+	const value: BoundaryValue = getRegistry().get(sessionId);
+	if (!isObject(value) || value === null) return undefined;
+	const setModel: BoundaryValue = Object.getOwnPropertyDescriptor(value, "setModel")?.value;
+	const setThinkingLevel: BoundaryValue = Object.getOwnPropertyDescriptor(value, "setThinkingLevel")?.value;
+	if (!isFunction(setModel) || !isFunction(setThinkingLevel)) return undefined;
 	return {
 		async setModel(model) {
-			const result: unknown = await Reflect.apply(setModel, value, [model]);
+			const result: BoundaryValue = await setModel.call(value, model);
 			return result === true;
 		},
 		setThinkingLevel(level) {
-			Reflect.apply(setThinkingLevel, value, [level]);
+			setThinkingLevel.call(value, level);
 		},
 	};
 }

@@ -15,11 +15,15 @@ test("removes its listener after the timer resolves", async () => {
 	const signal = controller.signal;
 	const originalAdd = signal.addEventListener.bind(signal);
 	const originalRemove = signal.removeEventListener.bind(signal);
-	signal.addEventListener = ((...args: Parameters<AbortSignal["addEventListener"]>) => {
+	signal.addEventListener = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ((
+		...args: Parameters<AbortSignal["addEventListener"]>
+	) => {
 		added++;
 		return originalAdd(...args);
 	}) as AbortSignal["addEventListener"];
-	signal.removeEventListener = ((...args: Parameters<AbortSignal["removeEventListener"]>) => {
+	signal.removeEventListener = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ((
+		...args: Parameters<AbortSignal["removeEventListener"]>
+	) => {
 		removed++;
 		return originalRemove(...args);
 	}) as AbortSignal["removeEventListener"];

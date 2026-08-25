@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /**
  * Panel reviewer configuration: discovery, validation, and model resolution.
  *
@@ -72,11 +73,12 @@ export const DEFAULT_SYNTHESIS = { model: "openai/gpt-5.6-terra", thinking: "med
 
 export type ConfigLoad = SharedConfigLoad<PanelConfig>;
 
-export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } | { ok: false; error: string } {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+export function validateConfig(raw: BoundaryValue): { ok: true; config: PanelConfig } | { ok: false; error: string } {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
 		return { ok: false, error: "Config must be a JSON object." };
 	}
-	const obj = raw as Record<string, unknown>;
+	const obj =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	if (!Array.isArray(obj.reviewers)) {
 		return { ok: false, error: '"reviewers" must be an array of {label, model, thinking?}.' };
 	}
@@ -86,11 +88,12 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 	const labels = new Set<string>();
 	const reviewers: ReviewerSpec[] = [];
 	for (const entry of obj.reviewers) {
-		if (typeof entry !== "object" || entry === null) {
+		if (!isObject(entry) || entry === null) {
 			return { ok: false, error: "Each reviewer must be an object." };
 		}
-		const r = entry as Record<string, unknown>;
-		if (typeof r.label !== "string" || !MODEL_LABEL_RE.test(r.label)) {
+		const r =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ entry as JsonObject;
+		if (!isString(r.label) || !MODEL_LABEL_RE.test(r.label)) {
 			return { ok: false, error: `Invalid reviewer label ${JSON.stringify(r.label)}.` };
 		}
 		if (labels.has(r.label)) {
@@ -134,7 +137,7 @@ export function validateConfig(raw: unknown): { ok: true; config: PanelConfig } 
 }
 
 function validateTimeouts(
-	obj: Record<string, unknown>,
+	obj: JsonObject,
 ): { ok: true; timeoutMinutes: number; maxRuntimeMinutes: number } | { ok: false; error: string } {
 	const timeoutMinutes = obj.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES;
 	if (!validateBoundedNumber(timeoutMinutes, { min: Number.MIN_VALUE, max: Number.MAX_VALUE })) {
@@ -154,16 +157,17 @@ function validateTimeouts(
 }
 
 function validateSynthesis(
-	obj: Record<string, unknown>,
+	obj: JsonObject,
 ): { ok: true; spec: Pick<ModelSpec, "model" | "thinking"> } | { ok: false; error: string } {
-	if (typeof obj.synthesis !== "object" || obj.synthesis === null || Array.isArray(obj.synthesis)) {
+	if (!isObject(obj.synthesis) || obj.synthesis === null || Array.isArray(obj.synthesis)) {
 		return {
 			ok: false,
 			error:
 				'"synthesis" is required: {"model": "provider/model", "thinking"?} — the model that merges reviewer reports into the verdict.',
 		};
 	}
-	const s = obj.synthesis as Record<string, unknown>;
+	const s =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ obj.synthesis as JsonObject;
 	const fields = validateModelSpecFields(s, {
 		requireLabel: false,
 		errors: {

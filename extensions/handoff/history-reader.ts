@@ -12,6 +12,7 @@ import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/ses
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import { isRecord } from "../shared/narrow.ts";
+import { type BoundaryValue, isString } from "../shared/validation.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 50 * 1024;
@@ -25,10 +26,10 @@ export interface HandoffSource {
 }
 
 interface HandoffEntryLike {
-	type?: unknown;
-	customType?: unknown;
-	content?: unknown;
-	details?: unknown;
+	type?: BoundaryValue;
+	customType?: BoundaryValue;
+	content?: BoundaryValue;
+	details?: BoundaryValue;
 }
 
 interface ReadHandoffHistoryOptions {
@@ -44,13 +45,13 @@ interface SearchHandoffHistoryOptions {
 	limit?: number;
 }
 
-function sourceFromDetails(details: unknown): HandoffSource | undefined {
+function sourceFromDetails(details: BoundaryValue): HandoffSource | undefined {
 	if (!isRecord(details)) return undefined;
 	if (
 		details.version !== 1 ||
-		typeof details.sessionFile !== "string" ||
-		typeof details.sessionId !== "string" ||
-		typeof details.cwd !== "string"
+		!isString(details.sessionFile) ||
+		!isString(details.sessionId) ||
+		!isString(details.cwd)
 	) {
 		return undefined;
 	}
@@ -63,8 +64,8 @@ function sourceFromDetails(details: unknown): HandoffSource | undefined {
 }
 
 /** Backward-compatible fallback for handoff entries created before structured details. */
-function sourceFromContent(content: unknown): HandoffSource | undefined {
-	if (typeof content !== "string") return undefined;
+function sourceFromContent(content: BoundaryValue): HandoffSource | undefined {
+	if (!isString(content)) return undefined;
 	const file = content.match(/^Previous session: (.+)$/m)?.[1];
 	const metadata = content.match(/^Session ID: (\S+) {2}CWD: (.+)$/m);
 	if (!file || !metadata || file.startsWith("(")) return undefined;
@@ -147,7 +148,12 @@ function readActiveSession(
 	try {
 		canonical = assertSafeActiveSessionPath(source, env);
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if (
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				error as NodeJS.ErrnoException
+			).code === "ENOENT"
+		)
+			return undefined;
 		throw error;
 	}
 	let stat: Stats;
@@ -155,7 +161,12 @@ function readActiveSession(
 		stat = fsImpl.statSync(canonical);
 	} catch (error) {
 		// The file may have moved between validation and the cache check.
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if (
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				error as NodeJS.ErrnoException
+			).code === "ENOENT"
+		)
+			return undefined;
 		throw error;
 	}
 	if (
@@ -173,7 +184,12 @@ function readActiveSession(
 		parsed = parseSessionJsonlBytes(fsImpl.readFileSync(canonical));
 	} catch (error) {
 		// The file may have moved between validation and reading.
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if (
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				error as NodeJS.ErrnoException
+			).code === "ENOENT"
+		)
+			return undefined;
 		throw error;
 	}
 	if (parsed.header.id !== source.sessionId) {

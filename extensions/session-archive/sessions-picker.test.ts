@@ -29,7 +29,7 @@ describe("selectSessionToggle", () => {
 			label: "Task",
 		};
 		const result = await selectSessionToggle(
-			{
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 				hasUI: true,
 				mode: "rpc",
 				ui: { select: async (_title: string, options: string[]) => options[0], notify() {} },
@@ -51,7 +51,7 @@ describe("selectSessionToggle", () => {
 			label: "Same label",
 		}));
 		const result = await selectSessionToggle(
-			{
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 				hasUI: true,
 				mode: "rpc",
 				ui: { select: async (_title: string, options: string[]) => options[1], notify() {} },

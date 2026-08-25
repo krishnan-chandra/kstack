@@ -6,6 +6,7 @@
  * An unclaimed emit means the target extension is not loaded.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type BoundaryValue, isBoolean, isObject } from "./validation.ts";
 
 export interface RequestEnvelope<TPayload, TResult, TVersion extends number = number> {
 	schemaVersion: TVersion;
@@ -18,7 +19,7 @@ interface ChannelSpec<TPayload, _TResult, TVersion extends number> {
 	event: string;
 	schemaVersion: TVersion;
 	/** Validate the payload only; the channel validates envelope mechanics. */
-	isPayload(value: unknown): value is TPayload;
+	isPayload(value: BoundaryValue): value is TPayload;
 }
 
 export function createRequestChannel<TPayload, TResult, TVersion extends number>(
@@ -26,14 +27,14 @@ export function createRequestChannel<TPayload, TResult, TVersion extends number>
 ) {
 	type Envelope = RequestEnvelope<TPayload, TResult, TVersion>;
 
-	function isRequest(value: unknown): value is Envelope {
-		if (typeof value !== "object" || value === null) return false;
+	function isRequest(value: BoundaryValue): value is Envelope {
+		if (!isObject(value) || value === null) return false;
 		if (!("schemaVersion" in value) || value.schemaVersion !== spec.schemaVersion) return false;
-		if (!("claimed" in value) || typeof value.claimed !== "boolean") return false;
+		if (!("claimed" in value) || !isBoolean(value.claimed)) return false;
 		return "payload" in value && spec.isPayload(value.payload);
 	}
 
-	function claim(value: unknown, run: (payload: TPayload) => Promise<TResult>): boolean {
+	function claim(value: BoundaryValue, run: (payload: TPayload) => Promise<TResult>): boolean {
 		if (!isRequest(value) || value.claimed) return false;
 		value.claimed = true;
 		value.completion = run(value.payload);

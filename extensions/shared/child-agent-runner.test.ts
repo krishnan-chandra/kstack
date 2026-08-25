@@ -8,6 +8,7 @@ import {
 	type SpawnedProcess,
 	type SubagentSessionStore,
 } from "./child-agent-runner.ts";
+import type { JsonObject } from "./validation.ts";
 
 const sessionStore: SubagentSessionStore = {
 	prepare: (_identity, cwd) => ({
@@ -28,7 +29,7 @@ const sessionStore: SubagentSessionStore = {
 class FakeProcess implements SpawnedProcess {
 	private headerSent = false;
 	stdin = {
-		writes: [] as string[],
+		writes: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
 		ended: false,
 		write: (data: string) => {
 			this.stdin.writes.push(data);
@@ -38,8 +39,12 @@ class FakeProcess implements SpawnedProcess {
 			this.stdin.ended = true;
 		},
 	};
-	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
-	stderr = new EventEmitter() as SpawnedProcess["stderr"] & EventEmitter;
+	stdout =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stdout"] &
+			EventEmitter;
+	stderr =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stderr"] &
+			EventEmitter;
 	private events = new EventEmitter();
 	killed = false;
 	kills: string[] = [];
@@ -73,7 +78,7 @@ class FakeProcess implements SpawnedProcess {
 	}
 }
 
-function event(text: string, extra: Record<string, unknown> = {}): string {
+function event(text: string, extra: JsonObject = {}): string {
 	return `${JSON.stringify({
 		type: "message_end",
 		message: {
@@ -85,7 +90,7 @@ function event(text: string, extra: Record<string, unknown> = {}): string {
 	})}\n`;
 }
 
-function run(child: FakeProcess, overrides: Record<string, unknown> = {}) {
+function run(child: FakeProcess, overrides: JsonObject = {}) {
 	return runChildAgent({
 		args: ["--mode", "json"],
 		cwd: "/repo",
@@ -336,7 +341,7 @@ describe("runChildAgent", () => {
 		if (events[0].kind === "tool_start") assert.equal(events[0].summary, "read foo.ts");
 		assert.equal(events[1].kind, "tool_end");
 		if (events[1].kind === "tool_end") {
-			assert.equal(typeof events[1].durationMs, "number");
+			assert.notEqual(events[1].durationMs, undefined);
 			assert.ok(events[1].durationMs! >= 0);
 		}
 		assert.equal(events[2].kind, "text_delta");

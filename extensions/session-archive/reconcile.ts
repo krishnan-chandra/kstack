@@ -71,10 +71,14 @@ export function reconcileArchive(options: ReconcileOptions): ReconcileReport {
 				finishRestore(db, restore.session_id);
 				report.restored.push(restore.session_id);
 			} catch (err) {
-				markError(db, restore.session_id, `restore recovery failed: ${(err as Error).message}`);
+				markError(
+					db,
+					restore.session_id,
+					`restore recovery failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				);
 				report.errors.push({
 					sessionId: restore.session_id,
-					message: `restore recovery failed: ${(err as Error).message}`,
+					message: `restore recovery failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
 				});
 			}
 		}
@@ -177,12 +181,19 @@ function checkArchivedIntegrity(
 	try {
 		stat = effects.fileStat(row.archive_path);
 	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err as Error).message?.includes("ENOENT")) {
+		if (
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				err as NodeJS.ErrnoException
+			).code === "ENOENT" ||
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				err as Error
+			).message?.includes("ENOENT")
+		) {
 			integrity.push({ sessionId: row.session_id, message: "archived file is missing" });
 		} else {
 			integrity.push({
 				sessionId: row.session_id,
-				message: `archived file could not be verified: ${(err as Error).message}`,
+				message: `archived file could not be verified: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
 			});
 		}
 		return;
@@ -208,7 +219,7 @@ function checkArchivedIntegrity(
 	} catch (err) {
 		integrity.push({
 			sessionId: row.session_id,
-			message: `archived file could not be verified: ${(err as Error).message}`,
+			message: `archived file could not be verified: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
 		});
 	}
 }

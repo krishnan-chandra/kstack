@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { type BoundaryValue, isNumber, isObject, isString } from "./validation.ts";
 
 const SAFE_LABEL = /^[A-Za-z0-9_-]{1,16}$/;
 const SAFE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -90,12 +91,12 @@ interface StoreOptions {
 	cap?: number;
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: BoundaryValue): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function errorCode(error: unknown): unknown {
-	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+function errorCode(error: BoundaryValue): BoundaryValue {
+	if (!isObject(error) || error === null || !("code" in error)) return undefined;
 	return error.code;
 }
 
@@ -127,12 +128,12 @@ function sessionFileName(header: ObservedSessionHeader): string {
 
 function parseLease(raw: string): { state: "pending" | "spawned"; pid: number; createdAt: string } | undefined {
 	try {
-		const value: unknown = JSON.parse(raw);
-		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+		const value: BoundaryValue = JSON.parse(raw);
+		if (!isObject(value) || value === null || Array.isArray(value)) return undefined;
 		if (!("state" in value) || (value.state !== "pending" && value.state !== "spawned")) return undefined;
-		if (!("pid" in value) || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid <= 0)
+		if (!("pid" in value) || !isNumber(value.pid) || !Number.isSafeInteger(value.pid) || value.pid <= 0)
 			return undefined;
-		if (!("createdAt" in value) || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)))
+		if (!("createdAt" in value) || !isString(value.createdAt) || !Number.isFinite(Date.parse(value.createdAt)))
 			return undefined;
 		return { state: value.state, pid: value.pid, createdAt: value.createdAt };
 	} catch {
@@ -162,8 +163,8 @@ function parseHeaderTimestamp(path: string, mtimeMs: number): number {
 		const bytes = Buffer.alloc(HEADER_READ_BYTES);
 		const count = readSync(fd, bytes, 0, bytes.length, 0);
 		const first = bytes.subarray(0, count).toString("utf8").split("\n", 1)[0];
-		const value: unknown = JSON.parse(first);
-		if (typeof value === "object" && value !== null && "timestamp" in value && typeof value.timestamp === "string") {
+		const value: BoundaryValue = JSON.parse(first);
+		if (isObject(value) && value !== null && "timestamp" in value && isString(value.timestamp)) {
 			const timestamp = Date.parse(value.timestamp);
 			if (Number.isFinite(timestamp)) return timestamp;
 		}
@@ -176,18 +177,17 @@ function parseHeaderTimestamp(path: string, mtimeMs: number): number {
 }
 
 export function validateSessionHeader(
-	value: unknown,
+	value: BoundaryValue,
 	prepared: PreparedSubagentSession,
 ): { ok: true; header: ObservedSessionHeader } | { ok: false; error: string } {
-	if (typeof value !== "object" || value === null || Array.isArray(value))
-		return { ok: false, error: "invalid session header" };
+	if (!isObject(value) || value === null || Array.isArray(value)) return { ok: false, error: "invalid session header" };
 	if (!("type" in value) || value.type !== "session")
 		return { ok: false, error: "first child record was not a session header" };
 	if (!("version" in value) || value.version !== 3) return { ok: false, error: "unsupported session header version" };
 	if (!("id" in value) || value.id !== prepared.id) return { ok: false, error: "session header ID mismatch" };
-	if (!("timestamp" in value) || typeof value.timestamp !== "string" || !Number.isFinite(Date.parse(value.timestamp)))
+	if (!("timestamp" in value) || !isString(value.timestamp) || !Number.isFinite(Date.parse(value.timestamp)))
 		return { ok: false, error: "invalid session header timestamp" };
-	if (!("cwd" in value) || typeof value.cwd !== "string" || canonicalPath(value.cwd) !== prepared.expectedCwd)
+	if (!("cwd" in value) || !isString(value.cwd) || canonicalPath(value.cwd) !== prepared.expectedCwd)
 		return { ok: false, error: "session header cwd mismatch" };
 	return { ok: true, header: { version: 3, id: value.id, timestamp: value.timestamp, cwd: value.cwd } };
 }
@@ -217,7 +217,7 @@ export function createSubagentSessionStore(options: StoreOptions = {}): Subagent
 	): Extract<ChildSession, { kind: "missing" }> {
 		return {
 			kind: "missing",
-			...(prepared ? { id: prepared.id, name: prepared.name } : {}),
+			...(prepared ? { id: prepared.id, name: prepared.name } : undefined),
 			reason,
 		};
 	}

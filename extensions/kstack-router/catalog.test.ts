@@ -108,7 +108,12 @@ describe("kstack-router catalog", () => {
 	});
 
 	it("returns undefined for unknown routes", () => {
-		assert.equal(getRouteMetadata("unknown" as never), undefined);
+		assert.equal(
+			getRouteMetadata(
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "unknown" as never,
+			),
+			undefined,
+		);
 	});
 
 	it("every playbookFile referenced by the catalog exists", () => {

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { summarizeToolCall } from "../shared/child-agent-runner.ts";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl } from "./reviewer-runner.ts";
 
 describe("JsonLineParser", () => {
 	it("handles events split across chunks and skips malformed lines", () => {
-		const events: unknown[] = [];
+		const events: BoundaryValue[] = [];
 		const parser = new JsonLineParser((e) => events.push(e));
 		parser.push('{"type":"mess');
 		parser.push('age_end","message":{"role":"assistant"}}\nnot json\n{"type":"x"}\n');
@@ -54,7 +55,9 @@ function addFakeEventHandler(handlers: FakeEventHandlers, event: string, callbac
 
 function closeFakeProcess(handlers: FakeEventHandlers, code: number): void {
 	for (const callback of handlers.close ?? []) {
-		(callback as (exitCode: number) => void)(code);
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+			callback as (exitCode: number) => void
+		)(code);
 	}
 }
 
@@ -72,9 +75,13 @@ interface FakeProcSpec {
 	closeOnSig?: string;
 }
 
+interface StreamListeners {
+	[stream: string]: ((data: Buffer) => void)[];
+}
+
 function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImpl {
 	return () => {
-		const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
+		const listeners: StreamListeners = { stdout: [], stderr: [] };
 		const handlers: FakeEventHandlers = {};
 		const proc = {
 			killed: false,
@@ -126,7 +133,7 @@ function fakeSpawn(spec: FakeProcSpec, onKill?: (sig: string) => void): SpawnImp
 
 const specA = { label: "A", model: "a/b" };
 const testSessionStore = {
-	prepare: (_identity: unknown, cwd: string) => ({
+	prepare: (_identity: BoundaryValue, cwd: string) => ({
 		ok: true as const,
 		prepared: {
 			id: "00000000-0000-4000-8000-000000000001",
@@ -335,7 +342,7 @@ function timedSpawn(
 	onKill?: (sig: string) => void,
 ): SpawnImpl {
 	return () => {
-		const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
+		const listeners: StreamListeners = { stdout: [], stderr: [] };
 		const handlers: FakeEventHandlers = {};
 		const proc = {
 			killed: false,
@@ -524,7 +531,7 @@ describe("runReviewer live text preview", () => {
 		];
 		// Split every JSON line across two chunks to exercise the streaming decoder.
 		const spawnImpl: SpawnImpl = () => {
-			const listeners: Record<string, ((d: Buffer) => void)[]> = { stdout: [], stderr: [] };
+			const listeners: StreamListeners = { stdout: [], stderr: [] };
 			const handlers: FakeEventHandlers = {};
 			const proc = {
 				killed: false,

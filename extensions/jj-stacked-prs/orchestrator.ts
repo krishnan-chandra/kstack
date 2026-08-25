@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../shared/validation.ts";
 /** Inspect, plan, publish, sync, and advance state machines. */
 
 import { realpathSync } from "node:fs";
@@ -669,7 +670,7 @@ async function applyPublication(
 			pullRequests,
 		},
 		completedActions: [...completed, ...comments.completed],
-		...(comments.errors.length > 0 ? { commentErrors: comments.errors } : {}),
+		...(comments.errors.length > 0 ? { commentErrors: comments.errors } : undefined),
 	};
 }
 
@@ -924,7 +925,7 @@ function provenPullRequests(
 
 function toFailedAction(
 	kind: FailedPublicationAction["kind"],
-	error: unknown,
+	error: BoundaryValue,
 	bookmark: string,
 ): FailedPublicationAction {
 	return { kind, bookmark, error: errorMessage(error) };
@@ -948,16 +949,16 @@ function provisionalPrMetadata(
 	return repositoryTemplate ? renderRepositoryPrTemplate(document, repositoryTemplate) : renderPrDocument(document);
 }
 
-function isIndeterminate(error: unknown): boolean {
+function isIndeterminate(error: BoundaryValue): boolean {
 	return (error instanceof JjError || error instanceof GitHubError) && error.kind === "indeterminate";
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: BoundaryValue): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
 function mutationFailure(
-	error: unknown,
+	error: BoundaryValue,
 	signal: AbortSignal | undefined,
 	operationId: string,
 	label: string,

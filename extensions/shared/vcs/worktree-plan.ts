@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../validation.ts";
 /** Shared read-only planner for kstack-managed Git worktrees. */
 
 import { createHash } from "node:crypto";
@@ -34,7 +35,7 @@ interface PlanManagedWorktreeOptions {
 	realpath?: (path: string) => string;
 }
 
-function failure(error: unknown): ExecFnResult {
+function failure(error: BoundaryValue): ExecFnResult {
 	return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
 }
 

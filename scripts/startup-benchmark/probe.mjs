@@ -21,6 +21,18 @@ const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
 const TERMINATE_GRACE_MS = 250;
 const KILL_GRACE_MS = 250;
 
+function isNumber(value) {
+	return Object.prototype.toString.call(value) === "[object Number]";
+}
+
+function isRecord(value) {
+	return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function isString(value) {
+	return Object.prototype.toString.call(value) === "[object String]";
+}
+
 function stripAnsi(value) {
 	return value.replace(ANSI_ESCAPE, "");
 }
@@ -135,9 +147,9 @@ function createProbeCapture() {
 			detail = "[unserializable RPC event]";
 		}
 		events.push({
-			type: typeof event.type === "string" ? event.type : undefined,
-			id: typeof event.id === "string" ? event.id : undefined,
-			command: typeof event.command === "string" ? event.command : undefined,
+			type: isString(event.type) ? event.type : undefined,
+			id: isString(event.id) ? event.id : undefined,
+			command: isString(event.command) ? event.command : undefined,
 			detail,
 		});
 		if (events.length > MAX_EVENT_COUNT) events.shift();
@@ -183,7 +195,7 @@ function createProbeCapture() {
 function describeExit(exit) {
 	if (!exit) return "unknown";
 	if (exit.signal) return `signal ${exit.signal}`;
-	if (typeof exit.code === "number") return `status ${exit.code}`;
+	if (isNumber(exit.code)) return `status ${exit.code}`;
 	return "unknown";
 }
 
@@ -194,7 +206,7 @@ function validateCommandInventory(response, scenario) {
 
 	const names = new Set(
 		response.data.commands
-			.filter((command) => command && typeof command === "object" && typeof command.name === "string")
+			.filter((command) => isRecord(command) && isString(command.name))
 			.map((command) => command.name),
 	);
 	const missing = scenario.requiredCommands.filter((name) => !names.has(name));
@@ -260,7 +272,7 @@ function waitForReadiness({ child, capture, scenario, timeoutMs, startedAt }) {
 				capture.addEvent({ type: "malformed" });
 				return;
 			}
-			if (!record || typeof record !== "object") return;
+			if (!isRecord(record)) return;
 			if (record.id !== REQUEST_ID) {
 				capture.addEvent(record);
 				return;
@@ -270,7 +282,7 @@ function waitForReadiness({ child, capture, scenario, timeoutMs, startedAt }) {
 				return;
 			}
 			if (record.success !== true) {
-				const detail = typeof record.error === "string" ? `: ${record.error}` : "";
+				const detail = isString(record.error) ? `: ${record.error}` : "";
 				finish(rejectReadiness, new Error(`get_commands reported failure${detail}`));
 				return;
 			}

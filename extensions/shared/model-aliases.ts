@@ -20,6 +20,7 @@
  */
 import { isThinkingLevel, MODEL_ID_RE, type ModelThinkingLevel } from "./kstack-config.ts";
 import { MODEL_LABEL_RE } from "./model-spec.ts";
+import { type BoundaryValue, isObject, isString, type JsonObject } from "./validation.ts";
 
 /** A single alias mapping a short name to a provider/model-id reference. */
 export interface ModelAlias {
@@ -64,20 +65,21 @@ function aliasKeys(alias: string): string[] {
  * validation patterns are skipped; the owning extension's config validator is
  * responsible for reporting those.
  */
-export function collectKstackModelAliases(root: Record<string, unknown>): ModelAlias[] {
+export function collectKstackModelAliases(root: JsonObject): ModelAlias[] {
 	const aliases: ModelAlias[] = [];
 	const seen = new Set<string>();
-	const visit = (value: unknown): void => {
+	const visit = (value: BoundaryValue): void => {
 		if (Array.isArray(value)) {
 			for (const item of value) visit(item);
 			return;
 		}
-		if (typeof value !== "object" || value === null) return;
-		const record = value as Record<string, unknown>;
+		if (!isObject(value) || value === null) return;
+		const record =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as JsonObject;
 		if (
-			typeof record.label === "string" &&
+			isString(record.label) &&
 			MODEL_LABEL_RE.test(record.label) &&
-			typeof record.model === "string" &&
+			isString(record.model) &&
 			MODEL_ID_RE.test(record.model)
 		) {
 			const dedupeKey = `${record.label.toLowerCase()}->${record.model.toLowerCase()}`;

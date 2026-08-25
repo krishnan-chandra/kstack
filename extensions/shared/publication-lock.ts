@@ -1,3 +1,4 @@
+import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } from "./validation.ts";
 /** Advisory per-repository file lock for publication and landing.
  *
  * The lock payload is written to a unique candidate before an atomic hard-link
@@ -60,8 +61,8 @@ function lockFileName(repositoryPath: string): string {
 	return `publish-${hash}.json`;
 }
 
-function errorCode(error: unknown): unknown {
-	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+function errorCode(error: BoundaryValue): BoundaryValue {
+	if (!isObject(error) || error === null || !("code" in error)) return undefined;
 	return error.code;
 }
 
@@ -76,18 +77,18 @@ function defaultIsPidAlive(pid: number): boolean {
 	}
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+	return isObject(value) && value !== null && !Array.isArray(value);
 }
 
 function parseOwner(raw: string, repositoryPath: string): OwnerPayload | undefined {
 	try {
-		const parsed: unknown = JSON.parse(raw);
+		const parsed: BoundaryValue = JSON.parse(raw);
 		if (!isRecord(parsed)) return undefined;
-		if (typeof parsed.pid !== "number" || !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0) return undefined;
-		if (typeof parsed.startedAt !== "string" || !Number.isFinite(Date.parse(parsed.startedAt))) return undefined;
+		if (!isNumber(parsed.pid) || !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0) return undefined;
+		if (!isString(parsed.startedAt) || !Number.isFinite(Date.parse(parsed.startedAt))) return undefined;
 		if (parsed.repositoryPath !== repositoryPath) return undefined;
-		if (typeof parsed.ownerToken !== "string" || parsed.ownerToken.length === 0) return undefined;
+		if (!isString(parsed.ownerToken) || parsed.ownerToken.length === 0) return undefined;
 		return {
 			pid: parsed.pid,
 			startedAt: parsed.startedAt,

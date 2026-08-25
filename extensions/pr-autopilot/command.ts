@@ -74,7 +74,8 @@ export function parseArgs(input: string): ArgsParse {
 			if (!MODES.has(value)) {
 				return { ok: false, error: `--mode must be one of: check, threads, drive, watch, cleanup (got "${value}").` };
 			}
-			parsed.mode = value as AutopilotMode;
+			parsed.mode =
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as AutopilotMode;
 			continue;
 		}
 

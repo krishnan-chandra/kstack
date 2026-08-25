@@ -34,7 +34,7 @@ function options(): ApprovedWorkflowOptions {
 	};
 }
 
-function effects(overrides: Partial<PhaseEffects> = {}): { fx: PhaseEffects; notifications: string[] } {
+function effects(overrides: Partial<PhaseEffects> = {}) {
 	const notifications: string[] = [];
 	const fx: PhaseEffects = {
 		confirm: async () => true,

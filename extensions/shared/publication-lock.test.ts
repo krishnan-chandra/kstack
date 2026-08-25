@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { ExecFn } from "./git-exec.ts";
 import { acquirePublicationLock, acquireRepositoryPublicationLock } from "./publication-lock.ts";
+import { type BoundaryValue, isObject, isString } from "./validation.ts";
 
 function lockFile(locksDir: string): string {
 	const name = readdirSync(locksDir).find((entry) => entry.startsWith("publish-") && entry.endsWith(".json"));
@@ -46,14 +47,14 @@ describe("shared publication lock", () => {
 		assert.equal(result.ok, true);
 		if (!result.ok) return;
 
-		const content: unknown = JSON.parse(readFileSync(lockFile(locksDir), "utf8"));
-		assert.ok(typeof content === "object" && content !== null);
+		const content: BoundaryValue = JSON.parse(readFileSync(lockFile(locksDir), "utf8"));
+		assert.ok(isObject(content) && content !== null);
 		assert.deepEqual(Object.fromEntries(Object.entries(content).filter(([key]) => key !== "ownerToken")), {
 			pid: 12345,
 			startedAt: "2025-01-01T00:00:00.000Z",
 			repositoryPath: "/repo/example",
 		});
-		assert.ok("ownerToken" in content && typeof content.ownerToken === "string" && content.ownerToken.length > 0);
+		assert.ok("ownerToken" in content && isString(content.ownerToken) && content.ownerToken.length > 0);
 		assert.deepEqual(
 			readdirSync(locksDir).filter((entry) => entry.includes("candidate")),
 			[],

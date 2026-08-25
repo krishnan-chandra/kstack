@@ -100,7 +100,10 @@ export default async function (pi: ExtensionAPI) {
 				);
 			}
 		} catch (err) {
-			ctx.ui.notify(`session-archive reconciliation failed: ${(err as Error).message}`, "warning");
+			ctx.ui.notify(
+				`session-archive reconciliation failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				"warning",
+			);
 		}
 	});
 

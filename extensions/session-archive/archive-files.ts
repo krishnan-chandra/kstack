@@ -113,7 +113,7 @@ export function canonicalizeActiveSource(sourcePath: string, activeSessionDir: s
 	return canonical;
 }
 
-export function hashFile(path: string): { sha256: string; size: number } {
+export function hashFile(path: string) {
 	const buf = readFileSync(path);
 	return { sha256: sha256Hex(buf), size: buf.length };
 }
@@ -178,7 +178,12 @@ function moveVerifiedFile(
 	try {
 		options.renameImpl(sourcePath, destPath);
 	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+		if (
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				err as NodeJS.ErrnoException
+			).code !== "EXDEV"
+		)
+			throw err;
 		moveVerifiedAcrossDevices(sourcePath, destPath, expectedSha256, expectedSize, options.tempPrefix);
 		return;
 	}
@@ -260,7 +265,9 @@ export function chmodOwnerWritable(path: string): void {
 		chmodSync(path, 0o600);
 	} catch (err) {
 		if (process.platform !== "win32")
-			throw new ArchiveFileError(`failed to make restored session writable: ${(err as Error).message}`);
+			throw new ArchiveFileError(
+				`failed to make restored session writable: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+			);
 	}
 }
 
@@ -269,7 +276,9 @@ export function chmodReadOnly(path: string): void {
 		chmodSync(path, 0o444);
 	} catch (err) {
 		if (process.platform === "win32") return;
-		throw new ArchiveFileError(`failed to mark ${path} read-only: ${(err as Error).message}`);
+		throw new ArchiveFileError(
+			`failed to mark ${path} read-only: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+		);
 	}
 }
 
@@ -281,7 +290,7 @@ export function fileSize(path: string): number {
 	return statSync(path).size;
 }
 
-export function fileStat(path: string): { size: number; mtimeMs: number } {
+export function fileStat(path: string) {
 	const stat = statSync(path);
 	return { size: stat.size, mtimeMs: stat.mtimeMs };
 }

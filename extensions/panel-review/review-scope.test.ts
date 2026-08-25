@@ -104,7 +104,12 @@ describe("readUntracked", () => {
 			writeFileSync(join(dir, "bin.dat"), Buffer.from([0, 1, 2, 3]));
 			symlinkSync(join(dir, "text.ts"), join(dir, "link.ts"));
 
-			assert.equal((readUntracked(dir, "text.ts") as { text: string }).text, "const x = 1;\n");
+			assert.equal(
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ (
+					readUntracked(dir, "text.ts") as { text: string }
+				).text,
+				"const x = 1;\n",
+			);
 			assert.deepEqual(readUntracked(dir, "bin.dat"), { skipped: "binary" });
 			assert.deepEqual(readUntracked(dir, "link.ts"), { skipped: "symlink" });
 			assert.deepEqual(readUntracked(dir, "../escape.ts"), { skipped: "path escapes repository root" });
@@ -118,7 +123,12 @@ describe("readUntracked", () => {
 		try {
 			// 2-byte chars; a cut at an odd byte lands mid-sequence.
 			writeFileSync(join(dir, "big.txt"), "é".repeat(100));
-			const r = readUntracked(dir, "big.txt", undefined, 51) as { text: string; truncated: boolean };
+			const r = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ readUntracked(
+				dir,
+				"big.txt",
+				undefined,
+				51,
+			) as { text: string; truncated: boolean };
 			assert.equal(r.truncated, true);
 			assert.ok(Buffer.byteLength(r.text, "utf8") <= 51);
 			assert.ok(!r.text.includes("�")); // no mojibake at the cut
@@ -141,7 +151,7 @@ describe("touchesContextFile", () => {
 });
 
 describe("collectScope", () => {
-	function makeRepo(): { root: string; cleanup: () => void } {
+	function makeRepo() {
 		const root = mkdtempSync(join(tmpdir(), "pr-repo-"));
 		writeFileSync(join(root, "untracked.ts"), "export const a = 1;\n");
 		writeFileSync(join(root, "blob.bin"), Buffer.from([0, 0, 0]));

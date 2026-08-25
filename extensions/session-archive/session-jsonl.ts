@@ -1,3 +1,4 @@
+import { type BoundaryValue, isString, type JsonObject } from "../shared/validation.ts";
 /** Strict parsing, search-text extraction, byte offsets, and hashing for Pi v3 session JSONL. */
 
 import { createHash } from "node:crypto";
@@ -40,22 +41,22 @@ export interface ParsedSession {
 	entries: ParsedEntry[];
 }
 
-function requireString(value: unknown, field: string, line: number): string {
-	if (typeof value !== "string" || value.length === 0) {
+function requireString(value: BoundaryValue, field: string, line: number): string {
+	if (!isString(value) || value.length === 0) {
 		throw new SessionParseError(`missing or invalid "${field}"`, line);
 	}
 	return value;
 }
 
-function optionalString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
+function optionalString(value: BoundaryValue): string | undefined {
+	return isString(value) ? value : undefined;
 }
 
-function extractText(content: unknown): string | undefined {
-	if (typeof content === "string") return content;
+function extractText(content: BoundaryValue): string | undefined {
+	if (isString(content)) return content;
 	if (!Array.isArray(content)) return undefined;
 	const parts = content.flatMap((block) =>
-		isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : [],
+		isRecord(block) && block.type === "text" && isString(block.text) ? [block.text] : [],
 	);
 	return parts.length > 0 ? parts.join("\n") : undefined;
 }
@@ -64,7 +65,7 @@ function setText(entry: ParsedEntry, text: string | undefined): void {
 	if (text) entry.textContent = text.slice(0, MAX_TEXT_CONTENT_CHARS);
 }
 
-function extractEntryText(entry: ParsedEntry, raw: Record<string, unknown>): void {
+function extractEntryText(entry: ParsedEntry, raw: JsonObject): void {
 	if (entry.entryType === "message") {
 		const message = raw.message;
 		if (!isRecord(message)) return;
@@ -127,7 +128,7 @@ export function parseSessionJsonl(content: string): ParsedSession {
 	if (lines.length === 0) throw new SessionParseError("empty session file");
 
 	const headerLine = lines[0];
-	let rawHeader: unknown;
+	let rawHeader: BoundaryValue;
 	try {
 		rawHeader = JSON.parse(headerLine.text);
 	} catch {
@@ -151,7 +152,7 @@ export function parseSessionJsonl(content: string): ParsedSession {
 	const entries: ParsedEntry[] = [];
 	const seenIds = new Set<string>();
 	for (const line of lines.slice(1)) {
-		let raw: unknown;
+		let raw: BoundaryValue;
 		try {
 			raw = JSON.parse(line.text);
 		} catch {
@@ -165,7 +166,7 @@ export function parseSessionJsonl(content: string): ParsedSession {
 		const entryId = requireString(raw.id, "id", line.lineNumber);
 		if (seenIds.has(entryId)) throw new SessionParseError(`duplicate entry id "${entryId}"`, line.lineNumber);
 		seenIds.add(entryId);
-		if (raw.parentId !== null && typeof raw.parentId !== "string") {
+		if (raw.parentId !== null && !isString(raw.parentId)) {
 			throw new SessionParseError('"parentId" must be a string or null', line.lineNumber);
 		}
 		const entry: ParsedEntry = {

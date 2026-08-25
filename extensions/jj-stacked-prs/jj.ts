@@ -1,3 +1,4 @@
+import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Validated jj and read-only Git adapter. */
 
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -121,13 +122,13 @@ export function createJjAdapter(run: ProcessRunner): JjAdapter {
 			const [commitId, empty, bookmarked, rawParents, ...extra] = rows[0].split("\t");
 			const isFlag = (value: string | undefined): value is "true" | "false" => value === "true" || value === "false";
 			if (!commitId || !isFlag(empty) || !isFlag(bookmarked) || !rawParents || extra.length > 0) return undefined;
-			let parents: unknown;
+			let parents: BoundaryValue;
 			try {
 				parents = JSON.parse(rawParents);
 			} catch {
 				return undefined;
 			}
-			if (!Array.isArray(parents) || !parents.every((parent): parent is string => typeof parent === "string")) {
+			if (!Array.isArray(parents) || !parents.every((parent): parent is string => isString(parent))) {
 				return undefined;
 			}
 			return {
@@ -247,9 +248,10 @@ export function parseStackCommits(text: string): StackCommit[] {
 	return commits;
 }
 
-function parseStackCommit(value: unknown): StackCommit {
-	if (typeof value !== "object" || value === null) throw new JjError("Malformed stack JSON: expected an object.");
-	const record = value as Record<string, unknown>;
+function parseStackCommit(value: BoundaryValue): StackCommit {
+	if (!isObject(value) || value === null) throw new JjError("Malformed stack JSON: expected an object.");
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as JsonObject;
 	const changeId = requiredString(record.change_id, "change_id");
 	const commitId = requiredString(record.commit_id, "commit_id");
 	const subject = optionalString(record.subject, "subject") ?? "";
@@ -339,27 +341,27 @@ function nonemptyLines(text: string): string[] {
 		.filter(Boolean);
 }
 
-function requiredString(value: unknown, field: string): string {
-	if (typeof value !== "string" || value.length === 0) throw new JjError(`Malformed stack JSON: missing ${field}.`);
+function requiredString(value: BoundaryValue, field: string): string {
+	if (!isString(value) || value.length === 0) throw new JjError(`Malformed stack JSON: missing ${field}.`);
 	return value;
 }
 
-function optionalString(value: unknown, field: string): string | undefined {
+function optionalString(value: BoundaryValue, field: string): string | undefined {
 	if (value === undefined || value === null) return undefined;
-	if (typeof value !== "string") throw new JjError(`Malformed stack JSON: ${field} must be a string.`);
+	if (!isString(value)) throw new JjError(`Malformed stack JSON: ${field} must be a string.`);
 	return value;
 }
 
-function requiredBoolean(value: unknown, field: string): boolean {
-	if (typeof value !== "boolean") throw new JjError(`Malformed stack JSON: ${field} must be a boolean.`);
+function requiredBoolean(value: BoundaryValue, field: string): boolean {
+	if (!isBoolean(value)) throw new JjError(`Malformed stack JSON: ${field} must be a boolean.`);
 	return value;
 }
 
-function stringArray(value: unknown, field: string): string[] {
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+function stringArray(value: BoundaryValue, field: string): string[] {
+	if (!Array.isArray(value) || value.some((item) => !isString(item))) {
 		throw new JjError(`Malformed stack JSON: ${field} must be a string array.`);
 	}
-	return value as string[];
+	return /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as string[];
 }
 
 function assertBoundedName(value: string, label: string, max: number): void {

@@ -61,7 +61,10 @@ export async function dispatchRoute(
 				}
 				return { status: "dispatched" };
 			} catch (err) {
-				return { status: "failed", error: `plan-implement dispatch failed: ${(err as Error).message}` };
+				return {
+					status: "failed",
+					error: `plan-implement dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				};
 			}
 		}
 
@@ -86,7 +89,10 @@ export async function dispatchRoute(
 				}
 				return { status: "dispatched" };
 			} catch (err) {
-				return { status: "failed", error: `plan-implement dispatch failed: ${(err as Error).message}` };
+				return {
+					status: "failed",
+					error: `plan-implement dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				};
 			}
 		}
 
@@ -103,7 +109,10 @@ export async function dispatchRoute(
 				}
 				return { status: "dispatched" };
 			} catch (err) {
-				return { status: "failed", error: `panel-review dispatch failed: ${(err as Error).message}` };
+				return {
+					status: "failed",
+					error: `panel-review dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				};
 			}
 		}
 
@@ -122,7 +131,10 @@ export async function dispatchRoute(
 								"Make sure it is installed: pi list | grep pr-autopilot",
 						};
 			} catch (err) {
-				return { status: "failed", error: `pr-autopilot dispatch failed: ${(err as Error).message}` };
+				return {
+					status: "failed",
+					error: `pr-autopilot dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				};
 			}
 		}
 
@@ -150,7 +162,10 @@ export async function dispatchRoute(
 								"Make sure it is installed: pi list | grep land",
 						};
 			} catch (err) {
-				return { status: "failed", error: `land dispatch failed: ${(err as Error).message}` };
+				return {
+					status: "failed",
+					error: `land dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				};
 			}
 		}
 

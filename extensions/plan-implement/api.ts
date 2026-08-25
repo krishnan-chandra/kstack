@@ -1,3 +1,4 @@
+import { type BoundaryValue, isBoolean, isObject, isString } from "../shared/validation.ts";
 /** In-process request contract for invoking plan-implement from another extension. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -20,7 +21,7 @@ interface PlanImplementPayload {
 /* exported: request-channel contract */
 export interface PlanImplementRequest extends RequestEnvelope<PlanImplementPayload, void, 1> {}
 
-function isWorkLocation(value: unknown): value is WorkLocation {
+function isWorkLocation(value: BoundaryValue): value is WorkLocation {
 	return value === "current" || value === "worktree";
 }
 
@@ -28,12 +29,12 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 	event: PLAN_IMPLEMENT_REQUEST_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is PlanImplementPayload =>
-		typeof value === "object" &&
+		isObject(value) &&
 		value !== null &&
 		"task" in value &&
-		typeof value.task === "string" &&
+		isString(value.task) &&
 		"ctx" in value &&
-		typeof value.ctx === "object" &&
+		isObject(value.ctx) &&
 		value.ctx !== null &&
 		"mode" in value &&
 		(value.mode === "single" || value.mode === "stack") &&
@@ -41,20 +42,20 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 		isWorkLocation(value.workLocation) &&
 		!(value.mode === "stack" && value.workLocation === "worktree") &&
 		"fast" in value &&
-		typeof value.fast === "boolean" &&
+		isBoolean(value.fast) &&
 		!(value.fast && value.mode === "stack") &&
 		"changeKind" in value &&
-		typeof value.changeKind === "string" &&
+		isString(value.changeKind) &&
 		isChangeKind(value.changeKind),
 });
 
 /* exported: request-channel contract */
-export function isPlanImplementRequest(value: unknown): value is PlanImplementRequest {
+export function isPlanImplementRequest(value: BoundaryValue): value is PlanImplementRequest {
 	return channel.isRequest(value);
 }
 
 export function claimPlanImplementRequest(
-	value: unknown,
+	value: BoundaryValue,
 	run: (
 		task: string,
 		mode: DeliveryMode,

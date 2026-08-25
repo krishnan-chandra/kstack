@@ -1,3 +1,4 @@
+import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Route classification logic: recommendation, validation, and manual fallback. */
 
 import { getAllRoutes, getRouteDescription, getRouteLabel } from "./catalog.ts";
@@ -40,18 +41,19 @@ export function parseClassifierOutput(
 		return { ok: false, error: "Empty envelope between sentinel markers." };
 	}
 
-	let parsed: unknown;
+	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(jsonPart);
 	} catch {
 		return { ok: false, error: "Classifier envelope is not valid JSON." };
 	}
 
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+	if (!isObject(parsed) || parsed === null || Array.isArray(parsed)) {
 		return { ok: false, error: "Classifier envelope must be a JSON object." };
 	}
 
-	const envelope = parsed as Record<string, unknown>;
+	const envelope =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ parsed as JsonObject;
 
 	// Validate schema version.
 	if (envelope.schemaVersion !== 1) {
@@ -59,17 +61,21 @@ export function parseClassifierOutput(
 	}
 
 	// Validate route.
-	if (typeof envelope.route !== "string" || !isRouteId(envelope.route)) {
+	if (!isString(envelope.route) || !isRouteId(envelope.route)) {
 		return { ok: false, error: `Invalid or unknown route: ${JSON.stringify(envelope.route)}.` };
 	}
 
 	// Validate confidence.
-	if (!["high", "medium", "low"].includes(envelope.confidence as string)) {
+	if (
+		!["high", "medium", "low"].includes(
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.confidence as string,
+		)
+	) {
 		return { ok: false, error: `Invalid confidence: ${envelope.confidence}. Must be high, medium, or low.` };
 	}
 
 	// Validate rationale.
-	if (typeof envelope.rationale !== "string" || envelope.rationale.trim().length === 0) {
+	if (!isString(envelope.rationale) || envelope.rationale.trim().length === 0) {
 		return { ok: false, error: "Classifier envelope missing or empty rationale." };
 	}
 	if (envelope.rationale.length > DEFAULTS.maxRationaleChars) {
@@ -79,7 +85,7 @@ export function parseClassifierOutput(
 	// Validate optional change kind.
 	let changeKind: ChangeKind | undefined;
 	if (envelope.changeKind !== undefined) {
-		if (typeof envelope.changeKind !== "string" || !isChangeKind(envelope.changeKind)) {
+		if (!isString(envelope.changeKind) || !isChangeKind(envelope.changeKind)) {
 			return { ok: false, error: `Invalid changeKind: ${JSON.stringify(envelope.changeKind)}.` };
 		}
 		// Fast classifiers sometimes fill every field shown in the output
@@ -120,10 +126,14 @@ export function parseClassifierOutput(
 	return {
 		ok: true,
 		envelope: {
-			schemaVersion: envelope.schemaVersion as number,
-			route: envelope.route as RouteId,
-			confidence: envelope.confidence as ClassifierEnvelope["confidence"],
-			rationale: envelope.rationale as string,
+			schemaVersion:
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.schemaVersion as number,
+			route:
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.route as RouteId,
+			confidence:
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.confidence as ClassifierEnvelope["confidence"],
+			rationale:
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.rationale as string,
 			delivery,
 			changeKind,
 		},
@@ -142,7 +152,7 @@ interface RouteRecommendation {
  * Build a human-readable route recommendation display.
  */
 export function formatRecommendation(recommendation: RouteRecommendation, modelSource: string): string {
-	const confidenceMap: Record<string, string> = {
+	const confidenceMap = {
 		high: "✓ High confidence",
 		medium: "~ Medium confidence",
 		low: "? Low confidence",

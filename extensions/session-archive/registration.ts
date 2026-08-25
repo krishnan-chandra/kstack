@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
+import { type BoundaryValue, isString } from "../shared/validation.ts";
 import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
 import type { BulkArchiveOutcome } from "./archive-ops.ts";
 import { buildSessionChoices } from "./session-choices.ts";
@@ -35,8 +36,10 @@ export function reportBatchResults(notify: Notify, outcomes: BulkArchiveOutcome[
 export function createWriteGuard(archiveRoot: string) {
 	return async (event: ToolCallEvent, ctx: ExtensionContext) => {
 		if (event.toolName !== "write" && event.toolName !== "edit") return;
-		const target = (event.input as { path?: unknown }).path;
-		if (typeof target !== "string" || target.length === 0) return;
+		const target = /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+			event.input as { path?: BoundaryValue }
+		).path;
+		if (!isString(target) || target.length === 0) return;
 		if (isArchiveWriteTarget(target, ctx.cwd, archiveRoot)) {
 			return {
 				block: true,

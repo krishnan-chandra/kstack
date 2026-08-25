@@ -14,7 +14,8 @@ describe("runPanel", () => {
 	it("caps concurrency and returns results in panel order", async () => {
 		let running = 0;
 		let peak = 0;
-		const delays: Record<string, number> = { A: 30, B: 5, C: 20, D: 10 };
+		type ReviewerDelays = Record<string, number>;
+		const delays: ReviewerDelays = { A: 30, B: 5, C: 20, D: 10 };
 		const panel = await runPanel(specs, 2, async (spec) => {
 			running++;
 			peak = Math.max(peak, running);

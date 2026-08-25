@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../validation.ts";
 /** Jujutsu implementation of K-Stack's repository-mutation contract. */
 
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
@@ -20,7 +21,7 @@ const LOCAL_BOOKMARK_TEMPLATE = 'if(self.remote(), "", self.name() ++ "\\n")';
 const BOOKMARK_TARGET_TEMPLATE =
 	'if(self.remote(), "", self.name() ++ "\\t" ++ self.normal_target().commit_id() ++ "\\n")';
 
-function failure(error: unknown): ExecFnResult {
+function failure(error: BoundaryValue): ExecFnResult {
 	return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
 }
 
@@ -166,7 +167,7 @@ export class JjBackend implements JjVcsBackend {
 		if (result.code !== 0) return { ok: false, error: `Could not inspect the jj working copy: ${diagnostic(result)}` };
 		if (output(result) === "true") return { ok: true, empty: true };
 		const summary = await this.jj(cwd, ["diff", "-r", "@", "--summary"], 5_000);
-		return { ok: true, empty: false, ...(output(summary) ? { details: output(summary) } : {}) };
+		return { ok: true, empty: false, ...(output(summary) ? { details: output(summary) } : undefined) };
 	}
 
 	async createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>> {

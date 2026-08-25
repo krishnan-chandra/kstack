@@ -1,4 +1,5 @@
 import { isThinkingLevel, MODEL_ID_RE, type ModelThinkingLevel, THINKING_LEVELS } from "./kstack-config.ts";
+import { type BoundaryValue, isString, type JsonObject } from "./validation.ts";
 
 /** A model reference as configured in kstack.json sections. */
 export interface ModelSpec {
@@ -13,7 +14,7 @@ export function modelCliId(spec: ModelSpec): string {
 }
 
 /** Split `provider/model-id`; extra path segments stay in the model id. */
-export function splitModelRef(ref: string): { provider: string; modelId: string } {
+export function splitModelRef(ref: string) {
 	const slash = ref.indexOf("/");
 	return { provider: ref.slice(0, slash), modelId: ref.slice(slash + 1) };
 }
@@ -24,9 +25,9 @@ interface ModelSpecFieldRules {
 	requireLabel: boolean;
 	allowedThinking?: readonly string[];
 	errors: {
-		label(value: unknown): string;
-		model(value: unknown): string;
-		thinking(value: unknown): string;
+		label(value: BoundaryValue): string;
+		model(value: BoundaryValue): string;
+		thinking(value: BoundaryValue): string;
 	};
 }
 
@@ -35,14 +36,11 @@ type ModelSpecFieldResult =
 	| { ok: false; error: string };
 
 /** Validate the common model-spec fields while callers retain their error text. */
-export function validateModelSpecFields(
-	value: Record<string, unknown>,
-	rules: ModelSpecFieldRules,
-): ModelSpecFieldResult {
-	if (rules.requireLabel && (typeof value.label !== "string" || !MODEL_LABEL_RE.test(value.label))) {
+export function validateModelSpecFields(value: JsonObject, rules: ModelSpecFieldRules): ModelSpecFieldResult {
+	if (rules.requireLabel && (!isString(value.label) || !MODEL_LABEL_RE.test(value.label))) {
 		return { ok: false, error: rules.errors.label(value.label) };
 	}
-	if (typeof value.model !== "string" || !MODEL_ID_RE.test(value.model)) {
+	if (!isString(value.model) || !MODEL_ID_RE.test(value.model)) {
 		return { ok: false, error: rules.errors.model(value.model) };
 	}
 	const allowedThinking = rules.allowedThinking ?? THINKING_LEVELS;
@@ -51,8 +49,8 @@ export function validateModelSpecFields(
 	}
 	return {
 		ok: true,
-		...(rules.requireLabel && typeof value.label === "string" ? { label: value.label } : {}),
+		...(rules.requireLabel && isString(value.label) ? { label: value.label } : undefined),
 		model: value.model,
-		...(isThinkingLevel(value.thinking) ? { thinking: value.thinking } : {}),
+		...(isThinkingLevel(value.thinking) ? { thinking: value.thinking } : undefined),
 	};
 }

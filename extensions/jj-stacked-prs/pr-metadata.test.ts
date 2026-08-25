@@ -356,7 +356,10 @@ describe("addUsage and createModelMetadataGenerator", () => {
 				stderr: "",
 			}),
 			{
-				model: { provider: "openai", id: "test-model" } as unknown as Model<Api>,
+				model: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+					provider: "openai",
+					id: "test-model",
+				} as Model<Api>,
 				hasConfiguredAuth: () => true,
 				onProgress: (bookmark) => progress.push(bookmark),
 				complete: async () => ({
@@ -403,7 +406,10 @@ describe("addUsage and createModelMetadataGenerator", () => {
 		const generator = createModelMetadataGenerator(
 			async () => ({ kind: "ok", code: 0, stdout: "diff --git\n", stderr: "" }),
 			{
-				model: { provider: "openai", id: "test-model" } as unknown as Model<Api>,
+				model: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+					provider: "openai",
+					id: "test-model",
+				} as Model<Api>,
 				hasConfiguredAuth: () => true,
 				complete: async (_model, options) => {
 					prompts.push(options.messages.map((message) => message.content[0].text));
@@ -456,7 +462,10 @@ describe("addUsage and createModelMetadataGenerator", () => {
 		const generator = createModelMetadataGenerator(
 			async () => ({ kind: "ok", code: 0, stdout: "diff --git\n", stderr: "" }),
 			{
-				model: { provider: "openai", id: "test-model" } as unknown as Model<Api>,
+				model: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+					provider: "openai",
+					id: "test-model",
+				} as Model<Api>,
 				hasConfiguredAuth: () => true,
 				complete: async () => ({
 					stopReason: "stop",

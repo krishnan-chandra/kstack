@@ -2,7 +2,9 @@
 
 import { ALL_ROUTES, type RouteId, type RouteMetadata } from "./types.ts";
 
-const CATALOG: Record<RouteId, RouteMetadata> = {
+interface RouteCatalog extends Record<RouteId, RouteMetadata> {}
+
+const CATALOG: RouteCatalog = {
 	investigate: {
 		id: "investigate",
 		label: "Investigate",

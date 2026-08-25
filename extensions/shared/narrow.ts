@@ -1,9 +1,10 @@
+import { type BoundaryValue, isObject, type JsonObject } from "./validation.ts";
 /** Narrowing helpers for untrusted JSON and event payloads. */
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isRecord(value: BoundaryValue): value is JsonObject {
+	return isObject(value) && value !== null && !Array.isArray(value);
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: BoundaryValue): JsonObject | undefined {
 	return isRecord(value) ? value : undefined;
 }

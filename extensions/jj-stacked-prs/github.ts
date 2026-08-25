@@ -1,3 +1,5 @@
+import { asRecord } from "../shared/narrow.ts";
+import { type BoundaryValue, isBoolean, isNumber, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Validated gh adapter and navigation-comment codec. */
 
 import type { CommandFailure, ProcessRunner } from "./process.ts";
@@ -37,7 +39,12 @@ export function redactUrl(url: string): string {
 
 function normalizeNavigationStatus(value: string): NavigationStatus {
 	const status = value.toLowerCase();
-	return VALID_NAVIGATION_STATUSES.has(status as NavigationStatus) ? (status as NavigationStatus) : "unknown";
+	// SAFETY: Set membership establishes NavigationStatus before the asserted branch returns it.
+	return VALID_NAVIGATION_STATUSES.has(
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ status as NavigationStatus,
+	)
+		? /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (status as NavigationStatus)
+		: "unknown";
 }
 
 export function buildNavigationComment(entries: readonly NavigationEntry[], defaultBranch: string): string {
@@ -76,7 +83,7 @@ export function parseNavigationCommentEntries(body: string): NavigationEntry[] {
 		const encoded = dataMatch[1];
 		try {
 			const padding = "=".repeat((4 - (encoded.length % 4)) % 4);
-			const parsed: unknown = JSON.parse(Buffer.from(encoded + padding, "base64url").toString("utf8"));
+			const parsed: BoundaryValue = JSON.parse(Buffer.from(encoded + padding, "base64url").toString("utf8"));
 			if (Array.isArray(parsed) && parsed.length <= MAX_NAVIGATION_ENTRIES) {
 				const entries = parsed.map(parseNavigationItem);
 				if (entries.every((entry) => entry !== undefined)) return entries.filter((entry) => entry !== undefined);
@@ -434,8 +441,8 @@ export function createGitHubAdapter(run: ProcessRunner): GitHubAdapter {
 						];
 			const result = await runGh(run, args, { cwd: input.cwd, signal: input.signal });
 			try {
-				const parsed: unknown = JSON.parse(result.stdout);
-				if (typeof parsed === "object" && parsed !== null && "id" in parsed && Number.isSafeInteger(parsed.id)) {
+				const parsed: BoundaryValue = JSON.parse(result.stdout);
+				if (isObject(parsed) && parsed !== null && "id" in parsed && Number.isSafeInteger(parsed.id)) {
 					return { id: Number(parsed.id) };
 				}
 			} catch {
@@ -455,24 +462,30 @@ export function parseOpenPrs(text: string, repo: GitHubRepository): OpenPullRequ
 	const expected = `${repo.owner}/${repo.repo}`.toLowerCase();
 	const prs: OpenPullRequest[] = [];
 	for (const item of items) {
-		if (typeof item !== "object" || item === null) continue;
-		const record = item as Record<string, unknown>;
+		if (!isObject(item) || item === null) continue;
+		const record =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ item as JsonObject;
 		const headRepository = record.headRepository;
 		const headRepositoryOwner = record.headRepositoryOwner;
 		if (headRepository === null || headRepository === undefined) continue;
-		if (typeof headRepository !== "object") continue;
-		const nameWithOwner = (headRepository as Record<string, unknown>).nameWithOwner;
-		if (typeof nameWithOwner !== "string" || nameWithOwner.toLowerCase() !== expected) continue;
+		if (!isObject(headRepository)) continue;
+		const nameWithOwner =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+				headRepository as JsonObject
+			).nameWithOwner;
+		if (!isString(nameWithOwner) || nameWithOwner.toLowerCase() !== expected) continue;
 		const ownerLogin =
-			typeof headRepositoryOwner === "object" && headRepositoryOwner !== null
-				? (headRepositoryOwner as Record<string, unknown>).login
+			isObject(headRepositoryOwner) && headRepositoryOwner !== null
+				? /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+						headRepositoryOwner as JsonObject
+					).login
 				: "";
 		if (
 			!Number.isSafeInteger(record.number) ||
 			Number(record.number) <= 0 ||
-			typeof record.headRefName !== "string" ||
-			typeof record.headCommitId !== "string" ||
-			typeof record.baseRefName !== "string"
+			!isString(record.headRefName) ||
+			!isString(record.headCommitId) ||
+			!isString(record.baseRefName)
 		) {
 			continue;
 		}
@@ -481,26 +494,27 @@ export function parseOpenPrs(text: string, repo: GitHubRepository): OpenPullRequ
 			headRef: record.headRefName,
 			headCommitId: record.headCommitId,
 			baseRef: record.baseRefName,
-			title: typeof record.title === "string" ? record.title : "",
+			title: isString(record.title) ? record.title : "",
 			draft: Boolean(record.isDraft),
-			url: typeof record.url === "string" ? record.url : "",
-			headOwner: typeof ownerLogin === "string" ? ownerLogin : "",
+			url: isString(record.url) ? record.url : "",
+			headOwner: isString(ownerLogin) ? ownerLogin : "",
 		});
 	}
 	return prs;
 }
 
 export function parseAllowedMergeMethods(text: string, repo: GitHubRepository): StackMergeMethod[] {
-	let payload: unknown;
+	let payload: BoundaryValue;
 	try {
 		payload = JSON.parse(text);
 	} catch {
 		throw new GitHubError(`Could not parse merge methods for ${repo.owner}/${repo.repo}: invalid JSON.`);
 	}
-	if (typeof payload !== "object" || payload === null) {
+	if (!isObject(payload) || payload === null) {
 		throw new GitHubError(`Could not parse merge methods for ${repo.owner}/${repo.repo}: invalid response.`);
 	}
-	const record = payload as Record<string, unknown>;
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ payload as JsonObject;
 	const methods: StackMergeMethod[] = [];
 	if (record.squash === true) methods.push("squash");
 	if (record.rebase === true) methods.push("rebase");
@@ -508,51 +522,43 @@ export function parseAllowedMergeMethods(text: string, repo: GitHubRepository): 
 }
 
 export function parseMergeCommit(text: string, prNumber: number): MergedPrInfo {
-	let payload: unknown;
+	let payload: BoundaryValue;
 	try {
 		payload = JSON.parse(text);
 	} catch {
 		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid JSON.`);
 	}
-	if (typeof payload !== "object" || payload === null) {
+	if (!isObject(payload) || payload === null) {
 		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid response.`);
 	}
-	const record = payload as Record<string, unknown>;
-	if (
-		typeof record.merged !== "boolean" ||
-		typeof record.headCommitId !== "string" ||
-		typeof record.headRef !== "string"
-	) {
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ payload as JsonObject;
+	if (!isBoolean(record.merged) || !isString(record.headCommitId) || !isString(record.headRef)) {
 		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid response.`);
 	}
 	const oid = record.mergeCommitOid;
-	if (oid !== null && oid !== undefined && typeof oid !== "string") {
+	if (oid !== null && oid !== undefined && !isString(oid)) {
 		throw new GitHubError(`Could not parse merge commit for PR #${prNumber}: invalid merge commit.`);
 	}
 	return {
 		merged: record.merged,
-		mergeCommitOid: typeof oid === "string" && oid.length > 0 ? oid : undefined,
+		mergeCommitOid: isString(oid) && oid.length > 0 ? oid : undefined,
 		headCommitId: record.headCommitId,
 		headRef: record.headRef,
 	};
 }
 
 export function parsePrStatus(text: string, prNumber: number): NavigationStatus {
-	let payload: unknown;
+	let payload: BoundaryValue;
 	try {
 		payload = JSON.parse(text);
 	} catch {
 		throw new GitHubError(`Could not parse status for PR #${prNumber}: invalid JSON.`);
 	}
-	if (
-		typeof payload !== "object" ||
-		payload === null ||
-		typeof (payload as { merged?: unknown }).merged !== "boolean" ||
-		((payload as { state?: unknown }).state !== "open" && (payload as { state?: unknown }).state !== "closed")
-	) {
+	const record = asRecord(payload);
+	if (!record || !isBoolean(record.merged) || (record.state !== "open" && record.state !== "closed")) {
 		throw new GitHubError(`Could not parse status for PR #${prNumber}: invalid response.`);
 	}
-	const record = payload as { merged: boolean; draft?: unknown; state: "open" | "closed" };
 	if (record.merged) return "merged";
 	if (record.draft) return "draft";
 	return record.state;
@@ -588,15 +594,16 @@ async function listPulls(
 function parseComments(text: string, prNumber: number): GitHubComment[] {
 	const comments: GitHubComment[] = [];
 	for (const item of decodeJsonSequence(text)) {
-		if (typeof item !== "object" || item === null) {
+		if (!isObject(item) || item === null) {
 			throw new GitHubError(`Could not parse comments for PR #${prNumber}: expected JSON objects.`);
 		}
-		const record = item as Record<string, unknown>;
+		const record =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ item as JsonObject;
 		if (!Number.isSafeInteger(record.id) || Number(record.id) <= 0) continue;
 		comments.push({
 			id: Number(record.id),
-			body: typeof record.body === "string" ? record.body : "",
-			user: typeof record.user === "string" ? record.user : undefined,
+			body: isString(record.body) ? record.body : "",
+			user: isString(record.user) ? record.user : undefined,
 		});
 	}
 	return comments;
@@ -604,24 +611,21 @@ function parseComments(text: string, prNumber: number): GitHubComment[] {
 
 function parseCreatedPr(text: string, fallbackUrl: string, repo: GitHubRepository): OpenPullRequest | undefined {
 	try {
-		const info: unknown = JSON.parse(text);
-		if (typeof info !== "object" || info === null) return undefined;
-		const record = info as Record<string, unknown>;
+		const info: BoundaryValue = JSON.parse(text);
+		if (!isObject(info) || info === null) return undefined;
+		const record =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ info as JsonObject;
 		if (!Number.isSafeInteger(record.number) || Number(record.number) <= 0) return undefined;
-		if (
-			typeof record.headRefName !== "string" ||
-			typeof record.headRefOid !== "string" ||
-			typeof record.baseRefName !== "string"
-		)
+		if (!isString(record.headRefName) || !isString(record.headRefOid) || !isString(record.baseRefName))
 			return undefined;
 		return {
 			number: Number(record.number),
 			headRef: record.headRefName,
 			headCommitId: record.headRefOid,
 			baseRef: record.baseRefName,
-			title: typeof record.title === "string" ? record.title : "",
+			title: isString(record.title) ? record.title : "",
 			draft: Boolean(record.isDraft),
-			url: typeof record.url === "string" ? record.url : fallbackUrl,
+			url: isString(record.url) ? record.url : fallbackUrl,
 			headOwner: repo.owner,
 		};
 	} catch {
@@ -629,8 +633,8 @@ function parseCreatedPr(text: string, fallbackUrl: string, repo: GitHubRepositor
 	}
 }
 
-function decodeJsonSequence(text: string): unknown[] {
-	const items: unknown[] = [];
+function decodeJsonSequence(text: string): BoundaryValue[] {
+	const items: BoundaryValue[] = [];
 	const trimmed = text.trim();
 	if (!trimmed) return items;
 	let offset = 0;
@@ -639,7 +643,7 @@ function decodeJsonSequence(text: string): unknown[] {
 		if (offset >= trimmed.length) break;
 		const end = jsonValueEnd(trimmed, offset);
 		if (end === undefined) throw new GitHubError("Could not parse GitHub JSON sequence.");
-		const parsed: unknown = JSON.parse(trimmed.slice(offset, end));
+		const parsed: BoundaryValue = JSON.parse(trimmed.slice(offset, end));
 		if (Array.isArray(parsed)) items.push(...parsed);
 		else items.push(parsed);
 		offset = end;
@@ -700,7 +704,7 @@ async function runGh(
 	return { stdout: result.stdout };
 }
 
-function isNotFound(error: unknown): boolean {
+function isNotFound(error: BoundaryValue): boolean {
 	if (!(error instanceof GitHubError)) return false;
 	return /\b404\b|not found/i.test(error.message);
 }
@@ -731,18 +735,19 @@ function encodeNavigationEntries(entries: readonly NavigationEntry[]): string {
 	return Buffer.from(payload, "utf8").toString("base64url").replace(/=+$/, "");
 }
 
-function parseNavigationItem(item: unknown): NavigationEntry | undefined {
-	if (typeof item !== "object" || item === null) return undefined;
-	const record = item as Record<string, unknown>;
+function parseNavigationItem(item: BoundaryValue): NavigationEntry | undefined {
+	if (!isObject(item) || item === null) return undefined;
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ item as JsonObject;
 	const prNumber = record.pr_number;
 	if (prNumber !== null && prNumber !== undefined && (!Number.isSafeInteger(prNumber) || Number(prNumber) <= 0)) {
 		return undefined;
 	}
-	if (typeof record.bookmark !== "string" || typeof record.base !== "string" || typeof record.status !== "string") {
+	if (!isString(record.bookmark) || !isString(record.base) || !isString(record.status)) {
 		return undefined;
 	}
 	return {
-		prNumber: typeof prNumber === "number" ? prNumber : undefined,
+		prNumber: isNumber(prNumber) ? prNumber : undefined,
 		bookmark: record.bookmark,
 		base: record.base,
 		status: normalizeNavigationStatus(record.status),

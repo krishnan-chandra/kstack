@@ -17,9 +17,11 @@ const manifestValue = {
 	slices: [{ branch: "kstack/one", baseBranch: "main", headSha, subject: "One" }],
 } as const;
 
-function scripted(overrides: Record<string, { code?: number; stdout?: string; stderr?: string }> = {}) {
+type ScriptedResults = Record<string, { code?: number; stdout?: string; stderr?: string }>;
+
+function scripted(overrides: ScriptedResults = {}) {
 	const calls: string[] = [];
-	const defaults: Record<string, { code?: number; stdout?: string; stderr?: string }> = {
+	const defaults = {
 		"git rev-parse --show-toplevel": { stdout: "/repo\n" },
 		"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
 		"git status --porcelain=v1 --untracked-files=all": {},
@@ -36,10 +38,11 @@ function scripted(overrides: Record<string, { code?: number; stdout?: string; st
 			stdout: "[]\n",
 		},
 	};
+	const defaultResponses = new Map<string, ScriptedResults[string]>(Object.entries(defaults));
 	const exec: ExecFn = async (command, args) => {
 		const key = `${command} ${args.join(" ")}`;
 		calls.push(key);
-		const response = overrides[key] ?? defaults[key] ?? {};
+		const response = overrides[key] ?? defaultResponses.get(key) ?? {};
 		return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
 	};
 	return { exec, calls };

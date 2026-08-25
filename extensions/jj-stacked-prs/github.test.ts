@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { createGitHubAdapter, GitHubError, parseAllowedMergeMethods, parseMergeCommit } from "./github.ts";
 import type { CommandResult } from "./process.ts";
 
@@ -46,7 +47,7 @@ describe("createDraftPr", () => {
 				body: "navigation",
 				cwd: ".",
 			}),
-			(error: unknown) => error instanceof GitHubError && error.kind === "indeterminate",
+			(error: BoundaryValue) => error instanceof GitHubError && error.kind === "indeterminate",
 		);
 	});
 });

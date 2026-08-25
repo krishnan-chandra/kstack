@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
+import type { BoundaryValue, JsonObject } from "../shared/validation.ts";
 import { buildChildArgs, runAgent, type SpawnedProcess, truncateUtf8 } from "./agent-runner.ts";
 
 const ID = "00000000-0000-4000-8000-000000000001";
 const sessionStore = {
-	prepare: (_identity: unknown, cwd: string) => ({
+	prepare: (_identity: BoundaryValue, cwd: string) => ({
 		ok: true as const,
 		prepared: {
 			id: ID,
@@ -27,8 +28,12 @@ const sessionStore = {
 };
 
 class FakeProcess implements SpawnedProcess {
-	stdout = new EventEmitter() as SpawnedProcess["stdout"] & EventEmitter;
-	stderr = new EventEmitter() as SpawnedProcess["stderr"] & EventEmitter;
+	stdout =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stdout"] &
+			EventEmitter;
+	stderr =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stderr"] &
+			EventEmitter;
 	private events = new EventEmitter();
 	killed = false;
 	kills: string[] = [];
@@ -58,7 +63,10 @@ class FakeProcess implements SpawnedProcess {
 	}
 }
 
-function options(process: FakeProcess, extra: Record<string, unknown> = {}) {
+type AgentOptions = Parameters<typeof runAgent>[0];
+type AgentOverrides = Partial<Omit<AgentOptions, "deps">> & { deps?: Partial<AgentOptions["deps"]> };
+
+function options(process: FakeProcess, extra: AgentOverrides = {}) {
 	return {
 		role: "planner" as const,
 		model: "a/planner:high",
@@ -302,14 +310,14 @@ describe("plan-implement child runner", () => {
 
 	it("spawns a mutation child in the selected managed worktree", async () => {
 		const process = new FakeProcess();
-		let spawnedCwd: unknown;
+		let spawnedCwd: BoundaryValue;
 		const promise = runAgent(
 			options(process, {
 				role: "implementer",
 				planFile: "/tmp/plan.md",
 				cwd: "/managed/repo/change",
 				deps: {
-					spawnImpl: (_command: string, _args: string[], spawnOptions: Record<string, unknown>) => {
+					spawnImpl: (_command: string, _args: string[], spawnOptions: JsonObject) => {
 						spawnedCwd = spawnOptions.cwd;
 						return process;
 					},
@@ -460,7 +468,7 @@ describe("plan-implement child runner", () => {
 
 	it("forwards progress preview and onEvent structured events", async () => {
 		const process = new FakeProcess();
-		const events: unknown[] = [];
+		const events: BoundaryValue[] = [];
 		const previews: string[] = [];
 
 		const promise = runAgent(
@@ -468,7 +476,7 @@ describe("plan-implement child runner", () => {
 				onProgress: (p: { turns: number; activity: string; preview?: string }) => {
 					if (p.preview) previews.push(p.preview);
 				},
-				onEvent: (e: unknown) => {
+				onEvent: (e: BoundaryValue) => {
 					events.push(e);
 				},
 			}),

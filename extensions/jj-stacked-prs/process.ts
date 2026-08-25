@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../shared/validation.ts";
 /** Hard-capped, abortable subprocess runner for jj/git/gh. */
 
 import { spawn as nodeSpawn } from "node:child_process";
@@ -230,7 +231,7 @@ function defaultSpawn(
 	return nodeSpawn(command, args, options);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: BoundaryValue): string {
 	return error instanceof Error ? error.message : String(error);
 }
 

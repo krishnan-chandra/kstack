@@ -56,7 +56,7 @@ function sectionLines(plan: string, heading: RegExp): string[] {
 	return result;
 }
 
-function collectItems(lines: string[], idPattern: RegExp): { items: PlanItem[]; malformed?: string } {
+function collectItems(lines: string[], idPattern: RegExp) {
 	const items: PlanItem[] = [];
 	for (const line of lines) {
 		if (!line.trim()) continue;
@@ -128,7 +128,8 @@ function parseLedger(output: string): { ok: true; entries: LedgerEntry[] } | { o
 		if (!line.trim()) continue;
 		const match = line.match(/^\s*[-*]\s+\[([^\]]+)\]\s+(.+?)\s+—\s+(done|blocked|skip)(?::\s*(.*))?\s*$/i);
 		if (!match) return { ok: false, error: `Malformed execution-ledger entry: ${line.trim()}` };
-		const status = match[3].toLowerCase() as LedgerStatus;
+		const status =
+			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ match[3].toLowerCase() as LedgerStatus;
 		const reason = normalizeText(match[4] ?? "");
 		if ((status === "blocked" || status === "skip") && !reason) {
 			return { ok: false, error: `${match[1]} must include a reason after ${status}:` };
@@ -140,7 +141,7 @@ function parseLedger(output: string): { ok: true; entries: LedgerEntry[] } | { o
 			kind: /^AC-\d+$/i.test(match[1]) ? "criterion" : "step",
 			text: normalizeText(match[2]),
 			status,
-			...(reason ? { reason } : {}),
+			...(reason ? { reason } : undefined),
 		});
 	}
 	if (entries.length === 0) return { ok: false, error: "Execution ledger has no entries." };

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { getAgentPaneHost } from "./agent-pane.ts";
+import type { BoundaryValue } from "./validation.ts";
 
 interface FakeUiState {
 	widgets: Map<string, unknown>;
@@ -21,14 +22,14 @@ function setup(mode: ExtensionContext["mode"] = "tui") {
 		notifications: [],
 	};
 	const ui = {
-		setWidget(key: string, content: unknown) {
+		setWidget(key: string, content: BoundaryValue) {
 			if (content === undefined) state.widgets.delete(key);
 			else state.widgets.set(key, content);
 		},
 		notify(message: string) {
 			state.notifications.push(message);
 		},
-		custom(factory: (...args: unknown[]) => Component) {
+		custom(factory: (...args: BoundaryValue[]) => Component) {
 			state.customCalls++;
 			let resolve!: () => void;
 			const closed = new Promise<void>((done) => {
@@ -45,22 +46,28 @@ function setup(mode: ExtensionContext["mode"] = "tui") {
 			return closed;
 		},
 	};
-	const ctx = { mode, ui } as unknown as ExtensionContext;
-	const pi = {
+	const ctx = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+		mode,
+		ui,
+	} as ExtensionContext;
+	const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		registerShortcut(key: string, value: { handler: (ctx: ExtensionContext) => void }) {
 			shortcuts.set(key, value.handler);
 		},
 		on(event: string, handler: () => void) {
 			handlers.set(event, handler);
 		},
-	} as unknown as ExtensionAPI;
+	} as ExtensionAPI;
 	return { pi, ctx, shortcuts, handlers, state };
 }
 
 function renderWidget(state: FakeUiState): string {
-	const factory = state.widgets.get("kstack-agent-pane") as
-		| ((tui: { requestRender(): void }, theme: { fg(color: string, text: string): string }) => Component)
-		| undefined;
+	const factory =
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ state.widgets.get(
+			"kstack-agent-pane",
+		) as
+			| ((tui: { requestRender(): void }, theme: { fg(color: string, text: string): string }) => Component)
+			| undefined;
 	assert.ok(factory);
 	return factory({ requestRender() {} }, { fg: (_color, text) => text })
 		.render(100)

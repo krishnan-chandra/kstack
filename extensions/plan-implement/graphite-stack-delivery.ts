@@ -1,3 +1,4 @@
+import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Validated local Graphite stack evidence and parent-owned publication. */
 
 import { createHash } from "node:crypto";
@@ -70,25 +71,25 @@ export type GraphiteStackPublishResult =
 	| { status: "indeterminate"; error: string }
 	| { status: "failed"; error: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+	return isObject(value) && value !== null && !Array.isArray(value);
 }
 
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+function exactKeys(value: JsonObject, expected: readonly string[]): boolean {
 	const actual = Object.keys(value).sort();
 	const sortedExpected = [...expected].sort();
 	return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
 }
 
-function safeRef(value: unknown, owned = false): value is string {
-	if (typeof value !== "string" || value.length === 0 || value.length > MAX_REF_CHARS) return false;
+function safeRef(value: BoundaryValue, owned = false): value is string {
+	if (!isString(value) || value.length === 0 || value.length > MAX_REF_CHARS) return false;
 	if (!(owned ? OWNED_BRANCH_RE : SAFE_REF_RE).test(value)) return false;
 	return !value.includes("..") && !value.includes("//") && !value.endsWith(".") && !value.endsWith(".lock");
 }
 
 /** Parse bounded evidence. The parent still verifies every field against Git and Graphite. */
 export function parseGraphiteStackManifest(raw: string): GraphiteManifestParseResult {
-	let value: unknown;
+	let value: BoundaryValue;
 	try {
 		value = JSON.parse(raw);
 	} catch {
@@ -116,7 +117,7 @@ export function parseGraphiteStackManifest(raw: string): GraphiteManifestParseRe
 			!safeRef(candidate.branch, true) ||
 			!safeRef(candidate.baseBranch) ||
 			!SHA_RE.test(String(candidate.headSha)) ||
-			typeof candidate.subject !== "string" ||
+			!isString(candidate.subject) ||
 			candidate.subject.trim().length === 0 ||
 			candidate.subject.length > MAX_SUBJECT_CHARS ||
 			/[\0\r\n]/.test(candidate.subject) ||
@@ -242,7 +243,7 @@ export async function verifyGraphiteStack(
 }
 
 function parsePullRequests(raw: string, expectedRef: string): ExistingPullRequest[] | undefined {
-	let value: unknown;
+	let value: BoundaryValue;
 	try {
 		value = JSON.parse(raw);
 	} catch {
@@ -255,11 +256,11 @@ function parsePullRequests(raw: string, expectedRef: string): ExistingPullReques
 		if (
 			!Number.isSafeInteger(item.number) ||
 			Number(item.number) <= 0 ||
-			typeof item.url !== "string" ||
+			!isString(item.url) ||
 			item.headRefName !== expectedRef ||
 			!safeRef(item.baseRefName) ||
 			!SHA_RE.test(String(item.headRefOid)) ||
-			typeof item.isDraft !== "boolean"
+			!isBoolean(item.isDraft)
 		)
 			return undefined;
 		parsed.push({
@@ -291,7 +292,7 @@ async function existingForRef(
 	if (!parsed) return { ok: false, error: `GitHub returned invalid PR data for ${ref}.` };
 	if (parsed.length > 1)
 		return { ok: false, error: `Expected at most one open PR for ${ref}; found ${parsed.length}.` };
-	return { ok: true, ...(parsed[0] ? { pr: parsed[0] } : {}) };
+	return { ok: true, ...(parsed[0] ? { pr: parsed[0] } : undefined) };
 }
 
 async function inspectPublishedStack(

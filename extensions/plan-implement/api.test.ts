@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ChangeKind } from "../shared/change-kind.ts";
+import type { BoundaryValue } from "../shared/validation.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT, requestPlanImplement } from "./api.ts";
 import type { DeliveryMode, WorkLocation } from "./types.ts";
 
-function fakeBus(listener?: (data: unknown) => void) {
+function fakeBus(listener?: (data: BoundaryValue) => void) {
 	return {
-		emit(channel: string, data: unknown) {
+		emit(channel: string, data: BoundaryValue) {
 			assert.equal(channel, PLAN_IMPLEMENT_REQUEST_EVENT);
 			listener?.(data);
 		},
@@ -27,15 +28,16 @@ describe("plan-implement in-process API", () => {
 			fast: boolean;
 			ctx: ExtensionCommandContext;
 		}[] = [];
-		const ctx = {} as ExtensionCommandContext;
-		const pi = {
+		const ctx =
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext;
+		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: fakeBus((data) => {
 				claimPlanImplementRequest(data, async (task, mode, workLocation, changeKind, fast, receivedCtx) => {
 					assert.equal(receivedCtx, ctx);
 					calls.push({ task, mode, workLocation, changeKind, fast, ctx });
 				});
 			}),
-		} as unknown as ExtensionAPI;
+		} as never;
 		const result = await requestPlanImplement(pi, "Add feature X", "single", "worktree", "feature", false, ctx);
 		assert.deepEqual(result, { handled: true });
 		assert.deepEqual(calls, [
@@ -44,7 +46,9 @@ describe("plan-implement in-process API", () => {
 	});
 
 	it("reports unavailable when plan-implement has no listener", async () => {
-		const pi = { events: fakeBus() } as unknown as ExtensionAPI;
+		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			events: fakeBus(),
+		} as never;
 		const result = await requestPlanImplement(
 			pi,
 			"",
@@ -52,7 +56,7 @@ describe("plan-implement in-process API", () => {
 			"current",
 			"generic",
 			false,
-			{} as ExtensionCommandContext,
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext,
 		);
 		assert.deepEqual(result, { handled: false });
 	});
@@ -62,11 +66,13 @@ describe("plan-implement in-process API", () => {
 			schemaVersion: 1 as const,
 			payload: {
 				task: "test",
-				mode: "single" as DeliveryMode,
-				workLocation: "current" as WorkLocation,
-				changeKind: "generic" as ChangeKind,
+				mode: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "single" as DeliveryMode,
+				workLocation:
+					/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "current" as WorkLocation,
+				changeKind:
+					/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "generic" as ChangeKind,
 				fast: false,
-				ctx: {} as ExtensionCommandContext,
+				ctx: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext,
 			},
 			claimed: false,
 		};

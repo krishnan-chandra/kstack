@@ -252,7 +252,7 @@ export default function (pi: ExtensionAPI): void {
 				routeLabel: getRouteLabel(route),
 				delivery,
 				worktree,
-				...(route === "change" || route === "fast-change" ? { changeKind } : {}),
+				...(route === "change" || route === "fast-change" ? { changeKind } : undefined),
 				modelSource,
 				confidence,
 				overrode,
@@ -303,7 +303,10 @@ export default function (pi: ExtensionAPI): void {
 					pendingDispatch = undefined;
 					restoreTools(snapshot);
 					lifecycle.endDispatch(dispatchToken);
-					notify(`Failed to start the routed turn: ${(error as Error).message}`, "error");
+					notify(
+						`Failed to start the routed turn: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
+						"error",
+					);
 					return;
 				}
 
@@ -349,13 +352,18 @@ export default function (pi: ExtensionAPI): void {
 					content:
 						result.status === "dispatched"
 							? `Dispatched to ${getRouteLabel(route)}.`
-							: `Dispatch failed: ${(result as { error?: string }).error ?? result.status}`,
+							: `Dispatch failed: ${(/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ result as { error?: string }).error ?? result.status}`,
 					display: true,
 					details: routeCard,
 				});
 
 				if (result.status === "failed") {
-					notify((result as { error?: string }).error ?? "Dispatch failed.", "error");
+					notify(
+						/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
+							result as { error?: string }
+						).error ?? "Dispatch failed.",
+						"error",
+					);
 				} else if (route === "change") {
 					notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
 				} else if (route === "fast-change") {

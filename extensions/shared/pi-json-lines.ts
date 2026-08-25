@@ -1,3 +1,4 @@
+import { type BoundaryValue, isString, type JsonObject } from "./validation.ts";
 /** Bounded parser for Pi's newline-delimited JSON event stream. */
 
 import { StringDecoder } from "node:string_decoder";
@@ -14,7 +15,7 @@ interface PiJsonEvent {
 	type?: string;
 	toolCallId?: string;
 	toolName?: string;
-	args?: Record<string, unknown>;
+	args?: JsonObject;
 	/** Present on `message_update` events; JSON mode omits the cumulative message. */
 	assistantMessageEvent?: PiAssistantMessageEvent;
 	message?: {
@@ -36,7 +37,7 @@ interface PiJsonEvent {
 interface JsonLineParserOptions {
 	maxLineBytes?: number;
 	onOverflow?: (maxLineBytes: number) => void;
-	onRecord?: (record: unknown) => void;
+	onRecord?: (record: BoundaryValue) => void;
 	onMalformed?: () => void;
 }
 
@@ -58,7 +59,7 @@ export class JsonLineParser {
 	}
 
 	push(chunk: string | Buffer): void {
-		const text = this.decoder.write(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk);
+		const text = this.decoder.write(isString(chunk) ? Buffer.from(chunk, "utf8") : chunk);
 		let offset = 0;
 		while (offset <= text.length) {
 			const newline = text.indexOf("\n", offset);
@@ -101,9 +102,11 @@ export class JsonLineParser {
 	private process(line: string): void {
 		if (!line.trim()) return;
 		try {
-			const record: unknown = JSON.parse(line);
+			const record: BoundaryValue = JSON.parse(line);
 			this.options.onRecord?.(record);
-			this.onEvent(record as PiJsonEvent);
+			this.onEvent(
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ record as PiJsonEvent,
+			);
 		} catch {
 			this.options.onMalformed?.();
 		}

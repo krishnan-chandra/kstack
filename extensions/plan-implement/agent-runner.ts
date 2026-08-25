@@ -134,7 +134,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 				role: options.role,
 				turns: progress.turns,
 				activity: progress.activity ?? "thinking",
-				...(progress.preview !== undefined ? { preview: progress.preview } : {}),
+				...(progress.preview !== undefined ? { preview: progress.preview } : undefined),
 			}),
 		onEvent: options.onEvent,
 	});

@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isAutopilotConfirmation } from "../pr-autopilot/api.ts";
 import { isMergeMethod } from "../shared/github.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
 import { isLandConfirmation } from "./confirmation.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
@@ -23,11 +24,10 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 	event: LAND_REQUEST_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is LandPayload => {
-		if (typeof value !== "object" || value === null || !("options" in value) || !("ctx" in value)) return false;
+		if (!isObject(value) || value === null || !("options" in value) || !("ctx" in value)) return false;
 		const options = value.options;
-		if (typeof value.ctx !== "object" || value.ctx === null || typeof options !== "object" || options === null)
-			return false;
-		if ("cwd" in options && options.cwd !== undefined && (typeof options.cwd !== "string" || options.cwd.length === 0))
+		if (!isObject(value.ctx) || value.ctx === null || !isObject(options) || options === null) return false;
+		if ("cwd" in options && options.cwd !== undefined && (!isString(options.cwd) || options.cwd.length === 0))
 			return false;
 		if ("confirmation" in options && options.confirmation !== undefined && !isLandConfirmation(options.confirmation))
 			return false;
@@ -46,7 +46,7 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 		if (!("target" in options)) return false;
 		const target = options.target;
 		return (
-			typeof target === "object" &&
+			isObject(target) &&
 			target !== null &&
 			"kind" in target &&
 			target.kind === "single" &&
@@ -57,12 +57,12 @@ const channel = createRequestChannel<LandPayload, LandResult, 1>({
 	},
 });
 
-export function isLandRequest(value: unknown): value is LandRequest {
+export function isLandRequest(value: BoundaryValue): value is LandRequest {
 	return channel.isRequest(value);
 }
 
 export function claimLandRequest(
-	value: unknown,
+	value: BoundaryValue,
 	run: (options: LandOptions, ctx: ExtensionContext) => Promise<LandResult>,
 ): boolean {
 	return channel.claim(value, ({ options, ctx }) => run(options, ctx));

@@ -19,7 +19,7 @@ function archivedSummary() {
 }
 
 function fakeContext(notifications: Array<{ message: string; level: string }>) {
-	return {
+	return /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		hasUI: true,
 		mode: "rpc",
 		sessionManager: {
@@ -45,7 +45,8 @@ function baseDeps() {
 		reconcileArchive: () => ({ finalized: [], leftPending: [], errors: [], restored: [] }),
 		listArchivedSessionSummaries: () => [archivedSummary()],
 		inspectArchiveIntegrity: () => [],
-		openArchiveDb: () => ({ close() {} }) as never,
+		openArchiveDb: () =>
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ({ close() {} }) as never,
 		listActiveSessions: async () => [],
 	};
 }

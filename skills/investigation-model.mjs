@@ -15,6 +15,14 @@ const FAST_MODELS = [
 ];
 const FAST_MODEL_IDS = new Set(FAST_MODELS.map(({ model }) => model));
 
+function isRecord(value) {
+	return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function isString(value) {
+	return Object.prototype.toString.call(value) === "[object String]";
+}
+
 function agentDir(env = process.env) {
 	const configured = env.PI_CODING_AGENT_DIR;
 	if (!configured) return join(homedir(), ".pi", "agent");
@@ -28,7 +36,7 @@ export function validateInvestigationConfig(raw) {
 			config: { allowedModels: FAST_MODELS, defaultModel: FAST_MODELS[0].model },
 			source: "built-in defaults",
 		};
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+	if (!isRecord(raw)) {
 		return { ok: false, error: '"investigation" must be an object.' };
 	}
 	const { allowedModels, defaultModel } = raw;
@@ -38,13 +46,7 @@ export function validateInvestigationConfig(raw) {
 	const models = [];
 	const seen = new Set();
 	for (const entry of allowedModels) {
-		if (
-			typeof entry !== "object" ||
-			entry === null ||
-			Array.isArray(entry) ||
-			typeof entry.model !== "string" ||
-			!MODEL_ID_RE.test(entry.model)
-		) {
+		if (!isRecord(entry) || !isString(entry.model) || !MODEL_ID_RE.test(entry.model)) {
 			return {
 				ok: false,
 				error: 'Each "investigation.allowedModels" entry must be {"model":"provider/model", "thinking"?}.',
@@ -56,16 +58,18 @@ export function validateInvestigationConfig(raw) {
 				error: `"investigation.allowedModels" can contain only kstack's fast investigation models; ${entry.model} is unsupported.`,
 			};
 		}
-		if (typeof entry.thinking !== "string" || !INVESTIGATION_THINKING_LEVELS.has(entry.thinking)) {
+		if (!isString(entry.thinking) || !INVESTIGATION_THINKING_LEVELS.has(entry.thinking)) {
 			return { ok: false, error: '"investigation.allowedModels[].thinking" must be medium, high, xhigh, or max.' };
 		}
 		if (seen.has(entry.model))
 			return { ok: false, error: `"investigation.allowedModels" contains ${entry.model} more than once.` };
 		seen.add(entry.model);
-		models.push({ model: entry.model, ...(entry.thinking === undefined ? {} : { thinking: entry.thinking }) });
+		const model = { model: entry.model };
+		if (entry.thinking !== undefined) model.thinking = entry.thinking;
+		models.push(model);
 	}
 	const selected = defaultModel === undefined ? models[0].model : defaultModel;
-	if (typeof selected !== "string" || !seen.has(selected)) {
+	if (!isString(selected) || !seen.has(selected)) {
 		return { ok: false, error: '"investigation.defaultModel" must name a model in "investigation.allowedModels".' };
 	}
 	return { ok: true, config: { allowedModels: models, defaultModel: selected }, source: "kstack.json" };
@@ -76,8 +80,7 @@ export function loadInvestigationConfig(env = process.env) {
 	if (!existsSync(path)) return validateInvestigationConfig(undefined);
 	try {
 		const root = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof root !== "object" || root === null || Array.isArray(root))
-			return { ok: false, error: "kstack.json must be a JSON object." };
+		if (!isRecord(root)) return { ok: false, error: "kstack.json must be a JSON object." };
 		return validateInvestigationConfig(root.investigation);
 	} catch (error) {
 		return { ok: false, error: `Cannot read ${path}: ${error.message}` };
