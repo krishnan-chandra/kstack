@@ -18,6 +18,8 @@ interface PrAutopilotPayload {
 	cwd: string;
 	/** Minted capability from a trusted caller that already holds user consent; skips run prompts. */
 	confirmation?: AutopilotConfirmation;
+	/** Optional abort signal from the calling lifecycle — composed into the run signal. */
+	signal?: AbortSignal;
 }
 
 function isPositivePr(value: BoundaryValue): value is number {
@@ -26,6 +28,10 @@ function isPositivePr(value: BoundaryValue): value is number {
 
 function isOptionalPr(value: BoundaryValue): value is number | undefined {
 	return value === undefined || isPositivePr(value);
+}
+
+function isOptionalAbortSignal(value: BoundaryValue): value is AbortSignal | undefined {
+	return value === undefined || value instanceof AbortSignal;
 }
 
 /* exported: request-channel contract */
@@ -46,7 +52,8 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		value.ctx !== null &&
 		"cwd" in value &&
 		isString(value.cwd) &&
-		value.cwd.length > 0,
+		value.cwd.length > 0 &&
+		(!("signal" in value) || isOptionalAbortSignal(value.signal)),
 });
 
 /* exported: request-channel contract */
@@ -62,10 +69,11 @@ export function claimPrAutopilotRequest(
 		ctx: ExtensionContext,
 		cwd: string,
 		confirmation: AutopilotConfirmation | undefined,
+		signal: AbortSignal | undefined,
 	) => Promise<AutopilotResult>,
 ): boolean {
 	return channel.claim(value, (payload) =>
-		run(payload.mode, payload.prNumber, payload.ctx, payload.cwd, payload.confirmation),
+		run(payload.mode, payload.prNumber, payload.ctx, payload.cwd, payload.confirmation, payload.signal),
 	);
 }
 
@@ -76,6 +84,7 @@ export function requestPrAutopilot(
 	ctx: ExtensionContext,
 	cwd: string,
 	confirmation?: AutopilotConfirmation,
+	signal?: AbortSignal,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
 	if (prNumber !== undefined && !isPositivePr(prNumber)) return Promise.resolve({ handled: false });
 	return channel.request(pi, {
@@ -84,5 +93,6 @@ export function requestPrAutopilot(
 		ctx,
 		cwd,
 		...(confirmation === undefined ? undefined : { confirmation }),
+		...(signal === undefined ? undefined : { signal }),
 	});
 }
