@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ExecFn } from "../shared/git-exec.ts";
-import { requestGraphiteStackLanding } from "./graphite-stack-landing.ts";
+import { requestGraphiteStackLanding } from "./landing.ts";
 
 const bottomSha = "a".repeat(40);
 const topSha = "b".repeat(40);
@@ -115,7 +115,7 @@ describe("Graphite stack landing", () => {
 		let released = false;
 		let preview = "";
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -149,7 +149,7 @@ describe("Graphite stack landing", () => {
 			},
 		);
 		assert.equal(response.status, "stack");
-		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "landed");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "completed");
 		assert.deepEqual(readiness, [11, 12]);
 		assert.match(preview, /PR #11: kstack\/bottom -> main/);
 		assert.match(preview, /PR #12: kstack\/top -> kstack\/bottom/);
@@ -157,7 +157,9 @@ describe("Graphite stack landing", () => {
 		assert.equal(calls.filter((call) => call === "gt --no-interactive merge").length, 1);
 		assert.equal(calls.filter((call) => call === "gt --no-interactive sync").length, 1);
 		assert.match(
-			response.status === "stack" ? response.outcome.completedMutations.join("\n") : "",
+			response.status === "stack" && "completedMutations" in response.outcome
+				? (response.outcome.completedMutations?.join("\n") ?? "")
+				: "",
 			/Synchronized Graphite/,
 		);
 		assert.equal(released, true);
@@ -174,7 +176,7 @@ describe("Graphite stack landing", () => {
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
 		};
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "watch" },
+			{ prNumber: 12, readiness: "watch" },
 			{
 				exec,
 				cwd: "/repo",
@@ -186,8 +188,11 @@ describe("Graphite stack landing", () => {
 			},
 		);
 		assert.equal(response.status, "stack");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
 		assert.match(
-			response.status === "stack" ? response.outcome.blockers.join("\n") : "",
+			response.status === "stack" && response.outcome.status === "blocked"
+				? response.outcome.blockers.map((b) => b.message).join("\n")
+				: "",
 			/Watch is bounded.*Inspect PR #11.*retry \/land after CI settles/i,
 		);
 	});
@@ -201,7 +206,7 @@ describe("Graphite stack landing", () => {
 			return base.exec(command, args, options);
 		};
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -220,15 +225,19 @@ describe("Graphite stack landing", () => {
 				}),
 			},
 		);
-		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "landed");
-		assert.match(response.status === "stack" ? (response.outcome.warnings?.join("\n") ?? "") : "", /gt sync failed/);
-		assert.deepEqual(response.status === "stack" ? response.outcome.blockers : undefined, []);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "completed");
+		assert.match(
+			response.status === "stack" && "warnings" in response.outcome
+				? (response.outcome.warnings?.join("\n") ?? "")
+				: "",
+			/gt sync failed/,
+		);
 	});
 
 	it("rejects an explicit merge method before readiness or mutation", async () => {
 		const { calls, exec } = harness();
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check", method: "squash" },
+			{ prNumber: 12, readiness: "check", method: "squash" },
 			{
 				exec,
 				cwd: "/repo",
@@ -240,7 +249,13 @@ describe("Graphite stack landing", () => {
 			},
 		);
 		assert.equal(response.status, "stack");
-		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /--method is not supported/);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
+		assert.match(
+			response.status === "stack" && response.outcome.status === "blocked"
+				? response.outcome.blockers.map((b) => b.message).join("\n")
+				: "",
+			/--method is not supported/,
+		);
 		assert.equal(
 			calls.some((call) => call === "gt --no-interactive merge"),
 			false,
@@ -250,7 +265,7 @@ describe("Graphite stack landing", () => {
 	it("declines after the dry run without acquiring the mutation lock", async () => {
 		const { calls, exec } = harness();
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -283,7 +298,7 @@ describe("Graphite stack landing", () => {
 			return base.exec(command, args, options);
 		};
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -295,7 +310,12 @@ describe("Graphite stack landing", () => {
 			},
 		);
 		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
-		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /unexpected/);
+		assert.match(
+			response.status === "stack" && response.outcome.status === "blocked"
+				? response.outcome.blockers.map((b) => b.message).join("\n")
+				: "",
+			/unexpected/,
+		);
 	});
 
 	it("binds the final landing plan to the exact readiness heads", async () => {
@@ -330,7 +350,7 @@ describe("Graphite stack landing", () => {
 			return base.exec(command, args, options);
 		};
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -341,7 +361,14 @@ describe("Graphite stack landing", () => {
 				sleep: async () => {},
 			},
 		);
-		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /readiness checks/);
+		assert.equal(response.status, "stack");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
+		assert.match(
+			response.status === "stack" && response.outcome.status === "blocked"
+				? response.outcome.blockers.map((b) => b.message).join("\n")
+				: "",
+			/readiness checks/,
+		);
 	});
 
 	it("uses native Graphite landing when the selected PR has an unpublished local descendant", async () => {
@@ -392,7 +419,7 @@ describe("Graphite stack landing", () => {
 			return { code: 1, stdout: "", stderr: `unexpected ${key}` };
 		};
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 20 }, readiness: "check" },
+			{ prNumber: 20, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -425,7 +452,7 @@ describe("Graphite stack landing", () => {
 			},
 		);
 		assert.equal(response.status, "stack");
-		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "landed");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "completed");
 		assert.ok(calls.includes("gt --no-interactive children"));
 		assert.ok(calls.includes("gt --no-interactive merge"));
 	});
@@ -433,7 +460,7 @@ describe("Graphite stack landing", () => {
 	it("marks closed or head-changed remote results blocked rather than queued", async () => {
 		const { calls, exec } = harness();
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -463,9 +490,15 @@ describe("Graphite stack landing", () => {
 				}),
 			},
 		);
-		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partially-landed");
-		assert.equal(response.status === "stack" ? response.outcome.frontiers[1].state : undefined, "blocked");
-		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /CLOSED/);
+		assert.equal(response.status, "stack");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partial");
+		assert.equal(
+			response.status === "stack" && "frontiers" in response.outcome
+				? response.outcome.frontiers?.[1]?.state
+				: undefined,
+			"blocked",
+		);
+		assert.match(response.status === "stack" && "error" in response.outcome ? response.outcome.error : "", /CLOSED/);
 		assert.equal(
 			calls.some((call) => call === "gt --no-interactive sync"),
 			false,
@@ -476,7 +509,7 @@ describe("Graphite stack landing", () => {
 		const { exec } = harness();
 		let bottomSettled = false;
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -500,10 +533,24 @@ describe("Graphite stack landing", () => {
 			},
 		);
 		assert.equal(bottomSettled, true);
-		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partially-landed");
-		assert.equal(response.status === "stack" ? response.outcome.frontiers[0].state : undefined, "landed");
-		assert.equal(response.status === "stack" ? response.outcome.frontiers[1].state : undefined, "blocked");
-		assert.match(response.status === "stack" ? response.outcome.blockers.join("\n") : "", /GitHub unavailable/);
+		assert.equal(response.status, "stack");
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "partial");
+		assert.equal(
+			response.status === "stack" && "frontiers" in response.outcome
+				? response.outcome.frontiers?.[0]?.state
+				: undefined,
+			"landed",
+		);
+		assert.equal(
+			response.status === "stack" && "frontiers" in response.outcome
+				? response.outcome.frontiers?.[1]?.state
+				: undefined,
+			"blocked",
+		);
+		assert.match(
+			response.status === "stack" && "error" in response.outcome ? response.outcome.error : "",
+			/GitHub unavailable/,
+		);
 	});
 
 	it("blocks a stale topology under the lock and releases it", async () => {
@@ -521,7 +568,7 @@ describe("Graphite stack landing", () => {
 			return base.exec(command, args, options);
 		};
 		const response = await requestGraphiteStackLanding(
-			{ target: { kind: "single", prNumber: 12 }, readiness: "check" },
+			{ prNumber: 12, readiness: "check" },
 			{
 				exec,
 				cwd: "/repo",
@@ -542,6 +589,7 @@ describe("Graphite stack landing", () => {
 				realpath: (path) => path,
 			},
 		);
+		assert.equal(response.status, "stack");
 		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
 		assert.equal(
 			base.calls.some((call) => call === "gt --no-interactive merge"),

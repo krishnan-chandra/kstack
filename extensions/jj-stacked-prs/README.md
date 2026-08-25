@@ -91,20 +91,18 @@ publication uses `requestStackPublication`. The publisher child may then edit
 titles/bodies for the trusted PR map and recommend reviewers. It does not push,
 create PRs, repair bases, or update navigation comments.
 
-## API
+## Shared stack channels
 
-- `requestJjStackCapabilities(pi)` — cheap loaded-schema probe.
-- `requestStackPublication(pi, input, ctx)` — discovery, planning, confirmation,
-  stale checking, and apply for trusted in-process workflow callers. The
-  extension owns that confirmation.
-- `requestStackLanding(pi, input, ctx)` — maps a selected PR head to local jj
-  state. When a local bookmark matches the PR head, it lands the complete prefix,
-  including one-slice work, then abandons the landed range, removes stale
-  bookmarks, refreshes trunk, deletes the verified remote branch, and settles a
-  safe empty working copy onto refreshed trunk. A discovered blocker stops the
-  run before single-PR fallback. It returns `not-stack` only when the PR head has
-  no matching local bookmark and navigation metadata does not identify missing
-  stack predecessors.
+In jj mode (`vcs.backend = "jj"`), this extension claims the four shared stack
+provider channels defined in [`extensions/shared/stack/`](../shared/stack/README.md):
+
+- `kstack:stack:capabilities` (`provider: "jj"`)
+- `kstack:stack:preflight` (`provider: "jj"`)
+- `kstack:stack:publish` (`provider: "jj"`)
+- `kstack:stack:land-through-pr` (`provider: "jj"`)
+
+These channels allow `plan-implement --stack` and `/land --pr` to interoperate
+with Jujutsu stacks without direct extension-to-extension dependencies.
 
 Completed outcomes return a base-to-top PR map using the shared stack
 vocabulary in [`extensions/shared/stack/`](../shared/stack/README.md)

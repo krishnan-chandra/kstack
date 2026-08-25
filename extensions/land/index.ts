@@ -1,18 +1,19 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { requestStackLanding } from "../jj-stacked-prs/api.ts";
-import { requestPrAutopilot } from "../pr-autopilot/api.ts";
+import { issueAutopilotConfirmation, requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { findOpenPullRequestByHead, getPullRequest, isMergeMethod } from "../shared/github.ts";
+import { requestStackLanding } from "../shared/stack/channel.ts";
+import { stackProviderFor } from "../shared/stack/provider.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
-import { claimLandRequest, LAND_REQUEST_EVENT } from "./api.ts";
+import { claimLandRequest, LAND_REQUEST_EVENT, requestLand } from "./api.ts";
 import { completeLandArgs, parseLandArgs } from "./command.ts";
 import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
-import { requestGraphiteStackLanding } from "./graphite-stack-landing.ts";
-import { LandLifecycle } from "./lifecycle.ts";
+import { issueLandConfirmation } from "./confirmation.ts";
+import { LandLifecycle, StackLandingLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { resolveImplicitPr } from "./pr-resolution.ts";
 import { blockedLandResult } from "./result.ts";
@@ -28,14 +29,21 @@ function selectedMethod(value: string | undefined): MergeMethod | undefined {
 export default function landExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "land");
 	const lifecycle = new LandLifecycle();
+	const stackLandingLifecycle = new StackLandingLifecycle();
 	lifecycle.startSession();
 	pi.on("session_start", () => lifecycle.startSession());
-	pi.on("session_shutdown", () => lifecycle.shutdownSession());
+	pi.on("session_shutdown", () => {
+		stackLandingLifecycle.abort();
+		lifecycle.shutdownSession();
+	});
 	pi.registerShortcut("ctrl+shift+l", {
 		description: "Abort active landing wait/subprocess",
 		handler: async (ctx) => {
+			const landAborted = lifecycle.abort();
+			const stackAborted = stackLandingLifecycle.abort();
+			const aborted = landAborted || stackAborted;
 			ctx.ui.notify(
-				lifecycle.abort() ? "Aborting landing. Accepted merges cannot be undone." : "No landing run is active.",
+				aborted ? "Aborting landing. Accepted merges cannot be undone." : "No landing run is active.",
 				"info",
 			);
 		},
@@ -69,40 +77,54 @@ export default function landExtension(pi: ExtensionAPI): void {
 			: await configuredBackend(ctx, cwd);
 		if (!resolved.ok) return blockedLandResult(resolved.error);
 		const exec = makeExec(pi);
+		const provider = stackProviderFor(resolved.backend.id);
 		const result = await routeLand(options, {
-			backend: resolved.backend.id,
+			provider,
 			requestStackLanding: async () => {
-				const selected = await getPullRequest(exec, cwd, options.target.prNumber, ctx.signal);
-				return requestStackLanding(
-					pi,
-					{
-						repositoryPath: cwd,
-						prNumber: selected.number,
-						headBookmark: selected.headRef,
-						readiness: options.readiness,
-						method: options.method,
-					},
-					ctx,
-				);
-			},
-			requestGraphiteStackLanding: async () => {
-				const token = lifecycle.begin();
-				if (!token) return { status: "stack", outcome: blockedLandResult("Another landing run is active.") };
-				ctx.ui.setStatus("land", "land: validating Graphite stack");
+				if (!provider) return { handled: false };
+				const stackSignal = stackLandingLifecycle.begin();
+				if (!stackSignal) {
+					return {
+						handled: true,
+						outcome: {
+							status: "stack",
+							outcome: { status: "busy", message: "Another stack landing run is active." },
+						},
+					};
+				}
 				try {
-					return await requestGraphiteStackLanding(options, {
-						exec,
-						cwd,
-						signal: token.signal,
-						runAutopilot: (mode, pr) =>
-							requestPrAutopilot(pi, mode, pr, ctx, cwd, options.autopilotConfirmation, token.signal),
-						confirmMerge: (body) => ctx.ui.confirm("Confirm exact Graphite stack merge?", body),
-						now: Date.now,
-						sleep: abortableSleep,
+					const selected = await getPullRequest(exec, cwd, options.target.prNumber, stackSignal);
+					return await requestStackLanding(pi, {
+						provider,
+						input: {
+							repositoryPath: cwd,
+							prNumber: selected.number,
+							headRef: selected.headRef,
+							readiness: options.readiness,
+							method: options.method,
+							signal: stackSignal,
+						},
+						capabilities: {
+							landPr: async ({ prNumber, readiness, method }) =>
+								requestLand(
+									pi,
+									{
+										target: { kind: "single", prNumber },
+										readiness,
+										method,
+										cwd,
+										confirmation: issueLandConfirmation(),
+										autopilotConfirmation: issueAutopilotConfirmation(),
+									},
+									ctx,
+								),
+							runAutopilot: (mode, pr) =>
+								requestPrAutopilot(pi, mode, pr, ctx, cwd, options.autopilotConfirmation, stackSignal),
+						},
+						ctx,
 					});
 				} finally {
-					lifecycle.end(token);
-					ctx.ui.setStatus("land", undefined);
+					stackLandingLifecycle.end(stackSignal);
 				}
 			},
 			runSingle: async () => {

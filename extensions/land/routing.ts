@@ -1,16 +1,14 @@
 import type { StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
-import type { VcsBackendId } from "../shared/vcs/config.ts";
+import type { StackProviderId } from "../shared/stack/provider.ts";
 import { isLandConfirmation } from "./confirmation.ts";
-import type { GraphiteLandingResponse } from "./graphite-stack-landing.ts";
 import { blockedLandResult } from "./result.ts";
 import type { FrontierResult, LandOptions, LandResult } from "./types.ts";
 
 type StackLandingResponse = { handled: false } | { handled: true; outcome: StackPrefixLandOutcome };
 
 interface RouteLandDeps {
-	backend: VcsBackendId;
+	provider: StackProviderId | undefined;
 	requestStackLanding(): Promise<StackLandingResponse>;
-	requestGraphiteStackLanding?(): Promise<GraphiteLandingResponse>;
 	runSingle(): Promise<LandResult>;
 }
 
@@ -89,21 +87,7 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 }
 
 export async function routeLand(options: LandOptions, deps: RouteLandDeps): Promise<LandResult> {
-	if (deps.backend === "git") return deps.runSingle();
-	if (deps.backend === "graphite") {
-		if (!deps.requestGraphiteStackLanding)
-			return blockedLandResult(
-				"Graphite stack landing is unavailable; refusing a possible individual middle-stack merge.",
-			);
-		try {
-			const response = await deps.requestGraphiteStackLanding();
-			return response.status === "not-stack" ? deps.runSingle() : response.outcome;
-		} catch (error) {
-			return blockedLandResult(
-				`Could not inspect Graphite stack topology: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
+	if (deps.provider === undefined) return deps.runSingle();
 	if (isLandConfirmation(options.confirmation)) return deps.runSingle();
 
 	let response: StackLandingResponse;
@@ -111,12 +95,12 @@ export async function routeLand(options: LandOptions, deps: RouteLandDeps): Prom
 		response = await deps.requestStackLanding();
 	} catch (error) {
 		return blockedLandResult(
-			`Could not inspect the selected PR for jj stack membership: ${error instanceof Error ? error.message : String(error)}`,
+			`Could not inspect the selected PR for ${deps.provider} stack membership: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 	if (!response.handled) {
 		return blockedLandResult(
-			"The jj-stacked-prs extension is unavailable; refusing a possible individual middle-stack merge.",
+			`The ${deps.provider}-stacked-prs extension is unavailable; refusing a possible individual middle-stack merge.`,
 		);
 	}
 	if (response.outcome.status === "not-stack") return deps.runSingle();

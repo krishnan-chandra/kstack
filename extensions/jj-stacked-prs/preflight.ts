@@ -1,19 +1,25 @@
+import { dirname, join } from "node:path";
 /** Stack-mode preflight: shared jj checks plus immutable trunk() resolution. */
 
+import { fileURLToPath } from "node:url";
 import type { ExecFn } from "../shared/git-exec.ts";
+import { readPromptAsset } from "../shared/prompt-assets.ts";
+import type { StackPreflight } from "../shared/stack/channel.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
 
-export type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
+const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const TRUNK_TEMPLATE = 'commit_id ++ "\\n"';
 
+function jjChildPolicy(): string {
+	return readPromptAsset(PROMPTS_DIR, "jj-stack-local.md");
+}
+
 /** Verify the shared jj prerequisites and resolve trunk() to one Git-backed commit. */
-export async function preflightStack(
-	cwd: string,
-	exec: ExecFn,
-): Promise<VcsResult<{ trunkSha: string; workspaceRoot: string }>> {
+export async function preflightJjStack(cwd: string, exec: ExecFn): Promise<VcsResult<StackPreflight>> {
 	const backend = await preflightVcs(cwd, "jj", exec);
 	if (!backend.ok) return backend;
 	const trunkLog = await exec("jj", ["log", "-r", "trunk()", "--no-graph", "--no-pager", "-T", TRUNK_TEMPLATE], {
@@ -42,5 +48,11 @@ export async function preflightStack(
 			error: `trunk() resolved to a non-Git commit id "${trunkSha}"; a colocated Git-backed commit is required.`,
 		};
 	}
-	return { ok: true, trunkSha, workspaceRoot: backend.workspaceRoot };
+	return {
+		ok: true,
+		workspaceRoot: backend.workspaceRoot,
+		trunkRef: "trunk()",
+		trunkSha,
+		childPolicy: jjChildPolicy(),
+	};
 }

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import graphiteStackedPrs from "./extensions/graphite-stacked-prs/index.ts";
 import handoff from "./extensions/handoff/index.ts";
 import jjStackedPrs from "./extensions/jj-stacked-prs/index.ts";
 import kstackRouter from "./extensions/kstack-router/index.ts";
@@ -13,6 +14,7 @@ import steeringSwap from "./extensions/steering-swap/index.ts";
 type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 
 const KSTACK_EXTENSIONS: ReadonlyArray<{ name: string; register: ExtensionFactory }> = [
+	{ name: "graphite-stacked-prs", register: graphiteStackedPrs },
 	{ name: "handoff", register: handoff },
 	{ name: "jj-stacked-prs", register: jjStackedPrs },
 	{ name: "kstack-router", register: kstackRouter },

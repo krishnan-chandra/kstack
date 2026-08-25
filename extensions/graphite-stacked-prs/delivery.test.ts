@@ -4,9 +4,10 @@ import type { ExecFn } from "../shared/git-exec.ts";
 import {
 	parseGraphiteStackManifest,
 	planGraphitePublication,
+	preflightGraphiteStack,
 	submitGraphiteStack,
 	verifyGraphiteStack,
-} from "./graphite-stack-delivery.ts";
+} from "./delivery.ts";
 
 const trunkSha = "a".repeat(40);
 const headSha = "b".repeat(40);
@@ -49,6 +50,29 @@ function scripted(overrides: ScriptedResults = {}) {
 }
 
 describe("Graphite stack delivery", () => {
+	it("rejects a dirty working tree before model work begins", async () => {
+		const exec: ExecFn = async (command, args) => {
+			const key = `${command} ${args.join(" ")}`;
+			const responses = new Map<string, ScriptedResults[string]>(
+				Object.entries({
+					"gt --version": { stdout: "1.8.5\n" },
+					"git --version": { stdout: "git version 2.38.0\n" },
+					"git rev-parse --show-toplevel": { stdout: "/repo\n" },
+					"gt --no-interactive trunk": { stdout: "main\n" },
+					"git rev-parse --verify refs/heads/main^{commit}": { stdout: `${trunkSha}\n` },
+					"git status --porcelain=v1 --untracked-files=all": { stdout: " M unrelated.ts\n" },
+				} satisfies ScriptedResults),
+			);
+			const response = responses.get(key) ?? {};
+			return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
+		};
+		const result = await preflightGraphiteStack("/repo", "/tmp/manifest.json", exec);
+		assert.deepEqual(result, {
+			ok: false,
+			error: "Graphite stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
+		});
+	});
+
 	it("accepts only a bounded, exact, linear kstack manifest", () => {
 		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);

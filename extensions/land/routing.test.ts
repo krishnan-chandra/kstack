@@ -33,7 +33,7 @@ describe("routeLand", () => {
 	it("routes a selected stacked PR through the complete stack prefix", async () => {
 		let ranSingle = false;
 		const result = await routeLand(options, {
-			backend: "jj",
+			provider: "jj",
 			requestStackLanding: async () => ({
 				handled: true,
 				outcome: {
@@ -80,7 +80,7 @@ describe("routeLand", () => {
 	it("keeps a pre-mutation jj frontier blocked so its recovery is visible", async () => {
 		const recovery = "Watch is bounded. Inspect PR #11, then retry /land after CI settles.";
 		const result = await routeLand(options, {
-			backend: "jj",
+			provider: "jj",
 			requestStackLanding: async () => ({
 				handled: true,
 				outcome: {
@@ -113,7 +113,7 @@ describe("routeLand", () => {
 	it("preserves single-PR behavior for Git, non-stacks, and internal stack frontiers", async () => {
 		let requests = 0;
 		const git = await routeLand(options, {
-			backend: "git",
+			provider: undefined,
 			requestStackLanding: async () => {
 				requests++;
 				return { handled: true, outcome: { status: "not-stack" } };
@@ -121,9 +121,10 @@ describe("routeLand", () => {
 			runSingle: async () => singleResult(),
 		});
 		assert.equal(git.status, "landed");
+		assert.equal(requests, 0, "Git backend should not invoke stack channels");
 
 		const nonStack = await routeLand(options, {
-			backend: "jj",
+			provider: "jj",
 			requestStackLanding: async () => {
 				requests++;
 				return { handled: true, outcome: { status: "not-stack" } };
@@ -131,11 +132,12 @@ describe("routeLand", () => {
 			runSingle: async () => singleResult(),
 		});
 		assert.equal(nonStack.status, "landed");
+		assert.equal(requests, 1);
 
 		const internal = await routeLand(
 			{ ...options, confirmation: issueLandConfirmation() },
 			{
-				backend: "jj",
+				provider: "jj",
 				requestStackLanding: async () => {
 					requests++;
 					return { handled: true, outcome: { status: "not-stack" } };
@@ -144,13 +146,13 @@ describe("routeLand", () => {
 			},
 		);
 		assert.equal(internal.status, "landed");
-		assert.equal(requests, 1);
+		assert.equal(requests, 1, "Internal confirmation capability bypasses stack route without calling channel");
 	});
 
 	it("blocks rather than risking an individual middle merge when stack detection is unavailable", async () => {
 		let ranSingle = false;
 		const result = await routeLand(options, {
-			backend: "jj",
+			provider: "jj",
 			requestStackLanding: async () => ({ handled: false }),
 			runSingle: async () => {
 				ranSingle = true;
@@ -162,14 +164,35 @@ describe("routeLand", () => {
 		assert.match(result.blockers.join("\n"), /jj-stacked-prs extension is unavailable/i);
 	});
 
-	it("routes Graphite stacks natively and preserves standalone Graphite landing", async () => {
+	it("routes Graphite stacks through the shared stack channel", async () => {
 		let singles = 0;
 		const native = await routeLand(
 			{ ...options, method: undefined },
 			{
-				backend: "graphite",
-				requestStackLanding: async () => ({ handled: false }),
-				requestGraphiteStackLanding: async () => ({ status: "stack", outcome: singleResult() }),
+				provider: "graphite",
+				requestStackLanding: async () => ({
+					handled: true,
+					outcome: {
+						status: "stack",
+						outcome: {
+							status: "completed",
+							frontiers: [
+								{
+									ref: "kstack/one",
+									prNumber: 12,
+									url: "https://example/12",
+									expectedHeadSha: "bbb",
+									method: "graphite",
+									state: "landed",
+								},
+							],
+							remainingRefs: [],
+							completedMutations: ["Graphite accepted native merge"],
+							warnings: [],
+							recoveryOperationIds: [],
+						},
+					},
+				}),
 				runSingle: async () => {
 					singles++;
 					return singleResult();
@@ -180,9 +203,11 @@ describe("routeLand", () => {
 		assert.equal(singles, 0);
 
 		const standalone = await routeLand(options, {
-			backend: "graphite",
-			requestStackLanding: async () => ({ handled: false }),
-			requestGraphiteStackLanding: async () => ({ status: "not-stack" }),
+			provider: "graphite",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: { status: "not-stack" },
+			}),
 			runSingle: async () => {
 				singles++;
 				return singleResult();
@@ -190,20 +215,5 @@ describe("routeLand", () => {
 		});
 		assert.equal(standalone.status, "landed");
 		assert.equal(singles, 1);
-
-		let inspected = false;
-		await routeLand(
-			{ ...options, confirmation: issueLandConfirmation() },
-			{
-				backend: "graphite",
-				requestStackLanding: async () => ({ handled: false }),
-				requestGraphiteStackLanding: async () => {
-					inspected = true;
-					return { status: "not-stack" };
-				},
-				runSingle: async () => singleResult(),
-			},
-		);
-		assert.equal(inspected, true, "a confirmation capability must not bypass Graphite topology detection");
 	});
 });

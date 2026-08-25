@@ -181,13 +181,6 @@ export type AdvanceOutcome =
 export type StackMergeMethod = MergeMethod;
 export type StackReadinessMode = "check" | "watch";
 
-export interface JjStackCapabilities {
-	schemaVersion: typeof SCHEMA_VERSION;
-	commands: readonly ["inspect", "plan", "publish", "sync", "advance", "land"];
-	tools: readonly ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish", "jj_stack_land"];
-	publication: true;
-}
-
 export interface StackPublicationRequestInput {
 	repositoryPath: string;
 	trunkRevset?: string;

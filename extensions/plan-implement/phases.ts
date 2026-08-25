@@ -220,13 +220,13 @@ export async function runPostReviewPhases(
 		let trustedMapFile: string | undefined;
 		if (mode === "stack") {
 			if (!fx.requestStackPublication) {
-				fx.notify("Stacked publication is unavailable; the jj-stacked-prs extension may not be loaded.", "error");
+				fx.notify("Stacked publication is unavailable; the stack provider extension may not be loaded.", "error");
 				return;
 			}
 			const published = await fx.requestStackPublication(state.workflowCwd);
 			if (!fx.isCurrent()) return;
 			if (!published.handled) {
-				fx.notify("Stacked publication is unavailable; the jj-stacked-prs extension may not be loaded.", "error");
+				fx.notify("Stacked publication is unavailable; the stack provider extension may not be loaded.", "error");
 				return;
 			}
 			const outcome = published.outcome;

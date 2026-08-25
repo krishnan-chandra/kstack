@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import landExtension from "./index.ts";
+import { StackLandingLifecycle } from "./lifecycle.ts";
+
+describe("StackLandingLifecycle", () => {
+	it("aborts the active provider request without owning nested single-PR runs", () => {
+		const lifecycle = new StackLandingLifecycle();
+		const signal = lifecycle.begin();
+		assert.ok(signal);
+		assert.equal(signal.aborted, false);
+		assert.equal(lifecycle.abort(), true);
+		assert.equal(signal.aborted, true);
+		lifecycle.end(signal);
+		assert.equal(lifecycle.abort(), false);
+	});
+});
 
 describe("land registration", () => {
 	it("registers the command, shortcut, renderer, and lifecycle handlers without launching a subprocess", () => {
