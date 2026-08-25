@@ -10,7 +10,9 @@
 		"@earendil-works/pi-ai": "^0.84.2",
 		"@earendil-works/pi-coding-agent": "^0.84.2",
 		"@earendil-works/pi-tui": "^0.84.2",
+		"@oxlint/plugins": "^1.80.0",
 		"@types/node": "^22",
+		"oxlint": "^1.80.0",
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
@@ -20,6 +22,7 @@
 		"format": "biome check --write .",
 		"lint": "biome check .",
 		"lint:ci": "biome ci .",
+		"lint:slop": "oxlint",
 		"test": "node --test --test-reporter=dot \"kstack.manifest.test.mjs\" \"kstack.test.ts\" \"scripts/check-exports/index.test.mjs\" \"scripts/check-imports/index.test.mjs\" \"scripts/install/index.test.mjs\" \"extensions/**/*.test.ts\" \"shell/**/*.test.mjs\" \"skills/**/*.test.ts\" \"skills/**/*.test.mjs\"",
 		"test:extensions": "node --test --test-reporter=dot \"extensions/**/*.test.ts\"",
 		"test:handoff": "node --test --test-reporter=dot \"extensions/handoff/**/*.test.ts\"",
