@@ -10,7 +10,7 @@ import {
 	type ReviewThread,
 	type UsageSummary,
 } from "./types.ts";
-import { untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
+import { sanitizeInline, untrustedFenceNote, wrapUntrusted } from "./untrusted.ts";
 
 /** Lifecycle phases surfaced to the parent UI for status display. */
 export function emptyUsage(): UsageSummary {
@@ -122,16 +122,16 @@ export function buildTriagerTask(state: PRState, backend: VcsBackendId): string 
 		(c) => c.status === "pending" || c.conclusion === "pending" || c.conclusion === null,
 	);
 	const threadLines = state.threads.map((t) => {
-		const loc = t.path ? `${t.path}${t.line !== undefined ? `:${t.line}` : ""}` : "(discussion)";
-		return `  - [${t.id}] @${t.commenter} ${loc} source=${t.source}\n${wrapUntrusted(`thread ${t.id}`, clipBody(t.body))}`;
+		const loc = t.path ? `${sanitizeInline(t.path)}${t.line !== undefined ? `:${t.line}` : ""}` : "(discussion)";
+		return `  - [${sanitizeInline(t.id)}] @${sanitizeInline(t.commenter)} ${loc} source=${t.source}\n${wrapUntrusted(`thread ${t.id}`, clipBody(t.body))}`;
 	});
 	const failureLines = failures.map((c) => {
 		const log = c.logExcerpt
 			? `\n${wrapUntrusted(`ci log ${c.name}`, c.logExcerpt)}`
 			: c.detailsUrl
-				? `\n    log URL: ${c.detailsUrl} (log not fetched)`
+				? `\n    log URL: ${sanitizeInline(c.detailsUrl)} (log not fetched)`
 				: "\n    (no log excerpt)";
-		return `  - ${c.name}${log}`;
+		return `  - ${sanitizeInline(c.name)}${log}`;
 	});
 
 	return `# PR Autopilot — Triage
@@ -151,7 +151,7 @@ ${wrapUntrusted("pr title", state.title)}
 
 ## Checks
 ${failures.length > 0 ? `Failing (${failures.length}):\n${failureLines.join("\n")}` : "  (none failing)"}
-${pending.length > 0 ? `Pending (${pending.length}):\n${pending.map((c) => `  - ${c.name}`).join("\n")}` : "  (none pending)"}
+${pending.length > 0 ? `Pending (${pending.length}):\n${pending.map((c) => `  - ${sanitizeInline(c.name)}`).join("\n")}` : "  (none pending)"}
 
 ## Unresolved review items (${state.threads.length})
 ${threadLines.length > 0 ? threadLines.join("\n") : "  (none)"}

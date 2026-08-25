@@ -12,10 +12,28 @@ const SENSITIVE_RE =
 const INJECTION_RE =
 	/\b(ignore(?:\s+all)?\s+previous\s+instructions|you are now|system prompt|new instructions|jailbreak|act as)\b/i;
 
+const INLINE_INJECTION_RE =
+	/\b(ignore(?:\s+all)?\s+previous\s+instructions|you are now|system prompt|new instructions|jailbreak|act as)\b/gi;
+
+/**
+ * Collapse remote metadata to one bounded line that cannot break a fence or
+ * list item. Fence markers are removed, whitespace is flattened, and
+ * instruction-like phrases are redacted so nothing directive survives inline.
+ */
+export function sanitizeInline(value: string, maxLength = 120): string {
+	const flattened = value
+		.replaceAll(BEGIN, "")
+		.replaceAll(END, "")
+		.replaceAll(/[\r\n\t]+/g, " ")
+		.replace(INLINE_INJECTION_RE, "[redacted]")
+		.trim();
+	return flattened.length > maxLength ? `${flattened.slice(0, maxLength)}…` : flattened;
+}
+
 /** Wrap GitHub-sourced text so child prompts can treat it as data, not instructions. */
 export function wrapUntrusted(label: string, text: string): string {
 	const cleaned = text.replaceAll(BEGIN, "").replaceAll(END, "");
-	return `${BEGIN}\n# ${label}\n${cleaned}\n${END}`;
+	return `${BEGIN}\n# ${sanitizeInline(label)}\n${cleaned}\n${END}`;
 }
 
 export function untrustedFenceNote(): string {
