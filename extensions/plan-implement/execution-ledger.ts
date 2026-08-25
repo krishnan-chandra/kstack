@@ -32,7 +32,7 @@ function sectionLines(plan: string, heading: RegExp): string[] {
 	let start = -1;
 	for (let index = 0; index < lines.length; index++) {
 		const trimmed = lines[index].trim();
-		if (/^```/.test(trimmed)) {
+		if (trimmed.startsWith("```")) {
 			fenced = !fenced;
 			continue;
 		}
@@ -46,7 +46,7 @@ function sectionLines(plan: string, heading: RegExp): string[] {
 	fenced = false;
 	for (const line of lines.slice(start + 1)) {
 		const trimmed = line.trim();
-		if (/^```/.test(trimmed)) {
+		if (trimmed.startsWith("```")) {
 			fenced = !fenced;
 			continue;
 		}

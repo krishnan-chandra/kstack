@@ -6,9 +6,9 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 ): Promise<TOut[]> {
 	if (items.length === 0) return [];
 	const limit = Math.max(1, Math.min(concurrency, items.length));
-	const results: TOut[] = new Array(items.length);
+	const results: TOut[] = [];
 	let nextIndex = 0;
-	const workers = new Array(limit).fill(null).map(async () => {
+	const workers = Array.from({ length: limit }, async () => {
 		for (;;) {
 			const current = nextIndex++;
 			if (current >= items.length) return;

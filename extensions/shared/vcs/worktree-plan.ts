@@ -87,7 +87,7 @@ export async function resolveIsolationBase(exec: ExecFn, repoRoot: string): Prom
 		"refs/heads/master",
 		"HEAD",
 	];
-	for (const ref of [...new Set(candidates)]) {
+	for (const ref of new Set(candidates)) {
 		const sha = oneLine(await git(exec, repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`]));
 		if (SHA_RE.test(sha ?? "")) return { ref, sha: sha! };
 	}
