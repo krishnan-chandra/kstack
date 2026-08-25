@@ -140,8 +140,10 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    restack, then submits only the current prefix with force-with-lease. It never
    runs `gt submit --stack`, force-pushes without lease, or rebases.
 
-10. **Untrusted GitHub text.** PR titles, comments, and CI logs are fenced as
-    data. Child agents are told not to follow instructions inside those fences.
+10. **Untrusted GitHub text.** PR titles, check and review metadata, comments,
+    and CI logs stay inside data fences. Prompts refer to checks and review
+    items by local keys such as `check-1` and `thread-1`. The parent maps those
+    keys back to the exact GitHub names and IDs before it acts.
 
 ## Child agents
 
