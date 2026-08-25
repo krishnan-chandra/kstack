@@ -8,9 +8,9 @@ import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { extractSlug } from "../slug.ts";
 import type {
 	CurrentRef,
-	GitVcsBackend,
 	IsolationPlan,
 	MergeBaseResult,
+	VcsBackend,
 	VcsResult,
 	WorkstreamCheckpoint,
 	WorkstreamSnapshot,
@@ -176,7 +176,7 @@ function parsePorcelainPaths(stdout: string): string[] {
 	return paths;
 }
 
-export class GitBackend implements GitVcsBackend {
+export class GitBackend implements VcsBackend {
 	readonly id = "git" as const;
 	readonly descriptor = { refNoun: "branch", workstreamNoun: "Git checkout", baseUpdateVerb: "merge" } as const;
 	readonly isolation = {
@@ -237,17 +237,6 @@ export class GitBackend implements GitVcsBackend {
 		}
 		if (!head.ok) return head;
 		return { ok: true, snapshot: { ref: current.ref.name, token: `${current.ref.name}@${head.sha}` } };
-	}
-
-	/** @deprecated Use captureWorkstream. */
-	async workstreamIdentity(
-		cwd: string,
-	): Promise<VcsResult<{ identity: { kind: "git"; ref: string; headSha: string } }>> {
-		const [current, head] = await Promise.all([this.currentRef(cwd), this.headSha(cwd)]);
-		if (!current.ok) return current;
-		if (current.ref.kind !== "branch") return { ok: false, error: "The Git workstream has no current branch." };
-		if (!head.ok) return head;
-		return { ok: true, identity: { kind: "git", ref: current.ref.name, headSha: head.sha } };
 	}
 
 	async assertWorkstreamUnchanged(cwd: string, expected: WorkstreamSnapshot): Promise<VcsResult> {
@@ -322,7 +311,7 @@ export class GitBackend implements GitVcsBackend {
 		return { ok: true, headSha: head.sha };
 	}
 
-	async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
+	private async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
 		const planned = await planManagedWorktree({
 			exec: this.exec,
 			cwd,
@@ -334,7 +323,7 @@ export class GitBackend implements GitVcsBackend {
 		return planned.ok ? { ok: true, plan: planned.plan } : planned;
 	}
 
-	async createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
+	private async createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
 		const branchLookup = await this.git(plan.sourceRepoRoot, [
 			"show-ref",
 			"--verify",
@@ -383,7 +372,7 @@ export class GitBackend implements GitVcsBackend {
 		return { ok: true, plan };
 	}
 
-	async removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
+	private async removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
 		const removed = await removeManagedGitWorktree({
 			cwd,
 			ref,
@@ -405,11 +394,6 @@ export class GitBackend implements GitVcsBackend {
 		return commit.code === 0 ? { ok: true } : { ok: false, error: `git commit failed: ${commit.stderr.trim()}` };
 	}
 
-	/** @deprecated Use recordPaths. */
-	commitPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
-		return this.recordPaths(cwd, paths, message);
-	}
-
 	async restorePaths(cwd: string, paths: string[]): Promise<VcsResult> {
 		const errors: string[] = [];
 		for (const path of paths) {
@@ -424,11 +408,6 @@ export class GitBackend implements GitVcsBackend {
 	async publishRecordedChanges(cwd: string, ref: string, _options?: { existingOnly?: boolean }): Promise<VcsResult> {
 		const result = await this.git(cwd, ["push", "origin", `HEAD:${ref}`], 30_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `git push failed: ${result.stderr.trim()}` };
-	}
-
-	/** @deprecated Use publishRecordedChanges. */
-	push(cwd: string, ref: string): Promise<VcsResult> {
-		return this.publishRecordedChanges(cwd, ref);
 	}
 
 	private async fetch(cwd: string, ref?: string): Promise<VcsResult> {
@@ -481,18 +460,5 @@ export class GitBackend implements GitVcsBackend {
 			kind: "failed",
 			error: `git merge origin/${baseRef} failed: ${merge.stderr.trim() || merge.stdout.trim()}`,
 		};
-	}
-
-	/** @deprecated Use updateBase. */
-	mergeBaseIntoHead(cwd: string, baseRef: string): Promise<MergeBaseResult> {
-		return this.updateBase(cwd, baseRef);
-	}
-
-	/** @deprecated Use verifyRecordedWorkstream. */
-	verifyCommittedWorkstream(
-		cwd: string,
-		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
-	): Promise<VcsResult<{ headSha: string }>> {
-		return this.verifyRecordedWorkstream(cwd, expected);
 	}
 }

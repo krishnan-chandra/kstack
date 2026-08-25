@@ -22,20 +22,20 @@ function scriptedExec(steps: Step[]): ExecFn {
 const HEAD = "1".repeat(40);
 const MERGED_HEAD = "2".repeat(40);
 
-describe("GitBackend commitPaths", () => {
+describe("GitBackend recordPaths", () => {
 	it("adds the given paths and then commits", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["add", "--", "a.ts", "b.ts"] },
 			{ command: "git", args: ["commit", "-m", "Apply fixes"] },
 		]);
-		assert.deepEqual(await new GitBackend(exec).commitPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
+		assert.deepEqual(await new GitBackend(exec).recordPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
 	});
 
 	it("does not commit when add fails", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["add", "--", "a.ts"], result: { code: 1, stderr: "pathspec did not match\n" } },
 		]);
-		assert.deepEqual(await new GitBackend(exec).commitPaths("/repo", ["a.ts"], "Apply fixes"), {
+		assert.deepEqual(await new GitBackend(exec).recordPaths("/repo", ["a.ts"], "Apply fixes"), {
 			ok: false,
 			error: "git add failed: pathspec did not match",
 		});
@@ -46,7 +46,7 @@ describe("GitBackend commitPaths", () => {
 			{ command: "git", args: ["add", "--", "a.ts"] },
 			{ command: "git", args: ["commit", "-m", "Apply fixes"], result: { code: 1, stderr: "nothing to commit\n" } },
 		]);
-		assert.deepEqual(await new GitBackend(exec).commitPaths("/repo", ["a.ts"], "Apply fixes"), {
+		assert.deepEqual(await new GitBackend(exec).recordPaths("/repo", ["a.ts"], "Apply fixes"), {
 			ok: false,
 			error: "git commit failed: nothing to commit",
 		});
@@ -88,7 +88,7 @@ describe("GitBackend restorePaths", () => {
 	});
 });
 
-describe("GitBackend removeIsolation", () => {
+describe("GitBackend isolation.remove", () => {
 	const cwd = "/managed/task";
 	const deps = { managedRoot: "/managed", realpath: (path: string) => path };
 	const listed = `worktree ${cwd}\0HEAD ${HEAD}\0branch refs/heads/kstack/task\0\0`;
@@ -103,7 +103,7 @@ describe("GitBackend removeIsolation", () => {
 	];
 
 	it("rejects a worktree outside the managed root without running Git", async () => {
-		assert.deepEqual(await new GitBackend(scriptedExec([]), deps).removeIsolation("/other/task", "kstack/task"), {
+		assert.deepEqual(await new GitBackend(scriptedExec([]), deps).isolation.remove("/other/task", "kstack/task"), {
 			ok: false,
 			error: "Refusing to remove a worktree outside the managed root /managed.",
 		});
@@ -114,7 +114,7 @@ describe("GitBackend removeIsolation", () => {
 			preflight[0],
 			{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: "" } },
 		]);
-		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
+		assert.deepEqual(await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task"), {
 			ok: false,
 			error: `Git does not list ${cwd} as an authoritative worktree.`,
 		});
@@ -126,7 +126,7 @@ describe("GitBackend removeIsolation", () => {
 			preflight[0],
 			{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: mismatch } },
 		]);
-		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
+		assert.deepEqual(await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task"), {
 			ok: false,
 			error: "Worktree branch changed: expected kstack/task, found kstack/other.",
 		});
@@ -135,7 +135,7 @@ describe("GitBackend removeIsolation", () => {
 	it("preserves a dirty managed worktree", async () => {
 		const steps = [...preflight];
 		steps[2] = { ...steps[2], result: { stdout: "?? notes.txt\n" } };
-		assert.deepEqual(await new GitBackend(scriptedExec(steps), deps).removeIsolation(cwd, "kstack/task"), {
+		assert.deepEqual(await new GitBackend(scriptedExec(steps), deps).isolation.remove(cwd, "kstack/task"), {
 			ok: false,
 			error: `Worktree ${cwd} has uncommitted or untracked files; cleanup preserved it.`,
 		});
@@ -150,7 +150,7 @@ describe("GitBackend removeIsolation", () => {
 					{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: locked } },
 				]),
 				deps,
-			).removeIsolation(cwd, "kstack/task"),
+			).isolation.remove(cwd, "kstack/task"),
 			{ ok: false, error: `Worktree ${cwd} is locked; unlock it before cleanup.` },
 		);
 	});
@@ -164,7 +164,7 @@ describe("GitBackend removeIsolation", () => {
 				result: { code: 1, stderr: "worktree locked\n" },
 			},
 		]);
-		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
+		assert.deepEqual(await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task"), {
 			ok: false,
 			error: "Worktree removal failed: worktree locked. You may need to remove it manually.",
 		});
@@ -176,7 +176,7 @@ describe("GitBackend removeIsolation", () => {
 			{ command: "git", args: ["worktree", "remove", cwd] },
 			{ command: "git", args: ["branch", "-d", "kstack/task"] },
 		]);
-		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), { ok: true });
+		assert.deepEqual(await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task"), { ok: true });
 	});
 
 	it("returns ok with a warning when branch deletion fails", async () => {
@@ -189,19 +189,19 @@ describe("GitBackend removeIsolation", () => {
 				result: { code: 1, stderr: "not fully merged\n" },
 			},
 		]);
-		assert.deepEqual(await new GitBackend(exec, deps).removeIsolation(cwd, "kstack/task"), {
+		assert.deepEqual(await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task"), {
 			ok: true,
 			warning: "Branch deletion warning: not fully merged",
 		});
 	});
 });
 
-describe("GitBackend mergeBaseIntoHead", () => {
+describe("GitBackend updateBase", () => {
 	it("returns failed when fetch fails", async () => {
 		const exec = scriptedExec([
 			{ command: "git", args: ["fetch", "origin", "main"], result: { code: 1, stderr: "network down\n" } },
 		]);
-		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), {
+		assert.deepEqual(await new GitBackend(exec).updateBase("/repo", "main"), {
 			kind: "failed",
 			error: "git fetch origin main failed: network down",
 		});
@@ -218,7 +218,7 @@ describe("GitBackend mergeBaseIntoHead", () => {
 			},
 			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${HEAD}\n` } },
 		]);
-		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), { kind: "already-current" });
+		assert.deepEqual(await new GitBackend(exec).updateBase("/repo", "main"), { kind: "already-current" });
 	});
 
 	it("returns clean with the new HEAD after a successful merge", async () => {
@@ -232,7 +232,7 @@ describe("GitBackend mergeBaseIntoHead", () => {
 			},
 			{ command: "git", args: ["rev-parse", "HEAD"], result: { stdout: `${MERGED_HEAD}\n` } },
 		]);
-		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), {
+		assert.deepEqual(await new GitBackend(exec).updateBase("/repo", "main"), {
 			kind: "clean",
 			headSha: MERGED_HEAD,
 		});
@@ -243,7 +243,7 @@ describe("GitBackend mergeBaseIntoHead", () => {
 			{ command: "git", args: ["fetch", "origin", "main"] },
 			{ command: "git", args: ["rev-parse", "HEAD"], result: { code: 1, stderr: "bad HEAD\n" } },
 		];
-		assert.deepEqual(await new GitBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main"), {
+		assert.deepEqual(await new GitBackend(scriptedExec(steps)).updateBase("/repo", "main"), {
 			kind: "failed",
 			error: "Could not read HEAD before merging origin/main: Could not resolve the current HEAD: bad HEAD",
 		});
@@ -266,7 +266,7 @@ describe("GitBackend mergeBaseIntoHead", () => {
 			},
 			{ command: "git", args: ["merge", "--abort"] },
 		]);
-		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), {
+		assert.deepEqual(await new GitBackend(exec).updateBase("/repo", "main"), {
 			kind: "needs-human",
 			files: ["src/a.ts", "src/b.ts"],
 			error: "Merge of origin/main conflicted in src/a.ts, src/b.ts. Competing intents need a human.",
@@ -285,7 +285,7 @@ describe("GitBackend mergeBaseIntoHead", () => {
 			{ command: "git", args: ["diff", "--name-only", "--diff-filter=U"] },
 			{ command: "git", args: ["merge", "--abort"] },
 		]);
-		assert.deepEqual(await new GitBackend(exec).mergeBaseIntoHead("/repo", "main"), {
+		assert.deepEqual(await new GitBackend(exec).updateBase("/repo", "main"), {
 			kind: "failed",
 			error: "git merge origin/main failed: not something we can merge",
 		});

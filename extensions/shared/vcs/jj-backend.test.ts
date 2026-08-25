@@ -66,9 +66,9 @@ describe("JjBackend references and workstreams", () => {
 				result: { stdout: `${parent}\n` },
 			},
 		]);
-		assert.deepEqual(await new JjBackend(exec).workstreamIdentity("/repo"), {
+		assert.deepEqual(await new JjBackend(exec).captureWorkstream("/repo"), {
 			ok: true,
-			identity: { kind: "jj", ref: "feature", changeId: "stable-change-id", parentCommitIds: [parent] },
+			snapshot: { ref: "feature", token: `feature@stable-change-id/parents:${parent}` },
 		});
 	});
 
@@ -131,7 +131,7 @@ describe("JjBackend references and workstreams", () => {
 			},
 		]);
 		assert.deepEqual(
-			await new JjBackend(exec).verifyCommittedWorkstream("/repo", {
+			await new JjBackend(exec).verifyRecordedWorkstream("/repo", {
 				ref: "add-search",
 				baseSha: base,
 				requireNewCommit: true,
@@ -160,9 +160,9 @@ describe("JjBackend mutations", () => {
 			{ command: "jj", args: noPager(["commit", 'cwd:"tilde~x"', "-m", "Apply hostile path"]) },
 		]);
 		const backend = new JjBackend(exec);
-		assert.deepEqual(await backend.commitPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
+		assert.deepEqual(await backend.recordPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
 		assert.deepEqual(await backend.restorePaths("/repo", ["forbidden.txt"]), { ok: true });
-		assert.deepEqual(await backend.commitPaths("/repo", ["tilde~x"], "Apply hostile path"), { ok: true });
+		assert.deepEqual(await backend.recordPaths("/repo", ["tilde~x"], "Apply hostile path"), { ok: true });
 	});
 
 	it("moves the task bookmark to the current checkpoint before pushing", async () => {
@@ -180,7 +180,7 @@ describe("JjBackend mutations", () => {
 			{ command: "jj", args: noPager(["bookmark", "set", "feature", "-r", "@"]) },
 			{ command: "jj", args: noPager(["git", "push", "--remote", "origin", "--bookmark", "feature"]) },
 		]);
-		assert.deepEqual(await new JjBackend(exec).push("/repo", "feature"), { ok: true });
+		assert.deepEqual(await new JjBackend(exec).publishRecordedChanges("/repo", "feature"), { ok: true });
 	});
 
 	it("restores the pre-merge change when a base merge conflicts", async () => {
@@ -221,7 +221,7 @@ describe("JjBackend mutations", () => {
 			{ command: "jj", args: noPager(["edit", "pre-merge-change"]) },
 			{ command: "jj", args: noPager(["abandon", "merge-change"]) },
 		];
-		assert.deepEqual(await new JjBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main"), {
+		assert.deepEqual(await new JjBackend(scriptedExec(steps)).updateBase("/repo", "main"), {
 			kind: "needs-human",
 			files: ["src/a.ts"],
 			error: "Merge conflicted in src/a.ts. Competing intents need a human.",
@@ -270,7 +270,7 @@ describe("JjBackend mutations", () => {
 				result: { code: 1, stderr: "edit failed\n" },
 			},
 		];
-		const result = await new JjBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main");
+		const result = await new JjBackend(scriptedExec(steps)).updateBase("/repo", "main");
 		assert.equal(result.kind, "needs-human");
 		assert.match(result.error, /jj op log and jj op restore/);
 		assert.equal(steps.length, 0);
@@ -300,7 +300,7 @@ describe("JjBackend mutations", () => {
 				result: { code: 1, stderr: "cannot read change\n" },
 			},
 		];
-		const result = await new JjBackend(scriptedExec(steps)).mergeBaseIntoHead("/repo", "main");
+		const result = await new JjBackend(scriptedExec(steps)).updateBase("/repo", "main");
 		assert.deepEqual(result, {
 			kind: "failed",
 			error: "Could not capture the pre-merge jj change: cannot read change",

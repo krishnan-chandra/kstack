@@ -53,7 +53,7 @@ describe("remote head synchronization", () => {
 	});
 });
 
-describe("committed workstream postcondition", () => {
+describe("recorded workstream postcondition", () => {
 	it("requires the expected branch, a new commit, and a clean tree", async () => {
 		const base = "1".repeat(40);
 		const head = "2".repeat(40);
@@ -63,7 +63,7 @@ describe("committed workstream postcondition", () => {
 			"status --porcelain=v1 --untracked-files=all": {},
 		});
 		assert.deepEqual(
-			await new GitBackend(exec).verifyCommittedWorkstream("/repo", {
+			await new GitBackend(exec).verifyRecordedWorkstream("/repo", {
 				ref: "kstack/add-search",
 				baseSha: base,
 				requireNewCommit: true,
@@ -79,7 +79,7 @@ describe("committed workstream postcondition", () => {
 			"rev-parse HEAD": { stdout: `${sha}\n` },
 			"status --porcelain=v1 --untracked-files=all": { stdout: " M src/search.ts\n" },
 		});
-		const result = await new GitBackend(exec).verifyCommittedWorkstream("/repo", {
+		const result = await new GitBackend(exec).verifyRecordedWorkstream("/repo", {
 			ref: "kstack/add-search",
 			baseSha: "1".repeat(40),
 			requireNewCommit: false,
