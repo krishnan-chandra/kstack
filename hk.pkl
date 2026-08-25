@@ -8,6 +8,10 @@ local linters = new Mapping<String, Step> {
         check = "npm exec -- biome check --no-errors-on-unmatched --diagnostic-level=error {{ files }}"
         fix = "npm exec -- biome check --no-errors-on-unmatched --write --unsafe {{ files }}"
     }
+    ["anti-slop"] {
+        glob = "*.{js,mjs,ts}"
+        check = "npm run lint:slop -- {{ files }}"
+    }
     ["typecheck"] { check = "npm run typecheck" }
     ["check-exports"] { check = "npm run check:exports" }
     ["check-imports"] { check = "npm run check:imports" }

@@ -70,8 +70,9 @@ text and special characters.
 ## Hooks
 
 `hk.pkl` at the repository root configures [hk](https://hk.jdx.dev) git hooks.
-The pre-commit hook runs `biome check` on staged `.ts` files and blocks the
-commit on any diagnostics at the `error` level. Install hooks with:
+The pre-commit hook runs Biome on staged `.ts` files and Oxlint, including the
+anti-slop plugin, on staged `.js`, `.mjs`, and `.ts` files. Diagnostics at the
+`error` level block the commit. Install hooks with:
 
 ```bash
 hk install
