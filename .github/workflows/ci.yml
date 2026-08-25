@@ -16,6 +16,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint:ci
+      - run: npm run lint:slop
       - run: npm test
       - run: npm run check:exports
       - run: npm run check:imports
