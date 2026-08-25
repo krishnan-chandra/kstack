@@ -670,7 +670,7 @@ export class SubagentConsoleComponent implements Component {
 			return;
 		}
 
-		if (checkKey(data, "escape")) {
+		if (checkKey(data, "escape") || data === "q" || data === "Q") {
 			this.onClose();
 			return;
 		}
