@@ -32,6 +32,11 @@
         "label": "ling",
         "model": "openrouter/inclusionai/ling-3.0-flash",
         "thinking": "medium"
+      },
+      {
+        "label": "mercury",
+        "model": "openrouter/inception/mercury-2",
+        "thinking": "medium"
       }
     ],
     "maxConcurrency": 5,
@@ -48,8 +53,8 @@
       "thinking": "high"
     },
     "implementer": {
-      "model": "openai/gpt-5.6-terra",
-      "thinking": "medium"
+      "model": "openrouter/google/gemini-3.7-flash",
+      "thinking": "high"
     },
     "timeoutMinutes": 30
   },
@@ -69,7 +74,7 @@
       },
       {
         "label": "glm",
-        "model": "openrouter/z-ai/glm-5.2",
+        "model": "openrouter/z-ai/glm-5.3",
         "thinking": "high"
       },
       {
@@ -86,8 +91,8 @@
   },
   "swarm": {
     "worker": {
-      "model": "anthropic/claude-sonnet-5",
-      "thinking": "low"
+      "model": "openai/gpt-5.6-luna",
+      "thinking": "high"
     },
     "maxConcurrency": 4
   },
@@ -103,7 +108,7 @@
     "models": [
       {
         "label": "glm",
-        "model": "openrouter/z-ai/glm-5.2",
+        "model": "openrouter/z-ai/glm-5.3",
         "thinking": "low"
       },
       {
@@ -112,9 +117,14 @@
         "thinking": "low"
       },
       {
-        "label": "terra",
-        "model": "openai/gpt-5.6-terra",
-        "thinking": "low"
+        "label": "luna",
+        "model": "openai/gpt-5.6-luna",
+        "thinking": "high"
+      },
+      {
+        "label": "gemini",
+        "model": "openrouter/google/gemini-3.7-flash",
+        "thinking": "medium"
       }
     ],
     "maxConcurrency": 3,
@@ -125,7 +135,7 @@
     "allowedModels": [
       {
         "model": "openai/gpt-5.6-luna",
-        "thinking": "medium"
+        "thinking": "high"
       },
       {
         "model": "openrouter/deepseek/deepseek-v4-flash",
@@ -136,7 +146,7 @@
         "thinking": "medium"
       },
       {
-        "model": "openrouter/z-ai/glm-5.2",
+        "model": "openrouter/z-ai/glm-5.3",
         "thinking": "medium"
       }
     ],
