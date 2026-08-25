@@ -9,11 +9,13 @@ verdict.
 /panel-review Add safe bulk session archival without moving the live session
 /panel-review --base main Implement handoff
 /panel-review --base origin/main "Implement handoff and panel review extensions"
+/panel-review --pr 42
+/panel-review --pr 42 "Review the auth refactor"
 ```
 
-Typing `/panel-review --` in the TUI offers `--base` and `--base=` as
-completions; the `--base` ref value and the free-form review intent are not
-completed.
+Typing `/panel-review --` in the TUI offers `--base`, `--base=`, `--pr`, and
+`--pr=` as completions; flag values and the free-form review intent are not
+completed. `--base` and `--pr` are mutually exclusive.
 
 Every reviewer independently runs the full
 [`thermo-nuclear-code-quality-review`](../../skills/thermo-nuclear-code-quality-review/)
@@ -23,10 +25,12 @@ Approval Bar and promotes structural maintainability blockers into **Act On**.
 
 Other trusted extensions can invoke the same workflow without serializing
 values into slash-command text. Import `requestPanelReview` from `api.ts` and
-pass structured `{ intent, base?, repositoryPath? }` options plus the caller's
-current `ExtensionCommandContext`;  `repositoryPath` is for trusted in-process
-callers that need to review another validated Git working tree (for example a
-managed worktree). Panel-review claims the request synchronously on
+pass structured `{ intent, base?, pr?, repositoryPath? }` options plus the
+caller's current `ExtensionCommandContext`. `PanelWorktreeArgs` and
+`PanelPrArgs` expose the two mutually exclusive target shapes. `repositoryPath`
+is for trusted in-process callers that need to review another validated Git
+working tree, such as a managed worktree. Panel-review claims the request
+synchronously on
 Pi's event bus and exposes a completion promise that resolves a structured
 `PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
 base/head SHAs), `no-changes`, `declined`, `aborted`, or `failed`. The normal
@@ -35,17 +39,31 @@ ignores the outcome.
 
 ## How it works
 
-1. Resolves the review base: explicit `--base`, else the branch upstream, else
-   `origin/HEAD`, else `main`/`master`, else `HEAD` (working-tree only). The
-   exact merge-base SHA is recorded so every reviewer sees an immutable baseline.
+1. Resolves the review target:
+   - In PR mode (`--pr <number>`), fetches the PR head and base source refs
+     from `origin` with an empty refmap, then verifies the pinned commit OIDs
+     locally. The fetch writes objects but does not update local or
+     remote-tracking refs. The diff covers only the committed range
+     `merge-base(baseOid, headOid)..headOid`; it excludes untracked files and
+     working-tree changes. After confirmation, `git archive` extracts the pinned
+     head into a private temporary directory for reviewer file access. The run
+     does not create, move, or reset branches, Git worktrees, or jj workspaces.
+     PR trees that contain symbolic links are rejected before extraction so
+     reviewer reads cannot escape the snapshot root. The temporary snapshot is
+     removed when the run ends.
+   - In standard mode, resolves the review base: explicit `--base`, else the
+     branch upstream, else `origin/HEAD`, else `main`/`master`, else `HEAD`
+     (working-tree only). The exact merge-base SHA is recorded so every reviewer
+     sees an immutable baseline.
 2. Builds a bounded bundle in a mode-`0600` temp file outside the repository:
    `git diff --find-renames --find-copies <merge-base>` (committed + staged +
    unstaged together), porcelain status, bounded contents of untracked text
    files (`--untracked-files=all`, so new directories are expanded into their
    files; symlinks, binaries, and path escapes skipped), and commit subjects.
    The diff is never passed on a command line.
-3. Asks for the review intent (from positional arguments or an editor prefilled with
-   commit subjects) and confirms once before spending anything.
+3. Asks for the review intent (from positional arguments or an editor prefilled
+   with commit subjects) and confirms once before extracting the PR snapshot or
+   launching reviewers.
 4. Spawns 2–5 reviewers concurrently. Each is an isolated child process with a retained native session:
 
    ```
@@ -201,6 +219,10 @@ the `"panel-review"` section:
 | Total bundle | 2 MiB |
 | Per untracked text file | 256 KiB |
 | Untracked files included | 200 (overflow disclosed, not named) |
+| PR snapshot tracked blob content | 512 MiB |
+| PR snapshot tracked entries | 200,000 |
+| PR snapshot tar archive | 512 MiB |
+| PR snapshot symbolic links | 0 (tree rejected before extraction) |
 | Per reviewer report into synthesis | 24 KiB |
 | Aggregate synthesis input | 96 KiB |
 | Child stderr retention | 8 KiB |
@@ -209,6 +231,10 @@ the `"panel-review"` section:
 | Dashboard live text preview | 240-byte rolling UTF-8 tail per child |
 | Console transcript cap | 128 KiB / 1,000 entries per child (oldest evicted with notice) |
 | Console entry text cap | 8 KiB per entry (UTF-8 safe head/tail truncation) |
+
+PR snapshot materialization stops before archiving when the pinned tree exceeds
+the tracked-byte or entry limit. The archive and extracted tree can briefly use
+up to about twice the archive limit in the system temp directory.
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes
@@ -223,8 +249,14 @@ Review Limitations.
 - Reviewer failure: siblings continue; the failure appears in the report.
 - All reviewers failed: no synthesis, concise diagnostics.
 - Synthesis failure: raw bounded reports are preserved and displayed.
-- Temp cleanup failure: warned, path reported, files remain mode `0600`.
-- The repository is never modified (hash/status identical before and after).
+- Temp cleanup failure: warned and the private path is reported. Bundle files
+  remain mode `0600`; snapshot files remain contained by their owner-only temp
+  directory.
+- Standard mode leaves the repository unchanged.
+- PR mode fetches objects into the local object database. It leaves the current
+  working tree, refs, branches, Git worktrees, and jj workspaces unchanged. The
+  snapshot is created only after confirmation. Once created, it is removed after
+  completion, abort, or failure.
 
 ## Development
 
@@ -241,7 +273,9 @@ untracked, and binary changes, run
 `/panel-review --base HEAD "fixture review"` and verify parallel
 progress, child argv (managed session flags, discovery flags, read-only tools), the
 confirmation names the thermo-nuclear lens, a single verdict message, no child
-session files, and an unchanged repository.
+session files, and an unchanged repository. For PR mode, also compare refs and
+`git worktree list --porcelain` before and after the run. Confirm that reviewers
+read the pinned head rather than dirty files from the current checkout.
 
 `extensions/panel-review/prompts/thermo-nuclear.md` is the canonical lens.
 The explicit skill points to that resource, and panel-review loads it directly
@@ -249,5 +283,4 @@ via `--append-system-prompt`, so the two paths cannot drift.
 
 ## Deferred
 
-- `/panel-review --pr <number>` via `gh`.
 - A follow-up command turning Act On findings into an implementation prompt.

@@ -216,7 +216,8 @@ export function truncateUtf8(text: string, maxBytes: number) {
 	return { text: out, truncated: true };
 }
 
-interface CollectScopeOptions {
+/* exported: colocated scope tests */
+export interface CollectScopeOptions {
 	exec?: GitExec;
 	fsImpl?: Fs;
 	tmpDir?: string;
@@ -224,6 +225,8 @@ interface CollectScopeOptions {
 	bundleBytes?: number;
 	untrackedFileBytes?: number;
 	untrackedFiles?: number;
+	/** Pinned committed head. Omit to include the current index and working tree. */
+	headSha?: string;
 }
 
 /**
@@ -243,18 +246,24 @@ export function collectScope(
 	const generatedAt = (options.now ?? (() => new Date()))().toISOString();
 
 	const repoRoot = requireWorkTree(exec, cwd);
-	const headSha = (tryGit(exec, ["rev-parse", "HEAD"], cwd) ?? "").trim();
+	const isCommitTarget = options.headSha !== undefined;
+	const headSha = options.headSha ?? (tryGit(exec, ["rev-parse", "HEAD"], cwd) ?? "").trim();
 	if (!headSha) throw new Error("Cannot resolve HEAD.");
 
-	const diffArgs = ["diff", "--find-renames", "--find-copies", base.mergeBaseSha];
+	const diffRange = isCommitTarget ? `${base.mergeBaseSha}..${headSha}` : base.mergeBaseSha;
+	const diffArgs = ["diff", "--find-renames", "--find-copies", diffRange];
 	const diff = exec(diffArgs, cwd);
-	const nameStatus = tryGit(exec, ["diff", "--name-status", "--find-renames", base.mergeBaseSha], cwd) ?? "";
+	const nameStatus = tryGit(exec, ["diff", "--name-status", "--find-renames", diffRange], cwd) ?? "";
 	// -uall expands untracked directories into individual files; without it a
 	// new directory collapses to one "?? dir/" entry and its contents — often
 	// the substance of the change — would never be reviewed.
-	const statusRaw = exec(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd);
-	const logRaw = tryGit(exec, ["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], cwd) ?? "";
-	const statusEntries = parsePorcelainZ(statusRaw);
+	// In commit-target mode (e.g. PR review), untracked and working-tree changes
+	// are excluded so git status is not invoked.
+	const statusEntries = isCommitTarget
+		? []
+		: parsePorcelainZ(exec(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd));
+	const logRange = isCommitTarget ? `${base.mergeBaseSha}..${headSha}` : `${base.mergeBaseSha}..HEAD`;
+	const logRaw = tryGit(exec, ["log", "--format=%s", logRange], cwd) ?? "";
 	const untracked = statusEntries.filter((e) => e.xy === "??");
 
 	const sections: string[] = [];
@@ -373,6 +382,7 @@ export function collectScope(
 		path: bundlePath,
 		dir,
 		repoRoot,
+		reviewRoot: repoRoot,
 		headSha,
 		baseSha: base.mergeBaseSha,
 		baseRef: base.ref,

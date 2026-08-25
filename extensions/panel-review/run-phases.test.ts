@@ -32,6 +32,7 @@ const testScope: ScopeBundle = {
 	path: "/tmp/bundle.md",
 	dir: "/tmp",
 	repoRoot: "/repo",
+	reviewRoot: "/snapshot",
 	headSha: "head",
 	baseSha: "base",
 	baseRef: "main",
@@ -196,7 +197,9 @@ test("a partially aborted panel advances to synthesis with a fresh signal", asyn
 			};
 		},
 		runReviewer: async (input) => {
+			assert.equal(input.cwd, "/snapshot");
 			if (input.spec.label === "lead") {
+				assert.match(input.task, /review root is \/snapshot/);
 				assert.equal(input.signal, synthesisController.signal);
 				assert.equal(input.signal.aborted, false);
 				return {

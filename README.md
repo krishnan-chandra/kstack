@@ -14,7 +14,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
-| [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset and synthesizes a lead-review verdict, with a live multi-agent TUI dashboard. |
+| [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset or a pinned GitHub PR snapshot, then synthesizes a lead-review verdict with a live multi-agent TUI dashboard. |
 | [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live multi-agent TUI dashboard, bounded concurrency, cancellation, and per-child runtime limits. |
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with a live multi-phase TUI dashboard and full-screen subagent console. Add `--fast` to skip planning, review, and publishing for one bounded implementer. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
@@ -167,7 +167,8 @@ rows stay unnamed.
 - Pi 0.84.2 or newer
 - Node.js 22.18 or newer for Pi's runtime and local tooling
 - A local filesystem for Pi's agent directory
-- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
+- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
+- `tar` — required to extract the temporary source snapshot for PR-scoped panel review
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
 

@@ -1,15 +1,26 @@
 /** Panel Review extension: interactive adapter for isolated review phases. */
 
 import { rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { getAgentPaneHost } from "../shared/agent-pane.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
+import { makeExec } from "../shared/git-exec.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
+import { buildPanelConfirmation } from "./confirmation.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
-import { collectScope, defaultGitExec, requireWorkTree, resolveBase, type ScopeBundle } from "./review-scope.ts";
+import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
+import { defaultGitExec, requireWorkTree, type ScopeBundle } from "./review-scope.ts";
+import {
+	buildIntentPrefill,
+	collectTargetScope,
+	noChangesMessage,
+	type ResolvedReviewTarget,
+	resolveReviewTarget,
+} from "./review-target.ts";
 import { type PipelineDashboard, resolvePanel, runReviewPipeline, type VerdictDetails } from "./run-phases.ts";
 import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
@@ -17,6 +28,7 @@ export default function (pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "panel-review");
 	const lifecycle = new PanelLifecycle();
 	const paneHost = getAgentPaneHost(pi);
+	const exec = makeExec(pi);
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
@@ -93,28 +105,22 @@ export default function (pi: ExtensionAPI): void {
 				).message,
 			};
 		}
-		let base: ReturnType<typeof resolveBase>;
+
+		let target: ResolvedReviewTarget;
 		try {
-			base = resolveBase(defaultGitExec, repoRoot, options.base);
+			target = await resolveReviewTarget(exec, defaultGitExec, repoRoot, options);
 		} catch (error) {
-			notify(
-				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error)
-					.message,
-				"error",
-			);
-			return {
-				status: "failed",
-				error: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
-					error as Error
-				).message,
-			};
+			const message = error instanceof Error ? error.message : String(error);
+			notify(message, "error");
+			return { status: "failed", error: message };
 		}
 
 		let intent = options.intent?.trim() ?? "";
 		if (!intent) {
-			const subjects = defaultGitExecSafe(["log", "--format=%s", `${base.mergeBaseSha}..HEAD`], repoRoot);
-			const prefill = subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
-			const edited = await ctx.ui.editor("Panel review intent (required):", prefill);
+			const edited = await ctx.ui.editor(
+				"Panel review intent (required):",
+				buildIntentPrefill(target, defaultGitExec, repoRoot),
+			);
 			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 			intent = edited?.trim() ?? "";
 		}
@@ -139,30 +145,27 @@ export default function (pi: ExtensionAPI): void {
 		for (const warning of panel.resolution.warnings) notify(warning, "warning");
 
 		let scope: ScopeBundle | undefined;
+		let prSnapshot: PrSnapshot | undefined;
 		try {
-			scope = collectScope(repoRoot, base, intent);
+			scope = collectTargetScope(target, repoRoot, intent);
 			if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
-				notify(
-					`No reviewable changes against ${scope.baseRef} (${scope.baseSha.slice(0, 8)}). Commit, stage, or modify files first — or pass --base for a wider range.`,
-					"info",
-				);
+				notify(noChangesMessage(target, scope), "info");
 				return { status: "no-changes" };
 			}
 			const resolution = panel.resolution;
-			const reviewerList = resolution.reviewers
-				.map((reviewer) => `  ${reviewer.label}: ${modelCliId(reviewer)}`)
-				.join("\n");
 			const confirmed = await ctx.ui.confirm(
 				"Run panel review?",
-				`Base: ${scope.baseRef} (${scope.baseSha.slice(0, 8)}, ${scope.baseStrategy})\n` +
-					"Review lens: thermo-nuclear code quality\n" +
-					`Changes: ${scope.fileCount} file(s), ${(scope.diffBytes / 1024).toFixed(0)} KiB diff, ${scope.untrackedCount} untracked${scope.truncated ? " — TRUNCATED bundle" : ""}\n` +
-					`Reviewers:\n${reviewerList}\nSynthesis: ${resolution.synthesis.cliId}\n\n` +
-					"Reviewers run in isolated read-only processes (read/grep/find/ls only, no bash, no extensions or skills). The repository is never modified. " +
-					`A child silent for ${resolution.timeoutMinutes} min is killed as stalled (hard cap ${resolution.maxRuntimeMinutes} min); press Ctrl+Shift+X to abort mid-run.` +
-					(scope.contextFilesTouched
-						? "\n\nThe changeset modifies AGENTS.md/CLAUDE.md, so children run with --no-context-files to keep the reviewed content out of their instructions."
-						: ""),
+				buildPanelConfirmation({
+					target,
+					scope,
+					reviewers: resolution.reviewers.map((reviewer) => ({
+						label: reviewer.label,
+						model: modelCliId(reviewer),
+					})),
+					synthesisModel: resolution.synthesis.cliId,
+					timeoutMinutes: resolution.timeoutMinutes,
+					maxRuntimeMinutes: resolution.maxRuntimeMinutes,
+				}),
 			);
 			if (!confirmed) return { status: "declined" };
 			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
@@ -172,6 +175,19 @@ export default function (pi: ExtensionAPI): void {
 				return { status: "failed", error: "a panel review is already running" };
 			}
 			runToken = activeRunToken;
+			const runSignal = lifecycle.runSignal(activeRunToken);
+			if (target.kind === "pr") {
+				try {
+					prSnapshot = await materializePrSnapshot(exec, repoRoot, target.pr.headSha, { signal: runSignal });
+					scope = { ...scope, reviewRoot: prSnapshot.directory };
+				} catch (error) {
+					if (runSignal?.aborted) return { status: "aborted" };
+					const message = error instanceof Error ? error.message : String(error);
+					notify(message, "error");
+					return { status: "failed", error: message };
+				}
+				if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
+			}
 			return await runReviewPipeline(
 				{ scope, intent, options, resolution },
 				{
@@ -179,7 +195,7 @@ export default function (pi: ExtensionAPI): void {
 					notify,
 					setCompactStatus,
 					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
-					runSignal: lifecycle.runSignal(activeRunToken),
+					runSignal,
 					beginSynthesisPhase: () => lifecycle.beginNextPhase(activeRunToken),
 					waitForIdle: () => ctx.waitForIdle(),
 					sendVerdict: (verdict, details) =>
@@ -187,6 +203,13 @@ export default function (pi: ExtensionAPI): void {
 				},
 			);
 		} finally {
+			if (prSnapshot) {
+				try {
+					await rm(prSnapshot.root, { recursive: true, force: true });
+				} catch {
+					notify(`panel-review: could not remove PR snapshot ${prSnapshot.root}; remove it manually.`, "warning");
+				}
+			}
 			if (scope) {
 				try {
 					rmSync(scope.dir, { recursive: true, force: true });
@@ -200,7 +223,7 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("panel-review", {
 		description:
-			"Review current changes with a strict panel of isolated read-only reviewers: /panel-review [--base <ref>] <intent>",
+			"Review current changes or a GitHub PR with a strict panel of isolated read-only reviewers: /panel-review [--base <ref> | --pr <number>] <intent>",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
@@ -235,13 +258,5 @@ export default function (pi: ExtensionAPI): void {
 			note: (id, text) => pane.note(id, text),
 			dispose: () => pane.dispose(),
 		};
-	}
-}
-
-function defaultGitExecSafe(args: string[], cwd: string): string {
-	try {
-		return defaultGitExec(args, cwd);
-	} catch {
-		return "";
 	}
 }

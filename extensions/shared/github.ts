@@ -1,6 +1,6 @@
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
 import { asRecord } from "./narrow.ts";
-import { type BoundaryValue, isBoolean, isNumber, isString } from "./validation.ts";
+import { type BoundaryValue, isBoolean, isNumber, isString, type JsonObject } from "./validation.ts";
 
 /** Merge methods Kstack permits anywhere; merge commits are never allowed. */
 export type MergeMethod = "squash" | "rebase";
@@ -31,6 +31,16 @@ export interface PullRequestSnapshot {
 	mergeStateStatus: string;
 	mergedAt: string | null;
 	mergeCommitOid: string | null;
+}
+
+export interface PullRequestReviewTarget {
+	number: number;
+	url: string;
+	title: string;
+	state: PullRequestSnapshot["state"];
+	baseRef: string;
+	headOid: string;
+	baseOid: string;
 }
 
 interface GithubLimits {
@@ -104,6 +114,47 @@ function withDefaults(limits: Partial<GithubLimits>): GithubLimits {
 	return { ...DEFAULT_LIMITS, ...limits };
 }
 
+interface PullRequestJson {
+	value: JsonObject;
+	identity: Pick<PullRequestSnapshot, "number" | "url" | "title" | "state">;
+}
+
+async function readPullRequestJson(
+	exec: ExecFn,
+	cwd: string,
+	number: number,
+	fields: string,
+	signal: AbortSignal | undefined,
+	limits: GithubLimits,
+): Promise<PullRequestJson> {
+	const out = await exec("gh", ["pr", "view", String(number), "--json", fields], {
+		cwd,
+		timeout: limits.queryMs,
+		signal,
+	});
+	if (out.code !== 0)
+		throw new Error(`Could not read PR #${number}: ${diagnostic(out.stderr, limits.diagnosticsBytes)}`);
+	const value = asRecord(parseJson(out.stdout));
+	if (
+		value?.number !== number ||
+		!isString(value.url) ||
+		!value.url.startsWith("https://") ||
+		!isString(value.title) ||
+		!["OPEN", "CLOSED", "MERGED"].includes(String(value.state))
+	)
+		throw new Error(`PR #${number} response failed validation.`);
+	return {
+		value,
+		identity: {
+			number,
+			url: value.url,
+			title: value.title,
+			state:
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value.state as PullRequestSnapshot["state"],
+		},
+	};
+}
+
 export async function getRepository(
 	exec: ExecFn,
 	cwd: string,
@@ -139,26 +190,16 @@ export async function getPullRequest(
 	limitOverrides: Partial<GithubLimits> = {},
 ): Promise<PullRequestSnapshot> {
 	const limits = withDefaults(limitOverrides);
-	const out = await exec(
-		"gh",
-		[
-			"pr",
-			"view",
-			String(number),
-			"--json",
-			"number,url,title,state,isDraft,headRefName,baseRefName,headRefOid,mergeable,mergeStateStatus,mergedAt,mergeCommit",
-		],
-		{ cwd, timeout: limits.queryMs, signal },
+	const { value, identity } = await readPullRequestJson(
+		exec,
+		cwd,
+		number,
+		"number,url,title,state,isDraft,headRefName,baseRefName,headRefOid,mergeable,mergeStateStatus,mergedAt,mergeCommit",
+		signal,
+		limits,
 	);
-	if (out.code !== 0)
-		throw new Error(`Could not read PR #${number}: ${diagnostic(out.stderr, limits.diagnosticsBytes)}`);
-	const value = asRecord(parseJson(out.stdout));
-	const commit = asRecord(value?.mergeCommit);
+	const commit = asRecord(value.mergeCommit);
 	if (
-		value?.number !== number ||
-		!isString(value.url) ||
-		!isString(value.title) ||
-		!["OPEN", "CLOSED", "MERGED"].includes(String(value.state)) ||
 		!isBoolean(value.isDraft) ||
 		!isString(value.headRefName) ||
 		!isString(value.baseRefName) ||
@@ -167,11 +208,7 @@ export async function getPullRequest(
 	)
 		throw new Error(`PR #${number} response failed validation.`);
 	return {
-		number,
-		url: value.url,
-		title: value.title,
-		state:
-			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value.state as PullRequestSnapshot["state"],
+		...identity,
 		isDraft: value.isDraft,
 		headRef: value.headRefName,
 		baseRef: value.baseRefName,
@@ -180,6 +217,38 @@ export async function getPullRequest(
 		mergeStateStatus: String(value.mergeStateStatus),
 		mergedAt: isString(value.mergedAt) ? value.mergedAt : null,
 		mergeCommitOid: isString(commit?.oid) ? commit.oid : null,
+	};
+}
+
+export async function getPullRequestReviewTarget(
+	exec: ExecFn,
+	cwd: string,
+	number: number,
+	signal?: AbortSignal,
+	limitOverrides: Partial<GithubLimits> = {},
+): Promise<PullRequestReviewTarget> {
+	const limits = withDefaults(limitOverrides);
+	const { value, identity } = await readPullRequestJson(
+		exec,
+		cwd,
+		number,
+		"number,url,title,state,baseRefName,headRefOid,baseRefOid",
+		signal,
+		limits,
+	);
+	if (
+		!isString(value.baseRefName) ||
+		!isString(value.headRefOid) ||
+		!SHA.test(value.headRefOid) ||
+		!isString(value.baseRefOid) ||
+		!SHA.test(value.baseRefOid)
+	)
+		throw new Error(`PR #${number} response failed validation.`);
+	return {
+		...identity,
+		baseRef: value.baseRefName,
+		headOid: value.headRefOid,
+		baseOid: value.baseRefOid,
 	};
 }
 

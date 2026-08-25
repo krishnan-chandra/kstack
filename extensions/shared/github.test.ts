@@ -4,6 +4,7 @@ import type { ExecFn } from "./git-exec.ts";
 import {
 	findOpenPullRequestByHead,
 	getPullRequest,
+	getPullRequestReviewTarget,
 	getRepository,
 	ghExec,
 	mergePullRequest,
@@ -103,6 +104,32 @@ test("parses repository policy and a pinned PR snapshot", async () => {
 	});
 	const pullRequest: PullRequestSnapshot = await getPullRequest(exec, "/repo", 3);
 	assert.equal(pullRequest.headOid, SHA);
+});
+
+test("parses the extra pinned fields needed for PR review", async () => {
+	const exec: ExecFn = async () => ({
+		code: 0,
+		stdout: JSON.stringify({
+			number: 3,
+			url: "https://github.com/o/r/pull/3",
+			title: "x",
+			state: "OPEN",
+			baseRefName: "main",
+			headRefOid: SHA,
+			baseRefOid: "b".repeat(40),
+		}),
+		stderr: "",
+	});
+	const target = await getPullRequestReviewTarget(exec, "/repo", 3);
+	assert.deepEqual(target, {
+		number: 3,
+		url: "https://github.com/o/r/pull/3",
+		title: "x",
+		state: "OPEN",
+		baseRef: "main",
+		headOid: SHA,
+		baseOid: "b".repeat(40),
+	});
 });
 
 test("builds allowedMethods from squash and rebase only, ignoring merge commit capability", async () => {

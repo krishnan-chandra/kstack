@@ -39,6 +39,30 @@ describe("parseArgs", () => {
 		assert.ok(r.ok);
 		assert.equal(r.args.base, "main");
 	});
+	it("parses --pr with positional intent", () => {
+		const r = parseArgs(`--pr 42 Add safe archival`);
+		assert.ok(r.ok);
+		assert.equal(r.args.pr, 42);
+		assert.equal(r.args.intent, "Add safe archival");
+	});
+	it("supports --pr=value form", () => {
+		const r = parseArgs("--pr=42");
+		assert.ok(r.ok);
+		assert.equal(r.args.pr, 42);
+	});
+	it("rejects non-numeric, negative, and zero --pr values", () => {
+		assert.ok(!parseArgs("--pr abc").ok);
+		assert.ok(!parseArgs("--pr 0").ok);
+		assert.ok(!parseArgs("--pr -5").ok);
+		assert.ok(!parseArgs("--pr 3.14").ok);
+		assert.ok(!parseArgs("--pr=").ok);
+		assert.ok(!parseArgs("--pr").ok);
+	});
+	it("rejects combining --pr and --base", () => {
+		const r = parseArgs("--pr 42 --base main Intent");
+		assert.ok(!r.ok);
+		assert.match(r.error, /mutually exclusive/);
+	});
 	it("rejects unknown flags", () => {
 		assert.ok(!parseArgs("--verbose").ok);
 	});
@@ -49,10 +73,12 @@ describe("parseArgs", () => {
 });
 
 describe("getArgumentCompletions", () => {
-	it("offers --base at the start", () => {
+	it("offers flags at the start", () => {
 		const expected = [
 			{ value: "--base", label: "--base" },
 			{ value: "--base=", label: "--base=" },
+			{ value: "--pr", label: "--pr" },
+			{ value: "--pr=", label: "--pr=" },
 		];
 		assert.deepEqual(getArgumentCompletions(""), expected);
 		assert.deepEqual(getArgumentCompletions("--"), expected);
@@ -62,13 +88,21 @@ describe("getArgumentCompletions", () => {
 			{ value: "--base", label: "--base" },
 			{ value: "--base=", label: "--base=" },
 		]);
+		assert.deepEqual(getArgumentCompletions("--p"), [
+			{ value: "--pr", label: "--pr" },
+			{ value: "--pr=", label: "--pr=" },
+		]);
 		assert.equal(getArgumentCompletions("--x"), null);
 	});
-	it("does not complete the free-form --base value", () => {
+	it("does not complete the free-form --base or --pr value", () => {
 		assert.equal(getArgumentCompletions("--base "), null);
 		assert.equal(getArgumentCompletions("--base main"), null);
 		assert.equal(getArgumentCompletions("--base="), null);
 		assert.equal(getArgumentCompletions("--base=main"), null);
+		assert.equal(getArgumentCompletions("--pr "), null);
+		assert.equal(getArgumentCompletions("--pr 42"), null);
+		assert.equal(getArgumentCompletions("--pr="), null);
+		assert.equal(getArgumentCompletions("--pr=42"), null);
 	});
 	it("stops offering flags once the positional intent has started", () => {
 		assert.equal(getArgumentCompletions("Add safe archival --"), null);
