@@ -64,7 +64,7 @@ interface ActiveRun {
 	disposed: boolean;
 }
 
-interface AgentPaneHost {
+export interface AgentPaneHost {
 	startRun(options: AgentPaneRunOptions): AgentPaneRun;
 	resetSession(): void;
 }

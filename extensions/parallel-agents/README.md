@@ -19,6 +19,8 @@ Transcript text and labels are sanitized and width-bounded. Each child keeps at 
 
 Children run with extensions, skills, prompt templates, and context files disabled. Read-only tasks receive `read`, `grep`, `find`, and `ls`. Arena workspace tasks additionally receive `write`, `edit`, and `bash`; callers must pre-create a separate candidate worktree or directory for each writer.
 
+A writable task runs with the user's full permissions. Its `cwd` is a working directory, not a sandbox boundary. The tool rejects assigned directories whose canonical root paths overlap, but it does not inspect their contents for symlinks or prevent a child from creating symlinks.
+
 Prompts are passed over stdin. Each child has a 10-minute idle timeout, a 30-minute absolute runtime limit, a 48 KiB final-output cap, and an 8 KiB stderr cap. Tool cancellation and session shutdown terminate active child process groups. Independent child failures remain in the ordered result instead of discarding sibling output.
 
 The tool does not synthesize results or apply changes. The invoking skill owns comparison, selection, grafting, edits, and verification.
