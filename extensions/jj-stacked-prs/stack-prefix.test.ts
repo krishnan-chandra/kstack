@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildNavigationComment } from "./github.ts";
 import { landStackThroughPullRequest } from "./land.ts";
-import { commit, fakeGithub, fakeJj, landed, openPrs, ui } from "./test-fixtures.ts";
+import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
 
 describe("stack-prefix landing", () => {
 	it("lands the complete prefix through a selected stacked PR", async () => {
@@ -26,10 +26,11 @@ describe("stack-prefix landing", () => {
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github,
+				acquirePublicationLock: permissiveLock(),
 				landPr: async ({ prNumber }) => {
 					calls.push(prNumber);
 					return {

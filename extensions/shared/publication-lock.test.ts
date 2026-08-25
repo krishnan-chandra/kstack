@@ -60,7 +60,7 @@ describe("shared publication lock", () => {
 			[],
 		);
 
-		result.lock.release();
+		assert.deepEqual(result.lock.release(), { ok: true });
 		assert.deepEqual(readdirSync(locksDir), []);
 	});
 
@@ -195,13 +195,38 @@ describe("shared publication lock", () => {
 		second.lock.release();
 	});
 
-	it("makes release idempotent", () => {
+	it("reports success when the lock file is already missing", () => {
 		const locksDir = tempLocksDir();
 		const result = acquirePublicationLock({ repositoryPath: "/repo", locksDir, pid: 100 });
 		assert.equal(result.ok, true);
 		if (!result.ok) return;
-		result.lock.release();
-		result.lock.release();
+		unlinkSync(lockFile(locksDir));
+		assert.deepEqual(result.lock.release(), { ok: true });
+	});
+
+	it("reports an unlink failure after retrying once", () => {
+		const locksDir = tempLocksDir();
+		let releaseAttempts = 0;
+		const result = acquirePublicationLock({
+			repositoryPath: "/repo",
+			locksDir,
+			pid: 100,
+			unlink: (path) => {
+				if (String(path).endsWith(".json")) {
+					releaseAttempts++;
+					throw new Error("permission denied");
+				}
+				unlinkSync(path);
+			},
+		});
+		assert.equal(result.ok, true);
+		if (!result.ok) return;
+		const path = lockFile(locksDir);
+		assert.deepEqual(result.lock.release(), {
+			ok: false,
+			error: `Could not remove publication lock ${path}: permission denied`,
+		});
+		assert.equal(releaseAttempts, 2);
 	});
 
 	it("creates the lock directory recursively", () => {
@@ -224,9 +249,11 @@ describe("shared publication lock", () => {
 
 	it("serializes linked worktrees through their canonical common Git directory", async () => {
 		const locksDir = tempLocksDir();
-		const exec: ExecFn = async (command, args) => {
+		const requestedCwds: string[] = [];
+		const exec: ExecFn = async (command, args, options) => {
 			assert.equal(command, "git");
 			assert.deepEqual(args, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+			requestedCwds.push(options.cwd);
 			return { code: 0, stdout: "/repo/.git\n", stderr: "" };
 		};
 		const first = await acquireRepositoryPublicationLock(exec, "/repo", {
@@ -241,6 +268,7 @@ describe("shared publication lock", () => {
 		});
 		assert.equal(second.ok, false);
 		assert.equal(second.ok ? "" : second.kind, "busy");
+		assert.deepEqual(requestedCwds, ["/repo", "/worktrees/task"]);
 		if (first.ok) first.lock.release();
 	});
 });

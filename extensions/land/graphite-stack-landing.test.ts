@@ -130,7 +130,15 @@ describe("Graphite stack landing", () => {
 				},
 				now: () => 0,
 				sleep: async () => {},
-				acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+				acquireLock: () => ({
+					ok: true,
+					lock: {
+						release: () => {
+							released = true;
+							return { ok: true };
+						},
+					},
+				}),
 				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => ({
 					merged: true,
@@ -202,7 +210,7 @@ describe("Graphite stack landing", () => {
 				confirmMerge: async () => true,
 				now: () => 0,
 				sleep: async () => {},
-				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
 				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => ({
 					merged: true,
@@ -406,7 +414,7 @@ describe("Graphite stack landing", () => {
 				confirmMerge: async () => true,
 				now: () => 0,
 				sleep: async () => {},
-				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
 				realpath: (path) => path,
 				waitForMerge: async () => ({
 					merged: true,
@@ -434,7 +442,7 @@ describe("Graphite stack landing", () => {
 				confirmMerge: async () => true,
 				now: () => 0,
 				sleep: async () => {},
-				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
 				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => ({
 					merged: number === 11,
@@ -477,7 +485,7 @@ describe("Graphite stack landing", () => {
 				confirmMerge: async () => true,
 				now: () => 0,
 				sleep: async () => {},
-				acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
 				realpath: (path) => path,
 				waitForMerge: async (_exec, _cwd, number) => {
 					if (number === 12) throw new Error("GitHub unavailable");
@@ -522,7 +530,15 @@ describe("Graphite stack landing", () => {
 				confirmMerge: async () => true,
 				now: () => 0,
 				sleep: async () => {},
-				acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+				acquireLock: () => ({
+					ok: true,
+					lock: {
+						release: () => {
+							released = true;
+							return { ok: true };
+						},
+					},
+				}),
 				realpath: (path) => path,
 			},
 		);

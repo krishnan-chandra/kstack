@@ -128,7 +128,15 @@ describe("Graphite stack delivery", () => {
 		if (!planned.ok) return;
 		let released = false;
 		const result = await submitGraphiteStack(planned.plan, exec, {
-			acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+			acquireLock: () => ({
+				ok: true,
+				lock: {
+					release: () => {
+						released = true;
+						return { ok: true };
+					},
+				},
+			}),
 			realpath: (path) => path,
 		});
 		assert.equal(result.status, "completed");
@@ -178,7 +186,7 @@ describe("Graphite stack delivery", () => {
 		assert.equal(planned.ok, true);
 		if (!planned.ok) return;
 		const result = await submitGraphiteStack(planned.plan, exec, {
-			acquireLock: () => ({ ok: true, lock: { release: () => {} } }),
+			acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
 			realpath: (path) => path,
 		});
 		assert.equal(result.status, "partial");

@@ -4,7 +4,8 @@ import type { BoundaryValue } from "../shared/validation.ts";
 import { realpathSync } from "node:fs";
 import type { LandResult } from "../land/types.ts";
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
-import { acquirePublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
+import type { ExecFn } from "../shared/git-exec.ts";
+import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import {
 	buildNavigationComment,
 	createGitHubAdapter,
@@ -215,15 +216,19 @@ async function publishStackWithAuthorization(
 		if (deps.signal?.aborted) return { status: "cancelled" };
 		if (!confirmed) return { status: "declined", planId: planned.plan.planId };
 	}
-	const repoPath = canonicalize(options.cwd, deps.realpath);
-	const tryLock = deps.acquirePublicationLock ?? ((path: string) => acquirePublicationLock({ repositoryPath: path }));
-	let lockAttempt: LockAttempt;
-	try {
-		lockAttempt = tryLock(repoPath);
-	} catch (error) {
-		return { status: "failed", error: `Unable to acquire publication lock: ${errorMessage(error)}` };
-	}
+	const injectedAcquireLock = deps.acquirePublicationLock;
+	const acquireLock = injectedAcquireLock
+		? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
+		: undefined;
+	const lockAttempt = await acquireRepositoryPublicationLock(execFromRunner(deps.run), options.cwd, {
+		acquireLock,
+		realpath: deps.realpath,
+		signal: deps.signal,
+	});
 	if (!lockAttempt.ok) {
+		if (lockAttempt.kind === "failed") {
+			return { status: "failed", error: `Unable to acquire publication lock: ${lockAttempt.error}` };
+		}
 		const detail = lockAttempt.holder ? ` (pid ${lockAttempt.holder.pid}, since ${lockAttempt.holder.startedAt})` : "";
 		return {
 			status: "blocked",
@@ -244,7 +249,13 @@ async function publishStackWithAuthorization(
 		deps.ui.setStatus("jj-stack: publishing");
 		return await applyPublication(fresh.plan, options, deps);
 	} finally {
-		lockAttempt.lock.release();
+		const released = lockAttempt.lock.release();
+		if (!released.ok) {
+			deps.ui.notify(
+				`Publication lock cleanup failed: ${released.error}. Remove the lock file manually if later publications block.`,
+				"warning",
+			);
+		}
 	}
 }
 
@@ -969,6 +980,20 @@ function mutationFailure(
 	}
 	if (mutationCompleted) return { status: "partial", operationId, blockers: [], error: errorMessage(error) };
 	return { status: "failed", error: errorMessage(error), operationId };
+}
+
+function execFromRunner(run: ProcessRunner): ExecFn {
+	return async (command, args, options) => {
+		const result = await run([command, ...args], {
+			cwd: options.cwd,
+			timeoutMs: options.timeout,
+			signal: options.signal,
+		});
+		if (result.kind === "ok" || result.kind === "nonzero") {
+			return { code: result.code, stdout: result.stdout, stderr: result.stderr };
+		}
+		throw new Error(result.message);
+	};
 }
 
 function canonicalize(path: string, realpath?: (value: string) => string): string {

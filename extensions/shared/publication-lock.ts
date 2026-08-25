@@ -16,7 +16,7 @@ import { getAgentDir } from "./kstack-config.ts";
 const DEFAULT_CORRUPT_STALE_AFTER_MS = 60 * 60 * 1000;
 
 interface PublicationLock {
-	release(): void;
+	release(): { ok: true } | { ok: false; error: string };
 }
 
 export type LockAttempt =
@@ -30,6 +30,7 @@ interface LockDeps {
 	isPidAlive?: (pid: number) => boolean;
 	now?: () => Date;
 	staleAfterMs?: number;
+	unlink?: typeof unlinkSync;
 }
 
 interface RepositoryPublicationLockDeps {
@@ -116,7 +117,11 @@ function inspectExisting(lockPath: string, repositoryPath: string): ExistingLock
 	}
 }
 
-function tryAtomicCreate(lockPath: string, payload: OwnerPayload): PublicationLock | undefined {
+function tryAtomicCreate(
+	lockPath: string,
+	payload: OwnerPayload,
+	unlink: typeof unlinkSync = unlinkSync,
+): PublicationLock | undefined {
 	const candidatePath = `${lockPath}.${payload.pid}.${payload.ownerToken}.candidate`;
 	try {
 		writeFileSync(candidatePath, JSON.stringify(payload), { flag: "wx", mode: 0o600 });
@@ -129,10 +134,21 @@ function tryAtomicCreate(lockPath: string, payload: OwnerPayload): PublicationLo
 		return {
 			release() {
 				const existing = inspectExisting(lockPath, payload.repositoryPath);
-				if (existing.kind !== "valid" || existing.owner.ownerToken !== payload.ownerToken) return;
+				if (existing.kind !== "valid" || existing.owner.ownerToken !== payload.ownerToken) return { ok: true };
 				try {
-					unlinkSync(lockPath);
-				} catch {}
+					unlink(lockPath);
+					return { ok: true };
+				} catch (firstError: unknown) {
+					if (errorCode(firstError) === "ENOENT") return { ok: true };
+				}
+				try {
+					unlink(lockPath);
+					return { ok: true };
+				} catch (secondError: unknown) {
+					if (errorCode(secondError) === "ENOENT") return { ok: true };
+					const message = secondError instanceof Error ? secondError.message : String(secondError);
+					return { ok: false, error: `Could not remove publication lock ${lockPath}: ${message}` };
+				}
 			},
 		};
 	} finally {
@@ -160,8 +176,8 @@ function isReclaimable(
 	return false;
 }
 
-function retryCreate(lockPath: string, payload: OwnerPayload): LockAttempt {
-	const lock = tryAtomicCreate(lockPath, payload);
+function retryCreate(lockPath: string, payload: OwnerPayload, unlink?: typeof unlinkSync): LockAttempt {
+	const lock = tryAtomicCreate(lockPath, payload, unlink);
 	return lock ? { ok: true, lock } : { ok: false, holder: undefined };
 }
 
@@ -172,6 +188,7 @@ export function acquirePublicationLock(deps: LockDeps): LockAttempt {
 	const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive;
 	const corruptStaleAfterMs = deps.staleAfterMs ?? DEFAULT_CORRUPT_STALE_AFTER_MS;
 	const repositoryPath = deps.repositoryPath;
+	const unlink = deps.unlink ?? unlinkSync;
 	const acquiredAt = now();
 
 	mkdirSync(locksDir, { recursive: true, mode: 0o700 });
@@ -183,11 +200,11 @@ export function acquirePublicationLock(deps: LockDeps): LockAttempt {
 		repositoryPath,
 		ownerToken: randomUUID(),
 	};
-	const lock = tryAtomicCreate(lockPath, payload);
+	const lock = tryAtomicCreate(lockPath, payload, unlink);
 	if (lock) return { ok: true, lock };
 
 	const first = inspectExisting(lockPath, repositoryPath);
-	if (first.kind === "missing") return retryCreate(lockPath, payload);
+	if (first.kind === "missing") return retryCreate(lockPath, payload, unlink);
 	if (!isReclaimable(first, isPidAlive, acquiredAt.getTime(), corruptStaleAfterMs)) return blocked(first);
 
 	// Only one process may decide that an existing lock is stale and remove it.
@@ -195,19 +212,19 @@ export function acquirePublicationLock(deps: LockDeps): LockAttempt {
 	// once the publication lock disappears, but stale cleanup may need manual help.
 	const reaperPath = `${lockPath}.reaper`;
 	const reaperPayload: OwnerPayload = { ...payload, repositoryPath: `${repositoryPath}#reaper` };
-	const reaper = tryAtomicCreate(reaperPath, reaperPayload);
+	const reaper = tryAtomicCreate(reaperPath, reaperPayload, unlink);
 	if (!reaper) return blocked(first);
 
 	try {
 		const current = inspectExisting(lockPath, repositoryPath);
-		if (current.kind === "missing") return retryCreate(lockPath, payload);
+		if (current.kind === "missing") return retryCreate(lockPath, payload, unlink);
 		if (!isReclaimable(current, isPidAlive, acquiredAt.getTime(), corruptStaleAfterMs)) return blocked(current);
 		try {
 			unlinkSync(lockPath);
 		} catch {
 			return blocked(current);
 		}
-		const retry = tryAtomicCreate(lockPath, payload);
+		const retry = tryAtomicCreate(lockPath, payload, unlink);
 		return retry ? { ok: true, lock: retry } : blocked(current);
 	} finally {
 		reaper.release();

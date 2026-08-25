@@ -146,7 +146,14 @@ export function openPrs(): OpenPullRequest[] {
 
 /** A no-op lock that always succeeds and never touches the filesystem. */
 export function permissiveLock(): (repositoryPath: string) => LockAttempt {
-	return () => ({ ok: true, lock: { release() {} } });
+	return () => ({
+		ok: true,
+		lock: {
+			release() {
+				return { ok: true };
+			},
+		},
+	});
 }
 
 export function landed(prNumber: number, sha: string): LandResult {

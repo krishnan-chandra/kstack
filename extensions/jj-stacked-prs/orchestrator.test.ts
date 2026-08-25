@@ -65,7 +65,7 @@ describe("inspect and plan", () => {
 	it("inspects an injected stack that is independent of this repository's trunk", async () => {
 		const model = await inspectStack(
 			{ cwd: "/repo", top: "feat2" },
-			{ run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }), ui: ui(), jj: fakeJj() },
+			{ run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }), ui: ui(), jj: fakeJj() },
 		);
 		assert.equal(model.trunk.commitId, "trunk");
 		assert.equal(model.top, "feat2");
@@ -103,7 +103,7 @@ describe("inspect and plan", () => {
 	it("blocks a truncated publication plan", async () => {
 		const planned = await planStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", maxStack: 1 },
-			{ run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }), ui: ui(), jj: fakeJj() },
+			{ run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }), ui: ui(), jj: fakeJj() },
 		);
 		assert.equal(planned.status, "blocked");
 		if (planned.status === "blocked") assert.ok(planned.blockers.some((blocker) => blocker.code === "truncated"));
@@ -118,7 +118,12 @@ describe("publishStack", () => {
 			(
 				await publishStack(
 					{ cwd: "/repo", top: "feat2", remote: "origin" },
-					{ run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }), ui: ui({ hasUI: false }), jj, github },
+					{
+						run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+						ui: ui({ hasUI: false }),
+						jj,
+						github,
+					},
 				)
 			).status,
 			"blocked",
@@ -128,7 +133,7 @@ describe("publishStack", () => {
 				await publishStack(
 					{ cwd: "/repo", top: "feat2", remote: "origin" },
 					{
-						run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+						run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 						ui: ui({ confirm: false }),
 						jj,
 						github,
@@ -146,7 +151,7 @@ describe("publishStack", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin", ready: true },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
 				github: fakeGithub({
@@ -166,7 +171,7 @@ describe("publishStack", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: {
 					...ui({ hasUI: false }),
 					confirm: async () => {
@@ -195,7 +200,7 @@ describe("publishStack", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
 				github: fakeGithub(),
@@ -203,7 +208,12 @@ describe("publishStack", () => {
 					events.push("acquire");
 					return {
 						ok: true,
-						lock: { release: () => events.push("release") },
+						lock: {
+							release: () => {
+								events.push("release");
+								return { ok: true };
+							},
+						},
 					};
 				},
 			},
@@ -234,7 +244,7 @@ describe("publishStack", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
 				github,
@@ -283,7 +293,7 @@ describe("publishStack", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
 				github: fakeGithub({
@@ -317,7 +327,7 @@ describe("publishStack", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
 				github: fakeGithub({
@@ -358,7 +368,7 @@ describe("publishStack", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
 				github: fakeGithub({
@@ -415,7 +425,7 @@ describe("publishStack", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj({
 					listRemoteBookmarks: async () => [
@@ -436,7 +446,7 @@ describe("publishStack", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: {
 					...ui(),
 					confirm: async () => {
@@ -459,7 +469,7 @@ describe("publishStack", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
 				github: fakeGithub({
@@ -483,7 +493,7 @@ describe("publishStack", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
 				github: fakeGithub({
@@ -512,7 +522,7 @@ describe("publishStack", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github,
@@ -532,7 +542,7 @@ describe("publishStack", () => {
 		const cancelled = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: {
 					...ui(),
 					confirm: async () => {
@@ -556,7 +566,7 @@ describe("publishStack", () => {
 		const indeterminate = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
 				github,
@@ -582,7 +592,7 @@ describe("publishStack", () => {
 		const planned = await planStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj({
 					listRemoteBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
@@ -607,7 +617,7 @@ describe("publication lock", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
 				github,
@@ -632,7 +642,7 @@ describe("publication lock", () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
 				github: fakeGithub(),
@@ -643,9 +653,62 @@ describe("publication lock", () => {
 		);
 		assert.deepEqual(result, {
 			status: "failed",
-			error: "Unable to acquire publication lock: permission denied",
+			error: "Unable to acquire publication lock: Could not acquire the repository publication lock: permission denied",
 		});
 		assert.deepEqual(jj.calls, []);
+	});
+
+	it("keys the lock by the canonical common Git directory", async () => {
+		let lockKey: string | undefined;
+		const result = await publishStackFromTool(
+			{ cwd: "/workspaces/task", top: "feat2", remote: "origin" },
+			{
+				run: async (argv, options) => {
+					assert.deepEqual(argv, ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+					assert.equal(options.cwd, "/workspaces/task");
+					assert.equal(options.timeoutMs, 8_000);
+					return { kind: "ok", code: 0, stdout: "/repo/.git\n", stderr: "" };
+				},
+				ui: ui({ hasUI: false }),
+				jj: fakeJj(),
+				github: fakeGithub(),
+				realpath: (path) => `/canonical${path}`,
+				acquirePublicationLock: (repositoryPath) => {
+					lockKey = repositoryPath;
+					return { ok: true, lock: { release: () => ({ ok: true }) } };
+				},
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.equal(lockKey, "/canonical/repo/.git");
+	});
+
+	it("warns when lock cleanup fails", async () => {
+		const notifications: Array<{ message: string; level: string | undefined }> = [];
+		const result = await publishStackFromTool(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: {
+					...ui({ hasUI: false }),
+					notify: (message, level) => notifications.push({ message, level }),
+				},
+				jj: fakeJj(),
+				github: fakeGithub(),
+				acquirePublicationLock: () => ({
+					ok: true,
+					lock: { release: () => ({ ok: false, error: "permission denied" }) },
+				}),
+			},
+		);
+		assert.equal(result.status, "completed");
+		assert.deepEqual(notifications, [
+			{
+				message:
+					"Publication lock cleanup failed: permission denied. Remove the lock file manually if later publications block.",
+				level: "warning",
+			},
+		]);
 	});
 
 	it("releases the lock on success and on publication failure", async () => {
@@ -654,7 +717,7 @@ describe("publication lock", () => {
 		const successResult = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
 				github: fakeGithub(),
@@ -663,6 +726,7 @@ describe("publication lock", () => {
 					lock: {
 						release() {
 							released = true;
+							return { ok: true };
 						},
 					},
 				}),
@@ -676,7 +740,7 @@ describe("publication lock", () => {
 		const failureResult = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj: fakeJj({
 					pushBookmark: async () => {
@@ -689,6 +753,7 @@ describe("publication lock", () => {
 					lock: {
 						release() {
 							releasedOnFailure = true;
+							return { ok: true };
 						},
 					},
 				}),
@@ -706,7 +771,7 @@ describe("navigation comment reconciliation concurrency", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat6", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(6),
 				github: fakeGithub({
@@ -764,7 +829,7 @@ describe("navigation comment reconciliation concurrency", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat4", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(4),
 				github,
@@ -788,7 +853,7 @@ describe("navigation comment reconciliation concurrency", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat3", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(3),
 				github: fakeGithub({
@@ -840,7 +905,7 @@ describe("navigation comment reconciliation concurrency", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(2),
 				github: fakeGithub({
@@ -872,7 +937,7 @@ describe("navigation comment reconciliation concurrency", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(2),
 				github: fakeGithub({
@@ -917,7 +982,7 @@ describe("navigation comment reconciliation concurrency", () => {
 		const result = await publishStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(2),
 				github,
@@ -941,7 +1006,7 @@ describe("sync and advance", () => {
 		const jj = fakeJj();
 		const result = await syncStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
-			{ run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }), ui: ui(), jj, github: fakeGithub() },
+			{ run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }), ui: ui(), jj, github: fakeGithub() },
 		);
 		assert.equal(result.status, "completed");
 		assert.deepEqual(jj.calls, ["fetch", "rebase"]);
@@ -961,7 +1026,7 @@ describe("sync and advance", () => {
 		};
 		const result = await syncStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
-			{ run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }), ui: ui(), jj, github: fakeGithub() },
+			{ run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }), ui: ui(), jj, github: fakeGithub() },
 		);
 		assert.equal(result.status, "partial");
 		assert.deepEqual(jj.calls, ["fetch"]);
@@ -975,7 +1040,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1004,7 +1069,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1033,7 +1098,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1062,7 +1127,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1094,7 +1159,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin", trunk: "main@origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1130,7 +1195,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat2", top: "feat3", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1169,7 +1234,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat2", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1201,7 +1266,7 @@ describe("sync and advance", () => {
 		const result = await advanceStack(
 			{ cwd: "/repo", merged: "feat1", top: "feat1", remote: "origin" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1234,7 +1299,7 @@ describe("requestPublicationFromInput", () => {
 		const result = await requestPublicationFromInput(
 			{ repositoryPath: "/repo", topBookmark: "feat2", remote: "origin", signal: request.signal },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
 				github: fakeGithub(),
@@ -1249,7 +1314,7 @@ describe("requestPublicationFromInput", () => {
 		const result = await requestPublicationFromInput(
 			{ repositoryPath: "/repo" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
 				github: fakeGithub(),
@@ -1270,7 +1335,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github,
@@ -1313,7 +1378,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github,
@@ -1365,7 +1430,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
@@ -1407,7 +1472,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
@@ -1431,7 +1496,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
@@ -1464,7 +1529,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
@@ -1494,7 +1559,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
@@ -1533,7 +1598,7 @@ describe("landStack", () => {
 		const result = await landStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: {
 					...ui({ hasUI: false }),
 					confirm: async () => {
@@ -1557,7 +1622,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
@@ -1595,7 +1660,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
@@ -1621,7 +1686,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({
@@ -1648,7 +1713,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
@@ -1674,7 +1739,7 @@ describe("landStack", () => {
 		const result = await landStack(
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
 				github: fakeGithub({

@@ -19,7 +19,15 @@ function scripted(responses: Record<string, { code?: number; stdout?: string; st
 function publicationDeps(onRelease: () => void = () => {}) {
 	return {
 		realpath: (path: string) => path,
-		acquireLock: () => ({ ok: true as const, lock: { release: onRelease } }),
+		acquireLock: () => ({
+			ok: true as const,
+			lock: {
+				release: () => {
+					onRelease();
+					return { ok: true as const };
+				},
+			},
+		}),
 	};
 }
 
@@ -128,7 +136,15 @@ describe("GraphiteBackend", () => {
 		});
 		const result = await new GraphiteBackend(exec, {
 			realpath: (path) => path,
-			acquireLock: () => ({ ok: true, lock: { release: () => (released = true) } }),
+			acquireLock: () => ({
+				ok: true,
+				lock: {
+					release: () => {
+						released = true;
+						return { ok: true };
+					},
+				},
+			}),
 		}).publishRecordedChanges("/repo", "kstack/fix", { existingOnly: true });
 		assert.deepEqual(result, { ok: true });
 		assert.equal(released, true);
