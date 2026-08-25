@@ -58,10 +58,10 @@ then retry `/land` after CI settles. Do not rebase or republish unless the PR
 head or base changed. If autopilot pushes a new head, Land pins that newly
 verified SHA before confirmation.
 
-If you omit `--method`, Land asks you to select one of the repository's enabled
-merge methods (squash or rebase only — merge commits are never allowed by
-kstack policy). `/kstack --route land` uses the same rule: omit `--method` to
-keep that chooser.
+If you omit `--method`, Land uses the repository's only enabled merge method
+without another selection or merge-confirmation prompt. When both squash and
+rebase are enabled, Land asks you to choose and then confirm. Merge commits are
+never allowed by kstack policy. `/kstack --route land` follows the same rules.
 
 ### Per-repository merge method config
 
@@ -79,9 +79,11 @@ repository and skip both the method-selection and confirmation prompts:
 }
 ```
 
-Precedence: `--method` CLI flag > per-repo config > interactive prompt. When the
-method comes from config (not CLI), the confirmation prompt is also skipped.
-Only `"squash"` and `"rebase"` are valid; unknown or invalid values are silently
+Precedence: `--method` CLI flag > per-repo config > the repository's only
+enabled method > interactive prompt. When the method comes from config (not
+CLI), the confirmation prompt is also skipped. A CLI or configured method that
+the repository has disabled is blocked before readiness work or mutation. Only
+`"squash"` and `"rebase"` are valid; unknown or invalid values are silently
 ignored. This configuration applies only to standalone and jj-frontier GitHub
 merges, not native Graphite stack landing.
 
@@ -122,9 +124,10 @@ request uses the same stack-prefix discovery as `/land`.
 
 Trusted in-process callers such as `/jj-stack land` may pass a capability from
 `issueLandConfirmation()` after they have already obtained consent for that
-exact PR. Only that minted object skips Land's interactive merge confirmation.
-A boolean or reconstructed payload is ignored. Land still revalidates the PR,
-pins the exact head, and passes `--match-head-commit`.
+exact PR. A boolean or reconstructed payload is ignored. Land also skips the
+interactive merge confirmation for a configured method or a repository's only
+enabled method. Every path still revalidates the PR, pins the exact head, and
+passes `--match-head-commit`.
 
 Trusted stack callers may pass a separate pr-autopilot confirmation, so each
 readiness pass runs without additional prompts. A plain `/land`, and any caller
