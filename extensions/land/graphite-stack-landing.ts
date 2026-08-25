@@ -493,7 +493,7 @@ export async function requestGraphiteStackLanding(
 				status: allMerged ? "landed" : "partially-landed",
 				frontiers,
 				autopilotRan: true,
-				remainingBookmarks: [],
+				remainingRefs: [],
 				completedMutations,
 				warnings,
 				blockers,

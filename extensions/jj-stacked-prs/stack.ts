@@ -215,7 +215,7 @@ export function detectBlockers(input: {
 			blockers.push({
 				code: "multiple-bookmarks",
 				message: `${label} carries multiple bookmarks (${commit.bookmarks.join(", ")}); one PR boundary per change is expected.`,
-				bookmark: commit.bookmarks[0],
+				ref: commit.bookmarks[0],
 			});
 		}
 	}
@@ -223,7 +223,7 @@ export function detectBlockers(input: {
 		blockers.push({
 			code: "ambiguous-local-bookmark",
 			message: `Bookmarks point to more than one commit: ${[...duplicateBookmarks].sort().join(", ")}.`,
-			bookmark: [...duplicateBookmarks].sort()[0],
+			ref: [...duplicateBookmarks].sort()[0],
 		});
 	}
 	if (commits.length > 0) {

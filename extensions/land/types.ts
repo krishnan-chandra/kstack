@@ -34,7 +34,7 @@ export interface LandResult {
 	frontiers: FrontierResult[];
 	autopilotRan: boolean;
 	autopilotStatus?: AutopilotResult["status"];
-	remainingBookmarks: string[];
+	remainingRefs: string[];
 	completedMutations: string[];
 	/** Non-fatal problems that occurred after the primary outcome was established. */
 	warnings?: string[];

@@ -2,6 +2,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
 import { isMergeMethod } from "../shared/github.ts";
+import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
 import {
 	createGitHubAdapter,
 	findKstackComment,
@@ -12,15 +13,7 @@ import {
 import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
 import { applyAdvance, inspectStack, type OrchestratorDeps, publishStackFromTool } from "./orchestrator.ts";
 import { renderLandConfirmation } from "./render.ts";
-import type {
-	InspectModel,
-	StackBlocker,
-	StackLandFrontier,
-	StackLandOutcome,
-	StackMergeMethod,
-	StackPrefixLandOutcome,
-	StackReadinessMode,
-} from "./types.ts";
+import type { InspectModel, StackBlocker, StackMergeMethod, StackReadinessMode } from "./types.ts";
 
 interface LandStackOptions {
 	cwd: string;
@@ -105,7 +98,7 @@ export async function landStackThroughPullRequest(
 				blockers: [
 					{
 						code: "ambiguous-local-bookmark",
-						bookmark: options.headBookmark,
+						ref: options.headBookmark,
 						message: `PR #${options.prNumber} belongs to a kstack prefix, but its head bookmark is not available locally.`,
 					},
 				],
@@ -266,7 +259,7 @@ async function mapStackPullRequests(
 					{
 						code: "ambiguous-local-bookmark",
 						message: `Bookmark ${JSON.stringify(slice.bookmark)} is not present on the inspected stack.`,
-						bookmark: slice.bookmark,
+						ref: slice.bookmark,
 					},
 				],
 			};
@@ -279,7 +272,7 @@ async function mapStackPullRequests(
 					{
 						code: "ambiguous-pr",
 						message: `Multiple open PRs use bookmark ${JSON.stringify(slice.bookmark)}.`,
-						bookmark: slice.bookmark,
+						ref: slice.bookmark,
 					},
 				],
 			};
@@ -293,7 +286,7 @@ async function mapStackPullRequests(
 						{
 							code: "head-mismatch",
 							message: `PR #${pr.number} head ${pr.headCommitId} does not match local bookmark ${JSON.stringify(slice.bookmark)} at ${local.commitId}.`,
-							bookmark: slice.bookmark,
+							ref: slice.bookmark,
 						},
 					],
 				};
@@ -306,7 +299,7 @@ async function mapStackPullRequests(
 						{
 							code: "base-chain-mismatch",
 							message: `PR #${pr.number} base ${JSON.stringify(pr.baseRef)} is not ${JSON.stringify(expectedBase)}.`,
-							bookmark: slice.bookmark,
+							ref: slice.bookmark,
 						},
 					],
 				};
@@ -331,7 +324,7 @@ async function mapStackPullRequests(
 					{
 						code: "publish-required",
 						message: `No pull request exists for bookmark ${JSON.stringify(slice.bookmark)}. Publish the stack before landing.`,
-						bookmark: slice.bookmark,
+						ref: slice.bookmark,
 					},
 				],
 			};
@@ -343,7 +336,7 @@ async function mapStackPullRequests(
 					{
 						code: "ambiguous-pr-history",
 						message: `Multiple pull requests in repository history use bookmark ${JSON.stringify(slice.bookmark)}.`,
-						bookmark: slice.bookmark,
+						ref: slice.bookmark,
 					},
 				],
 			};
@@ -368,7 +361,7 @@ async function mapStackPullRequests(
 					{
 						code: "out-of-order-merge",
 						message: `PR #${pr.number} for ${JSON.stringify(slice.bookmark)} is merged before its stack predecessors.`,
-						bookmark: slice.bookmark,
+						ref: slice.bookmark,
 					},
 				],
 			};
@@ -379,7 +372,7 @@ async function mapStackPullRequests(
 				{
 					code: "ambiguous-pr",
 					message: `Could not resolve an open or already-merged PR for bookmark ${JSON.stringify(slice.bookmark)}.`,
-					bookmark: slice.bookmark,
+					ref: slice.bookmark,
 				},
 			],
 		};
@@ -462,13 +455,13 @@ async function runLandLoop(
 	const completedMutations: string[] = [];
 	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
-	let remainingBookmarks: string[] = [];
+	let remainingRefs: string[] = [];
 	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, completedMutations);
 	let preparedFirstIteration = true;
 
 	const progress = () => ({
 		frontiers: [...frontiers],
-		remainingBookmarks,
+		remainingRefs,
 		completedMutations: [...completedMutations],
 		warnings: [...warnings],
 		recoveryOperationIds: [...recoveryOperationIds],
@@ -485,10 +478,10 @@ async function runLandLoop(
 				? prepared
 				: { status: "partial", error: prepared.blockers.map((blocker) => blocker.message).join(" "), ...progress() };
 		}
-		remainingBookmarks = prepared.mapped.map((slice) => slice.bookmark);
+		remainingRefs = prepared.mapped.map((slice) => slice.bookmark);
 		const current = prepared.mapped[0];
 		const frontier: StackLandFrontier = {
-			bookmark: current.bookmark,
+			ref: current.bookmark,
 			prNumber: current.prNumber,
 			url: current.url,
 			expectedHeadSha: current.headCommitId,
@@ -612,7 +605,7 @@ async function runLandLoop(
 			const onTrunk = await jj.isAncestor(options.cwd, mergeCommitOid, trunk, deps.signal);
 			if (!onTrunk) {
 				frontiers.push(frontier);
-				remainingBookmarks = remainingBookmarks.slice(1);
+				remainingRefs = remainingRefs.slice(1);
 				return {
 					status: "partial",
 					error: `Merge commit ${mergeCommitOid} for PR #${current.prNumber} is not an ancestor of the refreshed trunk.`,
@@ -633,7 +626,7 @@ async function runLandLoop(
 			return { status: "partial", error: errorMessage(error), ...progress() };
 		}
 
-		const remainder = remainingBookmarks.slice(1);
+		const remainder = remainingRefs.slice(1);
 		if (remainder.length > 0) {
 			deps.ui.setStatus("jj-stack: republishing remainder");
 			const published = await publishStackFromTool(
@@ -648,7 +641,7 @@ async function runLandLoop(
 			);
 			if (published.status !== "completed") {
 				frontiers.push(frontier);
-				remainingBookmarks = remainder;
+				remainingRefs = remainder;
 				if (published.status === "indeterminate") {
 					return {
 						status: "indeterminate",
@@ -667,7 +660,7 @@ async function runLandLoop(
 			}
 			completedMutations.push(
 				...published.completedActions.map((action) => {
-					if (action.kind === "push-bookmark") return `Pushed ${action.bookmark}`;
+					if (action.kind === "push-bookmark") return `Pushed ${action.ref}`;
 					if (action.kind === "repair-pr-base") return `Repaired PR #${action.prNumber} base → ${action.targetBase}`;
 					if (action.kind === "mark-pr-ready") return `Marked PR #${action.prNumber} ready`;
 					return `Publication ${action.kind}`;
@@ -696,7 +689,7 @@ async function runLandLoop(
 		}
 
 		frontiers.push(frontier);
-		remainingBookmarks = remainder;
+		remainingRefs = remainder;
 		if (remainder.length === 0) {
 			await settleWorkingCopyOnTrunk(options, deps, jj, settlement, refreshedTrunkCommitId, completedMutations);
 			return { status: "completed", ...progress() };

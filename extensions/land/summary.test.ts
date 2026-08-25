@@ -8,7 +8,7 @@ function result(status: LandResult["status"], frontiers: FrontierResult[] = []):
 		status,
 		frontiers,
 		autopilotRan: false,
-		remainingBookmarks: [],
+		remainingRefs: [],
 		completedMutations: [],
 		blockers: [],
 	};

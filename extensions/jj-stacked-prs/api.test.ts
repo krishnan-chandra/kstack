@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { StackPublishOutcome } from "../shared/stack/outcome.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	claimJjStackCapabilities,
@@ -16,9 +17,8 @@ import {
 	requestStackLanding,
 	requestStackPublication,
 } from "./api.ts";
-import type { StackPublicationOutcome } from "./types.ts";
 
-const outcome: StackPublicationOutcome = { status: "declined" };
+const outcome: StackPublishOutcome = { status: "declined" };
 
 describe("jj-stack request channels", () => {
 	it("claims capabilities synchronously and reports an unloaded extension", async () => {

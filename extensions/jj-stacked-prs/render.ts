@@ -1,5 +1,6 @@
 /** Bounded tables and confirmation summaries. */
 
+import type { StackLandFrontier, StackLandOutcome, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { shortenId } from "./stack.ts";
 import {
 	CHANGE_ID_DISPLAY_CHARS,
@@ -7,10 +8,7 @@ import {
 	type InspectModel,
 	PLAN_ID_DISPLAY_CHARS,
 	type PublicationPlan,
-	type StackLandFrontier,
-	type StackLandOutcome,
 	type StackMergeMethod,
-	type StackPublicationOutcome,
 	type StackReadinessMode,
 	TOOL_CONTENT_MAX_BYTES,
 	TOOL_CONTENT_MAX_LINES,
@@ -126,7 +124,7 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 				[
 					`Stack landing stopped: ${outcome.error}`,
 					...outcome.frontiers.map(renderFrontierLine),
-					...(outcome.remainingBookmarks.length > 0 ? [`Remaining: ${outcome.remainingBookmarks.join(", ")}`] : []),
+					...(outcome.remainingRefs.length > 0 ? [`Remaining: ${outcome.remainingRefs.join(", ")}`] : []),
 					...(outcome.recoveryOperationIds.length > 0
 						? [`Recovery: jj op restore ${outcome.recoveryOperationIds.at(-1)}`]
 						: []),
@@ -188,7 +186,7 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 }
 
 function renderFrontierLine(frontier: StackLandFrontier): string {
-	return `- #${frontier.prNumber} ${frontier.bookmark} ${frontier.state}`;
+	return `- #${frontier.prNumber} ${frontier.ref} ${frontier.state}`;
 }
 
 export function renderConfirmation(plan: PublicationPlan): { ok: true; body: string } | { ok: false; reason: string } {
@@ -203,14 +201,16 @@ export function renderConfirmation(plan: PublicationPlan): { ok: true; body: str
 	return { ok: true, body };
 }
 
-export function renderOutcome(outcome: StackPublicationOutcome): string {
+export function renderOutcome(outcome: StackPublishOutcome): string {
 	switch (outcome.status) {
 		case "completed":
 			return boundText(
 				[
-					`Published ${outcome.publication.pullRequests.length} PR(s) on ${outcome.publication.remote}.`,
+					outcome.publication.remote
+						? `Published ${outcome.publication.pullRequests.length} PR(s) on ${outcome.publication.remote}.`
+						: `Published ${outcome.publication.pullRequests.length} PR(s).`,
 					...outcome.publication.pullRequests.map(
-						(pr) => `#${pr.prNumber} ${pr.bookmark} → ${pr.baseBookmark ?? "trunk"} ${pr.url}`,
+						(pr) => `#${pr.prNumber} ${pr.ref} → ${pr.baseRef ?? "trunk"} ${pr.url}`,
 					),
 					...(outcome.commentErrors?.length
 						? ["", "Navigation comment errors:", ...outcome.commentErrors.map((error) => `- ${error}`)]

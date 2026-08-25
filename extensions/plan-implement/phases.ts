@@ -7,6 +7,7 @@ import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
+import type { StackPublishOutcome } from "../shared/stack/outcome.ts";
 import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
 import { runAgent } from "./agent-runner.ts";
@@ -14,7 +15,6 @@ import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
 import type { PlanPipelineDashboard } from "./live-dashboard.ts";
-import type { StackDeliveryOutcome } from "./stack-delivery.ts";
 import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
@@ -38,7 +38,7 @@ export interface PhaseEffects {
 		prNumber: number,
 		cwd: string,
 	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
-	requestStackPublication?(cwd: string): Promise<{ handled: false } | { handled: true; outcome: StackDeliveryOutcome }>;
+	requestStackPublication?(cwd: string): Promise<{ handled: false } | { handled: true; outcome: StackPublishOutcome }>;
 	dashboard?: PlanPipelineDashboard;
 }
 
@@ -71,7 +71,7 @@ export function phaseErrorText(result: AgentRunResult): string {
 	return result.output;
 }
 
-function describeStackPublication(outcome: StackDeliveryOutcome): string {
+function describeStackPublication(outcome: StackPublishOutcome): string {
 	switch (outcome.status) {
 		case "completed":
 			return `Published ${outcome.publication.pullRequests.length} stacked PR(s).`;
@@ -80,17 +80,17 @@ function describeStackPublication(outcome: StackDeliveryOutcome): string {
 		case "busy":
 			return outcome.message;
 		case "blocked":
-			return `Stacked publication blocked: ${outcome.message}`;
+			return `Stacked publication blocked: ${outcome.blockers.map((blocker) => blocker.message).join("; ")}`;
 		case "stale":
-			return outcome.message;
+			return "The stack publication plan changed after confirmation.";
 		case "partial":
-			return `Stacked publication was partial: ${outcome.message}`;
+			return `Stacked publication was partial: ${outcome.failedAction.error}`;
 		case "cancelled":
 			return "Stacked publication was cancelled; the metadata publisher was not launched.";
 		case "indeterminate":
-			return `Stacked publication is indeterminate: ${outcome.message}`;
+			return `Stacked publication is indeterminate: ${outcome.inFlight.error}`;
 		case "failed":
-			return `Stacked publication failed: ${outcome.message}`;
+			return `Stacked publication failed: ${outcome.error}`;
 		default: {
 			const _exhaustive: never = outcome;
 			return _exhaustive;

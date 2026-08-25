@@ -72,7 +72,7 @@ export type StackBlocker =
 				| "publish-required"
 				| "land-unavailable";
 			message: string;
-			bookmark?: string;
+			ref?: string;
 	  }
 	| {
 			code: "truncated" | "missing-remote" | "ambiguous-remote" | "non-github-remote" | "publication-locked";
@@ -158,71 +158,6 @@ export interface InspectModel {
 	blockers: readonly StackBlocker[];
 }
 
-export interface PublishedPullRequest {
-	bookmark: string;
-	baseBookmark: string | null;
-	changeIds: readonly string[];
-	prNumber: number;
-	url: string;
-	draft: boolean;
-}
-
-interface StackPublicationMap {
-	repository: GitHubRepository;
-	remote: string;
-	topBookmark: string;
-	pullRequests: readonly PublishedPullRequest[];
-}
-
-export type CompletedPublicationAction =
-	| { kind: "push-bookmark"; bookmark: string }
-	| { kind: "create-draft-pr"; bookmark: string; prNumber: number; url: string }
-	| { kind: "repair-pr-base"; bookmark: string; prNumber: number; targetBase: string }
-	| { kind: "create-nav-comment"; prNumber: number }
-	| { kind: "update-nav-comment"; prNumber: number }
-	| { kind: "mark-pr-ready"; bookmark: string; prNumber: number };
-
-export type FailedPublicationAction = {
-	kind: CorePublicationAction["kind"] | "nav-comment" | "mark-pr-ready";
-	bookmark?: string;
-	prNumber?: number;
-	error: string;
-};
-
-export type StackPublicationOutcome =
-	| {
-			status: "completed";
-			planId: string;
-			publication: StackPublicationMap;
-			completedActions: readonly CompletedPublicationAction[];
-			commentErrors?: readonly string[];
-	  }
-	| {
-			status: "declined";
-			planId?: string;
-			blockers?: readonly StackBlocker[];
-	  }
-	| { status: "busy"; message: string }
-	| { status: "blocked"; blockers: readonly StackBlocker[]; planId?: string }
-	| { status: "stale"; providedPlanId: string; recomputedPlanId: string }
-	| {
-			status: "partial";
-			planId: string;
-			completedActions: readonly CompletedPublicationAction[];
-			failedAction: FailedPublicationAction;
-			commentErrors?: readonly string[];
-			publication?: StackPublicationMap;
-	  }
-	| { status: "cancelled"; completedActions?: readonly CompletedPublicationAction[] }
-	| {
-			status: "indeterminate";
-			planId?: string;
-			inFlight: FailedPublicationAction;
-			completedActions: readonly CompletedPublicationAction[];
-			recovery?: string;
-	  }
-	| { status: "failed"; error: string; completedActions?: readonly CompletedPublicationAction[] };
-
 export type SyncOutcome =
 	| { status: "completed"; operationId: string; blockers: readonly StackBlocker[] }
 	| { status: "blocked"; blockers: readonly StackBlocker[] }
@@ -246,47 +181,6 @@ export type AdvanceOutcome =
 export type StackMergeMethod = MergeMethod;
 export type StackReadinessMode = "check" | "watch";
 
-export interface StackLandFrontier {
-	bookmark: string;
-	prNumber: number;
-	url: string;
-	expectedHeadSha: string;
-	method: StackMergeMethod;
-	state: "landed" | "queued" | "blocked" | "not-attempted" | "already-merged";
-}
-
-interface StackLandProgress {
-	frontiers: readonly StackLandFrontier[];
-	remainingBookmarks: readonly string[];
-	completedMutations: readonly string[];
-	/** Non-fatal cleanup or reconciliation problems. */
-	warnings?: readonly string[];
-	recoveryOperationIds: readonly string[];
-}
-
-export type StackLandOutcome =
-	| ({ status: "completed" } & StackLandProgress)
-	| ({ status: "partial"; error: string } & StackLandProgress)
-	| { status: "blocked"; blockers: readonly StackBlocker[] }
-	| { status: "declined" }
-	| { status: "busy"; message: string }
-	| {
-			status: "cancelled";
-			frontiers?: readonly StackLandFrontier[];
-			completedMutations?: readonly string[];
-			warnings?: readonly string[];
-			recoveryOperationIds?: readonly string[];
-	  }
-	| ({ status: "indeterminate"; inFlight: string; recovery?: string } & StackLandProgress)
-	| {
-			status: "failed";
-			error: string;
-			frontiers?: readonly StackLandFrontier[];
-			completedMutations?: readonly string[];
-			warnings?: readonly string[];
-			recoveryOperationIds?: readonly string[];
-	  };
-
 export interface JjStackCapabilities {
 	schemaVersion: typeof SCHEMA_VERSION;
 	commands: readonly ["inspect", "plan", "publish", "sync", "advance", "land"];
@@ -309,5 +203,3 @@ export interface StackLandingRequestInput {
 	readiness: StackReadinessMode;
 	method?: StackMergeMethod;
 }
-
-export type StackPrefixLandOutcome = { status: "not-stack" } | { status: "stack"; outcome: StackLandOutcome };

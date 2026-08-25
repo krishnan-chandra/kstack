@@ -169,7 +169,7 @@ export function landed(prNumber: number, sha: string): LandResult {
 			},
 		],
 		autopilotRan: true,
-		remainingBookmarks: [],
+		remainingRefs: [],
 		completedMutations: [`GitHub accepted merge/queue request for PR #${prNumber}`],
 		blockers: [],
 	};

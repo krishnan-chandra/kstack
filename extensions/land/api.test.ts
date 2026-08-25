@@ -10,7 +10,7 @@ const outcome: LandResult = {
 	status: "declined",
 	frontiers: [],
 	autopilotRan: false,
-	remainingBookmarks: [],
+	remainingRefs: [],
 	completedMutations: [],
 	blockers: ["no"],
 };
