@@ -1,14 +1,19 @@
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type AgentPaneRun, getAgentPaneHost } from "../shared/agent-pane.ts";
+import { type AgentPaneHost, type AgentPaneRun, getAgentPaneHost } from "../shared/agent-pane.ts";
 import { runParallelAgents } from "./orchestrator.ts";
 import type { ParallelAgentKind, ParallelAgentsDetails, ParallelAgentTask } from "./types.ts";
 
 const MAX_TASKS = 8;
 const DEFAULT_CONCURRENCY = 4;
+
+function isSameOrDescendant(parent: string, child: string): boolean {
+	const rel = relative(parent, child);
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 
 export function nestedUsage(results: ParallelAgentsDetails["results"]): Usage {
 	const usage = results.reduce(
@@ -39,11 +44,25 @@ const TaskSchema = Type.Object({
 	cwd: Type.Optional(Type.String({ minLength: 1 })),
 });
 
-export default function parallelAgentsExtension(pi: ExtensionAPI): void {
-	let activeController: AbortController | undefined;
-	const paneHost = getAgentPaneHost(pi);
+const ParametersSchema = Type.Object({
+	kind: Type.Union([Type.Literal("simplify"), Type.Literal("arena")]),
+	tasks: Type.Array(TaskSchema, { minItems: 1, maxItems: MAX_TASKS }),
+	maxConcurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TASKS })),
+});
 
-	pi.registerTool({
+type ParallelAgentsTool = ToolDefinition<typeof ParametersSchema, ParallelAgentsDetails>;
+
+interface ParallelAgentsRegistration {
+	paneHost: AgentPaneHost;
+	registerTool(tool: ParallelAgentsTool): void;
+	onShutdown(handler: () => void): void;
+}
+
+export function registerParallelAgents(registration: ParallelAgentsRegistration): void {
+	let activeController: AbortController | undefined;
+	const { paneHost } = registration;
+
+	registration.registerTool({
 		name: "parallel_agents",
 		label: "Parallel agents",
 		description:
@@ -52,11 +71,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use parallel_agents instead of manually spawning background Pi processes when the simplify or arena skill calls for parallel agents.",
 		],
-		parameters: Type.Object({
-			kind: Type.Union([Type.Literal("simplify"), Type.Literal("arena")]),
-			tasks: Type.Array(TaskSchema, { minItems: 1, maxItems: MAX_TASKS }),
-			maxConcurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TASKS })),
-		}),
+		parameters: ParametersSchema,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			if (activeController) throw new Error("Another parallel_agents run is already active.");
 			const kind: ParallelAgentKind = params.kind;
@@ -75,9 +90,19 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 					throw new Error("Simplify tasks must use read-only access.");
 				}
 				if (task.access === "workspace") {
-					if (task.cwd === root) throw new Error("Writable Arena tasks cannot use the current repository root.");
-					if (writableDirs.has(task.cwd))
-						throw new Error(`Writable Arena tasks must use distinct directories: ${task.cwd}`);
+					if (isSameOrDescendant(task.cwd, root)) {
+						throw new Error("Writable Arena tasks cannot use or contain the current repository root.");
+					}
+					if (isSameOrDescendant(root, task.cwd)) {
+						throw new Error("Writable Arena tasks cannot be inside the current repository root.");
+					}
+					for (const existing of writableDirs) {
+						if (isSameOrDescendant(existing, task.cwd) || isSameOrDescendant(task.cwd, existing)) {
+							throw new Error(
+								`Writable Arena tasks must use non-overlapping directories: ${task.cwd} overlaps ${existing}`,
+							);
+						}
+					}
 					writableDirs.add(task.cwd);
 				}
 			}
@@ -85,7 +110,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 				if (!ctx.hasUI) throw new Error("Writable Arena tasks require interactive confirmation.");
 				const confirmed = await ctx.ui.confirm(
 					"Run writable Arena candidates?",
-					`Each child can edit and run commands only from its assigned directory:\n${[...writableDirs].map((dir) => `- ${dir}`).join("\n")}`,
+					`Each child runs with your full user permissions. Its assigned directory is its working directory by convention, not an enforced boundary:\n${[...writableDirs].map((dir) => `- ${dir}`).join("\n")}`,
 				);
 				if (!confirmed) throw new Error("Writable Arena candidates were not approved.");
 			}
@@ -142,8 +167,16 @@ export default function parallelAgentsExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_shutdown", () => {
+	registration.onShutdown(() => {
 		activeController?.abort();
 		activeController = undefined;
+	});
+}
+
+export default function parallelAgentsExtension(pi: ExtensionAPI): void {
+	registerParallelAgents({
+		paneHost: getAgentPaneHost(pi),
+		registerTool: (tool) => pi.registerTool(tool),
+		onShutdown: (handler) => pi.on("session_shutdown", handler),
 	});
 }
