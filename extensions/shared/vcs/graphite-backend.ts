@@ -77,11 +77,6 @@ export class GraphiteBackend implements VcsBackend {
 	readonly id = "graphite" as const;
 	private readonly exec: ExecFn;
 	private readonly deps: GraphiteBackendDeps;
-	readonly descriptor = {
-		refNoun: "Graphite branch",
-		workstreamNoun: "Graphite checkout",
-		baseUpdateVerb: "restack",
-	} as const;
 	readonly isolation = {
 		plan: (cwd: string, task: string) => this.planIsolation(cwd, task),
 		create: (plan: IsolationPlan) => this.createIsolation(plan),
@@ -118,14 +113,6 @@ export class GraphiteBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec);
-	}
-
-	childGuidance(): string {
-		return [
-			"VCS backend: Graphite.",
-			"Use gt for all branch, staging, commit, restore, restack, and submit mutations. Do not run git commit, branch, rebase, or push.",
-			"Use gt add, gt create, gt modify, gt restore, and gt checkout. The parent alone publishes or lands work.",
-		].join(" ");
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {

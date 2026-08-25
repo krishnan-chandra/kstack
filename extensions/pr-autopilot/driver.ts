@@ -29,6 +29,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveRepoName } from "../shared/github.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
+import { vcsPolicy } from "../shared/vcs/policy.ts";
 import {
 	applyThreadReplies,
 	applyTriageGuardrails,
@@ -116,6 +117,7 @@ export async function runAutopilot(
 ): Promise<AutopilotResult> {
 	const { config, exec, backend, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
 	const { setPhase, notify, confirm } = handlers;
+	const policy = vcsPolicy(backend.id);
 	let usage = emptyUsage();
 	const blockedReasons: string[] = [];
 	const blockedCodes: NonNullable<AutopilotResult["blockedCodes"]> = [];
@@ -371,13 +373,9 @@ export async function runAutopilot(
 					usage,
 				};
 			}
-			const remoteBase = backend.id === "jj" ? `${state.baseRef}@origin` : `origin/${state.baseRef}`;
-			const updateDisclosure =
-				backend.descriptor.baseUpdateVerb === "restack"
-					? "A restack can rewrite this branch; Kstack proved it currently has no local descendants."
-					: "No rebase is performed.";
+			const remoteBase = policy.remoteBaseDisplay(state.baseRef);
 			notify(
-				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Applying the backend's ${backend.descriptor.baseUpdateVerb} update from ${remoteBase}. ${updateDisclosure}`,
+				`PR #${prNumber} is ${state.mergeStateStatus === "BEHIND" ? "behind" : "conflicted"} against ${state.baseRef}. Applying the backend's ${policy.baseUpdateVerb} update from ${remoteBase}. ${policy.baseUpdateDisclosure}`,
 				"info",
 			);
 			const merged = await backend.updateBase(cwd, state.baseRef);
@@ -398,7 +396,7 @@ export async function runAutopilot(
 						break;
 					}
 					notify(
-						`Applied the ${backend.descriptor.baseUpdateVerb} update from ${remoteBase} and published ${merged.headSha.slice(0, 8)}.`,
+						`Applied the ${policy.baseUpdateVerb} update from ${remoteBase} and published ${merged.headSha.slice(0, 8)}.`,
 						"info",
 					);
 					verifiedHeadSha = null;
@@ -620,9 +618,7 @@ export async function runAutopilot(
 				`Push fixes to PR #${prNumber}?`,
 				`Cycle ${cycle + 1} fixer (${selected.label}) completed.\n` +
 					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then publishing ${rewriteScope?.affectedRefs.join(", ") ?? state.headRef}.\n` +
-					(backend.descriptor.baseUpdateVerb === "restack"
-						? "Graphite may rewrite the selected branch; Kstack rechecks that it has no descendants immediately before recording. It will not merge the PR or change merge settings."
-						: "The autopilot will NOT rebase, restack, merge the PR, or touch merge settings."),
+					policy.fixPublicationDisclosure,
 			);
 			if (!confirmed) {
 				notify("Push not confirmed. Stopping.", "info");

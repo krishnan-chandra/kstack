@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { createVcsBackend } from "./factory.ts";
-import { vcsChildGuidance } from "./guidance.ts";
 import { filesetPath, JjBackend } from "./jj-backend.ts";
 
 interface Step {
@@ -330,11 +329,5 @@ describe("configured VCS child policy", () => {
 		const exec = scriptedExec([]);
 		assert.equal(createVcsBackend("git", exec).id, "git");
 		assert.equal(createVcsBackend("jj", exec).id, "jj");
-	});
-
-	it("injects mutually exclusive mutation guidance", () => {
-		assert.match(vcsChildGuidance("git"), /Do not run jj commands/);
-		assert.match(vcsChildGuidance("jj"), /Do not run git status, add, commit/);
-		assert.match(vcsChildGuidance("jj"), /task bookmark/);
 	});
 });

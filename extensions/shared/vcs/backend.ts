@@ -27,13 +27,6 @@ export interface WorkstreamSnapshot {
 	readonly token: string;
 }
 
-/* exported: VCS backend contract */
-export interface VcsDescriptor {
-	readonly refNoun: string;
-	readonly workstreamNoun: string;
-	readonly baseUpdateVerb: string;
-}
-
 export type MergeBaseResult =
 	| { kind: "clean"; headSha: string }
 	| { kind: "already-current" }
@@ -61,7 +54,6 @@ export interface ParentOwnedPublication {
 
 export interface VcsBackend {
 	readonly id: VcsBackendId;
-	readonly descriptor: VcsDescriptor;
 	readonly isolation?: IsolationBackend;
 	readonly rewriteScope?: RewriteScopeGuard;
 	readonly parentOwnedPublication?: ParentOwnedPublication;
@@ -82,5 +74,4 @@ export interface VcsBackend {
 	publishRecordedChanges(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult>;
 	fetchRemoteHead(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>>;
 	updateBase(cwd: string, baseRef: string): Promise<MergeBaseResult>;
-	childGuidance(): string;
 }
