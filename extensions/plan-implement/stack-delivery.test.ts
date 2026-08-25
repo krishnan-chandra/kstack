@@ -29,7 +29,7 @@ describe("stack delivery adapter factory", () => {
 		const adapter = createStackDeliveryAdapter("graphite", { exec, jjPolicy: "unused" });
 		assert.deepEqual(await adapter?.publish("/repo", undefined, async () => true), {
 			status: "failed",
-			message: "Graphite stack manifest path is unavailable.",
+			error: "Graphite stack manifest path is unavailable.",
 		});
 	});
 });

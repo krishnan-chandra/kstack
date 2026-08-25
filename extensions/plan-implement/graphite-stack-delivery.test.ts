@@ -140,7 +140,7 @@ describe("Graphite stack delivery", () => {
 			realpath: (path) => path,
 		});
 		assert.equal(result.status, "completed");
-		assert.equal(result.status === "completed" ? result.pullRequests[0].prNumber : undefined, 12);
+		assert.equal(result.status === "completed" ? result.publication.pullRequests[0].prNumber : undefined, 12);
 		assert.equal(
 			base.calls.filter((call) => call === "gt --no-interactive --no-ai submit --stack --draft --no-edit").length,
 			1,
@@ -190,6 +190,6 @@ describe("Graphite stack delivery", () => {
 			realpath: (path) => path,
 		});
 		assert.equal(result.status, "partial");
-		assert.equal(result.status === "partial" ? result.pullRequests.length : 0, 1);
+		assert.equal(result.status === "partial" ? result.publication?.pullRequests.length : 0, 1);
 	});
 });

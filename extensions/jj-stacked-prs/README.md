@@ -106,9 +106,10 @@ create PRs, repair bases, or update navigation comments.
   no matching local bookmark and navigation metadata does not identify missing
   stack predecessors.
 
-Completed outcomes return a base-to-top PR map. Other outcomes are
-`declined`, `busy`, `blocked`, `stale`, `partial`, `cancelled`,
-`indeterminate`, or `failed`.
+Completed outcomes return a base-to-top PR map using the shared stack
+vocabulary in [`extensions/shared/stack/`](../shared/stack/README.md)
+(`ref`, `topRef`, `baseRef`). Other outcomes are `declined`, `busy`,
+`blocked`, `stale`, `partial`, `cancelled`, `indeterminate`, or `failed`.
 
 ## Limits
 

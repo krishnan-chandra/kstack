@@ -1,8 +1,9 @@
 /** Backend-neutral seam for stack delivery orchestration. */
 
 import { readFileSync } from "node:fs";
-import type { StackPublicationOutcome as JjPublicationOutcome, JjStackCapabilities } from "../jj-stacked-prs/types.ts";
+import type { JjStackCapabilities } from "../jj-stacked-prs/types.ts";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
+import type { StackBlocker, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import type { VcsBackendId } from "../shared/vcs/config.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -16,31 +17,9 @@ import {
 
 type StackDeliveryBackendId = Extract<VcsBackendId, "jj" | "graphite">;
 
-interface StackPublicationPullRequest {
-	ref: string;
-	baseRef: string | null;
-	headSha?: string;
-	prNumber: number;
-	url: string;
-	draft: boolean;
+function graphiteBlocker(message: string): StackBlocker {
+	return { code: "graphite-publish", message };
 }
-
-export interface StackPublicationMap {
-	backend: StackDeliveryBackendId;
-	topRef: string;
-	pullRequests: readonly StackPublicationPullRequest[];
-}
-
-export type StackDeliveryOutcome =
-	| { status: "completed"; publication: StackPublicationMap }
-	| { status: "declined" }
-	| { status: "busy"; message: string }
-	| { status: "blocked"; message: string }
-	| { status: "stale"; message: string }
-	| { status: "partial"; message: string; publication?: StackPublicationMap }
-	| { status: "cancelled" }
-	| { status: "indeterminate"; message: string }
-	| { status: "failed"; message: string };
 
 interface StackPreflight {
 	workspaceRoot: string;
@@ -56,54 +35,14 @@ interface StackDeliveryAdapter {
 		cwd: string,
 		manifestPath: string | undefined,
 		confirm: (title: string, body: string) => Promise<boolean>,
-	): Promise<StackDeliveryOutcome>;
+	): Promise<StackPublishOutcome>;
 }
 
 interface StackAdapterDeps {
 	exec: ExecFn;
 	jjPolicy: string;
 	requestJjCapabilities?(): Promise<{ handled: false } | { handled: true; outcome: JjStackCapabilities }>;
-	requestJjPublication?(cwd: string): Promise<{ handled: false } | { handled: true; outcome: JjPublicationOutcome }>;
-}
-
-function mapJjOutcome(outcome: JjPublicationOutcome): StackDeliveryOutcome {
-	switch (outcome.status) {
-		case "completed":
-			return {
-				status: "completed",
-				publication: {
-					backend: "jj",
-					topRef: outcome.publication.topBookmark,
-					pullRequests: outcome.publication.pullRequests.map((pr) => ({
-						ref: pr.bookmark,
-						baseRef: pr.baseBookmark,
-						prNumber: pr.prNumber,
-						url: pr.url,
-						draft: pr.draft,
-					})),
-				},
-			};
-		case "declined":
-			return { status: "declined" };
-		case "busy":
-			return { status: "busy", message: outcome.message };
-		case "blocked":
-			return { status: "blocked", message: outcome.blockers.map((item) => item.message).join("; ") };
-		case "stale":
-			return { status: "stale", message: "The jj publication plan changed after confirmation." };
-		case "partial":
-			return { status: "partial", message: outcome.failedAction.error };
-		case "cancelled":
-			return { status: "cancelled" };
-		case "indeterminate":
-			return { status: "indeterminate", message: outcome.inFlight.error };
-		case "failed":
-			return { status: "failed", message: outcome.error };
-		default: {
-			const exhaustive: never = outcome;
-			return exhaustive;
-		}
-	}
+	requestJjPublication?(cwd: string): Promise<{ handled: false } | { handled: true; outcome: StackPublishOutcome }>;
 }
 
 class JjStackDeliveryAdapter implements StackDeliveryAdapter {
@@ -132,11 +71,11 @@ class JjStackDeliveryAdapter implements StackDeliveryAdapter {
 		return this.deps.jjPolicy;
 	}
 
-	async publish(cwd: string): Promise<StackDeliveryOutcome> {
+	async publish(cwd: string): Promise<StackPublishOutcome> {
 		const response = await this.deps.requestJjPublication?.(cwd);
 		return response?.handled
-			? mapJjOutcome(response.outcome)
-			: { status: "failed", message: "The jj-stacked-prs extension became unavailable." };
+			? response.outcome
+			: { status: "failed", error: "The jj-stacked-prs extension became unavailable." };
 	}
 }
 
@@ -192,57 +131,29 @@ class GraphiteStackDeliveryAdapter implements StackDeliveryAdapter {
 		cwd: string,
 		manifestPath: string | undefined,
 		confirm: (title: string, body: string) => Promise<boolean>,
-	): Promise<StackDeliveryOutcome> {
-		if (!manifestPath) return { status: "failed", message: "Graphite stack manifest path is unavailable." };
+	): Promise<StackPublishOutcome> {
+		if (!manifestPath) return { status: "failed", error: "Graphite stack manifest path is unavailable." };
 		let raw: string;
 		try {
 			raw = readFileSync(manifestPath, "utf8");
 		} catch (error) {
 			return {
 				status: "blocked",
-				message: `Could not read the Graphite stack manifest: ${error instanceof Error ? error.message : String(error)}`,
+				blockers: [
+					graphiteBlocker(
+						`Could not read the Graphite stack manifest: ${error instanceof Error ? error.message : String(error)}`,
+					),
+				],
 			};
 		}
 		const parsed = parseGraphiteStackManifest(raw);
-		if (!parsed.ok) return { status: "blocked", message: parsed.error };
+		if (!parsed.ok) return { status: "blocked", blockers: [graphiteBlocker(parsed.error)] };
 		const verified = await verifyGraphiteStack(cwd, parsed.manifest, this.deps.exec);
-		if (!verified.ok) return { status: "blocked", message: verified.error };
+		if (!verified.ok) return { status: "blocked", blockers: [graphiteBlocker(verified.error)] };
 		const planned = await planGraphitePublication(verified.stack, this.deps.exec);
-		if (!planned.ok) return { status: "blocked", message: planned.error };
+		if (!planned.ok) return { status: "blocked", blockers: [graphiteBlocker(planned.error)] };
 		if (!(await confirm("Publish this Graphite stack?", planned.plan.preview))) return { status: "declined" };
-		const result = await submitGraphiteStack(planned.plan, this.deps.exec);
-		switch (result.status) {
-			case "completed":
-				return {
-					status: "completed",
-					publication: {
-						backend: "graphite",
-						topRef: result.pullRequests.at(-1)?.ref ?? "",
-						pullRequests: result.pullRequests,
-					},
-				};
-			case "blocked":
-			case "busy":
-			case "failed":
-			case "indeterminate":
-				return { status: result.status, message: result.error };
-			case "stale":
-				return { status: "stale", message: "The Graphite publication plan changed after confirmation." };
-			case "partial":
-				return {
-					status: "partial",
-					message: result.error,
-					publication: {
-						backend: "graphite",
-						topRef: result.pullRequests.at(-1)?.ref ?? "",
-						pullRequests: result.pullRequests,
-					},
-				};
-			default: {
-				const exhaustive: never = result;
-				return exhaustive;
-			}
-		}
+		return submitGraphiteStack(planned.plan, this.deps.exec);
 	}
 }
 

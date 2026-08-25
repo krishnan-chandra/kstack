@@ -5,7 +5,7 @@ export function blockedLandResult(reason: string): LandResult {
 		status: "blocked",
 		frontiers: [],
 		autopilotRan: false,
-		remainingBookmarks: [],
+		remainingRefs: [],
 		completedMutations: [],
 		warnings: [],
 		blockers: [reason],

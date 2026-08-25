@@ -68,7 +68,7 @@ describe("stack-prefix landing", () => {
 		assert.equal(result.status, "stack");
 		if (result.status === "stack" && result.outcome.status === "blocked") {
 			assert.equal(result.outcome.blockers[0]?.code, "publish-required");
-			assert.equal(result.outcome.blockers[0]?.bookmark, "feat1");
+			assert.equal(result.outcome.blockers[0]?.ref, "feat1");
 			assert.match(result.outcome.blockers[0]?.message ?? "", /publish.*before landing/i);
 		} else {
 			assert.fail("expected publication-required blocker");

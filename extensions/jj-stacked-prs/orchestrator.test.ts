@@ -1640,7 +1640,7 @@ describe("landStack", () => {
 							},
 						],
 						autopilotRan: true,
-						remainingBookmarks: [],
+						remainingRefs: [],
 						completedMutations: ["GitHub accepted merge/queue request for PR #11"],
 						blockers: ["unverified"],
 					},
@@ -1723,7 +1723,7 @@ describe("landStack", () => {
 		assert.equal(result.status, "partial");
 		if (result.status === "partial") {
 			assert.match(result.error, /not an ancestor/);
-			assert.deepEqual(result.remainingBookmarks, ["feat2"]);
+			assert.deepEqual(result.remainingRefs, ["feat2"]);
 		}
 	});
 

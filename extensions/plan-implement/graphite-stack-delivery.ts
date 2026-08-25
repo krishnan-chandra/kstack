@@ -4,6 +4,7 @@ import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } fr
 import { createHash } from "node:crypto";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
+import type { StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 
 const MAX_SLICES = 50;
@@ -61,15 +62,39 @@ export interface GraphitePublicationPlan {
 	preview: string;
 }
 
-/* exported: Graphite stack-delivery contract */
-export type GraphiteStackPublishResult =
-	| { status: "completed"; planId: string; pullRequests: readonly GraphitePublishedPullRequest[] }
-	| { status: "blocked"; error: string }
-	| { status: "busy"; error: string }
-	| { status: "stale"; expectedPlanId: string; actualPlanId: string }
-	| { status: "partial"; error: string; pullRequests: readonly GraphitePublishedPullRequest[] }
-	| { status: "indeterminate"; error: string }
-	| { status: "failed"; error: string };
+function graphitePublication(pullRequests: readonly GraphitePublishedPullRequest[]): StackPublicationMap {
+	return {
+		topRef: pullRequests.at(-1)?.ref ?? "",
+		pullRequests,
+	};
+}
+
+function blockedPublish(message: string): StackPublishOutcome {
+	return { status: "blocked", blockers: [{ code: "graphite-publish", message }] };
+}
+
+function graphiteSubmitFailure(
+	planId: string,
+	message: string,
+	pullRequests: readonly GraphitePublishedPullRequest[],
+): StackPublishOutcome {
+	const error = message.trim();
+	if (pullRequests.length > 0) {
+		return {
+			status: "partial",
+			planId,
+			completedActions: [],
+			failedAction: { kind: "create-draft-pr", error },
+			publication: graphitePublication(pullRequests),
+		};
+	}
+	return {
+		status: "indeterminate",
+		planId,
+		inFlight: { kind: "create-draft-pr", error },
+		completedActions: [],
+	};
+}
 
 function isRecord(value: BoundaryValue): value is JsonObject {
 	return isObject(value) && value !== null && !Array.isArray(value);
@@ -361,20 +386,20 @@ export async function submitGraphiteStack(
 	plan: GraphitePublicationPlan,
 	exec: ExecFn,
 	deps: { acquireLock?: typeof acquirePublicationLock; realpath?: (path: string) => string } = {},
-): Promise<GraphiteStackPublishResult> {
+): Promise<StackPublishOutcome> {
 	const lock = await acquireRepositoryPublicationLock(exec, plan.repositoryRoot, deps);
 	if (!lock.ok) {
 		return lock.kind === "busy"
-			? { status: "busy", error: "Another Graphite publication or landing is active for this repository." }
+			? { status: "busy", message: "Another Graphite publication or landing is active for this repository." }
 			: { status: "failed", error: lock.error };
 	}
 	try {
 		const verified = await verifyGraphiteStack(plan.repositoryRoot, plan.manifest, exec);
-		if (!verified.ok) return { status: "blocked", error: verified.error };
+		if (!verified.ok) return blockedPublish(verified.error);
 		const current = await planGraphitePublication(verified.stack, exec);
-		if (!current.ok) return { status: "blocked", error: current.error };
+		if (!current.ok) return blockedPublish(current.error);
 		if (current.plan.planId !== plan.planId) {
-			return { status: "stale", expectedPlanId: plan.planId, actualPlanId: current.plan.planId };
+			return { status: "stale", providedPlanId: plan.planId, recomputedPlanId: current.plan.planId };
 		}
 		let submitted: ExecFnResult;
 		try {
@@ -384,30 +409,23 @@ export async function submitGraphiteStack(
 			});
 		} catch (error) {
 			const inspected = await inspectPublishedStack(exec, plan);
-			const message = `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)}`;
-			return inspected.pullRequests.length > 0
-				? {
-						status: "partial",
-						error: `${message} ${inspected.errors.join(" ")}`.trim(),
-						pullRequests: inspected.pullRequests,
-					}
-				: { status: "indeterminate", error: `${message} ${inspected.errors.join(" ")}`.trim() };
+			const message = `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)} ${inspected.errors.join(" ")}`;
+			return graphiteSubmitFailure(plan.planId, message, inspected.pullRequests);
 		}
 		const inspected = await inspectPublishedStack(exec, plan);
 		if (submitted.code !== 0) {
-			const message = `gt submit --stack returned ${diagnostic(submitted)} after publication began.`;
-			return inspected.pullRequests.length > 0
-				? {
-						status: "partial",
-						error: `${message} ${inspected.errors.join(" ")}`.trim(),
-						pullRequests: inspected.pullRequests,
-					}
-				: { status: "indeterminate", error: `${message} ${inspected.errors.join(" ")}`.trim() };
+			const message = `gt submit --stack returned ${diagnostic(submitted)} after publication began. ${inspected.errors.join(" ")}`;
+			return graphiteSubmitFailure(plan.planId, message, inspected.pullRequests);
 		}
 		if (inspected.errors.length > 0) {
-			return { status: "partial", error: inspected.errors.join(" "), pullRequests: inspected.pullRequests };
+			return graphiteSubmitFailure(plan.planId, inspected.errors.join(" "), inspected.pullRequests);
 		}
-		return { status: "completed", planId: plan.planId, pullRequests: inspected.pullRequests };
+		return {
+			status: "completed",
+			planId: plan.planId,
+			publication: graphitePublication(inspected.pullRequests),
+			completedActions: [],
+		};
 	} finally {
 		lock.lock.release();
 	}

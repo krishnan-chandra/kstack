@@ -6,6 +6,12 @@ import type { LandResult } from "../land/types.ts";
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
+import type {
+	CompletedPublicationAction,
+	FailedPublicationAction,
+	StackPublishedPullRequest,
+	StackPublishOutcome,
+} from "../shared/stack/outcome.ts";
 import {
 	buildNavigationComment,
 	createGitHubAdapter,
@@ -32,18 +38,14 @@ import { renderConfirmation } from "./render.ts";
 import { detectBlockers, inferUniqueTop, truncateStack } from "./stack.ts";
 import {
 	type AdvanceOutcome,
-	type CompletedPublicationAction,
 	DEFAULT_MAX_STACK,
-	type FailedPublicationAction,
 	type InspectModel,
 	type NavigationEntry,
 	type PublicationPlan,
-	type PublishedPullRequest,
 	SCHEMA_VERSION,
 	type StackBlocker,
 	type StackCommit,
 	type StackMergeMethod,
-	type StackPublicationOutcome,
 	type StackPublicationRequestInput,
 	type StackReadinessMode,
 	type SyncOutcome,
@@ -180,7 +182,7 @@ export async function planStack(
 	return { status: "ok", plan, model };
 }
 
-export async function publishStack(options: PublishOptions, deps: OrchestratorDeps): Promise<StackPublicationOutcome> {
+export async function publishStack(options: PublishOptions, deps: OrchestratorDeps): Promise<StackPublishOutcome> {
 	return publishStackWithAuthorization(options, deps, "interactive-confirmation");
 }
 
@@ -188,7 +190,7 @@ export async function publishStack(options: PublishOptions, deps: OrchestratorDe
 export async function publishStackFromTool(
 	options: PublishOptions,
 	deps: OrchestratorDeps,
-): Promise<StackPublicationOutcome> {
+): Promise<StackPublishOutcome> {
 	return publishStackWithAuthorization(options, deps, "model-tool");
 }
 
@@ -196,7 +198,7 @@ async function publishStackWithAuthorization(
 	options: PublishOptions,
 	deps: OrchestratorDeps,
 	authorization: "interactive-confirmation" | "model-tool",
-): Promise<StackPublicationOutcome> {
+): Promise<StackPublishOutcome> {
 	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
 		return {
 			status: "blocked",
@@ -335,7 +337,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 				{
 					code: "ambiguous-pr",
 					message: `Multiple open PRs use bookmark ${JSON.stringify(options.merged)}.`,
-					bookmark: options.merged,
+					ref: options.merged,
 				},
 			],
 		};
@@ -346,7 +348,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 				{
 					code: "ambiguous-pr",
 					message: `Could not resolve exactly one PR for merged bookmark ${JSON.stringify(options.merged)}.`,
-					bookmark: options.merged,
+					ref: options.merged,
 				},
 			],
 		};
@@ -359,7 +361,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 				{
 					code: "ambiguous-pr",
 					message: `PR #${matches[0].number} head ${matches[0].headCommitId} does not match local bookmark ${JSON.stringify(options.merged)} at ${mergedCommit?.commitId ?? "an unknown commit"}. Refusing to abandon reused or unpublished history.`,
-					bookmark: options.merged,
+					ref: options.merged,
 				},
 			],
 		};
@@ -371,7 +373,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 				{
 					code: "ambiguous-pr",
 					message: `GitHub reports PR for ${JSON.stringify(options.merged)} as ${status}, not merged.`,
-					bookmark: options.merged,
+					ref: options.merged,
 				},
 			],
 		};
@@ -441,7 +443,7 @@ export async function applyAdvance(
 export async function requestPublicationFromInput(
 	input: StackPublicationRequestInput,
 	deps: OrchestratorDeps,
-): Promise<StackPublicationOutcome> {
+): Promise<StackPublishOutcome> {
 	const cwd = canonicalize(input.repositoryPath, deps.realpath);
 	const signal =
 		deps.signal && input.signal ? AbortSignal.any([deps.signal, input.signal]) : (deps.signal ?? input.signal);
@@ -480,7 +482,7 @@ async function applyPublication(
 	plan: PublicationPlan,
 	options: PublishOptions,
 	deps: OrchestratorDeps,
-): Promise<StackPublicationOutcome> {
+): Promise<StackPublishOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createGitHubAdapter(deps.run);
 	const metadataByBookmark = new Map<string, PrMetadata>();
@@ -559,7 +561,7 @@ async function applyPublication(
 			try {
 				if (action.kind === "push-bookmark") {
 					await jj.pushBookmark(options.cwd, options.remote, action.bookmark, deps.signal);
-					completed.push({ kind: "push-bookmark", bookmark: action.bookmark });
+					completed.push({ kind: "push-bookmark", ref: action.bookmark });
 				} else if (action.kind === "create-draft-pr") {
 					const metadata = metadataByBookmark.get(action.bookmark);
 					if (!metadata) throw new Error(`No PR metadata was prepared for ${JSON.stringify(action.bookmark)}.`);
@@ -577,7 +579,7 @@ async function applyPublication(
 					published[index].draft = created.draft;
 					completed.push({
 						kind: "create-draft-pr",
-						bookmark: action.bookmark,
+						ref: action.bookmark,
 						prNumber: created.number,
 						url: created.url,
 					});
@@ -591,7 +593,7 @@ async function applyPublication(
 					});
 					completed.push({
 						kind: "repair-pr-base",
-						bookmark: action.bookmark,
+						ref: action.bookmark,
 						prNumber: action.prNumber,
 						targetBase: action.targetBase,
 					});
@@ -624,11 +626,11 @@ async function applyPublication(
 			try {
 				await github.markPrReady(plan.repository, slice.prNumber, options.cwd, deps.signal);
 				slice.draft = false;
-				completed.push({ kind: "mark-pr-ready", bookmark: slice.bookmark, prNumber: slice.prNumber });
+				completed.push({ kind: "mark-pr-ready", ref: slice.bookmark, prNumber: slice.prNumber });
 			} catch (error) {
 				const failed = {
 					kind: "mark-pr-ready" as const,
-					bookmark: slice.bookmark,
+					ref: slice.bookmark,
 					prNumber: slice.prNumber,
 					error: errorMessage(error),
 				};
@@ -677,7 +679,7 @@ async function applyPublication(
 		publication: {
 			repository: plan.repository,
 			remote: plan.remote.name,
-			topBookmark: plan.slices[plan.slices.length - 1].bookmark,
+			topRef: plan.slices[plan.slices.length - 1].bookmark,
 			pullRequests,
 		},
 		completedActions: [...completed, ...comments.completed],
@@ -918,13 +920,13 @@ function provenPullRequests(
 		url?: string;
 		draft: boolean;
 	}>,
-): PublishedPullRequest[] {
-	const prs: PublishedPullRequest[] = [];
+): StackPublishedPullRequest[] {
+	const prs: StackPublishedPullRequest[] = [];
 	for (const slice of published) {
 		if (slice.prNumber === undefined || !slice.url) return prs;
 		prs.push({
-			bookmark: slice.bookmark,
-			baseBookmark: slice.baseBookmark,
+			ref: slice.bookmark,
+			baseRef: slice.baseBookmark,
 			changeIds: slice.changeIds,
 			prNumber: slice.prNumber,
 			url: slice.url,
@@ -939,7 +941,7 @@ function toFailedAction(
 	error: BoundaryValue,
 	bookmark: string,
 ): FailedPublicationAction {
-	return { kind, bookmark, error: errorMessage(error) };
+	return { kind, ref: bookmark, error: errorMessage(error) };
 }
 
 function provisionalPrMetadata(

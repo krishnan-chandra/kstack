@@ -4,14 +4,13 @@ import { type BoundaryValue, isObject, isString, type JsonObject } from "../shar
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isMergeMethod } from "../shared/github.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import type { StackPrefixLandOutcome, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import {
 	type JjStackCapabilities,
 	MAX_NAME_CHARS,
 	MAX_REVSET_CHARS,
 	SCHEMA_VERSION,
 	type StackLandingRequestInput,
-	type StackPrefixLandOutcome,
-	type StackPublicationOutcome,
 	type StackPublicationRequestInput,
 } from "./types.ts";
 
@@ -43,7 +42,7 @@ interface LandingPayload {
 /* exported: request-channel contract */
 export interface JjStackCapabilitiesRequest extends RequestEnvelope<CapabilityPayload, JjStackCapabilities, 1> {}
 /* exported: request-channel contract */
-export interface JjStackPublicationRequest extends RequestEnvelope<PublicationPayload, StackPublicationOutcome, 1> {}
+export interface JjStackPublicationRequest extends RequestEnvelope<PublicationPayload, StackPublishOutcome, 1> {}
 /* exported: request-channel contract */
 export interface JjStackLandingRequest extends RequestEnvelope<LandingPayload, StackPrefixLandOutcome, 1> {}
 
@@ -54,7 +53,7 @@ const capabilityChannel = createRequestChannel<CapabilityPayload, JjStackCapabil
 		isObject(value) && value !== null && "schemaVersion" in value && value.schemaVersion === SCHEMA_VERSION,
 });
 
-const publicationChannel = createRequestChannel<PublicationPayload, StackPublicationOutcome, 1>({
+const publicationChannel = createRequestChannel<PublicationPayload, StackPublishOutcome, 1>({
 	event: JJ_STACK_PUBLICATION_EVENT,
 	schemaVersion: 1,
 	isPayload: (value): value is PublicationPayload => {
@@ -94,7 +93,7 @@ export function isJjStackPublicationRequest(value: BoundaryValue): value is JjSt
 
 export function claimStackPublication(
 	value: BoundaryValue,
-	run: (input: StackPublicationRequestInput, ctx: ExtensionCommandContext) => Promise<StackPublicationOutcome>,
+	run: (input: StackPublicationRequestInput, ctx: ExtensionCommandContext) => Promise<StackPublishOutcome>,
 ): boolean {
 	return publicationChannel.claim(value, ({ input, ctx }) => run(input, ctx));
 }
@@ -103,7 +102,7 @@ export function requestStackPublication(
 	pi: ExtensionAPI,
 	input: StackPublicationRequestInput,
 	ctx: ExtensionCommandContext,
-): Promise<{ handled: false } | { handled: true; outcome: StackPublicationOutcome }> {
+): Promise<{ handled: false } | { handled: true; outcome: StackPublishOutcome }> {
 	return publicationChannel.request(pi, { input, ctx });
 }
 

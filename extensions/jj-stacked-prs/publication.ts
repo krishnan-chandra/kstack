@@ -59,14 +59,14 @@ export function buildPublicationPlan(snapshot: PublicationSnapshot): Publication
 			blockers.push({
 				code: "ambiguous-local-bookmark",
 				message: `Bookmark ${JSON.stringify(slice.bookmark)} did not resolve to exactly one local target.`,
-				bookmark: slice.bookmark,
+				ref: slice.bookmark,
 			});
 		}
 		if (remoteMatches.length > 1) {
 			blockers.push({
 				code: "remote-bookmark-conflict",
 				message: `Bookmark ${JSON.stringify(slice.bookmark)} is conflicted on remote ${JSON.stringify(snapshot.remote.name)}.`,
-				bookmark: slice.bookmark,
+				ref: slice.bookmark,
 			});
 		}
 		const localCommitId = localMatches.length === 1 ? localMatches[0].commitId : null;
@@ -76,7 +76,7 @@ export function buildPublicationPlan(snapshot: PublicationSnapshot): Publication
 			blockers.push({
 				code: "ambiguous-pr",
 				message: `Multiple open PRs use bookmark ${JSON.stringify(slice.bookmark)}; refusing an ambiguous update.`,
-				bookmark: slice.bookmark,
+				ref: slice.bookmark,
 			});
 		}
 		const existingPr = matchingPrs.length === 1 ? matchingPrs[0] : undefined;

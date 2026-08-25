@@ -23,7 +23,7 @@ function singleResult(): LandResult {
 			},
 		],
 		autopilotRan: true,
-		remainingBookmarks: [],
+		remainingRefs: [],
 		completedMutations: ["single"],
 		blockers: [],
 	};
@@ -42,7 +42,7 @@ describe("routeLand", () => {
 						status: "completed",
 						frontiers: [
 							{
-								bookmark: "feat1",
+								ref: "feat1",
 								prNumber: 11,
 								url: "https://example/11",
 								expectedHeadSha: "aaa",
@@ -50,7 +50,7 @@ describe("routeLand", () => {
 								state: "landed",
 							},
 							{
-								bookmark: "feat2",
+								ref: "feat2",
 								prNumber: 12,
 								url: "https://example/12",
 								expectedHeadSha: "bbb",
@@ -58,7 +58,7 @@ describe("routeLand", () => {
 								state: "landed",
 							},
 						],
-						remainingBookmarks: [],
+						remainingRefs: [],
 						completedMutations: ["landed 11", "landed 12"],
 						recoveryOperationIds: ["op1", "op2"],
 					},
@@ -90,7 +90,7 @@ describe("routeLand", () => {
 						error: recovery,
 						frontiers: [
 							{
-								bookmark: "feat1",
+								ref: "feat1",
 								prNumber: 11,
 								url: "https://example/11",
 								expectedHeadSha: "aaa",
@@ -98,7 +98,7 @@ describe("routeLand", () => {
 								state: "blocked",
 							},
 						],
-						remainingBookmarks: ["feat1", "feat2"],
+						remainingRefs: ["feat1", "feat2"],
 						completedMutations: [],
 						recoveryOperationIds: [],
 					},

@@ -27,6 +27,7 @@
 | `slug.ts` | Extracts the short keyword slug used for session names, branches, and worktree paths. |
 | `transcript-store.ts` | Stores bounded ephemeral child transcripts for live dashboards and inspectors. |
 | `vcs/` | Owns the Git and jj mutation contract. See [`vcs/README.md`](vcs/README.md) for backend contracts, config/factory, Git and jj implementations, the shared worktree planner, preflight, and child guidance. |
+| `stack/` | Owns the cross-provider stacked-PR contract. See [`stack/README.md`](stack/README.md) for the shared outcome alphabet, open blocker codes, and the `ref` noun. |
 | `playbooks/` | Stores shared engineering principles and change-kind proof obligations. |
 
 ## Cross-extension imports

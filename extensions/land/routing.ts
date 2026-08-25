@@ -1,4 +1,4 @@
-import type { StackLandOutcome, StackPrefixLandOutcome } from "../jj-stacked-prs/types.ts";
+import type { StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
 import type { VcsBackendId } from "../shared/vcs/config.ts";
 import { isLandConfirmation } from "./confirmation.ts";
 import type { GraphiteLandingResponse } from "./graphite-stack-landing.ts";
@@ -25,7 +25,7 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 	}));
 	const completedMutations = "completedMutations" in outcome ? [...(outcome.completedMutations ?? [])] : [];
 	const warnings = "warnings" in outcome ? [...(outcome.warnings ?? [])] : [];
-	const remainingBookmarks = "remainingBookmarks" in outcome ? [...outcome.remainingBookmarks] : [];
+	const remainingRefs = "remainingRefs" in outcome ? [...outcome.remainingRefs] : [];
 	const recoveryOperationIds = "recoveryOperationIds" in outcome ? outcome.recoveryOperationIds : undefined;
 	const recoveryOperationId = recoveryOperationIds?.at(-1);
 	const autopilotRan = stackFrontiers.some((frontier) => frontier.state !== "already-merged");
@@ -35,7 +35,7 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 			status: "landed",
 			frontiers,
 			autopilotRan,
-			remainingBookmarks,
+			remainingRefs,
 			completedMutations,
 			warnings,
 			recoveryOperationId,
@@ -49,7 +49,7 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 			status: mutationAccepted ? "partially-landed" : "blocked",
 			frontiers,
 			autopilotRan,
-			remainingBookmarks,
+			remainingRefs,
 			completedMutations,
 			warnings,
 			recoveryOperationId,
@@ -69,7 +69,7 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 			status: "aborted",
 			frontiers,
 			autopilotRan,
-			remainingBookmarks,
+			remainingRefs,
 			completedMutations,
 			warnings,
 			recoveryOperationId,
@@ -80,7 +80,7 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 		status: "failed",
 		frontiers,
 		autopilotRan,
-		remainingBookmarks,
+		remainingRefs,
 		completedMutations,
 		warnings,
 		recoveryOperationId,

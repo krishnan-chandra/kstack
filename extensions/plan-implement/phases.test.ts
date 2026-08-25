@@ -252,8 +252,9 @@ describe("plan-implement phases", () => {
 				handled: true,
 				outcome: {
 					status: "completed",
+					planId: "plan",
+					completedActions: [],
 					publication: {
-						backend: "jj",
 						topRef: "feat2",
 						pullRequests: [
 							{
@@ -286,7 +287,7 @@ describe("plan-implement phases", () => {
 							status: "landed",
 							frontiers: [],
 							autopilotRan: true,
-							remainingBookmarks: [],
+							remainingRefs: [],
 							blockers: [],
 							completedMutations: ["merged"],
 						},
@@ -369,7 +370,7 @@ describe("plan-implement phases", () => {
 						status: "partially-landed",
 						frontiers: [],
 						autopilotRan: true,
-						remainingBookmarks: [],
+						remainingRefs: [],
 						blockers: ["verification pending"],
 						completedMutations: ["merge queued"],
 					},
@@ -390,7 +391,7 @@ describe("plan-implement phases", () => {
 						status: "blocked",
 						frontiers: [],
 						autopilotRan: true,
-						remainingBookmarks: [],
+						remainingRefs: [],
 						blockers: ["CI failing"],
 						completedMutations: [],
 					},

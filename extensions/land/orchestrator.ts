@@ -38,7 +38,7 @@ function empty(status: LandResult["status"], blocker: string): LandResult {
 		status,
 		frontiers: [],
 		autopilotRan: false,
-		remainingBookmarks: [],
+		remainingRefs: [],
 		completedMutations: [],
 		blockers: [blocker],
 	};
@@ -79,7 +79,7 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			frontiers: [],
 			autopilotRan: true,
 			autopilotStatus,
-			remainingBookmarks: [],
+			remainingRefs: [],
 			completedMutations: [],
 			blockers: [],
 		};
@@ -192,7 +192,7 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 				frontiers: [{ ...frontier, state: "queued" }],
 				autopilotRan: autopilotStatus !== undefined,
 				autopilotStatus,
-				remainingBookmarks: [],
+				remainingRefs: [],
 				completedMutations,
 				blockers: [
 					deps.signal.aborted ? "Verification was aborted after GitHub accepted the merge/queue request." : reason,
