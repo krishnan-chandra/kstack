@@ -222,10 +222,10 @@ See `api.ts` for the full contract and `api.test.ts` for usage examples.
 
 ## Configuration
 
-The shared `vcs.backend` setting selects `"git"` or `"jj"` and defaults to
-`"git"` when omitted. The extension reads that setting once at the adapter
-boundary, runs the corresponding preflight, and passes one backend through all
-mutation phases. Repository-local overrides are not supported.
+The shared `vcs.backend` setting selects `"git"`, `"jj"`, or `"graphite"` and
+defaults to `"git"` when omitted. The extension reads that setting once at the
+adapter boundary, runs the corresponding preflight, and passes one backend
+through all mutation phases. Repository-local overrides are not supported.
 
 Model configuration is the `"plan-implement"` section of
 `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
