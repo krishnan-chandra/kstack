@@ -23,13 +23,15 @@ export interface FrontierResult {
 export interface LandResult {
 	status: "landed" | "partially-landed" | "indeterminate" | "blocked" | "declined" | "aborted" | "failed";
 	frontiers: FrontierResult[];
-	autopilotRan: boolean;
+	/** Set only when Land itself invoked pr-autopilot. Absent for delegated stack landings. */
+	autopilotRan?: boolean;
 	autopilotStatus?: AutopilotResult["status"];
 	remainingRefs: string[];
 	completedMutations: string[];
 	/** Non-fatal problems that occurred after the primary outcome was established. */
 	warnings?: string[];
-	recoveryOperationId?: string;
+	/** Provider recovery handles, oldest first (jj op ids; ref@sha for GitHub stacks). */
+	recoveryOperationIds?: readonly string[];
 	blockers: string[];
 }
 export type { ExecFn, ExecFnResult as ExecResult } from "../shared/git-exec.ts";

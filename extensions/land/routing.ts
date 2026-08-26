@@ -31,18 +31,16 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 	const completedMutations = [...outcome.completedMutations];
 	const warnings = [...outcome.warnings];
 	const remainingRefs = [...outcome.remainingRefs];
-	const recoveryOperationId = outcome.recoveryOperationIds.at(-1);
-	const autopilotRan = outcome.frontiers.some((frontier) => frontier.state !== "already-merged");
+	const recoveryOperationIds = [...outcome.recoveryOperationIds];
 
 	if (outcome.status === "completed") {
 		return {
 			status: "landed",
 			frontiers,
-			autopilotRan,
 			remainingRefs,
 			completedMutations,
 			warnings,
-			recoveryOperationId,
+			recoveryOperationIds,
 			blockers: [],
 		};
 	}
@@ -55,11 +53,10 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 		return {
 			status,
 			frontiers,
-			autopilotRan,
 			remainingRefs,
 			completedMutations,
 			warnings,
-			recoveryOperationId,
+			recoveryOperationIds,
 			blockers: [blocker],
 		};
 	}
@@ -67,22 +64,20 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 		return {
 			status: "aborted",
 			frontiers,
-			autopilotRan,
 			remainingRefs,
 			completedMutations,
 			warnings,
-			recoveryOperationId,
+			recoveryOperationIds,
 			blockers: ["Stack landing was cancelled."],
 		};
 	}
 	return {
 		status: "failed",
 		frontiers,
-		autopilotRan,
 		remainingRefs,
 		completedMutations,
 		warnings,
-		recoveryOperationId,
+		recoveryOperationIds,
 		blockers: [outcome.error],
 	};
 }
