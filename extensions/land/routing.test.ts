@@ -53,6 +53,7 @@ describe("routeLand", () => {
 						],
 						remainingRefs: [],
 						completedMutations: ["landed 11", "landed 12"],
+						warnings: [],
 						recoveryOperationIds: ["op1", "op2"],
 					},
 				},
@@ -93,6 +94,7 @@ describe("routeLand", () => {
 						],
 						remainingRefs: ["feat1", "feat2"],
 						completedMutations: [],
+						warnings: [],
 						recoveryOperationIds: [],
 					},
 				},
@@ -116,6 +118,7 @@ describe("routeLand", () => {
 						frontiers: [],
 						remainingRefs: ["feat1"],
 						completedMutations: [],
+						warnings: [],
 						recoveryOperationIds: ["op1"],
 					},
 				},
@@ -125,6 +128,58 @@ describe("routeLand", () => {
 		assert.equal(result.status, "indeterminate");
 		assert.equal(result.blockers[0], "merge acceptance unknown");
 		assert.equal(result.recoveryOperationId, "op1");
+	});
+
+	it("preserves completed mutations from a cancelled stack outcome", async () => {
+		const result = await routeLand({
+			provider: "github",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: {
+					status: "stack",
+					outcome: {
+						status: "cancelled",
+						frontiers: [],
+						remainingRefs: ["feat2"],
+						completedMutations: ["landed #11"],
+						warnings: ["cleanup remains"],
+						recoveryOperationIds: [],
+					},
+				},
+			}),
+			runSingle: async () => singleResult(),
+		});
+		assert.equal(result.status, "aborted");
+		assert.deepEqual(result.completedMutations, ["landed #11"]);
+		assert.deepEqual(result.warnings, ["cleanup remains"]);
+	});
+
+	it("preserves progress from a failed stack outcome", async () => {
+		const result = await routeLand({
+			provider: "github",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: {
+					status: "stack",
+					outcome: {
+						status: "failed",
+						error: "lock failed",
+						frontiers: [],
+						remainingRefs: ["feat2"],
+						completedMutations: ["landed #11"],
+						warnings: ["cleanup remains"],
+						recoveryOperationIds: ["op1"],
+					},
+				},
+			}),
+			runSingle: async () => singleResult(),
+		});
+		assert.equal(result.status, "failed");
+		assert.deepEqual(result.remainingRefs, ["feat2"]);
+		assert.deepEqual(result.completedMutations, ["landed #11"]);
+		assert.deepEqual(result.warnings, ["cleanup remains"]);
+		assert.equal(result.recoveryOperationId, "op1");
+		assert.deepEqual(result.blockers, ["lock failed"]);
 	});
 
 	it("preserves single-PR behavior for Git and non-stacks", async () => {

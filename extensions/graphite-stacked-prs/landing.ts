@@ -415,6 +415,7 @@ export async function requestGraphiteStackLanding(
 					frontiers: [],
 					remainingRefs: [],
 					completedMutations: [],
+					warnings: [],
 					recoveryOperationIds: [],
 				},
 			};
@@ -429,6 +430,7 @@ export async function requestGraphiteStackLanding(
 					frontiers: [],
 					remainingRefs: [],
 					completedMutations: [],
+					warnings: [],
 					recoveryOperationIds: [],
 				},
 			};

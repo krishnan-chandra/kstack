@@ -90,9 +90,13 @@ interface StackLandProgress {
 	remainingRefs: readonly string[];
 	completedMutations: readonly string[];
 	/** Non-fatal cleanup or reconciliation problems. */
-	warnings?: readonly string[];
+	warnings: readonly string[];
 	/** Provider-defined recovery handles. jj stores `jj op` ids. */
 	recoveryOperationIds: readonly string[];
+}
+
+export function emptyStackLandProgress(): StackLandProgress {
+	return { frontiers: [], remainingRefs: [], completedMutations: [], warnings: [], recoveryOperationIds: [] };
 }
 
 export type StackLandOutcome =
@@ -101,21 +105,8 @@ export type StackLandOutcome =
 	| { status: "blocked"; blockers: readonly StackBlocker[] }
 	| { status: "declined" }
 	| { status: "busy"; message: string }
-	| {
-			status: "cancelled";
-			frontiers?: readonly StackLandFrontier[];
-			completedMutations?: readonly string[];
-			warnings?: readonly string[];
-			recoveryOperationIds?: readonly string[];
-	  }
+	| ({ status: "cancelled" } & StackLandProgress)
 	| ({ status: "indeterminate"; inFlight: string; recovery?: string } & StackLandProgress)
-	| {
-			status: "failed";
-			error: string;
-			frontiers?: readonly StackLandFrontier[];
-			completedMutations?: readonly string[];
-			warnings?: readonly string[];
-			recoveryOperationIds?: readonly string[];
-	  };
+	| ({ status: "failed"; error: string } & StackLandProgress);
 
 export type StackPrefixLandOutcome = { status: "not-stack" } | { status: "stack"; outcome: StackLandOutcome };
