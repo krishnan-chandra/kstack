@@ -34,7 +34,7 @@ synchronously on
 Pi's event bus and exposes a completion promise that resolves a structured
 `PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
 base/head SHAs), `no-changes`, `declined`, `aborted`, or `failed`. The normal
-confirmation, cancellation, and verdict path still runs; the slash command
+cancellation and verdict path still runs; the slash command
 ignores the outcome.
 
 ## How it works
@@ -45,7 +45,7 @@ ignores the outcome.
      locally. The fetch writes objects but does not update local or
      remote-tracking refs. The diff covers only the committed range
      `merge-base(baseOid, headOid)..headOid`; it excludes untracked files and
-     working-tree changes. After confirmation, `git archive` extracts the pinned
+     working-tree changes. `git archive` extracts the pinned
      head into a private temporary directory for reviewer file access. The run
      does not create, move, or reset branches, Git worktrees, or jj workspaces.
      PR trees that contain symbolic links are rejected before extraction so
@@ -61,9 +61,8 @@ ignores the outcome.
    files (`--untracked-files=all`, so new directories are expanded into their
    files; symlinks, binaries, and path escapes skipped), and commit subjects.
    The diff is never passed on a command line.
-3. Asks for the review intent (from positional arguments or an editor prefilled
-   with commit subjects) and confirms once before extracting the PR snapshot or
-   launching reviewers.
+3. Obtains the review intent (from positional arguments or an editor prefilled
+   with commit subjects) and launches reviewers immediately without confirmation prompts.
 4. Spawns 2–5 reviewers concurrently. Each is an isolated child process with a retained native session:
 
    ```
@@ -88,7 +87,7 @@ ignores the outcome.
    `CLAUDE.md`) are injected as usual — except when the changeset itself
    modifies one, in which case children run with `--no-context-files` so the
    content under review cannot become reviewer instructions (disclosed in the
-   confirmation and the verdict details).
+   verdict details).
    While a run is in flight in TUI mode, a live dashboard sits above the
    editor: one compact card per child with its label/model, state (queued,
    running, completed, failed, aborted), turn count, current tool or thinking
@@ -223,14 +222,14 @@ the `"panel-review"` section:
 | PR snapshot tracked entries | 200,000 |
 | PR snapshot tar archive | 512 MiB |
 | PR snapshot symbolic links | 0 (tree rejected before extraction) |
-| Per reviewer report into synthesis | 24 KiB |
-| Aggregate synthesis input | 96 KiB |
-| Child stderr retention | 8 KiB |
+| Per reviewer report into synthesis | 256 KiB |
+| Aggregate synthesis input | 1 MiB |
+| Child stderr retention | 64 KiB |
 | Child idle timeout | 10 min without output (SIGTERM, then SIGKILL after a 5 s grace) |
 | Child max runtime | 30 min absolute ceiling |
 | Dashboard live text preview | 240-byte rolling UTF-8 tail per child |
-| Console transcript cap | 128 KiB / 1,000 entries per child (oldest evicted with notice) |
-| Console entry text cap | 24 KiB per entry (UTF-8 safe head/tail truncation) |
+| Console transcript cap | 2 MiB / 5,000 entries per child (oldest evicted with notice) |
+| Console entry text cap | 256 KiB per entry (UTF-8 safe head/tail truncation) |
 
 PR snapshot materialization stops before archiving when the pinned tree exceeds
 the tracked-byte or entry limit. The archive and extracted tree can briefly use
@@ -255,8 +254,7 @@ Review Limitations.
 - Standard mode leaves the repository unchanged.
 - PR mode fetches objects into the local object database. It leaves the current
   working tree, refs, branches, Git worktrees, and jj workspaces unchanged. The
-  snapshot is created only after confirmation. Once created, it is removed after
-  completion, abort, or failure.
+  snapshot is created for the run and removed after completion, abort, or failure.
 
 ## Development
 
@@ -271,9 +269,9 @@ node --test extensions/panel-review/
 Manual smoke test: in a fixture repository with committed, staged, unstaged,
 untracked, and binary changes, run
 `/panel-review --base HEAD "fixture review"` and verify parallel
-progress, child argv (managed session flags, discovery flags, read-only tools), the
-confirmation names the thermo-nuclear lens, a single verdict message, no child
-session files, and an unchanged repository. For PR mode, also compare refs and
+progress, child argv (managed session flags, discovery flags, read-only tools),
+a single verdict message, no child session files, and an unchanged repository.
+For PR mode, also compare refs and
 `git worktree list --porcelain` before and after the run. Confirm that reviewers
 read the pinned head rather than dirty files from the current checkout.
 

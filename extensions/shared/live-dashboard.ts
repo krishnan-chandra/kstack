@@ -11,6 +11,7 @@ interface DashboardRow {
 	modelColor: "accent" | "dim";
 	status: DashboardStatus;
 	turns: number;
+	cost?: number;
 	activity?: string;
 	preview?: string;
 	error?: string;
@@ -33,6 +34,11 @@ export const STATUS_ICON = {
 export function rowElapsedSeconds(row: DashboardRow, now: number): number | undefined {
 	if (row.startedAt === undefined) return undefined;
 	return Math.max(0, Math.round(((row.finishedAt ?? now) - row.startedAt) / 1000));
+}
+
+/** Format a cost in dollars with enough precision to stay informative when tiny. */
+export function formatCost(cost: number): string {
+	return `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`;
 }
 
 export class LiveDashboardStore {
@@ -83,7 +89,7 @@ export class LiveDashboardStore {
 		this.emit();
 	}
 
-	progress(id: string, info: { turns: number; activity?: string; preview?: string }): void {
+	progress(id: string, info: { turns: number; cost?: number; activity?: string; preview?: string }): void {
 		const row = this.find(id);
 		if (!row || (row.status !== "running" && row.status !== "queued")) return;
 		if (row.status === "queued") {
@@ -91,21 +97,41 @@ export class LiveDashboardStore {
 			row.startedAt = this.now();
 		}
 		row.turns = info.turns;
+		if (info.cost !== undefined) row.cost = info.cost;
 		row.activity = info.activity;
 		if (info.preview !== undefined) row.preview = info.preview;
 		this.emit();
 	}
 
-	complete(id: string, result: { status: "completed" | "failed" | "aborted"; error?: string; turns?: number }): void {
+	complete(
+		id: string,
+		result: { status: "completed" | "failed" | "aborted"; error?: string; turns?: number; cost?: number },
+	): void {
 		const row = this.find(id);
 		if (!row) return;
 		row.status = result.status;
 		row.finishedAt = this.now();
 		if (result.turns !== undefined) row.turns = result.turns;
+		if (result.cost !== undefined) row.cost = result.cost;
 		if (result.status === "failed" && result.error) row.error = result.error;
 		row.activity = undefined;
 		if (this.clearPreviewOnComplete) row.preview = undefined;
 		this.emit();
+	}
+
+	updateCost(id: string, cost: number): void {
+		const row = this.find(id);
+		if (!row) return;
+		row.cost = cost;
+		this.emit();
+	}
+
+	totalCost(): number {
+		let total = 0;
+		for (const row of this.rows) {
+			if (row.cost !== undefined) total += row.cost;
+		}
+		return total;
 	}
 
 	tick(): void {
@@ -144,9 +170,11 @@ export function renderDashboard(
 	const lines: string[] = [];
 	const summary = store.summary();
 	const done = summary.completed + summary.failed + summary.aborted;
+	const totalCost = store.totalCost();
+	const costPart = totalCost > 0 ? ` · ${formatCost(totalCost)}` : "";
 	const header =
 		theme.fg("success", store.title) +
-		theme.fg("muted", ` — ${done}/${summary.total} done · ${store.elapsedSeconds()}s`) +
+		theme.fg("muted", ` — ${done}/${summary.total} done · ${store.elapsedSeconds()}s${costPart}`) +
 		theme.fg("dim", store.help);
 	lines.push(text.truncateToWidth(header, width));
 
@@ -164,6 +192,7 @@ export function renderDashboard(
 			const meta: string[] = [];
 			if (row.turns > 0) meta.push(`${row.turns}t`);
 			if (elapsed !== undefined && elapsed > 0) meta.push(`${elapsed}s`);
+			if (row.cost !== undefined && row.cost > 0) meta.push(formatCost(row.cost));
 			if (row.status === "running" && row.activity) meta.push(sanitizeDisplayText(row.activity, text));
 			if (row.status === "failed" && row.error) meta.push(sanitizeDisplayText(row.error, text));
 			if (meta.length > 0) line += theme.fg("dim", ` · ${meta.join(" · ")}`);

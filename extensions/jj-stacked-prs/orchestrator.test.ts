@@ -512,6 +512,72 @@ describe("publishStack", () => {
 		}
 	});
 
+	it("keeps an indeterminate navigation-comment write as a non-fatal publication error", async () => {
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj(),
+				github: fakeGithub({
+					createOrUpdateComment: async () => {
+						throw new GitHubError("comment acceptance unknown", "indeterminate");
+					},
+				}),
+				acquirePublicationLock: permissiveLock(),
+			},
+		);
+		assert.equal(result.status, "completed");
+		if (result.status === "completed") {
+			assert.ok(result.commentErrors?.some((error) => /acceptance unknown/.test(error)));
+			assert.equal(result.publication.pullRequests.length, 2);
+		}
+	});
+
+	it("reports a conclusive first action failure as failed", async () => {
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj({
+					pushBookmark: async () => {
+						throw new Error("push rejected");
+					},
+				}),
+				github: fakeGithub(),
+				acquirePublicationLock: permissiveLock(),
+			},
+		);
+		assert.equal(result.status, "failed");
+		assert.deepEqual(result.status === "failed" ? result.completedActions : undefined, []);
+	});
+
+	it("reports cancellation between actions as partial progress", async () => {
+		const controller = new AbortController();
+		const result = await publishStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj({
+					pushBookmark: async () => {
+						controller.abort();
+					},
+				}),
+				github: fakeGithub(),
+				signal: controller.signal,
+				acquirePublicationLock: permissiveLock(),
+			},
+		);
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") {
+			assert.deepEqual(result.completedActions, [{ kind: "push-bookmark", ref: "feat1" }]);
+			assert.equal(result.failedAction.kind, "create-draft-pr");
+			assert.match(result.failedAction.error, /cancelled/i);
+		}
+	});
+
 	it("stops later core actions and comment writes after the first conclusive failure", async () => {
 		const jj = fakeJj({
 			pushBookmark: async (_cwd, _remote, bookmark) => {
@@ -736,7 +802,7 @@ describe("publication lock", () => {
 		assert.equal(successResult.status, "completed");
 		assert.equal(released, true);
 
-		// Failure path (applyPublication throws)
+		// Conclusive first-action failure path
 		let releasedOnFailure = false;
 		const failureResult = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
@@ -760,7 +826,7 @@ describe("publication lock", () => {
 				}),
 			},
 		);
-		assert.equal(failureResult.status, "partial");
+		assert.equal(failureResult.status, "failed");
 		assert.equal(releasedOnFailure, true);
 	});
 });
@@ -1031,6 +1097,36 @@ describe("sync and advance", () => {
 		);
 		assert.equal(result.status, "partial");
 		assert.deepEqual(jj.calls, ["fetch"]);
+	});
+
+	it("does not let a concurrent abort override a conclusive sync failure", async () => {
+		const controller = new AbortController();
+		const jj = fakeJj();
+		let fetched = false;
+		const fetchRemote = jj.fetchRemote;
+		jj.fetchRemote = async (...args) => {
+			await fetchRemote(...args);
+			fetched = true;
+		};
+		jj.resolveRevset = async (_cwd, revset) => {
+			if (fetched) {
+				controller.abort();
+				throw new JjError("conclusive lookup failure");
+			}
+			return revset === "trunk()" ? "trunk" : `${revset}-id`;
+		};
+		const result = await syncStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub(),
+				signal: controller.signal,
+			},
+		);
+		assert.equal(result.status, "partial");
+		assert.match(result.status === "partial" ? result.error : "", /conclusive lookup failure/);
 	});
 
 	it("does not abandon a stack that inspection found conflicted", async () => {
@@ -1428,6 +1524,44 @@ describe("landStack", () => {
 		}
 	});
 
+	it("reports a final working-copy settlement failure as a warning", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const jj = fakeJj({
+			fetchStack: async () => stack,
+			resolveRevset: async (_cwd, revset) => (revset === "trunk()" ? "trunk" : "aaa-commit"),
+			listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+			workingCopyChangeId: async () => "wc-change",
+			workingCopyStatus: async () => ({
+				commitId: "wc-commit",
+				empty: true,
+				bookmarked: false,
+				parentCommitIds: ["aaa-commit"],
+			}),
+			rebaseWorkingCopy: async () => {
+				throw new Error("working copy moved");
+			},
+			isAncestor: async (_cwd, ancestor, descendant) => ancestor.startsWith("merge-") && descendant === "trunk",
+		});
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+			},
+		);
+		assert.equal(result.status, "completed");
+		if (result.status === "completed") {
+			assert.ok(result.warnings?.some((warning) => /working copy moved/.test(warning)));
+			assert.equal(
+				result.completedMutations.some((line) => /working copy moved/.test(line)),
+				false,
+			);
+		}
+	});
+
 	it("rebases an empty automation checkpoint bookmarked as the selected top", async () => {
 		const stack = [commit("aaa", "feat1")];
 		let statusReads = 0;
@@ -1489,8 +1623,10 @@ describe("landStack", () => {
 		);
 		assert.equal(result.status, "completed");
 		if (result.status === "completed") {
-			assert.ok(
+			assert.ok(result.warnings?.includes("Could not inspect the working copy before landing: template error"));
+			assert.equal(
 				result.completedMutations.includes("Could not inspect the working copy before landing: template error"),
+				false,
 			);
 		}
 	});

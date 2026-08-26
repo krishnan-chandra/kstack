@@ -10,7 +10,6 @@ import { makeExec } from "../shared/git-exec.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
-import { buildPanelConfirmation } from "./confirmation.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
 import { defaultGitExec, requireWorkTree, type ScopeBundle } from "./review-scope.ts";
@@ -153,22 +152,6 @@ export default function (pi: ExtensionAPI): void {
 				return { status: "no-changes" };
 			}
 			const resolution = panel.resolution;
-			const confirmed = await ctx.ui.confirm(
-				"Run panel review?",
-				buildPanelConfirmation({
-					target,
-					scope,
-					reviewers: resolution.reviewers.map((reviewer) => ({
-						label: reviewer.label,
-						model: modelCliId(reviewer),
-					})),
-					synthesisModel: resolution.synthesis.cliId,
-					timeoutMinutes: resolution.timeoutMinutes,
-					maxRuntimeMinutes: resolution.maxRuntimeMinutes,
-				}),
-			);
-			if (!confirmed) return { status: "declined" };
-			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 			const activeRunToken = lifecycle.beginRun(session);
 			if (!activeRunToken) {
 				notify("A panel review is already active. Press Ctrl+Shift+X to abort it.", "warning");

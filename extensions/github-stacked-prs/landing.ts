@@ -2,7 +2,13 @@
 
 import type { LandResult } from "../land/types.ts";
 import { commandDiagnostic, type ExecFn, runCommand } from "../shared/git-exec.ts";
-import type { GitHubGateway, GitHubRepository, MergeMethod, OpenPullRequest } from "../shared/github.ts";
+import {
+	type GitHubGateway,
+	type GitHubRepository,
+	isGitHubIndeterminate,
+	type MergeMethod,
+	type OpenPullRequest,
+} from "../shared/github.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import { STACK_SHA_RE } from "../shared/stack/manifest.ts";
 import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
@@ -647,7 +653,11 @@ async function runLandingLoop(input: {
 	try {
 		for (let index = 0; index <= input.selectedIndex; index++) {
 			const current = entries[index];
-			if (input.deps.signal?.aborted) return { status: "cancelled", ...progress() };
+			if (input.deps.signal?.aborted) {
+				return frontiers.length === 0 && completedMutations.length === 0
+					? { status: "cancelled", ...progress() }
+					: { status: "partial", error: "Landing was cancelled after earlier mutations completed.", ...progress() };
+			}
 			const expectedHeadSha = current.pr.headCommitId;
 			const frontier: StackLandFrontier = {
 				ref: current.entry.bookmark,
@@ -676,9 +686,10 @@ async function runLandingLoop(input: {
 				completedMutations.push(...landed.outcome.completedMutations);
 				if (landed.outcome.status !== "landed") {
 					frontier.state = landed.outcome.status === "partially-landed" ? "queued" : "blocked";
+					const hasEarlierProgress = frontiers.length > 0 || completedMutations.length > 0;
 					frontiers.push(frontier);
 					return {
-						status: landed.outcome.status === "failed" ? "failed" : "partial",
+						status: landed.outcome.status === "failed" && !hasEarlierProgress ? "failed" : "partial",
 						error: landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`,
 						...progress(),
 					};
@@ -735,7 +746,15 @@ async function runLandingLoop(input: {
 		}
 		return { status: "completed", ...progress() };
 	} catch (error) {
-		return frontiers.length > 0
+		if (isGitHubIndeterminate(error)) {
+			return {
+				status: "indeterminate",
+				inFlight: errorMessage(error),
+				recovery: "Inspect the frontier PR and remote stack state before retrying.",
+				...progress(),
+			};
+		}
+		return frontiers.length > 0 || completedMutations.length > 0
 			? { status: "partial", error: errorMessage(error), ...progress() }
 			: { status: "failed", error: errorMessage(error), ...progress() };
 	} finally {

@@ -6,10 +6,10 @@ export type TranscriptEntry =
 	| { kind: "text"; text: string; turn: number; at: number }
 	| { kind: "turn"; turn: number; usage: ChildUsage; at: number };
 
-const MAX_CHILD_TRANSCRIPT_BYTES = 128 * 1024;
-const MAX_CHILD_ENTRIES = 1000;
-const MAX_ENTRY_TEXT_BYTES = 24 * 1024;
-export const EVICTION_NOTICE = "… earlier transcript dropped (cap 128 KiB)";
+const MAX_CHILD_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
+const MAX_CHILD_ENTRIES = 5000;
+const MAX_ENTRY_TEXT_BYTES = 256 * 1024;
+export const EVICTION_NOTICE = "… earlier transcript dropped (cap 2 MiB)";
 
 function entryBytes(entry: TranscriptEntry): number {
 	switch (entry.kind) {

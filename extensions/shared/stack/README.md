@@ -29,6 +29,23 @@ Every stack mutation reports one of nine statuses:
 `completed`, `declined`, `busy`, `blocked`, `stale`, `partial`, `cancelled`,
 `indeterminate`, `failed`.
 
+Mutation producers apply these settlement rules:
+
+- Before any mutation completes, cancellation between actions is `cancelled`.
+- After an earlier mutation completes, cancellation between actions is
+  `partial` and identifies the next action that did not start.
+- After a mutator starts, its adapter decides whether an error proves rejection
+  or leaves acceptance uncertain. An uncertain acceptance is `indeterminate`,
+  regardless of earlier progress.
+- A conclusive first mutation failure is `failed`. A conclusive failure after
+  earlier progress is `partial`.
+- Cleanup and secondary reconciliation do not replace a proven core result.
+  Producers report those problems as `warnings` or `commentErrors`.
+
+The signal state alone does not prove remote acceptance. A producer must not
+turn every post-invocation abort into `indeterminate`; the adapter must preserve
+that evidence at the mutation seam.
+
 Publish (`StackPublishOutcome`) and land (`StackLandOutcome`) share that
 alphabet. They are separate types because the payloads differ. Publish carries
 `completedActions`, `failedAction`, and `inFlight`. Land carries `frontiers`,
