@@ -152,6 +152,10 @@ authority inside the delegated path. Repository policy, readiness, exact-head
 checks, merge submission, and remote verification remain Land-owned. The
 request is claimed synchronously, and callers await its structured `LandResult`.
 
+Land also owns `applyDelegatedFrontierSettlement`, which applies that `LandResult`
+to the attempted frontier and accumulated progress. Stack providers must use this interface rather
+than branch directly on `LandResult.status` for delegated frontiers.
+
 Cancellation combines Land's run signal, the outer stack signal, and the live
 extension-context signal. If GitHub accepts a merge or queue request before
 cancellation, Land reports a partial result instead of a clean abort.

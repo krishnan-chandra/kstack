@@ -105,7 +105,8 @@ All payloads identify the target `provider: StackProviderId`. Provider extension
 claim requests matching their provider ID and ignore other providers, preserving
 claim-once mechanics. `StackLandingCapabilities` contains only the optional
 `runAutopilot` callback used by Graphite's native landing flow. jj and GitHub
-delegate each frontier through Land's separate `kstack:land:request` interface.
+delegate each frontier through Land's separate `kstack:land:request` interface
+and use Land's `applyDelegatedFrontierSettlement` interface to apply the result.
 
 If a channel request is unclaimed (`handled: false`), the provider extension is
 not loaded and callers refuse middle-of-stack mutations.

@@ -379,6 +379,75 @@ describe("GitHub stack landing", () => {
 		assert.equal(result.status === "stack" ? result.outcome.status : "", "indeterminate");
 	});
 
+	it("uses Land's revised pin for verification, advancement, and cleanup", async () => {
+		const revisedPin = "9".repeat(40);
+		const mergeCommit = "d".repeat(40);
+		const calls: string[] = [];
+		let deletedBranch = "";
+		const baseExec = exec(true, {
+			"git fetch origin": {},
+			"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+			"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${mergeCommit}\n` },
+			[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
+		});
+		const recordingExec: ExecFn = async (command, args, options) => {
+			calls.push(`${command} ${args.join(" ")}`);
+			return baseExec(command, args, options);
+		};
+		const base = gateway();
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "watch", method: "squash" },
+			{
+				exec: recordingExec,
+				gateway: {
+					...base,
+					getMergeCommit: async () => ({
+						merged: true,
+						mergeCommitOid: mergeCommit,
+						headCommitId: revisedPin,
+						headRef: "kstack/one",
+					}),
+					getRemoteBranchSha: async (_repo, branch) => {
+						if (branch === "kstack/one") return revisedPin;
+						if (branch === "kstack/two") return two;
+						return undefined;
+					},
+					deleteRemoteBranch: async (_repo, branch) => {
+						deletedBranch = branch;
+						return "deleted";
+					},
+				},
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => ({
+					handled: true,
+					outcome: {
+						status: "landed",
+						frontiers: [
+							{
+								prNumber: 1,
+								url: "https://github.com/o/r/pull/1",
+								expectedHeadSha: revisedPin,
+								method: "squash",
+								state: "landed",
+							},
+						],
+						autopilotRan: true,
+						remainingRefs: [],
+						completedMutations: ["merged #1"],
+						blockers: [],
+					},
+				}),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.ok(result.status === "stack");
+		assert.equal(result.outcome.status, "completed");
+		assert.ok(calls.includes(`git rebase --onto refs/remotes/origin/main ${revisedPin} kstack/two --update-refs`));
+		assert.equal(deletedBranch, "kstack/one");
+	});
+
 	it("delegates the exact pinned head and blocks cleanly when Land refuses it", async () => {
 		let pinned = "";
 		const result = await requestGitHubStackLanding(
@@ -394,7 +463,15 @@ describe("GitHub stack landing", () => {
 						handled: true,
 						outcome: {
 							status: "blocked",
-							frontiers: [],
+							frontiers: [
+								{
+									prNumber: 1,
+									url: "https://github.com/o/r/pull/1",
+									expectedHeadSha: three,
+									method: "squash",
+									state: "blocked",
+								},
+							],
 							autopilotRan: true,
 							remainingRefs: [],
 							completedMutations: [],
@@ -408,6 +485,8 @@ describe("GitHub stack landing", () => {
 			},
 		);
 		assert.equal(pinned, one);
-		assert.equal(result.status === "stack" ? result.outcome.status : "", "partial");
+		assert.ok(result.status === "stack");
+		assert.ok(result.outcome.status === "partial");
+		assert.equal(result.outcome.frontiers[0]?.expectedHeadSha, three);
 	});
 });

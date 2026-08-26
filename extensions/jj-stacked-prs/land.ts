@@ -2,6 +2,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
+import { applyDelegatedFrontierSettlement } from "../land/api.ts";
 import { GitHubError, type GitHubGateway, isMergeMethod } from "../shared/github.ts";
 import {
 	emptyStackLandProgress,
@@ -468,7 +469,7 @@ async function runLandLoop(
 		}
 		remainingRefs = prepared.mapped.map((slice) => slice.bookmark);
 		const current = prepared.mapped[0];
-		const frontier: StackLandFrontier = {
+		let frontier: StackLandFrontier = {
 			ref: current.bookmark,
 			prNumber: current.prNumber,
 			url: current.url,
@@ -490,38 +491,14 @@ async function runLandLoop(
 						method,
 					})
 				: { handled: false as const };
-			if (!landed.handled) {
-				if (frontiers.length === 0 && completedMutations.length === 0) {
-					return {
-						status: "blocked",
-						blockers: [{ code: "land-unavailable", message: "The land extension is unavailable." }],
-					};
-				}
-				frontiers.push(frontier);
-				return { status: "partial", error: "The land extension is unavailable.", ...progress() };
-			}
-			const hadEarlierMutations = completedMutations.length > 0;
-			completedMutations.push(...landed.outcome.completedMutations);
-			const pinned = landed.outcome.frontiers[0]?.expectedHeadSha;
-			if (pinned) frontier.expectedHeadSha = pinned;
-			if (landed.outcome.status !== "landed") {
-				frontier.state = landed.outcome.status === "partially-landed" ? "queued" : "blocked";
-				frontiers.push(frontier);
-				const error = landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`;
-				const hasMutations = hadEarlierMutations || landed.outcome.completedMutations.length > 0;
-				if (landed.outcome.status === "indeterminate") {
-					return { status: "indeterminate", inFlight: error, ...progress() };
-				}
-				if ((landed.outcome.status === "aborted" || landed.outcome.status === "declined") && !hasMutations) {
-					return { status: "cancelled", ...progress() };
-				}
-				return {
-					status: landed.outcome.status === "failed" && !hasMutations ? "failed" : "partial",
-					error,
-					...progress(),
-				};
-			}
-			frontier.state = "landed";
+			const settlement = applyDelegatedFrontierSettlement({
+				response: landed,
+				frontier,
+				progress: { frontiers, remainingRefs, completedMutations, warnings, recoveryOperationIds },
+			});
+			if (settlement.kind === "halted") return settlement.outcome;
+			frontier = settlement.frontier;
+			completedMutations.push(...settlement.newCompletedMutations);
 		}
 
 		const remote = await jj.getRemote(options.cwd, options.remote, deps.signal);

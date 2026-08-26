@@ -8,6 +8,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type BoundaryValue, isBoolean, isObject } from "./validation.ts";
 
+export type RequestResponse<TResult> = { handled: false } | { handled: true; outcome: TResult };
+
 export interface RequestEnvelope<TPayload, TResult, TVersion extends number = number> {
 	schemaVersion: TVersion;
 	payload: TPayload;
@@ -41,10 +43,7 @@ export function createRequestChannel<TPayload, TResult, TVersion extends number>
 		return true;
 	}
 
-	async function request(
-		pi: ExtensionAPI,
-		payload: TPayload,
-	): Promise<{ handled: false } | { handled: true; outcome: TResult }> {
+	async function request(pi: ExtensionAPI, payload: TPayload): Promise<RequestResponse<TResult>> {
 		const envelope: Envelope = { schemaVersion: spec.schemaVersion, payload, claimed: false };
 		pi.events.emit(spec.event, envelope);
 		if (!envelope.claimed || !envelope.completion) return { handled: false };
