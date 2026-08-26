@@ -28,7 +28,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey } from "@earendil-works/pi-tui";
 import { formatDuration } from "./child-agent-runner.ts";
-import { type DashboardStatus, type DashboardTheme, type RenderRequester, STATUS_ICON } from "./live-dashboard.ts";
+import {
+	type DashboardStatus,
+	type DashboardTheme,
+	formatCost,
+	type RenderRequester,
+	STATUS_ICON,
+} from "./live-dashboard.ts";
 import {
 	fallbackTerminalText,
 	sanitizeDisplayText,
@@ -37,6 +43,8 @@ import {
 	visibleWidthFallback,
 } from "./terminal-text.ts";
 import { EVICTION_NOTICE, type TranscriptEntry } from "./transcript-store.ts";
+
+export { formatCost };
 
 interface ConsoleRow {
 	id: string;
@@ -101,12 +109,14 @@ interface ConsoleViewport {
 
 const WIDE_CHROME_LINES = 3; // title border, help, bottom border
 const NARROW_CHROME_LINES = 3; // tab bar, meta line, help
-const SIDEBAR_WIDTH = 32;
+const MIN_SIDEBAR_WIDTH = 34;
+const MAX_SIDEBAR_WIDTH = 48;
 
 export function computeViewport(width: number, height: number): ConsoleViewport {
 	const safeHeight = Math.max(4, height);
 	if (width >= WIDE_MIN_WIDTH) {
-		const sidebarWidth = Math.min(SIDEBAR_WIDTH, Math.floor((width - 3) / 2));
+		const targetWidth = Math.floor((width - 3) * 0.28);
+		const sidebarWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, targetWidth));
 		return {
 			wide: true,
 			bodyHeight: Math.max(1, safeHeight - WIDE_CHROME_LINES),
@@ -132,11 +142,6 @@ export function formatTokens(count: number): string {
 	if (count < 1000) return `${count}`;
 	const k = count / 1000;
 	return k % 1 === 0 ? `${k}k` : `${k.toFixed(1)}k`;
-}
-
-/** Format a cost in dollars with enough precision to stay informative when tiny. */
-export function formatCost(cost: number): string {
-	return `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`;
 }
 
 /** Format elapsed seconds compactly (e.g. 45s, 3m12s, 1h04m). */
@@ -173,7 +178,7 @@ function widthMeasurer(text: TerminalText): WidthMeasurer {
 }
 
 /** Break one sanitized line into chunks that fit within the display width. */
-function wrapPlainLine(line: string, width: number, widthOf: WidthMeasurer): string[] {
+function wrapPlainLine(line: string, width: number, widthOf: WidthMeasurer, breakOnDelimiters = false): string[] {
 	if (width <= 0) return [];
 	if (line === "") return [""];
 	if (widthOf(line) <= width) return [line];
@@ -183,13 +188,18 @@ function wrapPlainLine(line: string, width: number, widthOf: WidthMeasurer): str
 		let prefix = "";
 		let prefixWidth = 0;
 		let lastSpace = -1;
+		let lastBreak = -1;
 		const graphemes = Array.from(segmentGraphemesFallback(rest));
 		for (const grapheme of graphemes) {
 			const graphemeWidth = widthOf(grapheme);
 			if (prefixWidth + graphemeWidth > width) break;
 			prefix += grapheme;
 			prefixWidth += graphemeWidth;
-			if (/^\s$/u.test(grapheme)) lastSpace = prefix.length - grapheme.length;
+			if (/^\s$/u.test(grapheme)) {
+				lastSpace = prefix.length - grapheme.length;
+			} else if (breakOnDelimiters && /^[/_\-:]$/u.test(grapheme)) {
+				lastBreak = prefix.length;
+			}
 		}
 		if (prefix === "") {
 			// A single grapheme wider than the viewport: emit it anyway to make progress.
@@ -202,6 +212,9 @@ function wrapPlainLine(line: string, width: number, widthOf: WidthMeasurer): str
 		if (lastSpace > 0) {
 			out.push(prefix.slice(0, lastSpace));
 			rest = rest.slice(lastSpace + 1);
+		} else if (breakOnDelimiters && lastBreak > 0) {
+			out.push(prefix.slice(0, lastBreak));
+			rest = rest.slice(lastBreak);
 		} else {
 			out.push(prefix);
 			rest = rest.slice(prefix.length);
@@ -326,7 +339,7 @@ function windowBodyLines(bodyLines: string[], scroll: ConsoleScrollState, bodyHe
 }
 
 function helpText(copy: ConsoleCopy, follow: boolean): string {
-	return `←→/tab child · ↑↓ PgUp PgDn scroll · f follow [${follow ? "ON" : "OFF"}] · esc close${copy.helpSuffix ?? ""}`;
+	return `↑↓/←→/tab child · PgUp PgDn scroll · f follow [${follow ? "ON" : "OFF"}] · esc close${copy.helpSuffix ?? ""}`;
 }
 
 /** Narrow layout: legacy tab bar + meta line + windowed body + help. */
@@ -388,45 +401,96 @@ function renderNarrow(
 	return output.slice(0, height);
 }
 
-/** Two sidebar lines per child: icon+label, then dim model/status/turns/elapsed. */
-function computeSidebarLines(
+interface SidebarChildBlock {
+	lines: string[];
+}
+
+/** Compute sidebar blocks per child: icon+label, wrapped model name, and status/turns/elapsed/cost meta line. */
+function computeSidebarBlocks(
 	dashboard: ConsoleDashboard,
+	transcripts: ConsoleTranscripts,
 	selectedIndex: number,
+	sidebarWidth: number,
 	theme: DashboardTheme,
 	text: TerminalText,
-): string[] {
+): SidebarChildBlock[] {
 	const rows = dashboard.getRows();
 	const now = dashboard.nowMs();
-	const lines: string[] = [];
+	const widthOf = widthMeasurer(text);
+	const innerWidth = Math.max(10, sidebarWidth - 1);
+	const blocks: SidebarChildBlock[] = [];
+
 	for (let index = 0; index < rows.length; index++) {
 		const row = rows[index];
 		const { icon, color } = STATUS_ICON[row.status];
 		const safeLabel = sanitizeDisplayText(row.label, text);
-		const labelColor = index === selectedIndex ? "accent" : "muted";
+		const isSelected = index === selectedIndex;
+		const labelColor = isSelected ? "accent" : "muted";
+		const subColor = isSelected ? "muted" : "dim";
+
+		const lines: string[] = [];
 		lines.push(`${theme.fg(color, icon)} ${theme.fg(labelColor, safeLabel)}`);
 
 		const safeModel = sanitizeDisplayText(row.model, text);
-		const metaParts: string[] = [safeModel, row.status, `${row.turns}t`];
+		const modelWrapWidth = Math.max(6, innerWidth - 2);
+		const wrappedModelLines = wrapPlainLine(safeModel, modelWrapWidth, widthOf, true);
+		for (const mLine of wrappedModelLines) {
+			lines.push(theme.fg(subColor, `  ${mLine}`));
+		}
+
+		const metaParts: string[] = [row.status];
+		if (row.turns > 0) metaParts.push(`${row.turns}t`);
 		const elapsed = rowElapsedSeconds(row, now);
-		if (elapsed !== undefined) metaParts.push(`${elapsed}s`);
-		lines.push(theme.fg(index === selectedIndex ? "muted" : "dim", metaParts.join(" · ")));
+		if (elapsed !== undefined && (elapsed > 0 || row.status === "completed" || row.status === "running")) {
+			metaParts.push(`${elapsed}s`);
+		}
+		const cost = transcripts.getTotalCost(row.id);
+		if (cost > 0) metaParts.push(formatCost(cost));
+
+		lines.push(theme.fg(subColor, `  ${metaParts.join(" · ")}`));
+		blocks.push({ lines });
 	}
-	return lines;
+
+	return blocks;
 }
 
-/** Window the sidebar so the selected child's two lines stay visible. */
-function windowSidebarLines(sidebarLines: string[], selectedIndex: number, bodyHeight: number): string[] {
-	const linesPerChild = 2;
-	const selectedStart = selectedIndex * linesPerChild;
-	if (bodyHeight < linesPerChild) {
-		// Not enough room for the meta line: keep the selected child's label visible.
-		return sidebarLines.slice(selectedStart, selectedStart + bodyHeight);
+/** Window sidebar blocks so the selected child stays visible within bodyHeight. */
+function windowSidebarBlocks(
+	blocks: readonly SidebarChildBlock[],
+	selectedIndex: number,
+	bodyHeight: number,
+): string[] {
+	if (blocks.length === 0) return [];
+
+	const blockStarts: number[] = [];
+	const flatLines: string[] = [];
+	for (const block of blocks) {
+		blockStarts.push(flatLines.length);
+		for (const line of block.lines) {
+			flatLines.push(line);
+		}
 	}
-	let start = Math.min(selectedStart, Math.max(0, sidebarLines.length - bodyHeight));
-	if (selectedStart + linesPerChild > start + bodyHeight) {
-		start = selectedStart + linesPerChild - bodyHeight;
+
+	if (flatLines.length <= bodyHeight) {
+		return flatLines;
 	}
-	return sidebarLines.slice(start, start + bodyHeight);
+
+	const clampedIndex = Math.max(0, Math.min(selectedIndex, blocks.length - 1));
+	const selStart = blockStarts[clampedIndex] ?? 0;
+	const selLen = blocks[clampedIndex]?.lines.length ?? 1;
+	const selEnd = selStart + selLen;
+
+	if (bodyHeight < selLen) {
+		// When body height cannot fit the full child block, keep the child's label line visible.
+		return flatLines.slice(selStart, selStart + bodyHeight);
+	}
+
+	let start = Math.min(selStart, Math.max(0, flatLines.length - bodyHeight));
+	if (selEnd > start + bodyHeight) {
+		start = Math.max(0, selEnd - bodyHeight);
+	}
+
+	return flatLines.slice(start, start + bodyHeight);
 }
 
 /** Truncate and pad cell content to an exact cell width. */
@@ -469,11 +533,8 @@ function renderWide(
 	const titleLine = border("┌") + titleLabel + border("─".repeat(fillWidth)) + border("┐");
 
 	// Body rows: sidebar window + transcript window assembled into bordered cells.
-	const sidebarLines = windowSidebarLines(
-		computeSidebarLines(dashboard, clampedIndex, theme, text),
-		clampedIndex,
-		viewport.bodyHeight,
-	);
+	const sidebarBlocks = computeSidebarBlocks(dashboard, transcripts, clampedIndex, viewport.sidebarWidth, theme, text);
+	const sidebarLines = windowSidebarBlocks(sidebarBlocks, clampedIndex, viewport.bodyHeight);
 	const transcriptLines = computeTranscriptLines(
 		dashboard,
 		transcripts,
@@ -519,6 +580,28 @@ export function renderSubagentConsole(
 		return renderWide(dashboard, transcripts, state, width, height, theme, text, copy);
 	}
 	return renderNarrow(dashboard, transcripts, state, width, height, theme, text, copy);
+}
+
+export function parseWheelDirection(data: string): -1 | 1 | undefined {
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: match terminal mouse sequences
+	const sgr = /^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/.exec(data);
+	if (sgr) {
+		const button = Number.parseInt(sgr[1], 10);
+		if ((button & 64) === 0) return undefined;
+		const direction = button & 3;
+		if (direction === 0) return -1;
+		if (direction === 1) return 1;
+		return undefined;
+	}
+	if (data.length === 6 && data.startsWith("\x1b[M")) {
+		const button = data.charCodeAt(3) - 32;
+		if ((button & 64) === 0) return undefined;
+		const direction = button & 3;
+		if (direction === 0) return -1;
+		if (direction === 1) return 1;
+		return undefined;
+	}
+	return undefined;
 }
 
 function checkKey(data: string, key: Parameters<typeof matchesKey>[1]): boolean {
@@ -678,7 +761,7 @@ export class SubagentConsoleComponent implements Component {
 		const rows = this.dashboard.getRows();
 		const count = rows.length;
 
-		if (checkKey(data, "left") || checkKey(data, "shift+tab")) {
+		if (checkKey(data, "up") || checkKey(data, "left") || checkKey(data, "shift+tab") || data === "k") {
 			if (count > 0) {
 				this.state.selectedIndex = (this.state.selectedIndex - 1 + count) % count;
 				const id = this.selectedId();
@@ -691,7 +774,7 @@ export class SubagentConsoleComponent implements Component {
 			return;
 		}
 
-		if (checkKey(data, "right") || checkKey(data, "tab")) {
+		if (checkKey(data, "down") || checkKey(data, "right") || checkKey(data, "tab") || data === "j") {
 			if (count > 0) {
 				this.state.selectedIndex = (this.state.selectedIndex + 1) % count;
 				const id = this.selectedId();
@@ -708,29 +791,33 @@ export class SubagentConsoleComponent implements Component {
 		if (id === undefined) return;
 		const scroll = this.scrollFor(id);
 
-		if (checkKey(data, "up")) {
-			scroll.scrollOffset = Math.min(this.getMaxScroll(), scroll.scrollOffset + 1);
+		const wheelDir = parseWheelDirection(data);
+		if (wheelDir !== undefined) {
+			if (wheelDir < 0) {
+				scroll.scrollOffset = Math.min(this.getMaxScroll(), scroll.scrollOffset + 3);
+				scroll.follow = false;
+				this.tui.requestRender();
+				return;
+			}
+			if (wheelDir > 0) {
+				scroll.scrollOffset = Math.max(0, scroll.scrollOffset - 3);
+				if (scroll.scrollOffset === 0) scroll.follow = true;
+				this.tui.requestRender();
+				return;
+			}
+		}
+
+		const pageStep = Math.max(1, this.height() - WIDE_CHROME_LINES - 2);
+
+		if (checkKey(data, "pageUp") || checkKey(data, "ctrl+u") || checkKey(data, "ctrl+b")) {
+			scroll.scrollOffset = Math.min(this.getMaxScroll(), scroll.scrollOffset + pageStep);
 			scroll.follow = false;
 			this.tui.requestRender();
 			return;
 		}
 
-		if (checkKey(data, "down")) {
-			scroll.scrollOffset = Math.max(0, scroll.scrollOffset - 1);
-			if (scroll.scrollOffset === 0) scroll.follow = true;
-			this.tui.requestRender();
-			return;
-		}
-
-		if (checkKey(data, "pageUp")) {
-			scroll.scrollOffset = Math.min(this.getMaxScroll(), scroll.scrollOffset + 10);
-			scroll.follow = false;
-			this.tui.requestRender();
-			return;
-		}
-
-		if (checkKey(data, "pageDown")) {
-			scroll.scrollOffset = Math.max(0, scroll.scrollOffset - 10);
+		if (checkKey(data, "pageDown") || checkKey(data, "ctrl+d") || checkKey(data, "ctrl+f")) {
+			scroll.scrollOffset = Math.max(0, scroll.scrollOffset - pageStep);
 			if (scroll.scrollOffset === 0) scroll.follow = true;
 			this.tui.requestRender();
 			return;

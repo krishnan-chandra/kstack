@@ -134,11 +134,11 @@ export const LIMITS = {
 	/** Maximum tracked entries accepted for an ephemeral PR source snapshot. */
 	prSnapshotFiles: 200_000,
 	/** Final output per reviewer handed to the synthesizer. */
-	reviewerOutputBytes: 24 * 1024,
+	reviewerOutputBytes: 256 * 1024,
 	/** Aggregate reviewer input to the synthesizer. */
-	synthesisInputBytes: 96 * 1024,
+	synthesisInputBytes: 1024 * 1024,
 	/** Child stderr retention. */
-	stderrBytes: 8 * 1024,
+	stderrBytes: 64 * 1024,
 	/**
 	 * Idle limit per child process (reviewers and synthesizer): any stdout/
 	 * stderr output resets the timer, so slow-but-progressing children are

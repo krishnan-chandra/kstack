@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../shared/git-exec.ts";
-import type { GitHubGateway, OpenPullRequest } from "../shared/github.ts";
+import { GitHubError, type GitHubGateway, type OpenPullRequest } from "../shared/github.ts";
 import { buildNavigationComment } from "../shared/stack/topology.ts";
 import { requestGitHubStackLanding } from "./landing.ts";
 
@@ -302,6 +302,28 @@ describe("GitHub stack landing", () => {
 		assert.deepEqual(
 			result.status === "stack" && result.outcome.status === "partial" ? result.outcome.recoveryOperationIds : [],
 			[`kstack/two@${two}`],
+		);
+	});
+
+	it("reports an indeterminate delegated frontier invocation", async () => {
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "watch", method: "squash" },
+			{
+				exec: exec(),
+				gateway: gateway(),
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					throw new GitHubError("frontier acceptance unknown", "indeterminate");
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "indeterminate");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "indeterminate" ? result.outcome.inFlight : "",
+			/frontier acceptance unknown/,
 		);
 	});
 

@@ -109,9 +109,14 @@ class AgentPaneHostImpl implements AgentPaneHost {
 				transcripts.addChild(child.id);
 			},
 			markRunning: (id) => dashboard.markRunning(id),
-			progress: (id, info) => dashboard.progress(id, info),
-			complete: (id, info) => dashboard.complete(id, info),
-			event: (id, event) => transcripts.push(id, event),
+			progress: (id, info) => dashboard.progress(id, { ...info, cost: transcripts.getTotalCost(id) }),
+			complete: (id, info) => dashboard.complete(id, { ...info, cost: transcripts.getTotalCost(id) }),
+			event: (id, event) => {
+				transcripts.push(id, event);
+				if (event.kind === "turn_end") {
+					dashboard.updateCost(id, transcripts.getTotalCost(id));
+				}
+			},
 			note: (id, text) => transcripts.note(id, text),
 			dispose: () => this.disposeRun(run),
 		};

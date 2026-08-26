@@ -345,7 +345,15 @@ async function applyPublication(
 		...plannedActions.filter(({ action }) => action.kind !== "push-bookmark"),
 	];
 	for (const { action, index } of orderedActions) {
-		if (deps.signal?.aborted) return { status: "cancelled", completedActions: completed };
+		if (deps.signal?.aborted) {
+			if (completed.length === 0) return { status: "cancelled" };
+			return {
+				status: "partial",
+				planId: plan.planId,
+				completedActions: completed,
+				failedAction: failedAction(action, new Error("Publication was cancelled before this action started.")),
+			};
+		}
 		try {
 			if (action.kind === "push-bookmark") {
 				const lease = action.expectedRemoteSha

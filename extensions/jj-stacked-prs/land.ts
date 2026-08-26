@@ -435,7 +435,7 @@ async function runLandLoop(
 	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
 	let remainingRefs: string[] = [];
-	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, completedMutations);
+	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, warnings);
 	let preparedFirstIteration = true;
 
 	const progress = () => ({
@@ -447,7 +447,11 @@ async function runLandLoop(
 	});
 
 	for (;;) {
-		if (deps.signal?.aborted) return { status: "cancelled", ...progress() };
+		if (deps.signal?.aborted) {
+			return frontiers.length === 0 && completedMutations.length === 0
+				? { status: "cancelled", ...progress() }
+				: { status: "partial", error: "Landing was cancelled after earlier mutations completed.", ...progress() };
+		}
 		const prepared = preparedFirstIteration
 			? { status: "ok" as const, mapped: initialMapped, model: initialModel }
 			: await remapLand(options, deps);
@@ -497,8 +501,9 @@ async function runLandLoop(
 			if (landed.outcome.status !== "landed") {
 				frontier.state = landed.outcome.status === "partially-landed" ? "queued" : "blocked";
 				frontiers.push(frontier);
+				const hasProgress = frontiers.length > 1 || completedMutations.length > 0;
 				return {
-					status: landed.outcome.status === "failed" ? "failed" : "partial",
+					status: landed.outcome.status === "failed" && !hasProgress ? "failed" : "partial",
 					error: landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`,
 					...progress(),
 				};
@@ -533,7 +538,14 @@ async function runLandLoop(
 			mergeCommitOid = merge.mergeCommitOid;
 		} catch (error) {
 			frontiers.push({ ...frontier, state: frontier.state === "landed" ? "queued" : frontier.state });
-			return { status: "partial", error: errorMessage(error), ...progress() };
+			return isIndeterminate(error)
+				? {
+						status: "indeterminate",
+						inFlight: `merge-verification: ${errorMessage(error)}`,
+						recovery: "Inspect the frontier PR and remote stack state before retrying.",
+						...progress(),
+					}
+				: { status: "partial", error: errorMessage(error), ...progress() };
 		}
 
 		const operationId = await jj.currentOperationId(options.cwd, deps.signal);
@@ -577,7 +589,7 @@ async function runLandLoop(
 			refreshedTrunkCommitId = trunk;
 		} catch (error) {
 			frontiers.push(frontier);
-			if (isIndeterminate(error) || deps.signal?.aborted) {
+			if (isIndeterminate(error)) {
 				return {
 					status: "indeterminate",
 					inFlight: `trunk-verify: ${errorMessage(error)}`,
@@ -653,7 +665,15 @@ async function runLandLoop(
 		frontiers.push(frontier);
 		remainingRefs = remainder;
 		if (remainder.length === 0) {
-			await settleWorkingCopyOnTrunk(options, deps, jj, settlement, refreshedTrunkCommitId, completedMutations);
+			await settleWorkingCopyOnTrunk(
+				options,
+				deps,
+				jj,
+				settlement,
+				refreshedTrunkCommitId,
+				completedMutations,
+				warnings,
+			);
 			return { status: "completed", ...progress() };
 		}
 	}
@@ -671,7 +691,7 @@ async function identifyWorkingCopyToSettle(
 	deps: OrchestratorDeps,
 	jj: JjAdapter,
 	model: InspectModel,
-	completedMutations: string[],
+	warnings: string[],
 ): Promise<WorkingCopySettlement | undefined> {
 	if (!model.topCommitId) return undefined;
 	try {
@@ -686,7 +706,7 @@ async function identifyWorkingCopyToSettle(
 		if (isSelectedCheckpoint) return { changeId, replacementParentCommitId: model.trunk.commitId };
 		return isUnbookmarkedChild ? { changeId } : undefined;
 	} catch (error) {
-		completedMutations.push(`Could not inspect the working copy before landing: ${errorMessage(error)}`);
+		warnings.push(`Could not inspect the working copy before landing: ${errorMessage(error)}`);
 		return undefined;
 	}
 }
@@ -702,6 +722,7 @@ async function settleWorkingCopyOnTrunk(
 	candidate: WorkingCopySettlement | undefined,
 	refreshedTrunkCommitId: string | undefined,
 	completedMutations: string[],
+	warnings: string[],
 ): Promise<void> {
 	if (!candidate || !refreshedTrunkCommitId) return;
 	try {
@@ -720,7 +741,7 @@ async function settleWorkingCopyOnTrunk(
 		await jj.rebaseWorkingCopy(options.cwd, refreshedTrunkCommitId, deps.signal);
 		completedMutations.push("Rebased the empty working copy onto the refreshed trunk");
 	} catch (error) {
-		completedMutations.push(`Left the working copy in place: ${errorMessage(error)}`);
+		warnings.push(`Left the working copy in place: ${errorMessage(error)}`);
 	}
 }
 

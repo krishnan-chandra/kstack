@@ -165,6 +165,40 @@ describe("Graphite stack landing", () => {
 		assert.equal(released, true);
 	});
 
+	it("reports uncertain native merge invocation as indeterminate", async () => {
+		for (const failure of ["throw", "nonzero"] as const) {
+			const base = harness();
+			const failingExec: ExecFn = async (command, args, options) => {
+				const key = `${command} ${args.join(" ")}`;
+				if (key === "gt --no-interactive merge") {
+					if (failure === "throw") throw new Error("connection dropped");
+					return { code: 1, stdout: "", stderr: "connection dropped" };
+				}
+				return base.exec(command, args, options);
+			};
+			const response = await requestGraphiteStackLanding(
+				{ prNumber: 12, readiness: "check" },
+				{
+					exec: failingExec,
+					cwd: "/repo",
+					signal: new AbortController().signal,
+					runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
+					confirmMerge: async () => true,
+					now: () => 0,
+					sleep: async () => {},
+					acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+					realpath: (path) => path,
+				},
+			);
+			assert.equal(response.status, "stack");
+			assert.equal(response.status === "stack" ? response.outcome.status : undefined, "indeterminate");
+			assert.match(
+				response.status === "stack" && response.outcome.status === "indeterminate" ? response.outcome.inFlight : "",
+				/connection dropped/,
+			);
+		}
+	});
+
 	it("reports bounded-watch recovery when Graphite readiness stops on pending CI", async () => {
 		const { exec } = harness();
 		const pending: AutopilotResult = {

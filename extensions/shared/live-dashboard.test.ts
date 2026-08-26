@@ -44,4 +44,16 @@ describe("LiveDashboardStore", () => {
 		assert.match(lines[0], /■ Test — 0\/1 done · 0s — inspect/);
 		assert.match(lines[1], /A — queued \(model\/a\)/);
 	});
+
+	it("tracks and rolls up subagent costs in header and rows", () => {
+		const store = new TestStore("■ Test", " — inspect", true, () => 1000);
+		store.add("a");
+		store.add("b");
+		store.progress("a", { turns: 2, cost: 0.015, activity: "searching" });
+		store.updateCost("b", 0.025);
+		assert.equal(store.totalCost(), 0.04);
+		const lines = renderDashboard(store, 80, theme);
+		assert.match(lines[0], /■ Test — 0\/2 done · 0s · \$0\.040 — inspect/);
+		assert.match(lines[1], /A — running \(model\/a\) · 2t · \$0\.015 · searching/);
+	});
 });

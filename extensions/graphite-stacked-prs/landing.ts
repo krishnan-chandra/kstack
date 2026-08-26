@@ -405,11 +405,13 @@ export async function requestGraphiteStackLanding(
 				signal: deps.signal,
 			});
 		} catch (error) {
+			const inFlight = `gt merge may have started before the process failed: ${error instanceof Error ? error.message : String(error)}.`;
 			return {
 				status: "stack",
 				outcome: {
-					status: "partial",
-					error: `gt merge may have started before the process failed: ${error instanceof Error ? error.message : String(error)}. Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
+					status: "indeterminate",
+					inFlight,
+					recovery: `Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
 					frontiers: [],
 					remainingRefs: [],
 					completedMutations: [],
@@ -421,8 +423,9 @@ export async function requestGraphiteStackLanding(
 			return {
 				status: "stack",
 				outcome: {
-					status: "partial",
-					error: `gt merge returned ${diagnostic(merged)} after invocation. Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
+					status: "indeterminate",
+					inFlight: `gt merge returned ${diagnostic(merged)} after invocation.`,
+					recovery: `Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
 					frontiers: [],
 					remainingRefs: [],
 					completedMutations: [],

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../shared/git-exec.ts";
-import type { GitHubGateway, OpenPullRequest } from "../shared/github.ts";
+import { GitHubError, type GitHubGateway, type OpenPullRequest } from "../shared/github.ts";
 import type { VerifiedStackManifest } from "../shared/stack/manifest.ts";
 import { planGitHubPublication, preflightGitHubStack, publishGitHubStack } from "./delivery.ts";
 
@@ -129,7 +129,7 @@ describe("GitHub stack publication", () => {
 		});
 	});
 
-	it("publishes core state and reports comment failures without failing", async () => {
+	it("publishes core state and reports indeterminate comment writes without failing", async () => {
 		const { exec, calls } = execFixture();
 		const result = await publishGitHubStack({
 			cwd: "/repo",
@@ -141,7 +141,7 @@ describe("GitHub stack publication", () => {
 				exec,
 				gateway: gateway({
 					createOrUpdateComment: async () => {
-						throw new Error("comment denied");
+						throw new GitHubError("comment acceptance unknown", "indeterminate");
 					},
 				}),
 				confirm: async () => true,
@@ -150,7 +150,7 @@ describe("GitHub stack publication", () => {
 			},
 		});
 		assert.equal(result.status, "completed");
-		assert.deepEqual(result.status === "completed" ? result.commentErrors : [], ["PR #12: comment denied"]);
+		assert.deepEqual(result.status === "completed" ? result.commentErrors : [], ["comment acceptance unknown"]);
 		assert.ok(calls.includes("git push origin kstack/one:refs/heads/kstack/one"));
 	});
 
@@ -204,6 +204,62 @@ describe("GitHub stack publication", () => {
 			calls.some((call) => call.startsWith("git push ")),
 			false,
 		);
+	});
+
+	it("reports a conclusive first action failure as failed", async () => {
+		const { exec } = execFixture();
+		const result = await publishGitHubStack({
+			cwd: "/repo",
+			manifest,
+			remote: "origin",
+			ready: false,
+			authorization: "model-tool",
+			deps: {
+				exec,
+				gateway: gateway({
+					getRemoteBranchSha: async () => local,
+					createDraftPr: async () => {
+						throw new Error("creation rejected");
+					},
+				}),
+				confirm: async () => true,
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		});
+		assert.equal(result.status, "failed");
+		assert.deepEqual(result.status === "failed" ? result.completedActions : undefined, []);
+	});
+
+	it("reports cancellation between actions as partial progress", async () => {
+		const controller = new AbortController();
+		const fixture = execFixture();
+		const abortAfterPush: ExecFn = async (command, args, options) => {
+			const result = await fixture.exec(command, args, options);
+			if (command === "git" && args[0] === "push") controller.abort();
+			return result;
+		};
+		const result = await publishGitHubStack({
+			cwd: "/repo",
+			manifest,
+			remote: "origin",
+			ready: false,
+			authorization: "model-tool",
+			deps: {
+				exec: abortAfterPush,
+				gateway: gateway(),
+				confirm: async () => true,
+				signal: controller.signal,
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		});
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") {
+			assert.deepEqual(result.completedActions, [{ kind: "push-bookmark", ref: "kstack/one" }]);
+			assert.equal(result.failedAction.kind, "create-draft-pr");
+			assert.match(result.failedAction.error, /cancelled/i);
+		}
 	});
 
 	it("reports an indeterminate push when the process ends without a result", async () => {

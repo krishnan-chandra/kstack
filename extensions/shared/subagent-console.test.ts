@@ -10,6 +10,7 @@ import {
 	formatElapsedSeconds,
 	formatTokens,
 	openSubagentConsole,
+	parseWheelDirection,
 	renderSubagentConsole,
 	SubagentConsoleComponent,
 	sanitizeMultilineText,
@@ -252,7 +253,7 @@ describe("renderSubagentConsole narrow layout", () => {
 		assert.match(joined, /read foo\.ts · 340ms/);
 		assert.match(joined, /— turn 1 · in 12\.4k out 800 · \$0\.012/);
 		assert.match(joined, /I inspected foo\.ts\./);
-		assert.match(lines[19], /←→\/tab child/);
+		assert.match(lines[19], /↑↓\/←→\/tab child/);
 		assert.match(lines[19], /follow \[ON\]/);
 		assert.match(lines[19], /\^⇧X abort/);
 	});
@@ -430,6 +431,49 @@ describe("renderSubagentConsole wide layout", () => {
 		assert.ok(!lines.join("\n").includes("transcript of child 1"));
 	});
 
+	it("wraps long model names without truncation and shows rollup cost per child in the sidebar", () => {
+		const rows = [
+			makeRow("r1", "gemini", "openrouter/google/gemini-3.7-sonnet", { status: "running", turns: 15, startedAt: 1000 }),
+			makeRow("r2", "ling", "openrouter/inclusionai/ling-1t:free", {
+				status: "completed",
+				turns: 10,
+				startedAt: 1000,
+				finishedAt: 25000,
+			}),
+		];
+		const dashboard = makeDashboard(rows, { now: 34000, elapsedSeconds: 33 });
+		const transcripts = makeTranscripts();
+		transcripts.setTotalCost("r1", 0.045);
+		transcripts.setTotalCost("r2", 0.012);
+		transcripts.note("r1", "transcript of gemini");
+
+		const lines = renderSubagentConsole(
+			dashboard,
+			transcripts,
+			makeState(),
+			width,
+			height,
+			fakeTheme,
+			fallbackTerminalText,
+			COPY,
+		);
+		const joined = lines.join("\n");
+
+		// Model names are fully preserved across lines instead of cut off with ellipsis
+		assert.match(joined, /gemini/);
+		assert.match(joined, /openrouter\/google\/gemini-3\.7-/);
+		assert.match(joined, /sonnet/);
+		assert.match(joined, /running · 15t · 33s · \$0\.045/);
+
+		assert.match(joined, /ling/);
+		assert.match(joined, /openrouter\/inclusionai\/ling-1t:/);
+		assert.match(joined, /free/);
+		assert.match(joined, /completed · 10t · 24s · \$0\.012/);
+
+		// Rollup title cost sums all children
+		assert.match(lines[0], /\$0\.057/);
+	});
+
 	it("uses cumulative cost even when older turn entries were evicted", () => {
 		const { dashboard, transcripts } = wideSetup(1);
 		transcripts.setTotalCost("r1", 0.25);
@@ -494,13 +538,28 @@ describe("SubagentConsoleComponent", () => {
 		const { component, flags } = setup();
 		assert.equal(component.getState().selectedIndex, 0);
 
+		// Arrow right / down / tab select next child
 		component.handleInput("\x1b[C");
 		assert.equal(component.getState().selectedIndex, 1);
 		component.handleInput("\x1b[D");
 		assert.equal(component.getState().selectedIndex, 0);
+		component.handleInput("\x1b[B"); // down arrow selects next child
+		assert.equal(component.getState().selectedIndex, 1);
+		component.handleInput("\x1b[A"); // up arrow selects prev child
+		assert.equal(component.getState().selectedIndex, 0);
 
-		component.handleInput("\x1b[A");
-		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 1);
+		// Mouse wheel scrolling
+		component.handleInput("\x1b[<64;10;10M"); // wheel up
+		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 3);
+		assert.equal(component.getState().scroll.get("r1")?.follow, false);
+
+		component.handleInput("\x1b[<65;10;10M"); // wheel down
+		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 0);
+		assert.equal(component.getState().scroll.get("r1")?.follow, true);
+
+		// PageUp / PageDown scrolling
+		component.handleInput("\x1b[5~"); // PageUp
+		assert.ok((component.getState().scroll.get("r1")?.scrollOffset ?? 0) > 0);
 		assert.equal(component.getState().scroll.get("r1")?.follow, false);
 
 		component.handleInput("f");
@@ -537,8 +596,8 @@ describe("SubagentConsoleComponent", () => {
 		assert.ok(topOffset > 0 && topOffset < 100, `topOffset was ${topOffset}`);
 		assert.equal(component.getState().scroll.get("r1")?.follow, false);
 
-		component.handleInput("\x1b[B");
-		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, topOffset - 1);
+		component.handleInput("\x1b[<65;10;10M"); // wheel down
+		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, topOffset - 3);
 
 		component.handleInput("G");
 		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 0);
@@ -549,7 +608,7 @@ describe("SubagentConsoleComponent", () => {
 	it("keeps the visible viewport anchored while new output arrives with follow off", () => {
 		const { component, transcripts } = setup({ rows: 10, notes: 20 });
 		component.render(80);
-		for (let i = 0; i < 5; i++) component.handleInput("\x1b[A");
+		component.handleInput("\x1b[<64;10;10M"); // wheel up 3 lines
 
 		const before = component.render(80).slice(2, -1).filter(Boolean);
 		transcripts.note("r1", "Note 21");
@@ -562,9 +621,9 @@ describe("SubagentConsoleComponent", () => {
 		const { component, transcripts } = setup({ rows: 20, notes: 50 });
 		component.render(80);
 
-		// Scroll child r1 up by 5
-		for (let i = 0; i < 5; i++) component.handleInput("\x1b[A");
-		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 5);
+		// Scroll child r1 up with wheel
+		component.handleInput("\x1b[<64;10;10M"); // wheel up 3 lines
+		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 3);
 		const before = component.render(80).slice(2, -1).filter(Boolean);
 
 		// Switch to r2: fresh child starts at the tail in follow mode
@@ -577,7 +636,7 @@ describe("SubagentConsoleComponent", () => {
 		transcripts.note("r1", "Note 51");
 		component.handleInput("\x1b[D");
 		assert.equal(component.getState().selectedIndex, 0);
-		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 6);
+		assert.equal(component.getState().scroll.get("r1")?.scrollOffset, 4);
 		assert.equal(component.getState().scroll.get("r1")?.follow, false);
 		assert.deepEqual(component.render(80).slice(2, -1).filter(Boolean), before);
 		component.dispose();
@@ -599,6 +658,15 @@ describe("SubagentConsoleComponent", () => {
 		const lines = component.render(80);
 		assert.equal(lines.length, 31);
 		component.dispose();
+	});
+});
+
+describe("parseWheelDirection", () => {
+	it("parses SGR and legacy mouse wheel sequences", () => {
+		assert.equal(parseWheelDirection("\x1b[<64;20;10M"), -1);
+		assert.equal(parseWheelDirection("\x1b[<65;20;10M"), 1);
+		assert.equal(parseWheelDirection("\x1b[<0;20;10M"), undefined);
+		assert.equal(parseWheelDirection("not-mouse"), undefined);
 	});
 });
 
