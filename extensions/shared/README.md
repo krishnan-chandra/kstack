@@ -38,14 +38,11 @@ loaded; deep implementation imports create an unconditional module dependency.
 `scripts/check-imports/index.mjs` enforces this rule. Shared modules may not import extension
 modules.
 
-The gate has these narrow exceptions:
+The gate has one narrow exception: `handoff` imports the `session-archive`
+files, operations, store, JSONL parser, and output bounds needed to archive a
+source session and read its history.
 
-- `handoff` imports the `session-archive` files, operations, store, JSONL parser,
-  and output bounds needed to archive a source session and read its history.
-- `jj-stacked-prs` imports `land/confirmation.ts` so the trusted stack lander can
-  mint the confirmation capability documented in [`land/README.md`](../land/README.md).
-
-Treat each exception as dependency debt. Add a public `api.ts` or `types.ts`
+Treat this exception as dependency debt. Add a public `api.ts` or `types.ts`
 contract instead of extending the exception list.
 
 ## Subagent sessions

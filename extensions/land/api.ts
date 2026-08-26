@@ -1,9 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isAutopilotConfirmation } from "../pr-autopilot/api.ts";
-import { isMergeMethod } from "../shared/github.ts";
+import { isMergeMethod, type MergeMethod } from "../shared/github.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
-import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
-import { isLandConfirmation } from "./confirmation.ts";
+import { type BoundaryValue, isNumber, isObject, isString } from "../shared/validation.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
 // Public in-process access to Land's per-repository merge policy.
@@ -11,49 +9,81 @@ export { getRepoMethod, loadLandConfig } from "./config.ts";
 
 export const LAND_REQUEST_EVENT = "kstack:land:request";
 const READINESS_MODES = new Set<unknown>(["check", "watch"]);
+const HEAD_SHA = /^[0-9a-f]{40}$/;
 
-interface LandPayload {
+interface InteractiveLandRequest {
+	kind: "interactive";
 	options: LandOptions;
 	ctx: ExtensionContext;
 }
 
-/* exported: request-channel contract */
-export interface LandRequest extends RequestEnvelope<LandPayload, LandResult, 1> {}
+interface StackFrontierLandRequest {
+	kind: "stack-frontier";
+	options: LandOptions & { method: MergeMethod };
+	expectedHeadSha: string;
+	signal?: AbortSignal;
+	ctx: ExtensionContext;
+}
 
-const channel = createRequestChannel<LandPayload, LandResult, 1>({
+export type LandRequestPayload = InteractiveLandRequest | StackFrontierLandRequest;
+
+/* exported: request-channel contract */
+export interface LandRequest extends RequestEnvelope<LandRequestPayload, LandResult, 1> {}
+
+function isOptions(value: BoundaryValue, methodRequired: boolean): value is LandOptions & { method?: MergeMethod } {
+	if (
+		!isObject(value) ||
+		value === null ||
+		Object.keys(value).some((key) => key !== "target" && key !== "readiness" && key !== "method" && key !== "cwd")
+	) {
+		return false;
+	}
+	if ("cwd" in value && value.cwd !== undefined && (!isString(value.cwd) || value.cwd.length === 0)) return false;
+	if (!("readiness" in value) || !READINESS_MODES.has(value.readiness)) return false;
+	if (methodRequired) {
+		if (!("method" in value) || !isMergeMethod(value.method)) return false;
+	} else if ("method" in value && value.method !== undefined && !isMergeMethod(value.method)) return false;
+	if (!("target" in value) || !isObject(value.target) || value.target === null) return false;
+	const target = value.target;
+	return (
+		Object.keys(target).every((key) => key === "kind" || key === "prNumber") &&
+		"kind" in target &&
+		target.kind === "single" &&
+		"prNumber" in target &&
+		isNumber(target.prNumber) &&
+		Number.isSafeInteger(target.prNumber) &&
+		target.prNumber > 0
+	);
+}
+
+const channel = createRequestChannel<LandRequestPayload, LandResult, 1>({
 	event: LAND_REQUEST_EVENT,
 	schemaVersion: 1,
-	isPayload: (value): value is LandPayload => {
-		if (!isObject(value) || value === null || !("options" in value) || !("ctx" in value)) return false;
-		const options = value.options;
-		if (!isObject(value.ctx) || value.ctx === null || !isObject(options) || options === null) return false;
-		if ("cwd" in options && options.cwd !== undefined && (!isString(options.cwd) || options.cwd.length === 0))
+	isPayload: (value): value is LandRequestPayload => {
+		if (!isObject(value) || value === null || !("kind" in value) || !("options" in value) || !("ctx" in value)) {
 			return false;
-		if ("confirmation" in options && options.confirmation !== undefined && !isLandConfirmation(options.confirmation))
-			return false;
-		if (
-			"autopilotConfirmation" in options &&
-			options.autopilotConfirmation !== undefined &&
-			!isAutopilotConfirmation(options.autopilotConfirmation)
-		)
-			return false;
-		if (
-			!("readiness" in options) ||
-			!READINESS_MODES.has(options.readiness) ||
-			("method" in options && options.method !== undefined && !isMergeMethod(options.method))
-		)
-			return false;
-		if (!("target" in options)) return false;
-		const target = options.target;
-		return (
-			isObject(target) &&
-			target !== null &&
-			"kind" in target &&
-			target.kind === "single" &&
-			"prNumber" in target &&
-			Number.isSafeInteger(target.prNumber) &&
-			Number(target.prNumber) > 0
-		);
+		}
+		if (!isObject(value.ctx) || value.ctx === null) return false;
+		if (value.kind === "interactive") {
+			return (
+				Object.keys(value).every((key) => key === "kind" || key === "options" || key === "ctx") &&
+				isOptions(value.options, false)
+			);
+		}
+		if (value.kind === "stack-frontier") {
+			return (
+				Object.keys(value).every(
+					(key) =>
+						key === "kind" || key === "options" || key === "expectedHeadSha" || key === "signal" || key === "ctx",
+				) &&
+				isOptions(value.options, true) &&
+				"expectedHeadSha" in value &&
+				isString(value.expectedHeadSha) &&
+				HEAD_SHA.test(value.expectedHeadSha) &&
+				(!("signal" in value) || value.signal === undefined || value.signal instanceof AbortSignal)
+			);
+		}
+		return false;
 	},
 });
 
@@ -63,9 +93,9 @@ export function isLandRequest(value: BoundaryValue): value is LandRequest {
 
 export function claimLandRequest(
 	value: BoundaryValue,
-	run: (options: LandOptions, ctx: ExtensionContext) => Promise<LandResult>,
+	run: (request: LandRequestPayload) => Promise<LandResult>,
 ): boolean {
-	return channel.claim(value, ({ options, ctx }) => run(options, ctx));
+	return channel.claim(value, run);
 }
 
 export function requestLand(
@@ -73,5 +103,12 @@ export function requestLand(
 	options: LandOptions,
 	ctx: ExtensionContext,
 ): Promise<{ handled: false } | { handled: true; outcome: LandResult }> {
-	return channel.request(pi, { options, ctx });
+	return channel.request(pi, { kind: "interactive", options, ctx });
+}
+
+export function requestStackFrontierLand(
+	pi: ExtensionAPI,
+	request: Omit<StackFrontierLandRequest, "kind">,
+): Promise<{ handled: false } | { handled: true; outcome: LandResult }> {
+	return channel.request(pi, { kind: "stack-frontier", ...request });
 }

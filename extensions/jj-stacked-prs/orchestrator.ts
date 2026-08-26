@@ -55,12 +55,10 @@ export interface OrchestratorDeps {
 	ui: StackUi;
 	signal?: AbortSignal;
 	realpath?: (path: string) => string;
-	/**
-	 * Confirmation-bound Land request. The production `landDeps()` adapter is
-	 * the sole minting site for both Land and pr-autopilot capabilities.
-	 */
-	landPr?: (input: {
+	/** Delegated exact-head request into Land's single-PR implementation. */
+	landFrontier?: (input: {
 		prNumber: number;
+		expectedHeadSha: string;
 		readiness: StackReadinessMode;
 		method: StackMergeMethod;
 	}) => Promise<{ handled: false } | { handled: true; outcome: LandResult }>;

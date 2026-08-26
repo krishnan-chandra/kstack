@@ -69,7 +69,7 @@ export function renderPlan(plan: PublicationPlan): string {
 	return boundText(lines.join("\n"));
 }
 
-export function renderLandConfirmation(input: {
+export function renderStackLandingPlan(input: {
 	changeCount: number;
 	slices: readonly { bookmark: string; prNumber: number; url: string; draft: boolean; alreadyMerged: boolean }[];
 	method: StackMergeMethod;

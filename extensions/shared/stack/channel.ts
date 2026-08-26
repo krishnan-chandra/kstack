@@ -69,11 +69,6 @@ export interface StackLandingRequestInput {
 
 /* exported: request-channel contract */
 export interface StackLandingCapabilities {
-	landPr?(options: {
-		prNumber: number;
-		readiness: "check" | "watch";
-		method?: MergeMethod;
-	}): Promise<{ handled: false } | { handled: true; outcome: unknown }>;
 	runAutopilot?(mode: "check" | "watch", pr: number): Promise<{ handled: false } | { handled: true; outcome: unknown }>;
 }
 
@@ -104,9 +99,7 @@ function isSafeRef(value: BoundaryValue, max = 240): value is string {
 }
 
 function isCapabilities(value: BoundaryValue): value is StackLandingCapabilities {
-	if (!isObject(value) || value === null) return false;
-	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Function identity is the complete in-process capability contract; invocation results stay unknown.
-	if ("landPr" in value && value.landPr !== undefined && typeof value.landPr !== "function") return false;
+	if (!isObject(value) || value === null || Object.keys(value).some((key) => key !== "runAutopilot")) return false;
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Function identity is the complete in-process capability contract; invocation results stay unknown.
 	if ("runAutopilot" in value && value.runAutopilot !== undefined && typeof value.runAutopilot !== "function")
 		return false;

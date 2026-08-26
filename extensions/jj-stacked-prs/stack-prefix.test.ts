@@ -31,7 +31,8 @@ describe("stack-prefix landing", () => {
 				jj,
 				github,
 				acquirePublicationLock: permissiveLock(),
-				landPr: async ({ prNumber }) => {
+				landFrontier: async ({ prNumber, expectedHeadSha }) => {
+					assert.equal(expectedHeadSha, prNumber === 11 ? "aaa-commit" : "bbb-commit");
 					calls.push(prNumber);
 					return {
 						handled: true,
@@ -43,6 +44,70 @@ describe("stack-prefix landing", () => {
 		assert.equal(result.status, "stack");
 		if (result.status === "stack") assert.equal(result.outcome.status, "completed");
 		assert.deepEqual(calls, [11, 12]);
+	});
+
+	it("blocks an unclaimed Land request before progress", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const readyPr = { ...openPrs()[0], draft: false };
+		const result = await landStackThroughPullRequest(
+			{ cwd: "/repo", prNumber: 11, headBookmark: "feat1", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+				}),
+				github: fakeGithub({ listOpenPrs: async () => [readyPr] }),
+				landFrontier: async () => ({ handled: false }),
+			},
+		);
+		assert.equal(result.status, "stack");
+		if (result.status === "stack" && result.outcome.status === "blocked") {
+			assert.equal(result.outcome.blockers[0]?.code, "land-unavailable");
+		} else {
+			assert.fail(`expected an unavailable Land blocker: ${JSON.stringify(result)}`);
+		}
+	});
+
+	it("preserves progress when a later Land request is unclaimed", async () => {
+		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];
+		let calls = 0;
+		const prs = openPrs();
+		const result = await landStackThroughPullRequest(
+			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
+					abandonRange: async (_cwd, _trunk, mergedBookmark) => {
+						stack = stack.filter((item) => !item.bookmarks.includes(mergedBookmark));
+					},
+				}),
+				github: fakeGithub({
+					listOpenPrs: async () => prs.filter((pr) => stack.some((item) => item.bookmarks.includes(pr.headRef))),
+					updatePrBase: async (input) => {
+						const pr = prs.find((item) => item.number === input.prNumber);
+						if (pr) pr.baseRef = input.base;
+					},
+				}),
+				acquirePublicationLock: permissiveLock(),
+				landFrontier: async ({ prNumber }) => {
+					calls++;
+					return calls === 1 ? { handled: true, outcome: landed(prNumber, "aaa-commit") } : { handled: false };
+				},
+			},
+		);
+		assert.equal(result.status, "stack");
+		if (result.status === "stack" && result.outcome.status === "partial") {
+			assert.match(result.outcome.error, /land extension is unavailable/i);
+			assert.deepEqual(result.outcome.remainingRefs, ["feat2"]);
+			assert.ok(result.outcome.completedMutations.length > 0);
+		} else {
+			assert.fail("expected partial progress");
+		}
 	});
 
 	it("reports an unpublished slice as requiring publication", async () => {
@@ -60,7 +125,7 @@ describe("stack-prefix landing", () => {
 					listOpenPrs: async () => [openPrs()[1]],
 					listPrsForHead: async () => [],
 				}),
-				landPr: async () => {
+				landFrontier: async () => {
 					throw new Error("landing must not run before publication");
 				},
 			},
@@ -91,7 +156,7 @@ describe("stack-prefix landing", () => {
 					listOpenPrs: async () => [openPrs()[1]],
 					listPrsForHead: async (_repo, head) => (head === "feat1" ? [historical, openPrs()[0]] : []),
 				}),
-				landPr: async () => {
+				landFrontier: async () => {
 					throw new Error("landing must not run with ambiguous PR history");
 				},
 			},
@@ -122,7 +187,7 @@ describe("stack-prefix landing", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => (stack.length > 0 ? [openPrs()[0]] : []) }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "stack");
@@ -152,7 +217,7 @@ describe("stack-prefix landing", () => {
 					listOpenPrs: async () => [openPrs()[0]],
 					getPrComments: async () => [{ id: 1, body: navigation, user: "publisher" }],
 				}),
-				landPr: async () => {
+				landFrontier: async () => {
 					throw new Error("individual landing must not run");
 				},
 			},

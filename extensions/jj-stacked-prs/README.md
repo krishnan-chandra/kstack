@@ -61,11 +61,13 @@ freshness, not authorization.
   matches the local bottom bookmark, and GitHub reports that PR as `MERGED`.
   It abandons `<trunk>..<merged>` before fetch, then rebases any remainder. It
   does not republish; run `/jj-stack publish` separately.
-- Lands the stack bottom-up through the `land` extension. One confirmation
-  covers the whole plan, including each frontier's autopilot pass — no
-  per-PR prompts. Each frontier is marked ready if needed, merged with
-  a minted Land confirmation, advanced locally, verified onto trunk, republished,
-  and has its remote branch deleted only after those checks. `--readiness`
+- Lands the stack bottom-up through the `land` extension. jj owns the frontier
+  loop and confirms the complete plan once, including each frontier's autopilot
+  pass. It delegates each pinned PR and resolved merge method through Land's
+  `stack-frontier` request mode, with no per-PR prompt. Land owns readiness,
+  repository merge policy, exact-head checks, merge submission, and remote
+  verification. jj then advances locally, republishes the remainder, and
+  deletes the remote branch only after verification. `--readiness`
   defaults to `watch`. In jj mode, `/land --pr <number>` delegates here when the
   selected PR closes a local stack with two or more slices. After the final
   frontier lands, the same empty, bookmark-less working-copy child that began

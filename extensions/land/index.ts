@@ -9,10 +9,9 @@ import { stackProviderFor } from "../shared/stack/provider.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
-import { claimLandRequest, LAND_REQUEST_EVENT, requestLand } from "./api.ts";
+import { claimLandRequest, LAND_REQUEST_EVENT, type LandRequestPayload } from "./api.ts";
 import { completeLandArgs, parseLandArgs } from "./command.ts";
 import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
-import { issueLandConfirmation } from "./confirmation.ts";
 import { LandLifecycle, StackLandingLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { resolveImplicitPr } from "./pr-resolution.ts";
@@ -65,7 +64,50 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return preflight.ok ? { ok: true, backend } : preflight;
 	}
 
-	async function execute(
+	function landConfigFor(ctx: ExtensionContext): LandConfig {
+		const loaded = loadLandConfig();
+		if (loaded.status === "invalid") ctx.ui.notify(`Invalid ${loaded.path}: ${loaded.error}`, "error");
+		return loaded.status === "loaded" ? loaded.config : { repos: {} };
+	}
+
+	async function runSingle(request: LandRequestPayload): Promise<LandResult> {
+		const { ctx } = request;
+		const options = request.options;
+		const token = lifecycle.begin();
+		if (!token) return blockedLandResult("Another landing run is active.");
+		const cwd = options.cwd ?? ctx.cwd;
+		const signals = [token.signal, request.kind === "stack-frontier" ? request.signal : undefined, ctx.signal].filter(
+			(signal): signal is AbortSignal => signal !== undefined,
+		);
+		const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+		const autopilotConfirmation = request.kind === "stack-frontier" ? issueAutopilotConfirmation() : undefined;
+		const landConfig = request.kind === "interactive" ? landConfigFor(ctx) : undefined;
+		ctx.ui.setStatus("land", "land: resolving target");
+		try {
+			return await runLand(
+				request.kind === "stack-frontier"
+					? { kind: "stack-frontier", options: request.options, expectedHeadSha: request.expectedHeadSha }
+					: { kind: "interactive", options: request.options },
+				{
+					exec: makeExec(pi),
+					cwd,
+					signal,
+					runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd, autopilotConfirmation, signal),
+					selectMethod: async (allowed) =>
+						selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
+					confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),
+					configuredMethodFor: landConfig ? (nameWithOwner) => getRepoMethod(landConfig, nameWithOwner) : undefined,
+					now: Date.now,
+					sleep: abortableSleep,
+				},
+			);
+		} finally {
+			lifecycle.end(token);
+			ctx.ui.setStatus("land", undefined);
+		}
+	}
+
+	async function executeInteractive(
 		options: LandOptions,
 		ctx: ExtensionContext,
 		preparedBackend?: VcsBackend,
@@ -78,7 +120,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		if (!resolved.ok) return blockedLandResult(resolved.error);
 		const exec = makeExec(pi);
 		const provider = stackProviderFor(resolved.backend.id);
-		const result = await routeLand(options, {
+		return routeLand({
 			provider,
 			requestStackLanding: async () => {
 				if (!provider) return { handled: false };
@@ -86,10 +128,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 				if (!stackSignal) {
 					return {
 						handled: true,
-						outcome: {
-							status: "stack",
-							outcome: { status: "busy", message: "Another stack landing run is active." },
-						},
+						outcome: { status: "stack", outcome: { status: "busy", message: "Another stack landing run is active." } },
 					};
 				}
 				try {
@@ -105,21 +144,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 							signal: stackSignal,
 						},
 						capabilities: {
-							landPr: async ({ prNumber, readiness, method }) =>
-								requestLand(
-									pi,
-									{
-										target: { kind: "single", prNumber },
-										readiness,
-										method,
-										cwd,
-										confirmation: issueLandConfirmation(),
-										autopilotConfirmation: issueAutopilotConfirmation(),
-									},
-									ctx,
-								),
-							runAutopilot: (mode, pr) =>
-								requestPrAutopilot(pi, mode, pr, ctx, cwd, options.autopilotConfirmation, stackSignal),
+							runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd, undefined, stackSignal),
 						},
 						ctx,
 					});
@@ -127,37 +152,19 @@ export default function landExtension(pi: ExtensionAPI): void {
 					stackLandingLifecycle.end(stackSignal);
 				}
 			},
-			runSingle: async () => {
-				const token = lifecycle.begin();
-				if (!token) return blockedLandResult("Another landing run is active.");
-				ctx.ui.setStatus("land", "land: resolving target");
-				const configLoad = loadLandConfig();
-				if (configLoad.status === "invalid") {
-					ctx.ui.notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
-				}
-				const landConfig: LandConfig = configLoad.status === "loaded" ? configLoad.config : { repos: {} };
-				try {
-					return await runLand(options, {
-						exec,
-						cwd,
-						signal: token.signal,
-						// Stack landing supplies separate capabilities for the exact merge
-						// and for each frontier's autopilot pass.
-						runAutopilot: (mode, pr) =>
-							requestPrAutopilot(pi, mode, pr, ctx, cwd, options.autopilotConfirmation, token.signal),
-						selectMethod: async (allowed) =>
-							selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
-						confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),
-						configuredMethodFor: (nameWithOwner) => getRepoMethod(landConfig, nameWithOwner),
-						now: Date.now,
-						sleep: abortableSleep,
-					});
-				} finally {
-					lifecycle.end(token);
-					ctx.ui.setStatus("land", undefined);
-				}
-			},
+			runSingle: () => runSingle({ kind: "interactive", options, ctx }),
 		});
+	}
+
+	async function executeRequest(request: LandRequestPayload, preparedBackend?: VcsBackend): Promise<LandResult> {
+		let result: LandResult;
+		if (!request.ctx.hasUI) {
+			result = blockedLandResult("Land requires interactive TUI/RPC mode.");
+		} else if (request.kind === "stack-frontier") {
+			result = await runSingle(request);
+		} else {
+			result = await executeInteractive(request.options, request.ctx, preparedBackend);
+		}
 		pi.sendMessage({
 			customType: "land",
 			content: [...result.blockers, ...(result.warnings ?? []), ...result.completedMutations].join("\n"),
@@ -167,7 +174,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return result;
 	}
 
-	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, execute));
+	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, executeRequest));
 	pi.registerCommand("land", {
 		description: "Land a merge-ready PR: /land [--pr N] [--method squash|rebase] [--readiness check|watch]",
 		getArgumentCompletions: completeLandArgs,
@@ -193,13 +200,16 @@ export default function landExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(pr.message, "error");
 				return;
 			}
-			await execute(
+			await executeRequest(
 				{
-					target: { kind: "single", prNumber: pr.prNumber },
-					readiness: parsed.args.readiness,
-					method: parsed.args.method,
+					kind: "interactive",
+					options: {
+						target: { kind: "single", prNumber: pr.prNumber },
+						readiness: parsed.args.readiness,
+						method: parsed.args.method,
+					},
+					ctx,
 				},
-				ctx,
 				backend,
 			);
 		},

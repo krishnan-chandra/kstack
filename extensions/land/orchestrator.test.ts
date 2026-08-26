@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
-import { issueLandConfirmation } from "./confirmation.ts";
-import { runLand } from "./orchestrator.ts";
-import type { ExecFn, ExecResult, MergeMethod } from "./types.ts";
+import { runLand as executeLand } from "./orchestrator.ts";
+import type { ExecFn, ExecResult, LandOptions, MergeMethod } from "./types.ts";
+
+function runLand(options: LandOptions, runDeps: Parameters<typeof executeLand>[1]) {
+	return executeLand({ kind: "interactive", options }, runDeps);
+}
 
 const OLD = "a".repeat(40);
 const NEW = "b".repeat(40);
@@ -322,90 +325,115 @@ test("CLI --method takes priority over configured method and still confirms", as
 	assert.equal(confirmMergeCalled, true, "confirmMerge should be called when CLI --method is set");
 });
 
-test("minted confirmation skips confirmMerge and still revalidates", async () => {
+test("delegated frontier skips the prompt and still revalidates", async () => {
 	let confirmMergeCalled = false;
 	let views = 0;
 	const exec: ExecFn = async (_command, args) => {
 		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
 		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
 		if (args[0] === "pr" && args[1] === "view") {
-			const current = views++;
-			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+			return { code: 0, stdout: views++ < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
 		}
 		return { code: 0, stdout: "", stderr: "" };
 	};
 	const runDeps = {
 		...deps(exec),
-		confirmMerge: async (): Promise<boolean> => {
+		confirmMerge: async () => {
 			confirmMergeCalled = true;
 			return true;
 		},
 	};
-	const result = await runLand(
+	const result = await executeLand(
 		{
-			target: { kind: "single", prNumber: 7 },
-			readiness: "check",
-			method: "squash",
-			confirmation: issueLandConfirmation(),
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
 		},
 		runDeps,
 	);
 	assert.equal(result.status, "landed");
-	assert.equal(confirmMergeCalled, false, "confirmMerge should not be called when a minted confirmation is set");
+	assert.equal(confirmMergeCalled, false);
 });
 
-test("a reconstructed confirmation object does not skip confirmMerge", async () => {
-	let confirmMergeCalled = false;
+test("delegated frontier blocks a stale initial head before readiness", async () => {
+	let autopilotCalled = false;
+	const runDeps = {
+		...deps(async (_command, args) =>
+			args[0] === "repo" ? { code: 0, stdout: repo, stderr: "" } : { code: 0, stdout: pr(OLD), stderr: "" },
+		),
+		runAutopilot: async () => {
+			autopilotCalled = true;
+			return { handled: true as const, outcome: ready(NEW) };
+		},
+	};
+	const result = await executeLand(
+		{
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
+		},
+		runDeps,
+	);
+	assert.equal(result.status, "blocked");
+	assert.equal(autopilotCalled, false);
+});
+
+test("delegated frontier rejects readiness evidence for a different head", async () => {
+	const runDeps = deps(
+		async (_command, args) =>
+			args[0] === "repo" ? { code: 0, stdout: repo, stderr: "" } : { code: 0, stdout: pr(NEW), stderr: "" },
+		ready(OLD),
+	);
+	const result = await executeLand(
+		{
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
+		},
+		runDeps,
+	);
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockers.join(" "), /exact-head/i);
+});
+
+test("delegated frontier blocks a head change after readiness", async () => {
 	let views = 0;
 	const exec: ExecFn = async (_command, args) => {
 		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
-		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
 		if (args[0] === "pr" && args[1] === "view") {
-			const current = views++;
-			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+			return { code: 0, stdout: views++ === 0 ? pr(NEW) : pr(OLD), stderr: "" };
 		}
 		return { code: 0, stdout: "", stderr: "" };
 	};
-	const runDeps = {
-		...deps(exec),
-		confirmMerge: async (): Promise<boolean> => {
-			confirmMergeCalled = true;
-			return true;
-		},
-	};
-	const result = await runLand(
+	const result = await executeLand(
 		{
-			target: { kind: "single", prNumber: 7 },
-			readiness: "check",
-			method: "squash",
-			confirmation: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
 		},
-		runDeps,
+		deps(exec),
 	);
-	assert.equal(result.status, "landed");
-	assert.equal(confirmMergeCalled, true, "a reconstructed object must not skip confirmation");
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockers.join(" "), /no longer matches autopilot/i);
 });
 
-test("minted confirmation still blocks when the PR head changes before merge", async () => {
+test("delegated frontier blocks a head change immediately before merge", async () => {
 	const CHANGED = "c".repeat(40);
 	const calls: string[][] = [];
 	let views = 0;
 	const exec: ExecFn = async (_command, args) => {
 		calls.push(args);
 		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
-		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
 		if (args[0] === "pr" && args[1] === "view") {
-			const current = views++;
-			return { code: 0, stdout: current < 2 ? pr(NEW) : pr(CHANGED), stderr: "" };
+			return { code: 0, stdout: views++ < 2 ? pr(NEW) : pr(CHANGED), stderr: "" };
 		}
 		return { code: 0, stdout: "", stderr: "" };
 	};
-	const result = await runLand(
+	const result = await executeLand(
 		{
-			target: { kind: "single", prNumber: 7 },
-			readiness: "check",
-			method: "squash",
-			confirmation: issueLandConfirmation(),
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
 		},
 		deps(exec),
 	);

@@ -2,10 +2,7 @@
 
 import { Type, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getRepoMethod, loadLandConfig, requestLand } from "../land/api.ts";
-import { issueLandConfirmation } from "../land/confirmation.ts";
-import type { LandResult } from "../land/types.ts";
-import { issueAutopilotConfirmation } from "../pr-autopilot/api.ts";
+import { getRepoMethod, loadLandConfig, requestStackFrontierLand } from "../land/api.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { isMergeMethod } from "../shared/github.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
@@ -115,7 +112,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		};
 	}
 
-	function landDeps(ctx: ExtensionContext, signal: AbortSignal): OrchestratorDeps {
+	function landDeps(ctx: ExtensionContext, signal: AbortSignal, cwd = ctx.cwd): OrchestratorDeps {
 		const configLoad = loadLandConfig();
 		if (configLoad.status === "invalid") {
 			ctx.ui.notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
@@ -128,20 +125,13 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			generatePrMetadata: metadata.generate,
 			configuredMethodFor: (nameWithOwner) =>
 				configLoad.status === "loaded" ? getRepoMethod(configLoad.config, nameWithOwner) : undefined,
-			// Keep confirmation capability minting at this production boundary.
-			landPr: async ({ prNumber, readiness, method }) =>
-				requestLand(
-					pi,
-					{
-						target: { kind: "single", prNumber },
-						readiness,
-						method,
-						cwd: ctx.cwd,
-						confirmation: issueLandConfirmation(),
-						autopilotConfirmation: issueAutopilotConfirmation(),
-					},
+			landFrontier: ({ prNumber, expectedHeadSha, readiness, method }) =>
+				requestStackFrontierLand(pi, {
+					options: { target: { kind: "single", prNumber }, readiness, method, cwd },
+					expectedHeadSha,
+					signal,
 					ctx,
-				),
+				}),
 		};
 	}
 
@@ -194,7 +184,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		}),
 	);
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
-		claimStackLanding(data, "jj", async ({ input, capabilities, ctx }) => {
+		claimStackLanding(data, "jj", async ({ input, ctx }) => {
 			if (!ctx.hasUI) {
 				return {
 					status: "stack",
@@ -208,19 +198,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 				ctx,
 				(signal) => {
 					const contextSignal = combinePublicationSignals(signal, ctx.signal);
-					const deps = landDeps(ctx, combinePublicationSignals(contextSignal, input.signal));
-					const landPr = capabilities.landPr;
-					const effectiveDeps: OrchestratorDeps = landPr
-						? {
-								...deps,
-								landPr: async (landInput) => {
-									const res = await landPr(landInput);
-									return /* SAFETY: The land capability owns and returns the LandResult contract. */ res as
-										| { handled: false }
-										| { handled: true; outcome: LandResult };
-								},
-							}
-						: deps;
+					const deps = landDeps(ctx, combinePublicationSignals(contextSignal, input.signal), input.repositoryPath);
 					return landStackThroughPullRequest(
 						{
 							cwd: input.repositoryPath,
@@ -229,7 +207,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 							method: input.method,
 							readiness: input.readiness,
 						},
-						effectiveDeps,
+						deps,
 					);
 				},
 				() => ({

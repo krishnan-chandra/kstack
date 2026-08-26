@@ -1,14 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { issueLandConfirmation } from "./confirmation.ts";
 import { routeLand } from "./routing.ts";
-import type { LandOptions, LandResult } from "./types.ts";
-
-const options: LandOptions = {
-	target: { kind: "single", prNumber: 12 },
-	readiness: "watch",
-	method: "squash",
-};
+import type { LandResult } from "./types.ts";
 
 function singleResult(): LandResult {
 	return {
@@ -32,7 +25,7 @@ function singleResult(): LandResult {
 describe("routeLand", () => {
 	it("routes a selected stacked PR through the complete stack prefix", async () => {
 		let ranSingle = false;
-		const result = await routeLand(options, {
+		const result = await routeLand({
 			provider: "jj",
 			requestStackLanding: async () => ({
 				handled: true,
@@ -79,7 +72,7 @@ describe("routeLand", () => {
 
 	it("keeps a pre-mutation jj frontier blocked so its recovery is visible", async () => {
 		const recovery = "Watch is bounded. Inspect PR #11, then retry /land after CI settles.";
-		const result = await routeLand(options, {
+		const result = await routeLand({
 			provider: "jj",
 			requestStackLanding: async () => ({
 				handled: true,
@@ -110,9 +103,9 @@ describe("routeLand", () => {
 		assert.equal(result.blockers[0], recovery);
 	});
 
-	it("preserves single-PR behavior for Git, non-stacks, and internal stack frontiers", async () => {
+	it("preserves single-PR behavior for Git and non-stacks", async () => {
 		let requests = 0;
-		const git = await routeLand(options, {
+		const git = await routeLand({
 			provider: undefined,
 			requestStackLanding: async () => {
 				requests++;
@@ -123,7 +116,7 @@ describe("routeLand", () => {
 		assert.equal(git.status, "landed");
 		assert.equal(requests, 0, "Git backend should not invoke stack channels");
 
-		const nonStack = await routeLand(options, {
+		const nonStack = await routeLand({
 			provider: "jj",
 			requestStackLanding: async () => {
 				requests++;
@@ -133,25 +126,11 @@ describe("routeLand", () => {
 		});
 		assert.equal(nonStack.status, "landed");
 		assert.equal(requests, 1);
-
-		const internal = await routeLand(
-			{ ...options, confirmation: issueLandConfirmation() },
-			{
-				provider: "jj",
-				requestStackLanding: async () => {
-					requests++;
-					return { handled: true, outcome: { status: "not-stack" } };
-				},
-				runSingle: async () => singleResult(),
-			},
-		);
-		assert.equal(internal.status, "landed");
-		assert.equal(requests, 1, "Internal confirmation capability bypasses stack route without calling channel");
 	});
 
 	it("blocks rather than risking an individual middle merge when stack detection is unavailable", async () => {
 		let ranSingle = false;
-		const result = await routeLand(options, {
+		const result = await routeLand({
 			provider: "jj",
 			requestStackLanding: async () => ({ handled: false }),
 			runSingle: async () => {
@@ -166,43 +145,40 @@ describe("routeLand", () => {
 
 	it("routes Graphite stacks through the shared stack channel", async () => {
 		let singles = 0;
-		const native = await routeLand(
-			{ ...options, method: undefined },
-			{
-				provider: "graphite",
-				requestStackLanding: async () => ({
-					handled: true,
+		const native = await routeLand({
+			provider: "graphite",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: {
+					status: "stack",
 					outcome: {
-						status: "stack",
-						outcome: {
-							status: "completed",
-							frontiers: [
-								{
-									ref: "kstack/one",
-									prNumber: 12,
-									url: "https://example/12",
-									expectedHeadSha: "bbb",
-									method: "graphite",
-									state: "landed",
-								},
-							],
-							remainingRefs: [],
-							completedMutations: ["Graphite accepted native merge"],
-							warnings: [],
-							recoveryOperationIds: [],
-						},
+						status: "completed",
+						frontiers: [
+							{
+								ref: "kstack/one",
+								prNumber: 12,
+								url: "https://example/12",
+								expectedHeadSha: "bbb",
+								method: "graphite",
+								state: "landed",
+							},
+						],
+						remainingRefs: [],
+						completedMutations: ["Graphite accepted native merge"],
+						warnings: [],
+						recoveryOperationIds: [],
 					},
-				}),
-				runSingle: async () => {
-					singles++;
-					return singleResult();
 				},
+			}),
+			runSingle: async () => {
+				singles++;
+				return singleResult();
 			},
-		);
+		});
 		assert.equal(native.status, "landed");
 		assert.equal(singles, 0);
 
-		const standalone = await routeLand(options, {
+		const standalone = await routeLand({
 			provider: "graphite",
 			requestStackLanding: async () => ({
 				handled: true,

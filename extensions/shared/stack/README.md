@@ -88,5 +88,9 @@ with host workflows (`plan-implement` and `land`):
 
 All payloads identify the target `provider: StackProviderId`. Provider extensions
 claim requests matching their provider ID and ignore other providers, preserving
-claim-once mechanics. If a channel request is unclaimed (`handled: false`), the
-provider extension is not loaded and callers refuse middle-of-stack mutations.
+claim-once mechanics. `StackLandingCapabilities` contains only the optional
+`runAutopilot` callback used by Graphite's native landing flow. jj delegates each
+frontier through Land's separate `kstack:land:request` interface.
+
+If a channel request is unclaimed (`handled: false`), the provider extension is
+not loaded and callers refuse middle-of-stack mutations.

@@ -189,6 +189,7 @@ describe("dispatchRoute", () => {
 		assert.equal(result.status, "dispatched");
 		assert.deepEqual(seen, [
 			{
+				kind: "interactive",
 				options: {
 					target: { kind: "single", prNumber: 42 },
 					readiness: "watch",
