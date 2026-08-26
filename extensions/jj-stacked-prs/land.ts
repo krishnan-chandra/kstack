@@ -495,16 +495,24 @@ async function runLandLoop(
 				frontiers.push(frontier);
 				return { status: "partial", error: "The land extension is unavailable.", ...progress() };
 			}
+			const hadEarlierMutations = completedMutations.length > 0;
 			completedMutations.push(...landed.outcome.completedMutations);
 			const pinned = landed.outcome.frontiers[0]?.expectedHeadSha;
 			if (pinned) frontier.expectedHeadSha = pinned;
 			if (landed.outcome.status !== "landed") {
 				frontier.state = landed.outcome.status === "partially-landed" ? "queued" : "blocked";
-				const hasEarlierProgress = frontiers.length > 0 || completedMutations.length > 0;
 				frontiers.push(frontier);
+				const error = landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`;
+				const hasMutations = hadEarlierMutations || landed.outcome.completedMutations.length > 0;
+				if (landed.outcome.status === "indeterminate") {
+					return { status: "indeterminate", inFlight: error, ...progress() };
+				}
+				if ((landed.outcome.status === "aborted" || landed.outcome.status === "declined") && !hasMutations) {
+					return { status: "cancelled", ...progress() };
+				}
 				return {
-					status: landed.outcome.status === "failed" && !hasEarlierProgress ? "failed" : "partial",
-					error: landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`,
+					status: landed.outcome.status === "failed" && !hasMutations ? "failed" : "partial",
+					error,
 					...progress(),
 				};
 			}

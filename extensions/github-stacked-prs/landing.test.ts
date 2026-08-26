@@ -327,6 +327,58 @@ describe("GitHub stack landing", () => {
 		);
 	});
 
+	it("preserves delegated cancellation before any mutation", async () => {
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "watch", method: "squash" },
+			{
+				exec: exec(),
+				gateway: gateway(),
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => ({
+					handled: true,
+					outcome: {
+						status: "aborted",
+						frontiers: [],
+						autopilotRan: false,
+						remainingRefs: [],
+						completedMutations: [],
+						blockers: ["cancelled"],
+					},
+				}),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "cancelled");
+	});
+
+	it("preserves an indeterminate delegated frontier outcome", async () => {
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "watch", method: "squash" },
+			{
+				exec: exec(),
+				gateway: gateway(),
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => ({
+					handled: true,
+					outcome: {
+						status: "indeterminate",
+						frontiers: [],
+						autopilotRan: true,
+						remainingRefs: [],
+						completedMutations: [],
+						blockers: ["merge acceptance unknown"],
+					},
+				}),
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "indeterminate");
+	});
+
 	it("delegates the exact pinned head and blocks cleanly when Land refuses it", async () => {
 		let pinned = "";
 		const result = await requestGitHubStackLanding(

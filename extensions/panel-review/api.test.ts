@@ -62,7 +62,7 @@ describe("panel-review in-process API", () => {
 			events: fakeBus((data) => {
 				claimPanelReviewRequest(data, async (options) => {
 					receivedPr = options.pr;
-					return { status: "declined" };
+					return { status: "aborted" };
 				});
 			}),
 		} as never;
@@ -107,7 +107,7 @@ describe("panel-review in-process API", () => {
 			claimed: false,
 		};
 		assert.equal(
-			claimPanelReviewRequest(request, async () => ({ status: "declined" as const })),
+			claimPanelReviewRequest(request, async () => ({ status: "aborted" as const })),
 			true,
 		);
 		assert.equal(

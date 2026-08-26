@@ -1737,6 +1737,32 @@ describe("landStack", () => {
 		assert.deepEqual(calls, ["abandon:trunk..feat1", "land:12", "abandon:trunk..feat2"]);
 	});
 
+	it("preserves delegated cancellation and indeterminate outcomes", async () => {
+		for (const expected of ["cancelled", "indeterminate"] as const) {
+			const result = await landStack(
+				{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
+				{
+					run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+					ui: ui(),
+					jj: fakeJj(),
+					github: fakeGithub({ listOpenPrs: async () => openPrs() }),
+					landFrontier: async () => ({
+						handled: true,
+						outcome: {
+							status: expected === "cancelled" ? "aborted" : "indeterminate",
+							frontiers: [],
+							autopilotRan: true,
+							remainingRefs: [],
+							completedMutations: [],
+							blockers: [expected === "cancelled" ? "cancelled" : "merge acceptance unknown"],
+						},
+					}),
+				},
+			);
+			assert.equal(result.status, expected);
+		}
+	});
+
 	it("stops without advancing when land reports partially-landed", async () => {
 		const jj = fakeJj();
 		const result = await landStack(

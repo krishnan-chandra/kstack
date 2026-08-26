@@ -21,7 +21,7 @@ export interface FrontierResult {
 	state: "landed" | "queued" | "blocked" | "not-attempted";
 }
 export interface LandResult {
-	status: "landed" | "partially-landed" | "blocked" | "declined" | "aborted" | "failed";
+	status: "landed" | "partially-landed" | "indeterminate" | "blocked" | "declined" | "aborted" | "failed";
 	frontiers: FrontierResult[];
 	autopilotRan: boolean;
 	autopilotStatus?: AutopilotResult["status"];

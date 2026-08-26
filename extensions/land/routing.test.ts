@@ -103,6 +103,30 @@ describe("routeLand", () => {
 		assert.equal(result.blockers[0], recovery);
 	});
 
+	it("preserves an indeterminate stack outcome across the Land boundary", async () => {
+		const result = await routeLand({
+			provider: "github",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: {
+					status: "stack",
+					outcome: {
+						status: "indeterminate",
+						inFlight: "merge acceptance unknown",
+						frontiers: [],
+						remainingRefs: ["feat1"],
+						completedMutations: [],
+						recoveryOperationIds: ["op1"],
+					},
+				},
+			}),
+			runSingle: async () => singleResult(),
+		});
+		assert.equal(result.status, "indeterminate");
+		assert.equal(result.blockers[0], "merge acceptance unknown");
+		assert.equal(result.recoveryOperationId, "op1");
+	});
+
 	it("preserves single-PR behavior for Git and non-stacks", async () => {
 		let requests = 0;
 		const git = await routeLand({

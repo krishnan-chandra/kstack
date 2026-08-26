@@ -85,7 +85,6 @@ export type PanelReviewOutcome =
 			headSha: string;
 	  }
 	| { status: "no-changes" }
-	| { status: "declined" }
 	| { status: "aborted" }
 	| { status: "failed"; error: string };
 

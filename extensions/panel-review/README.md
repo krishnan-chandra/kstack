@@ -33,7 +33,7 @@ working tree, such as a managed worktree. Panel-review claims the request
 synchronously on
 Pi's event bus and exposes a completion promise that resolves a structured
 `PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
-base/head SHAs), `no-changes`, `declined`, `aborted`, or `failed`. The normal
+base/head SHAs), `no-changes`, `aborted`, or `failed`. The normal
 cancellation and verdict path still runs; the slash command
 ignores the outcome.
 
