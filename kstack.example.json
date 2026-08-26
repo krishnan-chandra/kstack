@@ -34,8 +34,8 @@
         "thinking": "medium"
       },
       {
-        "label": "mercury",
-        "model": "openrouter/inception/mercury-2",
+        "label": "glm",
+        "model": "openrouter/z-ai/glm-5.3-flash",
         "thinking": "medium"
       }
     ],
