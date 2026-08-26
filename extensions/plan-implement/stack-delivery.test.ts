@@ -31,14 +31,20 @@ function createMockPi() {
 }
 
 describe("createStackDeliveryClient", () => {
-	it("returns undefined for Git backend", () => {
+	it("uses GitHub by default for Git and supports the none opt-out", () => {
 		const { pi } = createMockPi();
-		const client = createStackDeliveryClient(
+		const github = createStackDeliveryClient(
 			/* SAFETY: Test mock */ pi as never,
-			"git",
+			{ backend: "git", gitStackProvider: "github", warnings: [] },
 			/* SAFETY: Test mock */ {} as never,
 		);
-		assert.equal(client, undefined);
+		assert.equal(github?.provider, "github");
+		const none = createStackDeliveryClient(
+			/* SAFETY: Test mock */ pi as never,
+			{ backend: "git", gitStackProvider: "none", warnings: [] },
+			/* SAFETY: Test mock */ {} as never,
+		);
+		assert.equal(none, undefined);
 	});
 
 	it("preflights through provider channels", async () => {
@@ -61,7 +67,7 @@ describe("createStackDeliveryClient", () => {
 
 		const client = createStackDeliveryClient(
 			/* SAFETY: Test mock */ pi as never,
-			"jj",
+			{ backend: "jj", warnings: [] },
 			/* SAFETY: Test mock */ {} as never,
 		);
 		assert.ok(client);
@@ -88,7 +94,7 @@ describe("createStackDeliveryClient", () => {
 
 		const client = createStackDeliveryClient(
 			/* SAFETY: Test mock */ pi as never,
-			"graphite",
+			{ backend: "graphite", warnings: [] },
 			/* SAFETY: Test mock */ {} as never,
 		);
 		assert.ok(client);
@@ -102,7 +108,7 @@ describe("createStackDeliveryClient", () => {
 		const { pi } = createMockPi();
 		const client = createStackDeliveryClient(
 			/* SAFETY: Test mock */ pi as never,
-			"jj",
+			{ backend: "jj", warnings: [] },
 			/* SAFETY: Test mock */ {} as never,
 		);
 		assert.ok(client);

@@ -14,7 +14,7 @@ Graphite users drive stacked workflows through `/land`, `plan-implement --stack`
 ## What it does
 
 - Validates local Graphite stack topology against immutable Git commits, Graphite trunk, and `gt submit --stack --dry-run` / `gt merge --dry-run` scope.
-- Enforces parent-owned publication for `plan-implement --stack` by inspecting a private JSON stack manifest written by the implementer child, revalidating every branch/headSha/diff against Git, and submitting through `gt submit --stack --draft --no-edit` under a publication lock.
+- Enforces parent-owned publication for `plan-implement --stack` by inspecting the provider-neutral private JSON stack manifest from [`shared/stack/manifest.ts`](../shared/stack/manifest.ts), revalidating every branch/headSha/diff against Git, and submitting through `gt submit --stack --draft --no-edit` under a publication lock.
 - Lands complete Graphite stack prefixes through `/land --pr <number>`. Validates all predecessor PRs, runs PR autopilot readiness on every PR in the prefix, dry-runs the native merge, confirms the landing plan with the user, acquires the publication lock, invokes native `gt merge`, verifies remote merge completion on GitHub for each PR, and synchronizes the local stack with `gt sync`.
 
 ## What it refuses

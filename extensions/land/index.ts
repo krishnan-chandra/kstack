@@ -7,7 +7,7 @@ import { findOpenPullRequestByHead, getPullRequest, isMergeMethod } from "../sha
 import { requestStackLanding } from "../shared/stack/channel.ts";
 import { stackProviderFor } from "../shared/stack/provider.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
-import { loadVcsBackend } from "../shared/vcs/config.ts";
+import { loadVcsBackend, type VcsBackendConfig } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT, type LandRequestPayload } from "./api.ts";
 import { completeLandArgs, parseLandArgs } from "./command.ts";
@@ -56,12 +56,15 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
-	async function configuredBackend(ctx: ExtensionContext, cwd: string): Promise<VcsResult<{ backend: VcsBackend }>> {
+	async function configuredBackend(
+		ctx: ExtensionContext,
+		cwd: string,
+	): Promise<VcsResult<{ backend: VcsBackend; config: VcsBackendConfig }>> {
 		const config = loadVcsBackend();
 		for (const warning of config.warnings) ctx.ui.notify(warning, "warning");
 		const backend = createVcsBackend(config.backend, makeExec(pi));
 		const preflight = await backend.preflight(cwd);
-		return preflight.ok ? { ok: true, backend } : preflight;
+		return preflight.ok ? { ok: true, backend, config } : preflight;
 	}
 
 	function landConfigFor(ctx: ExtensionContext): LandConfig {
@@ -110,16 +113,16 @@ export default function landExtension(pi: ExtensionAPI): void {
 	async function executeInteractive(
 		options: LandOptions,
 		ctx: ExtensionContext,
-		preparedBackend?: VcsBackend,
+		prepared?: { backend: VcsBackend; config: VcsBackendConfig },
 	): Promise<LandResult> {
 		if (!ctx.hasUI) return blockedLandResult("Land requires interactive TUI/RPC mode.");
 		const cwd = options.cwd ?? ctx.cwd;
-		const resolved: VcsResult<{ backend: VcsBackend }> = preparedBackend
-			? { ok: true, backend: preparedBackend }
+		const resolved: VcsResult<{ backend: VcsBackend; config: VcsBackendConfig }> = prepared
+			? { ok: true, ...prepared }
 			: await configuredBackend(ctx, cwd);
 		if (!resolved.ok) return blockedLandResult(resolved.error);
 		const exec = makeExec(pi);
-		const provider = stackProviderFor(resolved.backend.id);
+		const provider = stackProviderFor(resolved.config);
 		return routeLand({
 			provider,
 			requestStackLanding: async () => {
@@ -156,14 +159,17 @@ export default function landExtension(pi: ExtensionAPI): void {
 		});
 	}
 
-	async function executeRequest(request: LandRequestPayload, preparedBackend?: VcsBackend): Promise<LandResult> {
+	async function executeRequest(
+		request: LandRequestPayload,
+		prepared?: { backend: VcsBackend; config: VcsBackendConfig },
+	): Promise<LandResult> {
 		let result: LandResult;
 		if (!request.ctx.hasUI) {
 			result = blockedLandResult("Land requires interactive TUI/RPC mode.");
 		} else if (request.kind === "stack-frontier") {
 			result = await runSingle(request);
 		} else {
-			result = await executeInteractive(request.options, request.ctx, preparedBackend);
+			result = await executeInteractive(request.options, request.ctx, prepared);
 		}
 		pi.sendMessage({
 			customType: "land",
@@ -210,7 +216,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 					},
 					ctx,
 				},
-				backend,
+				{ backend, config: resolved.config },
 			);
 		},
 	});

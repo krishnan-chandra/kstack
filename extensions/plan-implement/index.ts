@@ -226,7 +226,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const backend = backendFor(vcsConfig.backend);
 		const policy = vcsPolicy(backend.id);
-		const stackClient = createStackDeliveryClient(pi, vcsConfig.backend, ctx);
+		const stackClient = createStackDeliveryClient(pi, vcsConfig, ctx);
 		const engineeringPrinciplesPrompt = readPromptAsset(PLAYBOOKS_DIR, "engineering-principles.md");
 		const playbookFile = changeKindPlaybookFile(changeKind);
 		const playbookPrompt = playbookFile ? readPromptAsset(PLAYBOOKS_DIR, playbookFile) : undefined;
@@ -284,8 +284,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				notify("The configured backend does not provide stack delivery.", "error");
 				return;
 			}
-			if (stackClient.provider === "graphite") {
-				stackTempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-graphite-stack-"));
+			if (stackClient.provider !== "jj") {
+				stackTempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-stack-"));
 				stackManifestPath = join(stackTempDir, "manifest.json");
 			}
 			const preflight = await stackClient.preflight(ctx.cwd, stackManifestPath);
@@ -301,7 +301,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			trunkSha = preflight.trunkSha;
 			stackTrunkRef = preflight.trunkRef;
 			skillPaths = buildStackSkillPolicy(discoveredSkills).map((skill) => skill.baseDir);
-			if (stackClient.provider === "graphite" && stackManifestPath) {
+			if (stackClient.provider !== "jj" && stackManifestPath) {
 				writeFileSync(
 					stackManifestPath,
 					`${JSON.stringify({ schemaVersion: 1, trunkRef: preflight.trunkRef, trunkSha: preflight.trunkSha, slices: [] }, null, 2)}\n`,
@@ -322,6 +322,10 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 			worktreePlan = planned.plan;
 		}
+		let stackBaseLabel = "";
+		if (stackClient?.provider === "jj") stackBaseLabel = "trunk()";
+		else if (stackClient?.provider === "graphite") stackBaseLabel = "Graphite trunk";
+		else if (stackClient?.provider === "github") stackBaseLabel = "Git remote trunk";
 		const confirmed = await ctx.ui.confirm(
 			mode === "stack"
 				? "Run plan → implement (stacked PRs) → panel review → fix → publish?"
@@ -329,7 +333,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					? "Run plan → implement in managed worktree → panel review → fix → publish?"
 					: "Run plan → implement → panel review → fix → publish?",
 			mode === "stack"
-				? `Planner (read-only): ${plannerModel}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackClient?.provider === "jj" ? "trunk()" : "Graphite trunk"} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nThe implementer builds a LOCAL stack only — it does not push or create PRs. The parent independently validates the complete stack, shows the exact publication plan, confirms it, and verifies every resulting draft PR before launching the metadata/reviewer child.`
+				? `Planner (read-only): ${plannerModel}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nThe implementer builds a LOCAL stack only — it does not push or create PRs. The parent independently validates the complete stack, shows the exact publication plan, confirms it, and verifies every resulting draft PR before launching the metadata/reviewer child.`
 				: `Planner (read-only): ${plannerModel}\nImplementer (${policy.taskWorkstreamSummary}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : policy.currentModeDisclosure}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) {

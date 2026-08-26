@@ -26,7 +26,7 @@ describe("createDraftPr", () => {
 		try {
 			await adapter.createDraftPr({
 				repo: { owner: "o", repo: "r" },
-				bookmark: "feature",
+				ref: "feature",
 				base: "main",
 				title: "Title",
 				body: "## Summary\n\n- Add the feature.\n\n## Review guide\n\n1. **Flow** — Verify it.",

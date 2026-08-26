@@ -398,7 +398,7 @@ export interface GitHubGateway {
 	): Promise<"deleted" | "already-gone">;
 	createDraftPr(input: {
 		repo: GitHubRepository;
-		bookmark: string;
+		ref: string;
 		base: string;
 		title: string;
 		body: string;
@@ -552,7 +552,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 					"--repo",
 					`${input.repo.owner}/${input.repo.repo}`,
 					"--head",
-					input.bookmark,
+					input.ref,
 					"--base",
 					input.base,
 					"--title",
@@ -576,7 +576,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 				/* fall through to the unresolved-create error */
 			}
 			throw new GitHubError(
-				`Created PR for bookmark ${JSON.stringify(input.bookmark)} at ${JSON.stringify(prUrl)}, but could not read its metadata. Run plan again to continue safely.`,
+				`Created PR for ref ${JSON.stringify(input.ref)} at ${JSON.stringify(prUrl)}, but could not read its metadata. Run plan again to continue safely.`,
 				"indeterminate",
 			);
 		},

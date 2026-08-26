@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../shared/git-exec.ts";
+import { parseStackManifest } from "../shared/stack/manifest.ts";
 import {
-	parseGraphiteStackManifest,
 	planGraphitePublication,
 	preflightGraphiteStack,
 	submitGraphiteStack,
@@ -74,12 +74,12 @@ describe("Graphite stack delivery", () => {
 	});
 
 	it("accepts only a bounded, exact, linear kstack manifest", () => {
-		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
-		assert.equal(parseGraphiteStackManifest("{}").ok, false);
-		assert.equal(parseGraphiteStackManifest(JSON.stringify({ ...manifestValue, extra: true })).ok, false);
+		assert.equal(parseStackManifest("{}").ok, false);
+		assert.equal(parseStackManifest(JSON.stringify({ ...manifestValue, extra: true })).ok, false);
 		assert.equal(
-			parseGraphiteStackManifest(
+			parseStackManifest(
 				JSON.stringify({ ...manifestValue, slices: [{ ...manifestValue.slices[0], branch: "kstack/bad..ref" }] }),
 			).ok,
 			false,
@@ -87,7 +87,7 @@ describe("Graphite stack delivery", () => {
 	});
 
 	it("verifies Git facts and Graphite's dry run before planning publication", async () => {
-		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
 		if (!parsed.ok) return;
 		const { exec, calls } = scripted();
@@ -101,7 +101,7 @@ describe("Graphite stack delivery", () => {
 	});
 
 	it("rejects a dry run whose affected branches differ from the manifest", async () => {
-		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
 		if (!parsed.ok) return;
 		const { exec } = scripted({
@@ -116,7 +116,7 @@ describe("Graphite stack delivery", () => {
 	});
 
 	it("revalidates under lock, submits once, and verifies the exact draft PR", async () => {
-		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
 		if (!parsed.ok) return;
 		let ghReads = 0;
@@ -173,7 +173,7 @@ describe("Graphite stack delivery", () => {
 	});
 
 	it("treats a nonzero submit as partial when exact PRs are visible", async () => {
-		const parsed = parseGraphiteStackManifest(JSON.stringify(manifestValue));
+		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
 		if (!parsed.ok) return;
 		let ghReads = 0;

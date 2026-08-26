@@ -14,6 +14,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
+| [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset or a pinned GitHub PR snapshot, then synthesizes a lead-review verdict with a live multi-agent TUI dashboard. |
 | [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live multi-agent TUI dashboard, bounded concurrency, cancellation, and per-child runtime limits. |
@@ -82,6 +83,8 @@ Kstack extension child agents persist native Pi sessions under `~/.pi/kstack/sub
 K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
 (default `~/.pi/agent/kstack.json`). The `vcs.backend` setting selects `"git"`,
 `"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
+For Git, `vcs.stackProvider` defaults to `"github"`; set it to `"none"` to
+disable stacked-PR publication and membership routing.
 Model assignments for panel-review, plan-implement, arena, swarm, and the
 `how` and `why` investigation skills use sections in the same file. The
 `plan-implement` section also drives `--fast` mode, which runs the same
@@ -109,8 +112,8 @@ user configuration, run:
 `setup-kstack` does not modify repository defaults unless you explicitly ask for
 a separate follow-up change.
 
-The backends are exclusive for each run. Git mode requires a plain Git working
-tree and supports current-checkout or managed-worktree single delivery. Graphite
+The backends are exclusive for each run. Git mode requires Git 2.38 or newer and a plain Git working tree. It supports
+current-checkout or managed-worktree single delivery and GitHub-native stacks. Graphite
 mode requires gt 1.8.5+, Git 2.38+, and initialized Graphite metadata, and uses
 native `gt` mutation in current or managed-worktree single delivery. jj mode
 requires jj 0.44 or newer, a configured jj user name and email, and a colocated
@@ -121,15 +124,17 @@ before launching a model or mutating repository state.
 | Workflow | Git backend | jj backend | Graphite backend |
 | --- | --- | --- | --- |
 | `plan-implement --single` | Current branch or `--worktree` | `main`-based change and bookmark | Current branch or tracked `--worktree` |
-| `plan-implement --stack` | Refused | Local jj stack | Graphite stack adapter |
+| `plan-implement --stack` | Local Git branch stack (`github` provider) | Local jj stack | Graphite stack adapter |
 | `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push | Branch validation and native Graphite record/restack/submit |
 | `land` auto-discovery | Current branch | Bookmark targeting `@` | Current Graphite branch |
 
 ### Migrating existing installations
 
-Existing installations that omit `vcs` continue to use Git. To adopt jj or Graphite, run
-`/skill:setup-kstack`, select the backend, review the preview, and approve the update to
-the user-level `kstack.json`. Ensure the repository is colocated and configure
+Existing installations that omit `vcs` continue to use Git and now use the
+GitHub stack provider by default. Set `vcs.stackProvider` to `"none"` to keep
+single-PR-only Git behavior. To adopt jj or Graphite, run `/skill:setup-kstack`,
+select the backend, review the preview, and approve the update to the user-level
+`kstack.json`. Ensure the repository is colocated and configure
 `jj config set --user user.name` and `user.email` first. The installer and
 package updates never create, overwrite, or migrate `kstack.json`; they preserve
 the user's backend choice.
@@ -168,9 +173,10 @@ rows stay unnamed.
 - Pi 0.84.2 or newer
 - Node.js 22.18 or newer for Pi's runtime and local tooling
 - A local filesystem for Pi's agent directory
-- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, jj-stacked-prs, and plan-implement's publish step
+- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step
 - `tar` — required to extract the temporary source snapshot for PR-scoped panel review
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
+- Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
 
 Pi loads one TypeScript entry, `kstack.ts`, from the package. The installer
@@ -267,11 +273,13 @@ The two-model implementation workflow also has a stacked-PR delivery mode:
 /plan-implement --stack Split the auth rollout into a three-PR jj stack
 ```
 
-In stack mode the planner and implementer build a **local** jj stack of
-bookmarks (one per PR) and deterministically exclude the `arena` skill; no PRs
-are created. Confirmed structural publication uses the loaded
-[`jj-stacked-prs`](extensions/jj-stacked-prs/) extension (`/jj-stack publish`);
-a child updates titles/bodies and recommends reviewers only after that succeeds.
+In stack mode the planner and implementer build a **local** stack with one ref
+per PR and deterministically exclude the `arena` skill. The configured stack
+provider owns confirmed structural publication: [`github-stacked-prs`](extensions/github-stacked-prs/)
+for Git, [`jj-stacked-prs`](extensions/jj-stacked-prs/) for jj, or
+[`graphite-stacked-prs`](extensions/graphite-stacked-prs/) for Graphite. A child
+updates titles and bodies and recommends reviewers only after publication
+succeeds.
 
 After a draft PR is published, hand it to the bounded PR autopilot to drive
 the review/fix/CI loop with only tiny models:
@@ -306,7 +314,7 @@ preferences. Remove the Kstack-managed links and delete the managed keys from
 
 The installer is preferred because it keeps the aggregator and shared skill
 links tied to the checkout. Copying `extensions/` into Pi's global user
-directory is no longer supported: Pi would discover ten source factories
+directory is no longer supported: Pi would discover every source factory
 instead of `kstack.ts`. Use `./scripts/install/index.mjs`.
 
 For a one-off extension test without installing anything, run from the repository
@@ -371,6 +379,7 @@ node --test extensions/kstack-router/
 node --test extensions/land/
 node --test extensions/pr-autopilot/
 node --test extensions/jj-stacked-prs/
+node --test 'extensions/github-stacked-prs/*.test.ts'
 node --test extensions/shared/
 node --test skills/reflect/
 node --test skills/architect/

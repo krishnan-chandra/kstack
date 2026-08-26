@@ -2,7 +2,7 @@
 name: setup-kstack
 description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
-compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); jj 0.44+ for jj; gt 1.8.5+ and Git 2.38+ for Graphite.
+compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); Git 2.38+ for GitHub stacks; jj 0.44+ for jj; gt 1.8.5+ and Git 2.38+ for Graphite.
 ---
 
 # Set up K-Stack
@@ -84,6 +84,10 @@ Read the existing `vcs.backend` value. If it is missing, the runtime default is
    successful `gt --no-interactive trunk`. Do not install, authenticate, or run
    `gt init`; show `gt init --trunk <branch>` as recovery guidance.
 5. Store exactly `git`, `jj`, or `graphite` in the top-level `vcs.backend`.
+6. If the user selects `git`, ask whether to use GitHub-native stacked PRs.
+   Store `vcs.stackProvider` as `"github"` (the default) or `"none"` to opt out.
+   Require Git 2.38 or newer for `"github"`. Remove the key when jj or Graphite
+   is selected because those backends always use their matching provider.
 
 Explain the exclusivity rule before approval: K-Stack sends every repository
 mutation through the selected backend. Git mode refuses a jj-managed workspace,
@@ -105,7 +109,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 
 | Workflow | Roles to configure | Constraints |
 | --- | --- | --- |
-| `vcs` | `backend` | Use exactly `"git"`, `"jj"`, or `"graphite"`; jj requires a colocated workspace and jj 0.44+, Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
+| `vcs` | `backend`, Git-only `stackProvider` | Use exactly `"git"`, `"jj"`, or `"graphite"`. With Git, use `"github"` (default, Git 2.38+) or `"none"`. jj requires a colocated workspace and jj 0.44+. Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. `--fast` mode reuses this implementer and skips planning, review, and publishing. |
 | `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
 | `kstack-router` | `classifier`, `timeoutSeconds` | `timeoutSeconds` is 1–600. |
@@ -137,10 +141,13 @@ list or select from the list above.
 
 Before showing the preview, check all of these conditions:
 
-- `vcs.backend` is exactly `"git"`, `"jj"`, or `"graphite"`. If it is `"jj"`,
-  jj 0.44 or newer is available. If it is `"graphite"`, gt 1.8.5+ and Git 2.38+
-  are available and `gt trunk` succeeds. Warn when the selected backend does not match the current
-  repository shape; the runtime preflight will refuse mutation there.
+- `vcs.backend` is exactly `"git"`, `"jj"`, or `"graphite"`. For Git,
+  `vcs.stackProvider` is absent or exactly `"github"` or `"none"`; GitHub stacks
+  require Git 2.38 or newer. For jj and Graphite, `vcs.stackProvider` is absent.
+  If the backend is `"jj"`, jj 0.44 or newer is available. If it is
+  `"graphite"`, gt 1.8.5+ and Git 2.38+ are available and `gt trunk` succeeds.
+  Warn when the selected backend does not match the current repository shape;
+  the runtime preflight will refuse mutation there.
 - Every selected `provider/model` either appears in `pi --list-models` or is an
   exact user-requested provider ID that passed the catalog-lag exception above.
   Every selected provider passed `pi auth check`.

@@ -3,9 +3,10 @@ import { describe, it } from "node:test";
 import { stackProviderFor } from "./provider.ts";
 
 describe("stackProviderFor", () => {
-	it("maps supported VCS backends to their respective stack providers", () => {
-		assert.equal(stackProviderFor("jj"), "jj");
-		assert.equal(stackProviderFor("graphite"), "graphite");
-		assert.equal(stackProviderFor("git"), undefined);
+	it("maps fixed providers and both Git provider choices", () => {
+		assert.equal(stackProviderFor({ backend: "jj", warnings: [] }), "jj");
+		assert.equal(stackProviderFor({ backend: "graphite", warnings: [] }), "graphite");
+		assert.equal(stackProviderFor({ backend: "git", gitStackProvider: "github", warnings: [] }), "github");
+		assert.equal(stackProviderFor({ backend: "git", gitStackProvider: "none", warnings: [] }), undefined);
 	});
 });

@@ -12,7 +12,7 @@ reviewers (`find-reviewers`).
 /plan-implement --change-kind bug-fix Fix the archive race
 /plan-implement --single --change-kind feature Add archive search
 /plan-implement --worktree --change-kind feature Add archive search without touching this checkout
-/plan-implement --stack --change-kind refactor Split the auth rollout into a three-PR jj stack
+/plan-implement --stack --change-kind refactor Split the auth rollout into three PRs
 /plan-implement --fast --change-kind feature Add archive search
 /plan-implement
 ```
@@ -153,17 +153,19 @@ workspace. Combining `--worktree` with `--stack` also fails before model calls.
 
 ### Stacked-PR mode (`--stack`)
 
-Stacked-PR mode builds a **local** stack of changes (Jujutsu bookmarks or
-native Graphite branches), one pointer per PR, and reviews it once. The
-implementer never publishes; the parent's publication phase owns publication.
+Stacked-PR mode builds a **local** stack of changes, one pointer per PR, and
+reviews it once. The implementer never publishes; the parent's publication
+phase owns publication.
 
-Stack mode requires `vcs.backend: "jj"` or `vcs.backend: "graphite"` and
-preflights via the stack provider request channels (`kstack:stack:preflight`
-and `kstack:stack:capabilities`):
+Stack mode preflights through `kstack:stack:preflight` and
+`kstack:stack:capabilities`:
 
-- For `jj`: `jj >= 0.44`, configured user identity, colocated Git worktree,
-  immutable `trunk()` commit, and `jj-stacked-prs` loaded.
-- For `graphite`: Git repository root, valid Graphite trunk and SHA, clean
+- For `git`: Git 2.38 or newer, a clean plain Git worktree, immutable remote
+  trunk, one `kstack/` branch per slice, and `github-stacked-prs` loaded. Set
+  `vcs.stackProvider` to `"none"` to disable Git stack mode.
+- For `jj`: jj 0.44 or newer, configured user identity, a colocated Git
+  worktree, immutable `trunk()` commit, and `jj-stacked-prs` loaded.
+- For `graphite`: a Git repository root, valid Graphite trunk and SHA, clean
   working tree, and `graphite-stacked-prs` loaded.
 
 Arena is **deterministically disabled** for both children: skill discovery is
@@ -294,9 +296,9 @@ Publication stops when workstream changes have not been recorded.
 - Invalid config, unavailable models, VCS preflight failures, a missing
   panel-review extension, missing `write-pr`/`find-reviewers` skills, and bad
   task input stop before model calls.
-- Stack-mode preflight failures (no jj, not a workspace, no colocated git, no
-  single `trunk()` commit, unloaded `jj-stacked-prs` extension, Arena not
-  excludable) stop before model calls.
+- Stack-mode preflight failures, including a dirty or mismatched workspace, an
+  unavailable provider extension, an unresolved immutable trunk, or Arena not
+  being excludable, stop before model calls.
 - Worktree-mode base/path failures stop before model calls. Creation happens
   only after plan approval; a creation failure stops before the implementer and
   reports any directory or branch that may need inspection.

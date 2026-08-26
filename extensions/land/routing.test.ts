@@ -129,18 +129,20 @@ describe("routeLand", () => {
 	});
 
 	it("blocks rather than risking an individual middle merge when stack detection is unavailable", async () => {
-		let ranSingle = false;
-		const result = await routeLand({
-			provider: "jj",
-			requestStackLanding: async () => ({ handled: false }),
-			runSingle: async () => {
-				ranSingle = true;
-				return singleResult();
-			},
-		});
-		assert.equal(ranSingle, false);
-		assert.equal(result.status, "blocked");
-		assert.match(result.blockers.join("\n"), /jj-stacked-prs extension is unavailable/i);
+		for (const provider of ["jj", "github"] as const) {
+			let ranSingle = false;
+			const result = await routeLand({
+				provider,
+				requestStackLanding: async () => ({ handled: false }),
+				runSingle: async () => {
+					ranSingle = true;
+					return singleResult();
+				},
+			});
+			assert.equal(ranSingle, false);
+			assert.equal(result.status, "blocked");
+			assert.match(result.blockers.join("\n"), new RegExp(`${provider}-stacked-prs extension is unavailable`, "i"));
+		}
 	});
 
 	it("routes Graphite stacks through the shared stack channel", async () => {

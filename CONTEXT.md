@@ -37,9 +37,9 @@ pull requests where each PR's base is its predecessor.
 One PR boundary within a stack: the changes between a ref and its predecessor.
 
 **Stack provider**:
-The subsystem that manages stacked PRs for a repository: jj, Graphite, or a
-future GitHub-native provider. Distinct from the VCS backend; a provider is
-derived from the backend but is its own axis.
+The subsystem that manages stacked PRs for a repository: jj, Graphite, or the
+GitHub-native Git provider. Distinct from the VCS backend; a provider is derived
+from the backend and the Git stack-provider choice, but is its own axis.
 _Avoid_: stack backend
 
 **Publication**:

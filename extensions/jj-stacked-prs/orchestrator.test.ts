@@ -228,15 +228,15 @@ describe("publishStack", () => {
 		const created: Array<{ bookmark: string; title: string; body: string }> = [];
 		const github = fakeGithub({
 			createDraftPr: async (input) => {
-				created.push({ bookmark: input.bookmark, title: input.title, body: input.body });
+				created.push({ bookmark: input.ref, title: input.title, body: input.body });
 				return {
-					number: input.bookmark === "feat1" ? 11 : 12,
-					headRef: input.bookmark,
-					headCommitId: input.bookmark === "feat1" ? "aaa-commit" : "bbb-commit",
+					number: input.ref === "feat1" ? 11 : 12,
+					headRef: input.ref,
+					headCommitId: input.ref === "feat1" ? "aaa-commit" : "bbb-commit",
 					baseRef: input.base,
 					title: input.title,
 					draft: true,
-					url: `https://example/${input.bookmark}`,
+					url: `https://example/${input.ref}`,
 					headOwner: "o",
 				};
 			},

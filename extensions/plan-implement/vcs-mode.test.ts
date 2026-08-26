@@ -18,11 +18,10 @@ describe("plan-implement VCS mode matrix", () => {
 		assert.match(validateVcsMode("jj", "single", "worktree") ?? "", /requires the Git or Graphite backend/);
 	});
 
-	it("allows stack delivery with jj or Graphite and without worktree isolation", () => {
-		assert.equal(validateVcsMode("jj", "stack", "current"), undefined);
-		assert.equal(validateVcsMode("graphite", "stack", "current"), undefined);
-		assert.match(validateVcsMode("git", "stack", "current") ?? "", /requires the jj or Graphite backend/);
-		assert.match(validateVcsMode("jj", "stack", "worktree") ?? "", /cannot currently be combined/);
-		assert.match(validateVcsMode("graphite", "stack", "worktree") ?? "", /cannot currently be combined/);
+	it("allows stack delivery with every backend and without worktree isolation", () => {
+		for (const backend of ["git", "jj", "graphite"] as const) {
+			assert.equal(validateVcsMode(backend, "stack", "current"), undefined);
+			assert.match(validateVcsMode(backend, "stack", "worktree") ?? "", /cannot currently be combined/);
+		}
 	});
 });

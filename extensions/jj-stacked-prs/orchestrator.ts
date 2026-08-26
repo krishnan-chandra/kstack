@@ -552,7 +552,7 @@ async function applyPublication(
 					if (!metadata) throw new Error(`No PR metadata was prepared for ${JSON.stringify(action.bookmark)}.`);
 					const created = await github.createDraftPr({
 						repo: plan.repository,
-						bookmark: action.bookmark,
+						ref: action.bookmark,
 						base: action.targetBase.replace(/^refs\/heads\//, ""),
 						title: metadata.title,
 						body: metadata.body,

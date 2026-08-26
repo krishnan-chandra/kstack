@@ -1,9 +1,10 @@
 # Land
 
 `/land` merges a GitHub pull request after `pr-autopilot` verifies its current
-head. In jj or Graphite mode, selecting a PR in a confirmed local stack lands
-the complete prefix from trunk through that PR. Land confirms the stack once,
-then revalidates each pull request before it asks GitHub or Graphite to merge it.
+head. With the GitHub, jj, or Graphite stack provider, selecting a PR in a
+confirmed local stack lands the complete prefix from trunk through that PR.
+Land confirms the stack once, then revalidates each pull request before it asks
+GitHub or Graphite to merge it.
 
 ## Usage
 
@@ -22,6 +23,16 @@ Git branch or jj bookmark, according to the shared `vcs.backend` setting. Land
 stops when Git is detached, when the current jj change has no unique bookmark,
 or when GitHub finds zero or multiple matching PRs. Pass `--pr` to select a PR
 without checking out its local head.
+
+In Git mode, `vcs.stackProvider` defaults to `"github"`. Land queries the
+navigation comment through `github-stacked-prs`. A PR without a kstack comment
+falls through to ordinary single-PR landing. Any PR in a multi-PR stack,
+including the bottom PR, requires the complete local Git branch chain at the
+exact remote heads. The provider lands each frontier through Land's delegated
+exact-head request, rebases the remainder with `git rebase --update-refs`, and
+atomically force-pushes it with exact leases after revalidating every remote
+head. It then repairs PR bases and updates navigation comments. Set `vcs.stackProvider` to
+`"none"` to disable this routing and preserve single-PR-only behavior.
 
 In Graphite mode, Land delegates stack landing through the shared
 `kstack:stack:land-through-pr` channel claimed by `graphite-stacked-prs`. The
@@ -92,9 +103,12 @@ merges, not native Graphite stack landing.
 
 ## Safety and partial results
 
-Land never passes `--admin`, `--auto`, or `--delete-branch` to `gh`. It does not
-force-push or delete a branch or bookmark. Immediately before the merge command,
-Land checks that GitHub still reports the confirmed head ref and SHA. The merge
+Land never passes `--admin`, `--auto`, or `--delete-branch` to `gh`. Its
+single-PR merge module does not force-push or delete a branch or bookmark. A
+stack provider may advance and republish its remainder after Land verifies a
+frontier merge; the GitHub provider uses exact force-with-lease pins and deletes
+only verified merged branches. Immediately before the merge command, Land
+checks that GitHub still reports the confirmed head ref and SHA. The merge
 command also passes `--match-head-commit`.
 
 A successful `gh pr merge` command is not proof that the PR merged. Land polls
