@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Validated local Graphite stack evidence and parent-owned publication. */
 
 import { createHash } from "node:crypto";
@@ -7,7 +6,6 @@ import { commandDiagnostic, type ExecFn, type ExecFnResult, runCommand } from ".
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import type { StackPreflight } from "../shared/stack/channel.ts";
 import {
-	isSafeStackRef,
 	parseStackManifest,
 	STACK_SHA_RE,
 	type StackManifest,
@@ -18,16 +16,10 @@ import type { StackPublicationMap, StackPublishOutcome } from "../shared/stack/o
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
+import { type GraphiteOpenPullRequest, queryOpenPullRequests } from "./pull-requests.ts";
 
 /* exported: Graphite stack-delivery contract */
-export interface GraphitePublishedPullRequest {
-	ref: string;
-	baseRef: string;
-	headSha: string;
-	prNumber: number;
-	url: string;
-	draft: boolean;
-}
+export type GraphitePublishedPullRequest = Omit<GraphiteOpenPullRequest, "number"> & { prNumber: number };
 
 interface ExistingPullRequest extends GraphitePublishedPullRequest {
 	state: "OPEN";
@@ -74,10 +66,6 @@ function graphiteSubmitFailure(
 		inFlight: { kind: "create-draft-pr", error },
 		completedActions: [],
 	};
-}
-
-function isRecord(value: BoundaryValue): value is JsonObject {
-	return isObject(value) && value !== null && !Array.isArray(value);
 }
 
 function graphiteChildPolicy(input: { trunkRef: string; trunkSha: string; manifestPath?: string }): string {
@@ -172,58 +160,36 @@ export async function verifyGraphiteStack(
 	return { ok: true, stack: { repositoryRoot, manifest } };
 }
 
-function parsePullRequests(raw: string, expectedRef: string): ExistingPullRequest[] | undefined {
-	let value: BoundaryValue;
-	try {
-		value = JSON.parse(raw);
-	} catch {
-		return undefined;
-	}
-	if (!Array.isArray(value)) return undefined;
-	const parsed: ExistingPullRequest[] = [];
-	for (const item of value) {
-		if (!isRecord(item)) return undefined;
-		if (
-			!Number.isSafeInteger(item.number) ||
-			Number(item.number) <= 0 ||
-			!isString(item.url) ||
-			item.headRefName !== expectedRef ||
-			!isSafeStackRef(item.baseRefName) ||
-			!STACK_SHA_RE.test(String(item.headRefOid)) ||
-			!isBoolean(item.isDraft)
-		)
-			return undefined;
-		parsed.push({
-			state: "OPEN",
-			ref: expectedRef,
-			baseRef: item.baseRefName,
-			headSha: String(item.headRefOid),
-			prNumber: Number(item.number),
-			url: item.url,
-			draft: item.isDraft,
-		});
-	}
-	return parsed;
-}
-
 async function existingForRef(
 	exec: ExecFn,
 	cwd: string,
 	ref: string,
 ): Promise<{ ok: true; pr?: ExistingPullRequest } | { ok: false; error: string }> {
-	const result = await runCommand(
-		exec,
-		"gh",
-		["pr", "list", "--state", "open", "--head", ref, "--json", "number,url,headRefName,baseRefName,headRefOid,isDraft"],
-		cwd,
-	);
-	if (result.code !== 0)
-		return { ok: false, error: `Could not inspect GitHub PR for ${ref}: ${commandDiagnostic(result)}` };
-	const parsed = parsePullRequests(result.stdout, ref);
-	if (!parsed) return { ok: false, error: `GitHub returned invalid PR data for ${ref}.` };
-	if (parsed.length > 1)
-		return { ok: false, error: `Expected at most one open PR for ${ref}; found ${parsed.length}.` };
-	return { ok: true, ...(parsed[0] ? { pr: parsed[0] } : undefined) };
+	const result = await queryOpenPullRequests({ exec, cwd, filter: ["--head", ref], limit: 2 });
+	if (!result.ok) return { ok: false, error: `Could not inspect GitHub PR for ${ref}: ${result.error}` };
+	if (result.pullRequests.some((pr) => pr.ref !== ref)) {
+		return { ok: false, error: `GitHub returned invalid PR data for ${ref}.` };
+	}
+	if (result.pullRequests.length > 1) {
+		return {
+			ok: false,
+			error: `Expected at most one open PR for ${ref}; found ${result.pullRequests.length}.`,
+		};
+	}
+	const found = result.pullRequests[0];
+	if (!found) return { ok: true };
+	return {
+		ok: true,
+		pr: {
+			state: "OPEN",
+			ref: found.ref,
+			baseRef: found.baseRef,
+			headSha: found.headSha,
+			prNumber: found.number,
+			url: found.url,
+			draft: found.draft,
+		},
+	};
 }
 
 async function inspectPublishedStack(
