@@ -1,6 +1,5 @@
-import type { AutopilotConfirmation, AutopilotResult } from "../pr-autopilot/types.ts";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { MergeMethod } from "../shared/github.ts";
-import type { LandConfirmation } from "./confirmation.ts";
 
 export type { MergeMethod } from "../shared/github.ts";
 export type ReadinessMode = "check" | "watch";
@@ -13,14 +12,6 @@ export interface LandOptions {
 	readiness: ReadinessMode;
 	method?: MergeMethod;
 	cwd?: string;
-	/**
-	 * Capability minted by `issueLandConfirmation()`. A boolean or reconstructed
-	 * object is not accepted. Skips only Land's interactive merge confirmation;
-	 * every revalidation, head pin, and `--match-head-commit` check still runs.
-	 */
-	confirmation?: LandConfirmation;
-	/** Separate authority for the readiness pass; Land forwards it unchanged to pr-autopilot. */
-	autopilotConfirmation?: AutopilotConfirmation;
 }
 export interface FrontierResult {
 	prNumber: number;

@@ -1,7 +1,10 @@
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { getPullRequest, getRepository, mergePullRequest, waitForMerge } from "../shared/github.ts";
-import { isLandConfirmation } from "./confirmation.ts";
 import type { ExecFn, FrontierResult, LandOptions, LandResult, MergeMethod } from "./types.ts";
+
+type LandExecution =
+	| { kind: "interactive"; options: LandOptions }
+	| { kind: "stack-frontier"; options: LandOptions & { method: MergeMethod }; expectedHeadSha: string };
 
 interface LandDeps {
 	exec: ExecFn;
@@ -44,7 +47,9 @@ function empty(status: LandResult["status"], blocker: string): LandResult {
 	};
 }
 
-export async function runLand(options: LandOptions, deps: LandDeps): Promise<LandResult> {
+export async function runLand(execution: LandExecution, deps: LandDeps): Promise<LandResult> {
+	const options = execution.options;
+	const expectedHeadSha = execution.kind === "stack-frontier" ? execution.expectedHeadSha : undefined;
 	let acceptedMutation = false;
 	let frontier: FrontierResult | undefined;
 	let autopilotStatus: AutopilotResult["status"] | undefined;
@@ -53,6 +58,9 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 		const repo = await getRepository(deps.exec, deps.cwd, deps.signal);
 		const initial = await getPullRequest(deps.exec, deps.cwd, options.target.prNumber, deps.signal);
 		if (initial.state !== "OPEN") return empty("blocked", `PR #${initial.number} is ${initial.state.toLowerCase()}.`);
+		if (expectedHeadSha !== undefined && initial.headOid !== expectedHeadSha) {
+			return empty("blocked", `PR #${initial.number} head no longer matches the delegated frontier.`);
+		}
 
 		// Reject impossible repository/method combinations before readiness work,
 		// because autopilot may itself perform confirmed mutations.
@@ -62,7 +70,8 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 				"Repository only allows merge commits; kstack does not support merge commits. Enable squash or rebase merging in repository settings.",
 			);
 		}
-		const configuredMethod = deps.configuredMethodFor?.(repo.nameWithOwner);
+		const configuredMethod =
+			execution.kind === "interactive" ? deps.configuredMethodFor?.(repo.nameWithOwner) : undefined;
 		const preselected = options.method ?? configuredMethod;
 		if (preselected && !repo.allowedMethods.includes(preselected)) {
 			return empty(
@@ -87,7 +96,8 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			autopilot.status !== "merge-ready" ||
 			!autopilot.mergeReady ||
 			!autopilot.prState ||
-			autopilot.prState.verifiedHeadSha !== autopilot.prState.headSha
+			autopilot.prState.verifiedHeadSha !== autopilot.prState.headSha ||
+			(expectedHeadSha !== undefined && autopilot.prState.headSha !== expectedHeadSha)
 		) {
 			return {
 				...base,
@@ -116,7 +126,7 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 		let method = preselected;
 		if (autoSelectedOnlyMethod) {
 			method = repo.allowedMethods[0];
-		} else if (!method) {
+		} else if (!method && execution.kind === "interactive") {
 			method = await deps.selectMethod(repo.allowedMethods);
 		}
 		if (!method) return { ...base, status: "declined", blockers: ["No merge method selected."] };
@@ -128,12 +138,11 @@ export async function runLand(options: LandOptions, deps: LandDeps): Promise<Lan
 			method,
 			state: "not-attempted",
 		};
-		// Skip confirmation when only one repository-supported method was
-		// auto-selected, when the method comes from per-repo config (not CLI
-		// --method), or when a caller presents a minted confirmation capability.
+		// A delegated stack frontier was authorized by the stack's single confirmation.
+		// Interactive calls also skip when policy selected the only/configured method.
 		const skipConfirm =
+			execution.kind === "stack-frontier" ||
 			autoSelectedOnlyMethod ||
-			isLandConfirmation(options.confirmation) ||
 			(configuredMethod !== undefined && options.method === undefined);
 		if (!skipConfirm) {
 			const confirmed = await deps.confirmMerge(

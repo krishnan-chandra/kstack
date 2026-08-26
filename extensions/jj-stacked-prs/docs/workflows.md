@@ -170,10 +170,11 @@ you need to set the remote, trunk revset, or maximum stack size explicitly.
 
 The command confirms the ordered plan once. The model tool treats an explicit
 land request as authorization. Both paths preflight the base chain and head
-SHAs, then for each frontier: mark the PR ready if it is still a draft, land it
-through `/land` with a minted confirmation, advance locally, verify the merge
-commit is an ancestor of the refreshed trunk, republish the remainder, and
-delete the merged remote branch when it still points at the landed head.
+SHAs, then delegates each pinned PR to Land's `stack-frontier` request mode.
+Land's readiness pass marks a draft ready when authorized. After Land verifies
+the merge, jj advances locally, verifies that the merge commit is an ancestor
+of refreshed trunk, republishes the remainder, and deletes the merged remote
+branch when it still points at the landed head.
 `--readiness` defaults to `watch` because each restack restarts CI. Re-run the
 command after a partial stop; an already-merged bottom PR is advanced and the
 loop continues.

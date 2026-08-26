@@ -1,8 +1,7 @@
 import type { StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
 import type { StackProviderId } from "../shared/stack/provider.ts";
-import { isLandConfirmation } from "./confirmation.ts";
 import { blockedLandResult } from "./result.ts";
-import type { FrontierResult, LandOptions, LandResult } from "./types.ts";
+import type { FrontierResult, LandResult } from "./types.ts";
 
 type StackLandingResponse = { handled: false } | { handled: true; outcome: StackPrefixLandOutcome };
 
@@ -86,9 +85,8 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 	};
 }
 
-export async function routeLand(options: LandOptions, deps: RouteLandDeps): Promise<LandResult> {
+export async function routeLand(deps: RouteLandDeps): Promise<LandResult> {
 	if (deps.provider === undefined) return deps.runSingle();
-	if (isLandConfirmation(options.confirmation)) return deps.runSingle();
 
 	let response: StackLandingResponse;
 	try {

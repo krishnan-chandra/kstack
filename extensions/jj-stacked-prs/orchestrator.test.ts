@@ -1340,7 +1340,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github,
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "blocked");
@@ -1350,7 +1350,7 @@ describe("landStack", () => {
 		assert.deepEqual(jj.calls, []);
 	});
 
-	it("lands three-step order: ready, land, advance, republish, delete", async () => {
+	it("lands in order: delegate, advance, republish, delete", async () => {
 		const calls: string[] = [];
 		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];
 		const prs = openPrs();
@@ -1368,9 +1368,6 @@ describe("landStack", () => {
 				const pr = prs.find((item) => item.number === input.prNumber);
 				if (pr) pr.baseRef = input.base;
 			},
-			markPrReady: async (_repo, prNumber) => {
-				calls.push(`ready:${prNumber}`);
-			},
 			deleteRemoteBranch: async (_repo, branch) => {
 				calls.push(`delete:${branch}`);
 				return "deleted";
@@ -1383,7 +1380,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github,
-				landPr: async ({ prNumber }) => {
+				landFrontier: async ({ prNumber }) => {
 					calls.push(`land:${prNumber}`);
 					return {
 						handled: true,
@@ -1394,22 +1391,8 @@ describe("landStack", () => {
 		);
 		assert.equal(result.status, "completed");
 		assert.deepEqual(
-			calls.filter(
-				(item) =>
-					item.startsWith("ready:") ||
-					item.startsWith("land:") ||
-					item.startsWith("abandon:") ||
-					item.startsWith("delete:"),
-			),
-			[
-				"ready:11",
-				"land:11",
-				"abandon:trunk..feat1",
-				"delete:feat1",
-				"land:12",
-				"abandon:trunk..feat2",
-				"delete:feat2",
-			],
+			calls.filter((item) => item.startsWith("land:") || item.startsWith("abandon:") || item.startsWith("delete:")),
+			["land:11", "abandon:trunk..feat1", "delete:feat1", "land:12", "abandon:trunk..feat2", "delete:feat2"],
 		);
 	});
 
@@ -1435,7 +1418,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -1477,7 +1460,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -1501,7 +1484,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -1534,7 +1517,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -1564,7 +1547,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "completed");
@@ -1608,7 +1591,7 @@ describe("landStack", () => {
 				},
 				jj,
 				github,
-				landPr: async ({ prNumber }) => {
+				landFrontier: async ({ prNumber }) => {
 					calls.push(`land:${prNumber}`);
 					return { handled: true, outcome: landed(prNumber, "bbb-commit") };
 				},
@@ -1627,7 +1610,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
-				landPr: async () => ({
+				landFrontier: async () => ({
 					handled: true,
 					outcome: {
 						status: "partially-landed",
@@ -1665,7 +1648,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "partial");
@@ -1699,7 +1682,7 @@ describe("landStack", () => {
 						headRef: "feat1",
 					}),
 				}),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "partial");
@@ -1718,7 +1701,7 @@ describe("landStack", () => {
 				ui: ui(),
 				jj,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "partial");
@@ -1749,7 +1732,7 @@ describe("landStack", () => {
 						throw new GitHubError("delete failed");
 					},
 				}),
-				landPr: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
+				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
 		);
 		assert.equal(result.status, "completed");

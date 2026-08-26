@@ -120,22 +120,27 @@ cannot undo a merge or remove a request from a merge queue.
 
 ## API
 
-The `kstack:land:request` event accepts typed `LandOptions` with a positive PR
-number and returns a structured `LandResult`. The request is claimed
-synchronously, and callers await its completion. In jj and Graphite modes, the
-request uses the same stack-prefix discovery as `/land`.
+The `kstack:land:request` event has two request modes. An `interactive` request
+accepts `LandOptions`, performs stack-prefix discovery in jj and Graphite
+repositories, and uses the same confirmation rules as `/land`.
 
-Trusted in-process callers such as `/jj-stack land` may pass a capability from
-`issueLandConfirmation()` after they have already obtained consent for that
-exact PR. A boolean or reconstructed payload is ignored. Land also skips the
-interactive merge confirmation for a configured method or a repository's only
-enabled method. Every path still revalidates the PR, pins the exact head, and
-passes `--match-head-commit`.
+A `stack-frontier` request is trusted in-process authority for one frontier. It
+requires a positive PR number, a concrete squash or rebase method, and an exact
+40-character lowercase head SHA. Land bypasses stack routing for this mode, so
+a provider cannot recurse into its own stack channel. Land checks the pinned
+head before readiness, against pr-autopilot's evidence, after readiness, and
+immediately before merge submission. It also passes the SHA to GitHub through
+`--match-head-commit`.
 
-Trusted stack callers may pass a separate pr-autopilot confirmation, so each
-readiness pass runs without additional prompts. A plain `/land`, and any caller
-that provides only a Land confirmation, still confirms mutating autopilot runs
-interactively.
+The stack provider confirms the complete stack before it sends frontier
+requests. Land therefore skips only the per-PR merge prompt and mints readiness
+authority inside the delegated path. Repository policy, readiness, exact-head
+checks, merge submission, and remote verification remain Land-owned. The
+request is claimed synchronously, and callers await its structured `LandResult`.
+
+Cancellation combines Land's run signal, the outer stack signal, and the live
+extension-context signal. If GitHub accepts a merge or queue request before
+cancellation, Land reports a partial result instead of a clean abort.
 
 ## Limits
 
@@ -149,8 +154,8 @@ interactively.
 `/land --pr <number>` lands through the selected PR when its head closes a
 confirmed local jj or Graphite stack. Use `/jj-stack land` or `jj_stack_land` when you want
 to name the top bookmark, remote, trunk revset, or stack-size limit explicitly.
-Both paths call Land once per pull request with a minted confirmation and retain its
-head pin, revalidation, and `--match-head-commit` checks.
+Both paths delegate each jj frontier through Land's `stack-frontier` request mode
+and retain its head pin, revalidation, and `--match-head-commit` checks.
 
 ## Development
 

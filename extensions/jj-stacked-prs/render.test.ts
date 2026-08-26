@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderLandConfirmation, renderLandOutcome } from "./render.ts";
+import { renderLandOutcome, renderStackLandingPlan } from "./render.ts";
 
 const slices = [
 	{
@@ -13,7 +13,7 @@ const slices = [
 ];
 
 test("watch confirmation reports change and PR slice counts and discloses autopilot mutations", () => {
-	const rendered = renderLandConfirmation({ changeCount: 2, slices, method: "squash", readiness: "watch" });
+	const rendered = renderStackLandingPlan({ changeCount: 2, slices, method: "squash", readiness: "watch" });
 	assert.equal(rendered.ok, true);
 	if (!rendered.ok) return;
 	assert.match(rendered.body, /2 jj changes → 1 PR slice/);
@@ -24,7 +24,7 @@ test("watch confirmation reports change and PR slice counts and discloses autopi
 });
 
 test("check confirmation does not claim that readiness can mutate", () => {
-	const rendered = renderLandConfirmation({ changeCount: 1, slices, method: "squash", readiness: "check" });
+	const rendered = renderStackLandingPlan({ changeCount: 1, slices, method: "squash", readiness: "check" });
 	assert.equal(rendered.ok, true);
 	if (!rendered.ok) return;
 	assert.doesNotMatch(rendered.body, /edit code/);

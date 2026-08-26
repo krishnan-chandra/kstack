@@ -8,7 +8,7 @@ import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import { createJjGitHubGateway } from "./github-gateway.ts";
 import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
 import { applyAdvance, inspectStack, type OrchestratorDeps, publishStackFromTool } from "./orchestrator.ts";
-import { renderLandConfirmation } from "./render.ts";
+import { renderStackLandingPlan } from "./render.ts";
 import type { InspectModel, StackBlocker, StackMergeMethod, StackReadinessMode } from "./types.ts";
 
 interface LandStackOptions {
@@ -153,22 +153,11 @@ async function landStackWithAuthorization(
 			blockers: [{ code: "missing-remote", message: "Stack landing requires interactive TUI/RPC mode." }],
 		};
 	}
-	if (!deps.landPr) {
-		return {
-			status: "blocked",
-			blockers: [
-				{
-					code: "land-unavailable",
-					message: "The land extension is unavailable. Load land before /jj-stack land.",
-				},
-			],
-		};
-	}
 	if (deps.signal?.aborted) return { status: "cancelled" };
 	const prepared = await prepareLand(options, deps, initialModel);
 	if (prepared.status !== "ok") return prepared;
 	if (authorization === "interactive-confirmation") {
-		const confirmation = renderLandConfirmation({
+		const confirmation = renderStackLandingPlan({
 			changeCount: prepared.model.stack.length,
 			slices: prepared.mapped,
 			method: prepared.method,
@@ -440,13 +429,7 @@ async function runLandLoop(
 ): Promise<StackLandOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createJjGitHubGateway(deps.run);
-	const landPr = deps.landPr;
-	if (!landPr) {
-		return {
-			status: "blocked",
-			blockers: [{ code: "land-unavailable", message: "The land extension is unavailable." }],
-		};
-	}
+	const landFrontier = deps.landFrontier;
 	const frontiers: StackLandFrontier[] = [];
 	const completedMutations: string[] = [];
 	const warnings: string[] = [];
@@ -486,44 +469,27 @@ async function runLandLoop(
 		};
 		deps.ui.setStatus(`jj-stack: landing #${current.prNumber}`);
 
-		if (current.draft && !current.alreadyMerged) {
-			try {
-				const remote = await jj.getRemote(options.cwd, options.remote, deps.signal);
-				if (!remote.github) {
-					return { status: "partial", error: `Remote ${options.remote} is not a GitHub repository.`, ...progress() };
-				}
-				await github.markPrReady(remote.github, current.prNumber, options.cwd, deps.signal);
-				completedMutations.push(`Marked PR #${current.prNumber} ready`);
-			} catch (error) {
-				if (isIndeterminate(error) || deps.signal?.aborted) {
-					return {
-						status: "indeterminate",
-						inFlight: `mark-pr-ready: ${errorMessage(error)}`,
-						recovery: "Inspect the PR draft state before retrying.",
-						...progress(),
-					};
-				}
-				frontiers.push(frontier);
-				return { status: "partial", error: errorMessage(error), ...progress() };
-			}
-		}
-
 		if (current.alreadyMerged) {
 			frontier.state = "already-merged";
 			completedMutations.push(`PR #${current.prNumber} already merged; advancing`);
 		} else {
-			const landed = await landPr({
-				prNumber: current.prNumber,
-				readiness: options.readiness,
-				method,
-			});
+			const landed = landFrontier
+				? await landFrontier({
+						prNumber: current.prNumber,
+						expectedHeadSha: current.headCommitId,
+						readiness: options.readiness,
+						method,
+					})
+				: { handled: false as const };
 			if (!landed.handled) {
+				if (frontiers.length === 0 && completedMutations.length === 0) {
+					return {
+						status: "blocked",
+						blockers: [{ code: "land-unavailable", message: "The land extension is unavailable." }],
+					};
+				}
 				frontiers.push(frontier);
-				return {
-					status: "partial",
-					error: "The land extension is unavailable.",
-					...progress(),
-				};
+				return { status: "partial", error: "The land extension is unavailable.", ...progress() };
 			}
 			completedMutations.push(...landed.outcome.completedMutations);
 			const pinned = landed.outcome.frontiers[0]?.expectedHeadSha;

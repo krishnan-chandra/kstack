@@ -39,11 +39,6 @@ export const IMPORT_EXCEPTIONS = [
 		target: "session-archive/tool-output.ts",
 		reason: "handoff uses the archive output bounds",
 	},
-	{
-		importer: "jj-stacked-prs/index.ts",
-		target: "land/confirmation.ts",
-		reason: "the trusted stack lander mints Land confirmation capabilities",
-	},
 ];
 
 export function isTestFile(path) {

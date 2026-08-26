@@ -177,7 +177,6 @@ describe("shared stack request channels", () => {
 					method: "squash",
 				},
 				capabilities: {
-					landPr: async () => ({ handled: true, outcome: {} }),
 					runAutopilot: async () => ({ handled: true, outcome: {} }),
 				},
 				ctx: /* SAFETY: Mock ExtensionContext */ {} as never,
@@ -192,6 +191,19 @@ describe("shared stack request channels", () => {
 					provider: "graphite",
 					input: { repositoryPath: "/repo", prNumber: -1, headRef: "feat", readiness: "watch" },
 					capabilities: {},
+					ctx: {},
+				},
+				claimed: false,
+			}),
+			false,
+		);
+		assert.equal(
+			isStackLandingRequest({
+				schemaVersion: 1,
+				payload: {
+					provider: "graphite",
+					input: { repositoryPath: "/repo", prNumber: 1, headRef: "feat", readiness: "watch" },
+					capabilities: { landPr: "removed" },
 					ctx: {},
 				},
 				claimed: false,
