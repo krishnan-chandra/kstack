@@ -279,7 +279,7 @@ export async function syncStack(options: SyncOptions, deps: OrchestratorDeps): P
 			? { status: "partial", operationId, blockers: remaining, error: "Rebase recorded conflicts or other blockers." }
 			: { status: "completed", operationId, blockers: after.blockers };
 	} catch (error) {
-		return mutationFailure(error, deps.signal, operationId, "sync", mutationCompleted);
+		return mutationFailure(error, operationId, "sync", mutationCompleted);
 	}
 }
 
@@ -421,7 +421,7 @@ export async function applyAdvance(
 				}
 			: { status: "completed", operationId: input.operationId, remainingTop: options.top, blockers: after.blockers };
 	} catch (error) {
-		return mutationFailure(error, deps.signal, input.operationId, "advance", mutationCompleted);
+		return mutationFailure(error, input.operationId, "advance", mutationCompleted);
 	}
 }
 
@@ -847,12 +847,11 @@ function errorMessage(error: BoundaryValue): string {
 
 function mutationFailure(
 	error: BoundaryValue,
-	signal: AbortSignal | undefined,
 	operationId: string,
 	label: string,
 	mutationCompleted: boolean,
 ): Extract<SyncOutcome, { status: "partial" | "indeterminate" | "failed" }> {
-	if (isIndeterminate(error) || signal?.aborted) {
+	if (isIndeterminate(error)) {
 		return { status: "indeterminate", operationId, inFlight: `${label}: ${errorMessage(error)}` };
 	}
 	if (mutationCompleted) return { status: "partial", operationId, blockers: [], error: errorMessage(error) };

@@ -686,10 +686,10 @@ async function runLandingLoop(input: {
 				completedMutations.push(...landed.outcome.completedMutations);
 				if (landed.outcome.status !== "landed") {
 					frontier.state = landed.outcome.status === "partially-landed" ? "queued" : "blocked";
+					const hasEarlierProgress = frontiers.length > 0 || completedMutations.length > 0;
 					frontiers.push(frontier);
-					const hasProgress = frontiers.length > 1 || completedMutations.length > 0;
 					return {
-						status: landed.outcome.status === "failed" && !hasProgress ? "failed" : "partial",
+						status: landed.outcome.status === "failed" && !hasEarlierProgress ? "failed" : "partial",
 						error: landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`,
 						...progress(),
 					};

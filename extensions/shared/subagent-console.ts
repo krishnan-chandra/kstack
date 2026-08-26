@@ -807,7 +807,7 @@ export class SubagentConsoleComponent implements Component {
 			}
 		}
 
-		const pageStep = Math.max(1, this.height() - WIDE_CHROME_LINES - 2);
+		const pageStep = Math.max(1, computeViewport(this.lastWidth, this.height()).bodyHeight - 2);
 
 		if (checkKey(data, "pageUp") || checkKey(data, "ctrl+u") || checkKey(data, "ctrl+b")) {
 			scroll.scrollOffset = Math.min(this.getMaxScroll(), scroll.scrollOffset + pageStep);

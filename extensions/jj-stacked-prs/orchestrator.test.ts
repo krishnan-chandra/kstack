@@ -1099,6 +1099,36 @@ describe("sync and advance", () => {
 		assert.deepEqual(jj.calls, ["fetch"]);
 	});
 
+	it("does not let a concurrent abort override a conclusive sync failure", async () => {
+		const controller = new AbortController();
+		const jj = fakeJj();
+		let fetched = false;
+		const fetchRemote = jj.fetchRemote;
+		jj.fetchRemote = async (...args) => {
+			await fetchRemote(...args);
+			fetched = true;
+		};
+		jj.resolveRevset = async (_cwd, revset) => {
+			if (fetched) {
+				controller.abort();
+				throw new JjError("conclusive lookup failure");
+			}
+			return revset === "trunk()" ? "trunk" : `${revset}-id`;
+		};
+		const result = await syncStack(
+			{ cwd: "/repo", top: "feat2", remote: "origin" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				ui: ui(),
+				jj,
+				github: fakeGithub(),
+				signal: controller.signal,
+			},
+		);
+		assert.equal(result.status, "partial");
+		assert.match(result.status === "partial" ? result.error : "", /conclusive lookup failure/);
+	});
+
 	it("does not abandon a stack that inspection found conflicted", async () => {
 		const conflicted = { ...commit("aaa", "feat1"), conflict: true };
 		const jj = fakeJj({
