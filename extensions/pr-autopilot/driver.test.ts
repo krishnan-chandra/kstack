@@ -21,8 +21,8 @@ const MERGED_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 const BRANCH = "kstack/fix-thing";
 const config: ResolvedAutopilotConfig = {
 	models: [
-		{ label: "tiny-1", model: "test/tiny-1", thinking: "low" },
-		{ label: "tiny-2", model: "test/tiny-2", thinking: "low" },
+		{ label: "model-1", model: "test/model-1", thinking: "low" },
+		{ label: "model-2", model: "test/model-2", thinking: "low" },
 	],
 	maxConcurrency: 1,
 	timeoutMinutes: 1,

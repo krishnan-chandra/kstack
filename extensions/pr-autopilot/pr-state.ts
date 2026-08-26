@@ -227,7 +227,7 @@ ${wrapUntrusted("pr title", state.title)}
 - Head SHA: ${state.headSha}
 - Mode: ${modeLine}
 
-## Triage from the tiny-model classifier
+## Triage from the model classifier
 ${wrapUntrusted("triage json", triage)}
 
 ## Unresolved review items
@@ -240,7 +240,7 @@ ${
 		.join("\n\n") || "(none)"
 }
 
-## Instructions (tiny-model only)
+## Instructions
 
 1. Match triage keys to the review items and checks below. Only edit files needed for threads marked decision=fix and checks marked cls=code, matching the mode above.
 2. Skip dismiss/ask/ignore threads, and skip flake/infra/stale-base/unknown checks.
@@ -255,7 +255,7 @@ The selected workspace is already on the PR's ${backend === "jj" ? "bookmark" : 
 `;
 }
 
-/** Pick one tiny model from the configured pool. */
+/** Pick one model from the configured pool. */
 export function pickModel(
 	models: readonly AutopilotModelSpec[],
 	random: () => number = Math.random,

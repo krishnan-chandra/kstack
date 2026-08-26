@@ -3,20 +3,20 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DEFAULT_TINY_MODELS, loadConfig, modelCliId, resolveModels, validateConfig } from "./config.ts";
+import { DEFAULT_AUTOPILOT_MODELS, loadConfig, modelCliId, resolveModels, validateConfig } from "./config.ts";
 
 describe("pr-autopilot config", () => {
-	it("defaults to the three tiny models", () => {
-		assert.equal(DEFAULT_TINY_MODELS.length, 3);
-		assert.equal(DEFAULT_TINY_MODELS[0].model, "openai/gpt-5.6-luna");
-		assert.equal(DEFAULT_TINY_MODELS[1].model, "openrouter/z-ai/glm-5.2");
-		assert.equal(DEFAULT_TINY_MODELS[2].model, "openrouter/deepseek/deepseek-v4-flash");
-		for (const m of DEFAULT_TINY_MODELS) {
+	it("defaults to three models", () => {
+		assert.equal(DEFAULT_AUTOPILOT_MODELS.length, 3);
+		assert.equal(DEFAULT_AUTOPILOT_MODELS[0].model, "openai/gpt-5.6-luna");
+		assert.equal(DEFAULT_AUTOPILOT_MODELS[1].model, "openrouter/z-ai/glm-5.2");
+		assert.equal(DEFAULT_AUTOPILOT_MODELS[2].model, "openrouter/deepseek/deepseek-v4-flash");
+		for (const m of DEFAULT_AUTOPILOT_MODELS) {
 			assert.equal(m.thinking, "low");
 		}
 	});
 
-	it("validates a well-formed tiny-model config", () => {
+	it("validates a well-formed model config", () => {
 		const result = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
@@ -37,18 +37,22 @@ describe("pr-autopilot config", () => {
 		}
 	});
 
-	it("rejects thinking above low — tiny-model invariant", () => {
+	it("accepts any supported thinking level", () => {
 		const result = validateConfig({
 			models: [
-				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "high" },
-				{ label: "lite", model: "openrouter/z-ai/glm-5.2" },
+				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "max" },
+				{ label: "lite", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 			],
 		});
-		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /low/);
+		assert.equal(result.ok, true);
+		if (result.ok)
+			assert.deepEqual(
+				result.config.models.map((model) => model.thinking),
+				["max", "high"],
+			);
 	});
 
-	it("requires at least 2 tiny models", () => {
+	it("requires at least 2 models", () => {
 		const result = validateConfig({
 			models: [{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" }],
 		});
@@ -133,7 +137,7 @@ describe("pr-autopilot config", () => {
 		);
 	});
 
-	it("resolves configured models only when all are available", () => {
+	it("trusts explicitly configured model IDs even when absent from Pi's registry", () => {
 		const valid = validateConfig({
 			models: [
 				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
@@ -143,44 +147,25 @@ describe("pr-autopilot config", () => {
 		assert.equal(valid.ok, true);
 		if (!valid.ok) return;
 
-		const ok = resolveModels(
-			{ status: "loaded", config: { ...valid.config, source: "config", warnings: [] }, path: "/fake" },
-			{
-				available: () => true,
-			},
-		);
-		assert.equal(ok.ok, true);
-		if (ok.ok) assert.equal(ok.config.source, "config");
-
-		const bad = resolveModels(
-			{ status: "loaded", config: { ...valid.config, source: "config", warnings: [] }, path: "/fake" },
-			{
-				available: (provider) => provider === "openai",
-			},
-		);
-		assert.equal(bad.ok, false);
-		if (!bad.ok) assert.match(bad.error, /glm-5.2/);
+		const result = resolveModels({
+			status: "loaded",
+			config: { ...valid.config, source: "config", warnings: [] },
+			path: "/fake",
+		});
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.config.source, "config");
+			assert.deepEqual(result.config.models, valid.config.models);
+		}
 	});
 
-	it("falls back to defaults filtered to available", () => {
-		const dir = mkdtempSync(join(tmpdir(), "pr-autopilot-config-"));
-		try {
-			const result = resolveModels(
-				{ status: "missing", path: dir },
-				{
-					available: (provider, modelId) =>
-						provider === "openai" || (provider === "openrouter" && modelId.includes("glm")),
-				},
-			);
-			assert.equal(result.ok, true);
-			if (result.ok) {
-				assert.equal(result.config.source, "default");
-				// Only 2 of the 3 defaults match the filter; that's exactly the minimum.
-				assert.equal(result.config.models.length, 2);
-				assert.ok(result.config.warnings.length > 0);
-			}
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
+	it("uses the complete default set without consulting model availability", () => {
+		const result = resolveModels({ status: "missing", path: "/fake" });
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.config.source, "default");
+			assert.deepEqual(result.config.models, DEFAULT_AUTOPILOT_MODELS);
+			assert.deepEqual(result.config.warnings, []);
 		}
 	});
 

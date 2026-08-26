@@ -2,7 +2,7 @@ import { type BoundaryValue, isObject, isString, type JsonObject } from "../shar
 /**
  * Bounded PR autopilot state machine.
  *
- * One PR at a time, lowest unmerged first. Tiny models only. The loop:
+ * One PR at a time, lowest unmerged first. Configured models only. The loop:
  *
  *   refresh snapshot → conflicts/behind (merge base, never rebase)
  *   → unresolved review items (fix / dismiss / ask / ignore)
@@ -50,13 +50,13 @@ import {
 import {
 	type AutopilotMode,
 	type AutopilotPersistedState,
+	type AutopilotThinkingLevel,
 	type ExecFn,
 	type FailureClass,
 	LIMITS,
 	type PRState,
 	type ReviewThread,
 	type ThreadDecision,
-	type TinyThinkingLevel,
 	type UsageSummary,
 } from "./types.ts";
 import { shouldForceAsk } from "./untrusted.ts";
@@ -201,7 +201,7 @@ export async function runChildRole(
 	role: "triager" | "fixer",
 	opts: {
 		model: string;
-		thinking?: TinyThinkingLevel;
+		thinking?: AutopilotThinkingLevel;
 		promptFile: string;
 		taskFile: string;
 		timeoutMinutes: number;

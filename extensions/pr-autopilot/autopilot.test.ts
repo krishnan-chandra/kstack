@@ -17,7 +17,7 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import { DEFAULT_TINY_MODELS } from "./config.ts";
+import { DEFAULT_AUTOPILOT_MODELS } from "./config.ts";
 import type { GHPrJson } from "./github-parse.ts";
 import {
 	buildFixerTask,
@@ -364,7 +364,7 @@ describe("pr-autopilot state machine", () => {
 
 	describe("pickModel", () => {
 		it("picks one model from the pool using the injected random source", () => {
-			const models = DEFAULT_TINY_MODELS;
+			const models = DEFAULT_AUTOPILOT_MODELS;
 			assert.equal(pickModel(models, () => 0).label, "luna");
 			assert.equal(pickModel(models, () => 0.32).label, "luna");
 			assert.equal(pickModel(models, () => 1 / 3).label, "glm");

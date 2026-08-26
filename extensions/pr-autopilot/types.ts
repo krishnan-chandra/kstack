@@ -1,12 +1,12 @@
 /**
  * Shared types for the pr-autopilot extension.
  *
- * The PR autopilot is a bounded, tiny-model-only workflow: it owns a single
+ * The PR autopilot is a bounded child-agent workflow: it owns a single
  * PR at a time (the lowest unmerged PR), classifies its state with one randomly
- * chosen tiny-model child, addresses review threads and CI failures it can fix,
+ * chosen model child, addresses review threads and CI failures it can fix,
  * pushes, and re-checks — stopping at merge-ready. It never auto-merges, never
  * re-stacks shared history, and never uses anything other than one model from
- * the tiny-model pool in kstack.json.
+ * the model pool in kstack.json.
  */
 
 import type { ExecFn, ExecFnOptions, ExecFnResult } from "../shared/git-exec.ts";
@@ -18,17 +18,17 @@ export type { AutopilotConfirmation } from "./confirmation.ts";
 /** Autopilot modes — the explicit user-facing entry points. */
 export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
 
-/** Tiny-model child roles inside the autopilot loop. */
+/** Child-agent roles inside the autopilot loop. */
 export type AutopilotAgentRole = "triager" | "fixer";
 
-export type TinyThinkingLevel = Extract<ModelThinkingLevel, "off" | "minimal" | "low">;
+export type AutopilotThinkingLevel = ModelThinkingLevel;
 
 /** A model entry in the pr-autopilot config, with a short run label. */
 export interface AutopilotModelSpec extends Omit<ModelSpec, "thinking"> {
 	/** Short run label (e.g. "luna", "flash"). */
 	label: string;
-	/** Thinking level for the child; default "low" for tiny models. */
-	thinking?: TinyThinkingLevel;
+	/** Thinking level for the child; defaults to "low". */
+	thinking?: AutopilotThinkingLevel;
 }
 
 export interface UsageSummary {
@@ -40,7 +40,7 @@ export interface UsageSummary {
 	turns: number;
 }
 
-/** Resolved pr-autopilot configuration after availability checking. */
+/** Resolved pr-autopilot configuration. */
 export interface ResolvedAutopilotConfig {
 	models: AutopilotModelSpec[];
 	maxConcurrency: number;
@@ -86,7 +86,7 @@ export interface ReviewThread {
 export type ThreadDecision = "fix" | "dismiss" | "ask" | "ignore";
 
 /**
- * A check-run classification produced by the tiny-model triager: tells the
+ * A check-run classification produced by the model triager: tells the
  * autopilot whether a failure is the diff's own code, a stale base, or
  * infrastructure flakiness — before any retrigger is attempted.
  */
@@ -157,11 +157,11 @@ export interface AutopilotToken {
 
 export type { ExecFn, ExecFnOptions, ExecFnResult };
 
-/** Config guardrails the autopilot enforces to stay "tiny-model-only". */
+/** Resource and concurrency limits enforced by the autopilot. */
 export const LIMITS = {
 	/** Maximum PRs traversed in the frontier sweep (always pick the lowest). */
 	maxFrontierPRs: 5,
-	/** AutopilotMode default timeout (minutes) applied to tiny child agents. */
+	/** AutopilotMode default timeout (minutes) applied to child agents. */
 	defaultTimeoutMinutes: 5,
 	minTimeoutMinutes: 1,
 	maxTimeoutMinutes: 15,
@@ -169,12 +169,10 @@ export const LIMITS = {
 	defaultMaxRuntimeMinutes: 15,
 	minRuntimeMinutes: 2,
 	maxRuntimeMinutes: 60,
-	/** Max concurrent tiny-model children / log fetches. */
+	/** Max concurrent model children / log fetches. */
 	defaultMaxConcurrency: 3,
 	minConcurrency: 1,
 	maxConcurrency: 5,
-	/** Tiny models use at most "low" thinking. */
-	maxThinkingLevel: "low" as const,
 	/** Output cap for a child agent's final text. */
 	outputBytes: 16 * 1024,
 	stderrBytes: 8 * 1024,

@@ -1,6 +1,6 @@
-import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
+import { type BoundaryValue, isObject, type JsonObject } from "../shared/validation.ts";
 /**
- * pr-autopilot configuration: discovery, validation, and tiny-model resolution.
+ * pr-autopilot configuration: discovery, validation, and model-pool resolution.
  *
  * Config lives in the `"pr-autopilot"` section of
  * `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
@@ -18,48 +18,35 @@ import { type BoundaryValue, isObject, isString, type JsonObject } from "../shar
  *     }
  *   }
  *
- * The autopilot is tiny-model-only by construction: the validator rejects any
- * thinking level above "low" and the resolver only considers the configured
- * tiny set. When no config file exists the built-in DEFAULT_TINY_MODELS
- * (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash) are used.
+ * The autopilot uses only the configured model pool. Any supported thinking
+ * level is accepted, and explicit model IDs are trusted so provider models can be used
+ * before Pi's bundled catalog catches up. When no config file exists the
+ * built-in DEFAULT_AUTOPILOT_MODELS (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash) are
+ * used.
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import {
-	loadValidatedSection,
-	type ModelThinkingLevel,
-	type ConfigLoad as SharedConfigLoad,
-	THINKING_LEVELS,
-} from "../shared/kstack-config.ts";
-import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
-import type { AutopilotModelSpec, ResolvedAutopilotConfig, TinyThinkingLevel } from "./types.ts";
+import { loadValidatedSection, type ConfigLoad as SharedConfigLoad, THINKING_LEVELS } from "../shared/kstack-config.ts";
+import { validateModelSpecFields } from "../shared/model-spec.ts";
+import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
-
-const TINY_THINKING = ["off", "minimal", "low"] as const satisfies readonly TinyThinkingLevel[];
-
-function isTinyThinkingLevel(value: ModelThinkingLevel): value is TinyThinkingLevel {
-	return TINY_THINKING.some((allowed) => allowed === value);
-}
 
 export type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
 
 /**
- * Built-in tiny model set, used when no pr-autopilot config section exists.
+ * Built-in model set, used when no pr-autopilot config section exists.
  * These are the only models the autopilot may spawn children with. Each run
  * picks one at random. They are small, fast, and cheap enough for repeated
  * triage loops.
  */
-export const DEFAULT_TINY_MODELS: readonly AutopilotModelSpec[] = [
+export const DEFAULT_AUTOPILOT_MODELS: readonly AutopilotModelSpec[] = [
 	{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
 	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
 	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
 ] as const;
 
-/**
- * Validate a single model spec. Enforces the tiny-model invariant: thinking
- * must be at most "low" (or absent, which defaults to "low").
- */
+/** Validate one model spec, defaulting its thinking level to "low". */
 function validateModelSpec(
 	raw: BoundaryValue,
 	index: number,
@@ -71,30 +58,17 @@ function validateModelSpec(
 		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
 	const fields = validateModelSpecFields(value, {
 		requireLabel: true,
-		allowedThinking: TINY_THINKING,
+		allowedThinking: THINKING_LEVELS,
 		errors: {
 			label: () => `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].`,
 			model: () => `Model entry ${index} (${value.label}): "model" must be "provider/model".`,
-			thinking: (thinking) =>
-				isString(thinking) &&
-				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
-					THINKING_LEVELS as readonly string[]
-				).includes(thinking)
-					? `Model entry ${index} (${value.label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`
-					: `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
+			thinking: () => `Model entry ${index} (${value.label}): "thinking" must be one of ${THINKING_LEVELS.join(", ")}.`,
 		},
 	});
 	if (!fields.ok) return fields;
 	const label = fields.label;
 	if (!label) return { ok: false, error: `Model entry ${index}: "label" must be 1–16 chars of [A-Za-z0-9_-].` };
-	const thinking = fields.thinking ?? "low";
-	if (!isTinyThinkingLevel(thinking)) {
-		return {
-			ok: false,
-			error: `Model entry ${index} (${label}): "thinking" must be "off", "minimal", or "low" — the autopilot is tiny-model-only.`,
-		};
-	}
-	return { ok: true, spec: { label, model: fields.model, thinking } };
+	return { ok: true, spec: { label, model: fields.model, thinking: fields.thinking ?? "low" } };
 }
 
 interface ValidateConfigResult {
@@ -119,7 +93,7 @@ export function validateConfig(raw: BoundaryValue): ValidateConfigResult | Valid
 	if (obj.models.length < 2) {
 		return {
 			ok: false,
-			error: '"models" must contain at least 2 tiny model entries so each run can pick one at random.',
+			error: '"models" must contain at least 2 model entries so each run can pick one at random.',
 		};
 	}
 	if (obj.models.length > 6) {
@@ -134,7 +108,7 @@ export function validateConfig(raw: BoundaryValue): ValidateConfigResult | Valid
 		if (labels.has(result.spec.label)) {
 			return { ok: false, error: `Duplicate model label "${result.spec.label}".` };
 		}
-		// Tiny-model invariant: each model must differ.
+		// Each configured model must differ.
 		if (models.some((m) => m.model === result.spec.model)) {
 			return { ok: false, error: `Duplicate model "${result.spec.model}" (label "${result.spec.label}").` };
 		}
@@ -192,80 +166,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	);
 }
 
-export interface ResolveDeps {
-	available: (provider: string, modelId: string) => boolean;
-}
-
-/**
- * Resolve the tiny model set against the Pi model registry. With a config file
- * every listed model must be available (hard error otherwise). Without one,
- * the built-in DEFAULT_TINY_MODELS are filtered to what's available; the
- * remaining set is returned (at least 2 expected).
- */
+/** Resolve validated configured models or the complete built-in default set. */
 export function resolveModels(
 	config: ConfigLoad,
-	deps: ResolveDeps,
 ): { ok: true; config: ResolvedAutopilotConfig } | { ok: false; error: string } {
-	const warnings: string[] = [];
-
 	if (config.status === "invalid") {
 		return { ok: false, error: `Invalid ${config.path}: ${config.error}` };
 	}
-
-	if (config.status === "loaded") {
-		const unavailable: string[] = [];
-		for (const m of config.config.models) {
-			const { provider, modelId } = splitModelRef(m.model);
-			if (!deps.available(provider, modelId)) {
-				unavailable.push(`${m.label}: ${m.model}`);
-			}
-		}
-		if (unavailable.length > 0) {
-			return {
-				ok: false,
-				error:
-					"Configured pr-autopilot models are unavailable or unauthenticated:\n  " +
-					unavailable.join("\n  ") +
-					"\nFix the pr-autopilot section in kstack.json or authenticate the providers.",
-			};
-		}
-		return {
-			ok: true,
-			config: { ...config.config, source: "config", warnings: [...config.config.warnings, ...warnings] },
-		};
-	}
-
-	// No config: fall back to the built-in tiny model defaults, filtered.
-	const available: AutopilotModelSpec[] = [];
-	const skipped: string[] = [];
-	for (const m of DEFAULT_TINY_MODELS) {
-		const { provider, modelId } = splitModelRef(m.model);
-		if (deps.available(provider, modelId)) {
-			available.push({ ...m });
-		} else {
-			skipped.push(m.model);
-		}
-	}
-	if (skipped.length > 0) {
-		warnings.push(`Default tiny models unavailable, skipping: ${skipped.join(", ")}.`);
-	}
-	if (available.length < 2) {
-		return {
-			ok: false,
-			error:
-				"Fewer than 2 tiny models are available. Configure the pr-autopilot " +
-				"section in kstack.json with at least 2 tiny-model entries (thinking ≤ low).",
-		};
-	}
+	if (config.status === "loaded") return { ok: true, config: config.config };
 	return {
 		ok: true,
 		config: {
-			models: available,
+			models: DEFAULT_AUTOPILOT_MODELS.map((model) => ({ ...model })),
 			maxConcurrency: 3,
 			timeoutMinutes: 5,
 			maxRuntimeMinutes: 15,
 			source: "default",
-			warnings,
+			warnings: [],
 		},
 	};
 }

@@ -1,7 +1,7 @@
 # pr-autopilot — Bounded PR Autopilot
 
 Drives an open PR through the check → triage → fix → push → recheck loop using
-**one tiny model per run**, chosen at random from the configured pool. Stops at
+**one configured model per run**, chosen at random from the configured pool. Stops at
 merge-ready — never auto-merges. Git and jj never rebase or restack; Graphite uses native restack only after proving the selected branch has no local descendants.
 
 This is the bounded post-PR companion to `plan-implement`. Where
@@ -20,7 +20,7 @@ model.
 | Mode | Behavior |
 |---|---|
 | `check` | One status pass: fetch CI checks, unresolved review threads, and conflict state. Report and stop. No child agents are spawned. |
-| `threads` | Fetch state, spawn a tiny-model triager, then a fixer for threads marked `fix`. Dismiss/ask are handled by the parent. Commit and push. One cycle. |
+| `threads` | Fetch state, spawn a model triager, then a fixer for threads marked `fix`. Dismiss/ask are handled by the parent. Commit and push. One cycle. |
 | `drive` | Loop: refresh → merge base if behind/conflicted → comments → watch pending CI → flake rerun → code CI, up to 3 fix cycles. |
 | `watch` | Same as `drive` with up to 15 fix cycles. Watches `gh pr checks --watch` when nothing is actionable and CI is still running. |
 | `cleanup` | In Git mode, verify and remove the current clean, unlocked Kstack-managed worktree, then safely delete its branch after confirmation. Dirty, untracked, locked, unregistered, and out-of-root worktrees are preserved. In jj mode, report a no-op. Session archival remains separate. |
@@ -29,16 +29,17 @@ Tab-completion offers `--mode` and `--pr` as flags, and the five mode values onc
 
 If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR authored by the current GitHub user** in the repository (sorted by number, not GitHub's default list order). Before any mutation, the selected workstream must match the PR's exact head ref and GitHub head SHA. Git mode also requires a clean tree. jj mode requires the PR bookmark to target an empty `@` automation checkpoint; the implementation remains in its ancestors.
 
-## Tiny-model-only invariant
+## Model pool
 
-The autopilot is tiny-model-only by construction:
+Every child agent in a run uses one model chosen at random from the configured
+array. All Pi thinking levels are accepted; omitted thinking defaults to
+`"low"`. The default pool is GPT-5.6 Luna, GLM 5.2, and DeepSeek V4 Flash.
 
-- The config validator **rejects** any thinking level above `"low"`.
-- Every child agent in a run uses one model chosen at random from that array.
-- The default pool is GPT-5.6 Luna, GLM 5.2, and DeepSeek V4 Flash.
-
-If no `pr-autopilot` section exists in `kstack.json`, the built-in defaults are
-used, filtered to what is available in the Pi model registry.
+If no `pr-autopilot` section exists in `kstack.json`, the complete built-in
+pool is used. Explicitly configured model IDs are passed to child Pi processes
+without checking Pi's bundled model registry, so provider models can be used
+before the local catalog is updated. Invalid or unauthenticated IDs fail when
+the child starts.
 
 ## Configuration
 
@@ -62,7 +63,7 @@ Config lives in the `"pr-autopilot"` section of
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `models` | yes (≥2) | built-in tiny set | Pool of tiny models. Each run picks one entry at random for both the triager and the fixer. Each entry: `{label, model, thinking?}`. `thinking` must be `"off"`, `"minimal"`, or `"low"`. |
+| `models` | yes (≥2) | built-in model set | Model pool. Each run picks one entry at random for both the triager and the fixer. Each entry is `{label, model, thinking?}` and accepts any supported Pi thinking level. |
 | `maxConcurrency` | no | 3 | Max concurrent failed-log fetches (1–5). |
 | `timeoutMinutes` | no | 5 | Per-child idle limit in minutes; child output resets the timer (1–15). |
 | `maxRuntimeMinutes` | no | 15 | Absolute per-child ceiling in minutes (2–60, ≥ `timeoutMinutes`). |
@@ -105,7 +106,7 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    running, the autopilot watches `gh pr checks --watch --fail-fast` instead of
    spawning a fixer.
 
-4. **Classify before retrying.** The tiny-model triager classifies each
+4. **Classify before retrying.** The model triager classifies each
    failure as `code`, `stale-base`, `flake`, `infra`, or `unknown` from the
    failing log, not the check name. Flake gets one `gh run rerun --failed` per
    check+SHA. Blind retries never happen. Workflow files are never staged.
@@ -147,7 +148,7 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 
 ## Child agents
 
-Each run picks one tiny model, then spawns two child agents with that model:
+Each run picks one configured model, then spawns two child agents with that model:
 
 - **Triager** — receives bounded task data through stdin and has no tools. It
   classifies CI check failures (with log excerpts) and review threads without

@@ -1,7 +1,7 @@
 /**
  * Bounded PR Autopilot extension for Pi.
  *
- * Watches over an open PR using one tiny model per run, chosen at random
+ * Watches over an open PR using one configured model per run, chosen at random
  * from the configured pool (GPT-5.6 Luna, GLM 5.2, DeepSeek V4
  * Flash by default). Spawns isolated child agents with that model to triage
  * CI/check status and review threads, generates fixes, commits, and pushes —
@@ -19,7 +19,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Box, Text } from "@earendil-works/pi-tui";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
@@ -37,8 +36,8 @@ import type { AutopilotMode, AutopilotResult } from "./types.ts";
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 
-/** Tiny models the autopilot is allowed to use — the exclusive child agent set. */
-export { DEFAULT_TINY_MODELS } from "./config.ts";
+/** Configured models the autopilot is allowed to use — the exclusive child agent set. */
+export { DEFAULT_AUTOPILOT_MODELS } from "./config.ts";
 
 interface PhaseDetails {
 	schemaVersion: 1;
@@ -154,10 +153,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 			return early("failed", configLoad.error);
 		}
 
-		const modelDeps = {
-			available: (provider: string, modelId: string) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
-		};
-		const modelResolution = resolveModels(configLoad, modelDeps);
+		const modelResolution = resolveModels(configLoad);
 		if (!modelResolution.ok) {
 			notify(modelResolution.error, "error");
 			return early("failed", modelResolution.error);
@@ -173,7 +169,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 		// Confirm the run before starting unless a trusted in-process caller already
 		// holds user consent (for example, an explicitly requested stack land).
-		// One randomly chosen tiny model runs the children.
+		// One randomly chosen configured model runs the children.
 		const selected = pickModel(config.models);
 		const callerConfirmed = isAutopilotConfirmation(confirmation);
 		if (callerConfirmed) {
@@ -193,7 +189,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					`- Conflicts/behind: ${policy.baseUpdateVerb} from the remote base with ${backend.id}${policy.conflictRuleSuffix}\n` +
 					"- Comments before CI; watch pending checks instead of inventing work\n" +
 					"- Stops at merge-ready (never auto-merges)\n" +
-					"- One tiny model per run, chosen at random from the configured pool",
+					"- One configured model per run, chosen at random from the configured pool",
 			);
 			if (!confirmed) return early("declined", "autopilot confirmation declined");
 		}
@@ -305,7 +301,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("pr-autopilot", {
 		description:
-			"Keep an open PR merge-ready with one randomly chosen tiny model: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]. " +
+			"Keep an open PR merge-ready with one randomly chosen configured model: /pr-autopilot [--mode check|threads|drive|watch|cleanup] [--pr <number>]. " +
 			"Stops at merge-ready; never auto-merges or rebases shared history.",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {

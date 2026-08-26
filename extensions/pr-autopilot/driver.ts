@@ -2,7 +2,7 @@ import { isString } from "../shared/validation.ts";
 /**
  * Bounded PR autopilot state machine.
  *
- * One PR at a time, lowest unmerged first. Tiny models only. The loop:
+ * One PR at a time, lowest unmerged first. Configured models only. The loop:
  *
  *   refresh snapshot → conflicts/behind (merge base, never rebase)
  *   → unresolved review items (fix / dismiss / ask / ignore)
@@ -103,7 +103,7 @@ export async function runAutopilot(
 		promptDir: string;
 		triagerPromptFile: string;
 		fixerPromptFile: string;
-		/** One tiny model for every child in this run. Chosen before confirmation. */
+		/** One configured model for every child in this run. Chosen before confirmation. */
 		selectedModel?: Pick<AutopilotModelSpec, "model" | "label" | "thinking">;
 	},
 	handlers: {
@@ -605,7 +605,7 @@ export async function runAutopilot(
 						error: "Fixer reported VERIFY_FAIL — not pushing a fix that failed its own checks.",
 					}
 				: await mutation.publishFix(cwd, opened.checkout, {
-						message: `Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (tiny models)`,
+						message: `Autopilot PR #${prNumber}: address review threads and CI failures\n\nCo-authored-by: pr-autopilot (child agents)`,
 						isForbiddenPath: isForbiddenStagingPath,
 					});
 			switch (pushResult.kind) {
