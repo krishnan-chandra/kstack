@@ -35,9 +35,10 @@ function scripted(overrides: ScriptedResults = {}) {
 		"gt --no-interactive --no-ai submit --stack --draft --no-edit --dry-run": {
 			stdout: "Preparing to submit PRs for the following branches...\n▸ kstack/one (Create)\n✅ Dry run complete.\n",
 		},
-		"gh pr list --state open --head kstack/one --json number,url,headRefName,baseRefName,headRefOid,isDraft": {
-			stdout: "[]\n",
-		},
+		"gh pr list --state open --head kstack/one --limit 2 --json number,url,headRefName,baseRefName,headRefOid,isDraft":
+			{
+				stdout: "[]\n",
+			},
 	};
 	const defaultResponses = new Map<string, ScriptedResults[string]>(Object.entries(defaults));
 	const exec: ExecFn = async (command, args) => {

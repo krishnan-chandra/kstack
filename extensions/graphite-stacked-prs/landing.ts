@@ -1,34 +1,24 @@
-import { type BoundaryValue, isBoolean, isString } from "../shared/validation.ts";
+import { type BoundaryValue, isString } from "../shared/validation.ts";
 /** Verified, parent-owned native Graphite stack landing. */
 
 import { createHash } from "node:crypto";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequest, type MergeMethod, waitForMerge } from "../shared/github.ts";
-import { asRecord } from "../shared/narrow.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
+import { type GraphiteOpenPullRequest, queryOpenPullRequests } from "./pull-requests.ts";
 
 const MAX_REFS = 50;
-const SHA_RE = /^[0-9a-f]{40}$/;
 const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
-
-interface GraphitePullRequest {
-	number: number;
-	url: string;
-	ref: string;
-	baseRef: string;
-	headSha: string;
-	draft: boolean;
-}
 
 interface GraphiteLandingPlan {
 	planId: string;
 	repositoryRoot: string;
 	trunkRef: string;
 	selectedRef: string;
-	pullRequests: readonly GraphitePullRequest[];
+	pullRequests: readonly GraphiteOpenPullRequest[];
 	preview: string;
 }
 
@@ -99,71 +89,6 @@ async function run(
 	}
 }
 
-function parseOpenPullRequests(raw: string): GraphitePullRequest[] | undefined {
-	let value: BoundaryValue;
-	try {
-		value = JSON.parse(raw);
-	} catch {
-		return undefined;
-	}
-	if (!Array.isArray(value) || value.length > MAX_REFS) return undefined;
-	const result: GraphitePullRequest[] = [];
-	for (const candidate of value) {
-		const item = asRecord(candidate);
-		if (
-			!item ||
-			!Number.isSafeInteger(item.number) ||
-			Number(item.number) <= 0 ||
-			!isString(item.url) ||
-			!safeRef(item.headRefName) ||
-			!safeRef(item.baseRefName) ||
-			!SHA_RE.test(String(item.headRefOid)) ||
-			!isBoolean(item.isDraft)
-		)
-			return undefined;
-		result.push({
-			number: Number(item.number),
-			url: item.url,
-			ref: item.headRefName,
-			baseRef: item.baseRefName,
-			headSha: String(item.headRefOid),
-			draft: item.isDraft,
-		});
-	}
-	return result;
-}
-
-async function queryOpenPullRequests(
-	exec: ExecFn,
-	cwd: string,
-	filter: ["--head" | "--base", string],
-	limit: number,
-	signal: AbortSignal,
-): Promise<{ ok: true; pullRequests: GraphitePullRequest[] } | { ok: false; error: string }> {
-	const listed = await run(
-		exec,
-		"gh",
-		[
-			"pr",
-			"list",
-			"--state",
-			"open",
-			...filter,
-			"--limit",
-			String(limit),
-			"--json",
-			"number,url,headRefName,baseRefName,headRefOid,isDraft",
-		],
-		cwd,
-		signal,
-	);
-	if (listed.code !== 0) return { ok: false, error: `Could not inspect open PR topology: ${diagnostic(listed)}` };
-	const pullRequests = parseOpenPullRequests(listed.stdout);
-	return pullRequests
-		? { ok: true, pullRequests }
-		: { ok: false, error: "GitHub returned invalid Graphite PR topology." };
-}
-
 async function inspectPlan(
 	cwd: string,
 	targetPr: number,
@@ -183,7 +108,7 @@ async function inspectPlan(
 	if (!safeRef(target.headRef) || !safeRef(target.baseRef)) {
 		return { ok: false, error: `PR #${targetPr} has invalid Graphite head/base refs.` };
 	}
-	const selected: GraphitePullRequest = {
+	const selected: GraphiteOpenPullRequest = {
 		number: target.number,
 		url: target.url,
 		ref: target.headRef,
@@ -196,7 +121,13 @@ async function inspectPlan(
 	const seen = new Set([selected.ref]);
 	while (prefix[0].baseRef !== trunkRef) {
 		if (prefix.length >= MAX_REFS) return { ok: false, error: "Graphite PR topology is too large." };
-		const parents = await queryOpenPullRequests(exec, repositoryRoot, ["--head", prefix[0].baseRef], 2, signal);
+		const parents = await queryOpenPullRequests({
+			exec,
+			cwd: repositoryRoot,
+			filter: ["--head", prefix[0].baseRef],
+			limit: 2,
+			signal,
+		});
 		if (!parents.ok) return parents;
 		if (parents.pullRequests.length !== 1) {
 			return {
@@ -209,7 +140,13 @@ async function inspectPlan(
 		seen.add(parent.ref);
 		prefix.unshift(parent);
 	}
-	const children = await queryOpenPullRequests(exec, repositoryRoot, ["--base", selected.ref], 1, signal);
+	const children = await queryOpenPullRequests({
+		exec,
+		cwd: repositoryRoot,
+		filter: ["--base", selected.ref],
+		limit: 1,
+		signal,
+	});
 	if (!children.ok) return children;
 	const hasChild = children.pullRequests.length > 0;
 	const current = await run(exec, "git", ["branch", "--show-current"], repositoryRoot, signal);
@@ -307,7 +244,7 @@ export async function requestGraphiteStackLanding(
 	}
 
 	let plan = inspected.plan;
-	const readinessEvidence = new Map<number, { ref: string; baseRef: string; headSha: string }>();
+	const readinessEvidence = new Map<number, Pick<GraphiteOpenPullRequest, "ref" | "baseRef" | "headSha">>();
 	for (const pr of plan.pullRequests) {
 		const readiness = await deps.runAutopilot(options.readiness, pr.number);
 		if (!readiness.handled) {
