@@ -1,7 +1,9 @@
 # Sources and divergence
 
 This extension replaces the former `jj-stacked-prs` skill and its Python
-publisher. The workflow opinions below are unchanged.
+publisher. The workflow opinions below are unchanged. Shared GitHub process
+access now lives in `extensions/shared/github.ts`, while the live navigation
+comment protocol and topology store live in `extensions/shared/stack/topology.ts`.
 
 ## Input sources
 

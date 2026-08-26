@@ -1,8 +1,9 @@
 import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } from "../shared/validation.ts";
+
 /** Validated jj and read-only Git adapter. */
 
+import { parseGithubUrl, redactUrl } from "../shared/github.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
-import { parseGithubUrl, redactUrl } from "./github.ts";
 import type { CommandResult, ProcessRunner } from "./process.ts";
 import { parseConcatenatedJson } from "./stack.ts";
 import {

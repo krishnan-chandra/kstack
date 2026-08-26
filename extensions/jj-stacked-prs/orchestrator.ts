@@ -3,8 +3,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 
 import { realpathSync } from "node:fs";
 import type { LandResult } from "../land/types.ts";
-import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
-import type { ExecFn } from "../shared/git-exec.ts";
+import { GitHubError, type GitHubGateway } from "../shared/github.ts";
 import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import type {
 	CompletedPublicationAction,
@@ -12,17 +11,8 @@ import type {
 	StackPublishedPullRequest,
 	StackPublishOutcome,
 } from "../shared/stack/outcome.ts";
-import {
-	buildNavigationComment,
-	createGitHubAdapter,
-	findKstackComment,
-	findNavigationAncestors,
-	type GitHubAdapter,
-	type GitHubComment,
-	GitHubError,
-	parseNavigationCommentEntries,
-	reconcileStackEntries,
-} from "./github.ts";
+import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
 import { type PrDocument, renderPrDocument } from "./pr-document.ts";
 import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
@@ -40,7 +30,6 @@ import {
 	type AdvanceOutcome,
 	DEFAULT_MAX_STACK,
 	type InspectModel,
-	type NavigationEntry,
 	type PublicationPlan,
 	SCHEMA_VERSION,
 	type StackBlocker,
@@ -50,8 +39,6 @@ import {
 	type StackReadinessMode,
 	type SyncOutcome,
 } from "./types.ts";
-
-const NAVIGATION_READ_CONCURRENCY = 4;
 
 export interface StackUi {
 	hasUI: boolean;
@@ -63,7 +50,7 @@ export interface StackUi {
 
 export interface OrchestratorDeps {
 	jj?: JjAdapter;
-	github?: GitHubAdapter;
+	github?: GitHubGateway;
 	run: ProcessRunner;
 	ui: StackUi;
 	signal?: AbortSignal;
@@ -305,7 +292,7 @@ export async function advanceStack(options: AdvanceOptions, deps: OrchestratorDe
 			blockers: [{ code: "missing-remote", message: "Advance requires interactive TUI/RPC mode." }],
 		};
 	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const github = deps.github ?? createJjGitHubGateway(deps.run);
 	const model = await inspectStack(options, deps);
 	if (model.blockers.length > 0) return { status: "blocked", blockers: model.blockers };
 	if (!model.top || !model.slices.some((slice) => slice.bookmark === options.merged)) {
@@ -484,7 +471,7 @@ async function applyPublication(
 	deps: OrchestratorDeps,
 ): Promise<StackPublishOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const github = deps.github ?? createJjGitHubGateway(deps.run);
 	const metadataByBookmark = new Map<string, PrMetadata>();
 	const slicesNeedingMetadata = plan.slices.filter((slice) =>
 		slice.actions.some((action) => action.kind === "create-draft-pr"),
@@ -653,7 +640,13 @@ async function applyPublication(
 		}
 	}
 
-	const comments = await reconcileComments(plan, published, options, deps, github);
+	const comments = await createNavigationCommentStore(github).reconcile({
+		repo: plan.repository,
+		defaultBranch: plan.defaultBranch,
+		published: published.map((slice) => ({ ...slice, ref: slice.bookmark })),
+		cwd: options.cwd,
+		signal: deps.signal,
+	});
 	const pullRequests = provenPullRequests(published);
 	if (comments.indeterminate) {
 		return {
@@ -687,146 +680,6 @@ async function applyPublication(
 	};
 }
 
-async function reconcileComments(
-	plan: PublicationPlan,
-	published: Array<{
-		bookmark: string;
-		prNumber: number | undefined;
-		url?: string;
-		draft: boolean;
-		targetBase: string;
-		createPr: boolean;
-	}>,
-	options: PublishOptions,
-	deps: OrchestratorDeps,
-	github: GitHubAdapter,
-): Promise<{ completed: CompletedPublicationAction[]; errors: string[]; indeterminate?: FailedPublicationAction }> {
-	const completed: CompletedPublicationAction[] = [];
-	const errors: string[] = [];
-	const user = await github.getAuthenticatedUser(options.cwd, deps.signal);
-	if (!user) {
-		return {
-			completed,
-			errors: ["Navigation comments skipped: could not determine the authenticated GitHub user."],
-		};
-	}
-	const existingByPr = new Map<number, GitHubComment[]>();
-	const failedFetches = new Set<number>();
-	let priorEntries: NavigationEntry[] = [];
-	const publishedWithPrs = published.filter(
-		(slice): slice is (typeof published)[number] & { prNumber: number } => slice.prNumber !== undefined,
-	);
-	const commentReads = await mapWithConcurrencyLimit(publishedWithPrs, NAVIGATION_READ_CONCURRENCY, async (slice) => {
-		try {
-			const comments = await github.getPrComments(plan.repository, slice.prNumber, options.cwd, deps.signal);
-			return { kind: "ok" as const, prNumber: slice.prNumber, comments };
-		} catch (error) {
-			return { kind: "error" as const, prNumber: slice.prNumber, error };
-		}
-	});
-	for (const read of commentReads) {
-		if (read.kind === "error") {
-			failedFetches.add(read.prNumber);
-			errors.push(`PR #${read.prNumber}: ${errorMessage(read.error)}`);
-			continue;
-		}
-		existingByPr.set(read.prNumber, read.comments);
-		const existing = findKstackComment(read.comments, user);
-		const entries = existing ? parseNavigationCommentEntries(existing.body) : [];
-		if (entries.length > priorEntries.length) priorEntries = entries;
-	}
-	const statusByPr: Record<number, string> = {};
-	for (const slice of published) {
-		if (slice.prNumber !== undefined) statusByPr[slice.prNumber] = slice.createPr || slice.draft ? "draft" : "open";
-	}
-	const queuedAncestorPrs: number[] = [];
-	const queuedAncestorSeen = new Set<number>();
-	for (const entry of findNavigationAncestors(
-		published.map((slice) => ({
-			bookmark: slice.bookmark,
-			existingPr: slice.prNumber === undefined ? undefined : { number: slice.prNumber },
-		})),
-		priorEntries,
-	)) {
-		if (entry.prNumber === undefined || statusByPr[entry.prNumber]) continue;
-		if (entry.status === "merged") {
-			statusByPr[entry.prNumber] = "merged";
-			continue;
-		}
-		if (queuedAncestorSeen.has(entry.prNumber)) continue;
-		queuedAncestorSeen.add(entry.prNumber);
-		queuedAncestorPrs.push(entry.prNumber);
-	}
-	const statusReads = await mapWithConcurrencyLimit(
-		queuedAncestorPrs,
-		NAVIGATION_READ_CONCURRENCY,
-		async (prNumber) => {
-			try {
-				const status = await github.getPrStatus(plan.repository, prNumber, options.cwd, deps.signal);
-				return { kind: "ok" as const, prNumber, status };
-			} catch (error) {
-				return { kind: "error" as const, prNumber, error };
-			}
-		},
-	);
-	for (const read of statusReads) {
-		if (read.kind === "ok") {
-			statusByPr[read.prNumber] = read.status;
-		} else {
-			statusByPr[read.prNumber] = "unknown";
-			errors.push(errorMessage(read.error));
-		}
-	}
-	let body: string;
-	try {
-		body = buildNavigationComment(
-			reconcileStackEntries({
-				published: published.map((slice) => ({
-					bookmark: slice.bookmark,
-					prNumber: slice.prNumber,
-					targetBase: slice.targetBase,
-					createPr: slice.createPr,
-				})),
-				priorEntries,
-				statusByPr,
-				defaultBranch: plan.defaultBranch,
-			}),
-			plan.defaultBranch,
-		);
-	} catch (error) {
-		return { completed, errors: [...errors, errorMessage(error)] };
-	}
-	for (const slice of published) {
-		if (slice.prNumber === undefined || failedFetches.has(slice.prNumber)) continue;
-		const existing = findKstackComment(existingByPr.get(slice.prNumber) ?? [], user);
-		try {
-			await github.createOrUpdateComment({
-				repo: plan.repository,
-				prNumber: slice.prNumber,
-				body,
-				existingCommentId: existing?.id,
-				cwd: options.cwd,
-				signal: deps.signal,
-			});
-			completed.push({
-				kind: existing ? "update-nav-comment" : "create-nav-comment",
-				prNumber: slice.prNumber,
-			});
-		} catch (error) {
-			if (isIndeterminate(error)) {
-				return {
-					completed,
-					errors,
-					indeterminate: { kind: "nav-comment", prNumber: slice.prNumber, error: errorMessage(error) },
-				};
-			}
-			errors.push(`PR #${slice.prNumber}: ${errorMessage(error)}`);
-			break;
-		}
-	}
-	return { completed, errors };
-}
-
 async function snapshotPublication(
 	model: InspectModel,
 	options: PlanOptions,
@@ -839,7 +692,7 @@ async function snapshotPublication(
 	const derived = slicesForPublication(model.stack, model.top);
 	if ("blocker" in derived) return { blockers: [derived.blocker] };
 	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const github = deps.github ?? createJjGitHubGateway(deps.run);
 	const remote = await jj.getRemote(options.cwd, options.remote, deps.signal);
 	if (!remote.github) {
 		return {
@@ -982,20 +835,6 @@ function mutationFailure(
 	}
 	if (mutationCompleted) return { status: "partial", operationId, blockers: [], error: errorMessage(error) };
 	return { status: "failed", error: errorMessage(error), operationId };
-}
-
-function execFromRunner(run: ProcessRunner): ExecFn {
-	return async (command, args, options) => {
-		const result = await run([command, ...args], {
-			cwd: options.cwd,
-			timeoutMs: options.timeout,
-			signal: options.signal,
-		});
-		if (result.kind === "ok" || result.kind === "nonzero") {
-			return { code: result.code, stdout: result.stdout, stderr: result.stderr };
-		}
-		throw new Error(result.message);
-	};
 }
 
 function canonicalize(path: string, realpath?: (value: string) => string): string {

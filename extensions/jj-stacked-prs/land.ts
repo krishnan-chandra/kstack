@@ -1,15 +1,11 @@
 import type { BoundaryValue } from "../shared/validation.ts";
+
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
-import { isMergeMethod } from "../shared/github.ts";
+import { GitHubError, type GitHubGateway, isMergeMethod } from "../shared/github.ts";
 import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
-import {
-	createGitHubAdapter,
-	findKstackComment,
-	type GitHubAdapter,
-	GitHubError,
-	parseNavigationCommentEntries,
-} from "./github.ts";
+import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { createJjGitHubGateway } from "./github-gateway.ts";
 import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
 import { applyAdvance, inspectStack, type OrchestratorDeps, publishStackFromTool } from "./orchestrator.ts";
 import { renderLandConfirmation } from "./render.ts";
@@ -46,7 +42,7 @@ export async function landStackThroughPullRequest(
 	deps: OrchestratorDeps,
 ): Promise<StackPrefixLandOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const github = deps.github ?? createJjGitHubGateway(deps.run);
 	const localBookmarks = await jj.listLocalBookmarks(options.cwd, deps.signal);
 	const hasLocalHead = localBookmarks.some((bookmark) => bookmark.name === options.headBookmark);
 	const model = hasLocalHead ? await inspectStack({ cwd: options.cwd, top: options.headBookmark }, deps) : undefined;
@@ -79,14 +75,14 @@ export async function landStackThroughPullRequest(
 	const candidate = candidates[0];
 	let metadataConfirmsPrefix = false;
 	if (!model || model.slices.length <= 1) {
-		const user = await github.getAuthenticatedUser(options.cwd, deps.signal);
-		const comments = await github.getPrComments(candidate.repository, options.prNumber, options.cwd, deps.signal);
-		const navigation = findKstackComment(comments, user);
-		const entries = navigation ? parseNavigationCommentEntries(navigation.body) : [];
-		const selectedIndex = entries.findIndex(
-			(entry) => entry.prNumber === options.prNumber && entry.bookmark === options.headBookmark,
-		);
-		metadataConfirmsPrefix = selectedIndex > 0;
+		const membership = await createNavigationCommentStore(github).membership({
+			repo: candidate.repository,
+			prNumber: options.prNumber,
+			headRef: options.headBookmark,
+			cwd: options.cwd,
+			signal: deps.signal,
+		});
+		metadataConfirmsPrefix = membership.selectedIndex > 0;
 	}
 
 	if (!model) {
@@ -217,7 +213,7 @@ async function prepareLand(
 		options,
 		deps,
 		remapped.repository,
-		deps.github ?? createGitHubAdapter(deps.run),
+		deps.github ?? createJjGitHubGateway(deps.run),
 	);
 	if (method.status !== "ok") return method;
 	return { status: "ok", mapped: remapped.mapped, method: method.method, model: remapped.model };
@@ -239,7 +235,7 @@ async function mapStackPullRequests(
 		};
 	}
 	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const github = deps.github ?? createJjGitHubGateway(deps.run);
 	const remote = await jj.getRemote(options.cwd, options.remote, deps.signal);
 	if (!remote.github) {
 		return {
@@ -384,7 +380,7 @@ async function resolveLandMethod(
 	options: LandStackOptions,
 	deps: OrchestratorDeps,
 	repository: { owner: string; repo: string },
-	github: GitHubAdapter,
+	github: GitHubGateway,
 ): Promise<{ status: "ok"; method: StackMergeMethod } | { status: "blocked"; blockers: StackBlocker[] }> {
 	const allowed = await github.getAllowedMergeMethods(repository, options.cwd, deps.signal);
 	if (allowed.length === 0) {
@@ -443,7 +439,7 @@ async function runLandLoop(
 	initialMapped: MappedLandSlice[],
 ): Promise<StackLandOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createGitHubAdapter(deps.run);
+	const github = deps.github ?? createJjGitHubGateway(deps.run);
 	const landPr = deps.landPr;
 	if (!landPr) {
 		return {
