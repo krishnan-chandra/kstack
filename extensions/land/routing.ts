@@ -12,20 +12,27 @@ interface RouteLandDeps {
 }
 
 function mapStackOutcome(outcome: StackLandOutcome): LandResult {
-	const stackFrontiers = "frontiers" in outcome ? (outcome.frontiers ?? []) : [];
-	const frontiers: FrontierResult[] = stackFrontiers.map((frontier) => ({
+	if (outcome.status === "blocked") return blockedLandResult(outcome.blockers.map((item) => item.message).join(" "));
+	if (outcome.status === "declined") {
+		return {
+			...blockedLandResult("Stack landing confirmation declined."),
+			status: "declined",
+		};
+	}
+	if (outcome.status === "busy") return blockedLandResult(outcome.message);
+
+	const frontiers: FrontierResult[] = outcome.frontiers.map((frontier) => ({
 		prNumber: frontier.prNumber,
 		url: frontier.url,
 		expectedHeadSha: frontier.expectedHeadSha,
 		method: frontier.method,
 		state: frontier.state === "already-merged" ? "landed" : frontier.state,
 	}));
-	const completedMutations = "completedMutations" in outcome ? [...(outcome.completedMutations ?? [])] : [];
-	const warnings = "warnings" in outcome ? [...(outcome.warnings ?? [])] : [];
-	const remainingRefs = "remainingRefs" in outcome ? [...outcome.remainingRefs] : [];
-	const recoveryOperationIds = "recoveryOperationIds" in outcome ? outcome.recoveryOperationIds : undefined;
-	const recoveryOperationId = recoveryOperationIds?.at(-1);
-	const autopilotRan = stackFrontiers.some((frontier) => frontier.state !== "already-merged");
+	const completedMutations = [...outcome.completedMutations];
+	const warnings = [...outcome.warnings];
+	const remainingRefs = [...outcome.remainingRefs];
+	const recoveryOperationId = outcome.recoveryOperationIds.at(-1);
+	const autopilotRan = outcome.frontiers.some((frontier) => frontier.state !== "already-merged");
 
 	if (outcome.status === "completed") {
 		return {
@@ -56,14 +63,6 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 			blockers: [blocker],
 		};
 	}
-	if (outcome.status === "blocked") return blockedLandResult(outcome.blockers.map((item) => item.message).join(" "));
-	if (outcome.status === "declined") {
-		return {
-			...blockedLandResult("Stack landing confirmation declined."),
-			status: "declined",
-		};
-	}
-	if (outcome.status === "busy") return blockedLandResult(outcome.message);
 	if (outcome.status === "cancelled") {
 		return {
 			status: "aborted",

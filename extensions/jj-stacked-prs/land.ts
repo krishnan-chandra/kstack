@@ -3,7 +3,12 @@ import type { BoundaryValue } from "../shared/validation.ts";
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
 import { GitHubError, type GitHubGateway, isMergeMethod } from "../shared/github.ts";
-import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
+import {
+	emptyStackLandProgress,
+	type StackLandFrontier,
+	type StackLandOutcome,
+	type StackPrefixLandOutcome,
+} from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import { createJjGitHubGateway } from "./github-gateway.ts";
 import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
@@ -153,7 +158,7 @@ async function landStackWithAuthorization(
 			blockers: [{ code: "missing-remote", message: "Stack landing requires interactive TUI/RPC mode." }],
 		};
 	}
-	if (deps.signal?.aborted) return { status: "cancelled" };
+	if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
 	const prepared = await prepareLand(options, deps, initialModel);
 	if (prepared.status !== "ok") return prepared;
 	if (authorization === "interactive-confirmation") {
@@ -168,7 +173,7 @@ async function landStackWithAuthorization(
 		}
 		deps.ui.setStatus("jj-stack: confirm landing");
 		const confirmed = await deps.ui.confirm("Land this stacked PR plan?", confirmation.body);
-		if (deps.signal?.aborted) return { status: "cancelled" };
+		if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
 		if (!confirmed) return { status: "declined" };
 	}
 	return runLandLoop(options, deps, prepared.method, prepared.model, prepared.mapped);

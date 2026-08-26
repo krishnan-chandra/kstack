@@ -11,7 +11,12 @@ import {
 } from "../shared/github.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import { STACK_SHA_RE } from "../shared/stack/manifest.ts";
-import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
+import {
+	emptyStackLandProgress,
+	type StackLandFrontier,
+	type StackLandOutcome,
+	type StackPrefixLandOutcome,
+} from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore, type NavigationEntry } from "../shared/stack/topology.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { requireGit238, resolveGitRemote, resolveGitTrunk } from "./repository.ts";
@@ -603,7 +608,7 @@ async function runLandingLoop(input: {
 	if (!lock.ok) {
 		return lock.kind === "busy"
 			? { status: "busy", message: "Another stack publication or landing is active for this repository." }
-			: { status: "failed", error: lock.error };
+			: { status: "failed", error: lock.error, ...emptyStackLandProgress() };
 	}
 	const fresh = await inspectLocalStack(
 		input.entries.map((item) => item.entry),
