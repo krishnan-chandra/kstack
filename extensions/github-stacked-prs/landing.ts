@@ -1,6 +1,6 @@
 /** Bottom-up Git landing loop for navigation-comment stacks. */
 
-import type { LandResult } from "../land/types.ts";
+import { applyDelegatedFrontierSettlement, type DelegatedFrontierResponse } from "../land/api.ts";
 import { commandDiagnostic, type ExecFn, runCommand } from "../shared/git-exec.ts";
 import {
 	type GitHubGateway,
@@ -38,7 +38,7 @@ interface GitHubLandingDeps {
 		expectedHeadSha: string;
 		readiness: "check" | "watch";
 		method: MergeMethod;
-	}): Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
+	}): Promise<DelegatedFrontierResponse>;
 	signal?: AbortSignal;
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
@@ -664,7 +664,7 @@ async function runLandingLoop(input: {
 					: { status: "partial", error: "Landing was cancelled after earlier mutations completed.", ...progress() };
 			}
 			const expectedHeadSha = current.pr.headCommitId;
-			const frontier: StackLandFrontier = {
+			let frontier: StackLandFrontier = {
 				ref: current.entry.bookmark,
 				prNumber: current.entry.prNumber,
 				url: current.pr.url,
@@ -679,40 +679,19 @@ async function runLandingLoop(input: {
 					readiness: input.readiness,
 					method: input.method,
 				});
-				if (!landed.handled) {
-					if (frontiers.length === 0)
-						return {
-							status: "blocked",
-							blockers: [{ code: "land-unavailable", message: "The land extension is unavailable." }],
-						};
-					frontiers.push(frontier);
-					return { status: "partial", error: "The land extension is unavailable.", ...progress() };
-				}
-				const hadEarlierMutations = completedMutations.length > 0;
-				completedMutations.push(...landed.outcome.completedMutations);
-				if (landed.outcome.status !== "landed") {
-					frontier.state = landed.outcome.status === "partially-landed" ? "queued" : "blocked";
-					frontiers.push(frontier);
-					const error = landed.outcome.blockers.join(" ") || `Land returned ${landed.outcome.status}.`;
-					const hasMutations = hadEarlierMutations || landed.outcome.completedMutations.length > 0;
-					if (landed.outcome.status === "indeterminate") {
-						return { status: "indeterminate", inFlight: error, ...progress() };
-					}
-					if ((landed.outcome.status === "aborted" || landed.outcome.status === "declined") && !hasMutations) {
-						return { status: "cancelled", ...progress() };
-					}
-					return {
-						status: landed.outcome.status === "failed" && !hasMutations ? "failed" : "partial",
-						error,
-						...progress(),
-					};
-				}
-				frontier.state = "landed";
+				const settlement = applyDelegatedFrontierSettlement({
+					response: landed,
+					frontier,
+					progress: { frontiers, remainingRefs, completedMutations, warnings, recoveryOperationIds },
+				});
+				if (settlement.kind === "halted") return settlement.outcome;
+				frontier = settlement.frontier;
+				completedMutations.push(...settlement.newCompletedMutations);
 			}
 
 			const verifiedMerge = await verifyMergedFrontier({
 				current,
-				expectedHeadSha,
+				expectedHeadSha: frontier.expectedHeadSha,
 				cwd: input.cwd,
 				repository: input.repository,
 				deps: input.deps,
@@ -729,7 +708,7 @@ async function runLandingLoop(input: {
 			const advanced = await advanceRemainder({
 				current,
 				remainder,
-				expectedHeadSha,
+				expectedHeadSha: frontier.expectedHeadSha,
 				mergeCommitOid: verifiedMerge.mergeCommitOid,
 				cwd: input.cwd,
 				remote: input.remote,
@@ -745,7 +724,7 @@ async function runLandingLoop(input: {
 
 			const cleanup = await cleanupMergedBranch({
 				current,
-				expectedHeadSha,
+				expectedHeadSha: frontier.expectedHeadSha,
 				trunkBranch: advanced.trunkBranch,
 				switchToTrunk: remainder.length === 0,
 				cwd: input.cwd,

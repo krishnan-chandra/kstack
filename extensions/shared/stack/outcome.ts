@@ -85,7 +85,7 @@ export interface StackLandFrontier {
 	state: "landed" | "queued" | "blocked" | "not-attempted" | "already-merged";
 }
 
-interface StackLandProgress {
+export interface StackLandProgress {
 	frontiers: readonly StackLandFrontier[];
 	remainingRefs: readonly string[];
 	completedMutations: readonly string[];

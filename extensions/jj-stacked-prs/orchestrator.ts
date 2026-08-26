@@ -2,7 +2,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 /** Inspect, plan, publish, sync, and advance state machines. */
 
 import { realpathSync } from "node:fs";
-import type { LandResult } from "../land/types.ts";
+import type { DelegatedFrontierResponse } from "../land/api.ts";
 import { GitHubError, type GitHubGateway } from "../shared/github.ts";
 import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import type {
@@ -61,7 +61,7 @@ export interface OrchestratorDeps {
 		expectedHeadSha: string;
 		readiness: StackReadinessMode;
 		method: StackMergeMethod;
-	}) => Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
+	}) => Promise<DelegatedFrontierResponse>;
 	configuredMethodFor?: (nameWithOwner: string) => StackMergeMethod | undefined;
 	generatePrMetadata?: PrMetadataGenerator;
 	loadRepositoryPrTemplate?: (cwd: string) => RepositoryPrTemplate | undefined;

@@ -2,10 +2,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isMergeMethod, type MergeMethod } from "../shared/github.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import { type BoundaryValue, isNumber, isObject, isString } from "../shared/validation.ts";
+import type { DelegatedFrontierResponse } from "./frontier-settlement.ts";
 import type { LandOptions, LandResult } from "./types.ts";
 
 // Public in-process access to Land's per-repository merge policy.
 export { getRepoMethod, loadLandConfig } from "./config.ts";
+export { applyDelegatedFrontierSettlement, type DelegatedFrontierResponse } from "./frontier-settlement.ts";
 
 export const LAND_REQUEST_EVENT = "kstack:land:request";
 const READINESS_MODES = new Set<unknown>(["check", "watch"]);
@@ -109,6 +111,6 @@ export function requestLand(
 export function requestStackFrontierLand(
 	pi: ExtensionAPI,
 	request: Omit<StackFrontierLandRequest, "kind">,
-): Promise<{ handled: false } | { handled: true; outcome: LandResult }> {
+): Promise<DelegatedFrontierResponse> {
 	return channel.request(pi, { kind: "stack-frontier", ...request });
 }
