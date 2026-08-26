@@ -28,7 +28,7 @@ jj_stack_land({ top, remote?, trunk?, method?, readiness?, maxStack? })
 ```
 
 `jj_stack_publish` pushes bookmarks, creates draft PRs, repairs PR bases, and
-reconciles navigation comments without a UI confirmation. `jj_stack_land` lands
+reconciles navigation comments through the shared stack-topology store without a UI confirmation. `jj_stack_land` lands
 the stack the same way. Pi calls either tool only after the user explicitly
 asks. There is no sync, advance, or generic jj mutation tool. A plan ID proves
 freshness, not authorization.
@@ -167,5 +167,7 @@ npm run typecheck
 npm run check:exports
 ```
 
+GitHub effects use the shared gateway in `extensions/shared/github.ts`; navigation
+comment encoding and reconciliation live in `extensions/shared/stack/topology.ts`.
 Tests inject process and GitHub/jj adapters. They do not use real credentials
 or mutate a real GitHub repository.

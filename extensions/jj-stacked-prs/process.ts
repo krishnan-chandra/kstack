@@ -37,7 +37,7 @@ interface CommandSuccess {
 	stderr: string;
 }
 
-export type CommandFailure =
+type CommandFailure =
 	| { kind: "nonzero"; code: number; stdout: string; stderr: string; message: string }
 	| { kind: "timeout"; message: string; stdout: string; stderr: string }
 	| { kind: "cancelled"; message: string; stdout: string; stderr: string }

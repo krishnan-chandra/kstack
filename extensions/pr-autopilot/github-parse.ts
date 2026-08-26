@@ -1,12 +1,13 @@
 import { type BoundaryValue, isBoolean, isNumber, isString } from "../shared/validation.ts";
+
 /**
  * Pure parsing and formatting of GitHub CLI output.
  *
  * These helpers never run `gh` or `git`. Execution wrappers live in `github.ts`.
  */
 
-import { KSTACK_COMMENT_MARKER } from "../shared/github.ts";
 import { isRecord } from "../shared/narrow.ts";
+import { KSTACK_COMMENT_MARKER } from "../shared/stack/topology.ts";
 import type { CheckRun, MergeStateStatus, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
 

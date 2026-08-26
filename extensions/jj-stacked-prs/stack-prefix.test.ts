@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildNavigationComment } from "./github.ts";
+import { buildNavigationComment } from "../shared/stack/topology.ts";
 import { landStackThroughPullRequest } from "./land.ts";
 import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
 

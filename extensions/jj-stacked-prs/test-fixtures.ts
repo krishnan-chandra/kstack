@@ -1,6 +1,6 @@
 import type { LandResult } from "../land/types.ts";
+import type { GitHubGateway } from "../shared/github.ts";
 import type { LockAttempt } from "../shared/publication-lock.ts";
-import type { GitHubAdapter } from "./github.ts";
 import type { JjAdapter } from "./jj.ts";
 import type { OpenPullRequest, RemoteInfo, StackCommit } from "./types.ts";
 
@@ -67,7 +67,7 @@ export function fakeJj(overrides: Partial<JjAdapter> = {}): JjAdapter & { calls:
 	return adapter;
 }
 
-export function fakeGithub(overrides: Partial<GitHubAdapter> = {}): GitHubAdapter & { comments: string[] } {
+export function fakeGithub(overrides: Partial<GitHubGateway> = {}): GitHubGateway & { comments: string[] } {
 	const comments: string[] = [];
 	return {
 		comments,

@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { findPrForBookmark, parseGithubUrl, parseOpenPrs, parsePrStatus, redactUrl } from "../shared/github.ts";
 import {
 	buildNavigationComment,
 	findKstackComment,
 	findNavigationAncestors,
-	findPrForBookmark,
 	parseCommentMetadata,
-	parseGithubUrl,
 	parseNavigationCommentEntries,
-	parseOpenPrs,
-	parsePrStatus,
 	reconcileStackEntries,
-	redactUrl,
-} from "./github.ts";
+} from "../shared/stack/topology.ts";
 import { buildPublicationPlan, displayPlanId, planIdsMatch } from "./publication.ts";
 import { KSTACK_COMMENT_MARKER, type NavigationEntry, type OpenPullRequest, type StackSlice } from "./types.ts";
 

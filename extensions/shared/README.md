@@ -10,7 +10,7 @@
 | `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
 | `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec` for VCS modules. |
-| `github.ts` | Provides a bounded, validated `gh` client for repository and PR snapshots, merges, and merge verification. |
+| `github.ts` | Provides the single bounded, validated `gh` gateway for repository and PR reads, publication, merges, and merge verification. |
 | `subagent-console.ts` | Renders the full-screen read-only subagent console (sidebar + transcript) used by live dashboards. |
 | `live-dashboard.ts` | Stores and renders shared live-dashboard state with extension-specific copy and display policy. |
 | `terminal-text.ts` | Sanitizes and width-bounds untrusted terminal text, with fallbacks for tests outside the Pi host. |
@@ -27,7 +27,7 @@
 | `slug.ts` | Extracts the short keyword slug used for session names, branches, and worktree paths. |
 | `transcript-store.ts` | Stores bounded ephemeral child transcripts for live dashboards and inspectors. |
 | `vcs/` | Owns the Git and jj mutation contract. See [`vcs/README.md`](vcs/README.md) for backend contracts, config/factory, Git and jj implementations, the shared worktree planner, preflight, and child guidance. |
-| `stack/` | Owns the cross-provider stacked-PR contract and provider channels. See [`stack/README.md`](stack/README.md) for the shared outcome alphabet, provider mapping, channels, open blocker codes, and the `ref` noun. |
+| `stack/` | Owns the cross-provider stacked-PR contract, provider channels, and stack-topology store. See [`stack/README.md`](stack/README.md) for outcomes, provider mapping, topology, blocker codes, and the `ref` noun. |
 | `playbooks/` | Stores shared engineering principles and change-kind proof obligations. |
 
 ## Cross-extension imports

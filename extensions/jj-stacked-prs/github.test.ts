@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { createGitHubGateway, GitHubError, parseAllowedMergeMethods, parseMergeCommit } from "../shared/github.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
-import { createGitHubAdapter, GitHubError, parseAllowedMergeMethods, parseMergeCommit } from "./github.ts";
 import type { CommandResult } from "./process.ts";
+
+function gatewayFor(run: (argv: string[]) => Promise<CommandResult>) {
+	return createGitHubGateway(async (command, args) => {
+		const result = await run([command, ...args]);
+		if (result.kind === "ok" || result.kind === "nonzero")
+			return { code: result.code, stdout: result.stdout, stderr: result.stderr };
+		throw new Error(result.message);
+	});
+}
 
 describe("createDraftPr", () => {
 	it("treats a created PR whose metadata cannot be re-read as indeterminate", async () => {
 		const calls: string[][] = [];
-		const adapter = createGitHubAdapter(async (argv) => {
+		const adapter = gatewayFor(async (argv) => {
 			calls.push([...argv]);
 			if (argv[0] === "gh" && argv[1] === "pr" && argv[2] === "create") {
 				return { kind: "ok", code: 0, stdout: "https://github.com/o/r/pull/7\n", stderr: "" } satisfies CommandResult;
@@ -34,7 +43,7 @@ describe("createDraftPr", () => {
 	});
 
 	it("treats a created comment whose id cannot be read as indeterminate", async () => {
-		const adapter = createGitHubAdapter(async () => ({
+		const adapter = gatewayFor(async () => ({
 			kind: "ok",
 			code: 0,
 			stdout: "{}",
@@ -68,7 +77,7 @@ describe("landing adapters", () => {
 
 	it("marks one PR ready and treats a missing branch delete as already-gone", async () => {
 		const calls: string[][] = [];
-		const adapter = createGitHubAdapter(async (argv) => {
+		const adapter = gatewayFor(async (argv) => {
 			calls.push([...argv]);
 			if (argv.includes("-X") && argv.includes("DELETE")) {
 				return { kind: "nonzero", code: 1, stdout: "", stderr: "HTTP 404: Not Found", message: "HTTP 404: Not Found" };

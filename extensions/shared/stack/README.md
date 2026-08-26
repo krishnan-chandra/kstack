@@ -7,6 +7,20 @@ from [`../vcs/`](../vcs/README.md), which mutates the local repository.
 `plan-implement` and `land` consume those types directly. There is no
 translation layer between producers.
 
+## Stack topology
+
+`topology.ts` owns the remote stack-membership record. Callers reconcile or
+query ordered PR entries through `StackTopologyStore`; they do not read or
+write GitHub comments directly. The navigation-comment store is the only
+adapter today. A future GitHub-native store can implement the same contract
+without changing publication or landing orchestration.
+
+The navigation-comment wire format is a compatibility contract with comments
+already live on GitHub. It uses the `<!-- kstack-stack-nav -->` marker, schema
+version 1, at most 100 entries, and at most 60,000 UTF-8 bytes. Changes must
+remain backward-compatible with both the encoded payload and legacy Markdown
+table fallback.
+
 ## Status alphabet
 
 Every stack mutation reports one of nine statuses:

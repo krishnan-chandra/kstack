@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildNavigationComment, GitHubError, parseNavigationCommentEntries } from "./github.ts";
+import { GitHubError } from "../shared/github.ts";
+import { buildNavigationComment, parseNavigationCommentEntries } from "../shared/stack/topology.ts";
 import { JjError } from "./jj.ts";
 import { landStack, landStackFromTool } from "./land.ts";
 import {

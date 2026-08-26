@@ -1,14 +1,15 @@
 /** Public domain types and result unions for stacked-PR inspection and publication. */
 
-import type { MergeMethod } from "../shared/github.ts";
+import type { GitHubRepository, MergeMethod, OpenPullRequest } from "../shared/github.ts";
+import type { NavigationEntry, NavigationStatus } from "../shared/stack/topology.ts";
 
-export { KSTACK_COMMENT_MARKER } from "../shared/github.ts";
+export { KSTACK_COMMENT_MARKER } from "../shared/stack/topology.ts";
+export type { GitHubRepository, NavigationEntry, NavigationStatus, OpenPullRequest };
 
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_MAX_STACK = 50;
 export const MIN_MAX_STACK = 1;
 export const DEFAULT_TIMEOUT_MS = 20_000;
-export const GH_TIMEOUT_MS = 30_000;
 export const STDOUT_CAP_BYTES = 512 * 1024;
 export const STDERR_CAP_BYTES = 64 * 1024;
 export const DIAGNOSTICS_CAP_BYTES = 8 * 1024;
@@ -16,9 +17,6 @@ export const KILL_GRACE_MS = 5_000;
 export const PLAN_ID_DISPLAY_CHARS = 16;
 export const CHANGE_ID_DISPLAY_CHARS = 12;
 export const COMMIT_ID_DISPLAY_CHARS = 12;
-export const MAX_NAVIGATION_ENTRIES = 100;
-export const MAX_NAVIGATION_COMMENT_BYTES = 60_000;
-export const KSTACK_COMMENT_SCHEMA_VERSION = 1;
 export const TOOL_CONTENT_MAX_BYTES = 50 * 1024;
 export const TOOL_CONTENT_MAX_LINES = 2_000;
 export const MAX_NAME_CHARS = 256;
@@ -84,36 +82,11 @@ export interface BookmarkTarget {
 	commitId: string;
 }
 
-export interface GitHubRepository {
-	owner: string;
-	repo: string;
-}
-
 export interface RemoteInfo {
 	name: string;
 	url: string;
 	redactedUrl: string;
 	github: GitHubRepository | undefined;
-}
-
-export interface OpenPullRequest {
-	number: number;
-	headRef: string;
-	headCommitId: string;
-	baseRef: string;
-	title: string;
-	draft: boolean;
-	url: string;
-	headOwner: string;
-}
-
-export type NavigationStatus = "open" | "draft" | "merged" | "closed" | "unknown";
-
-export interface NavigationEntry {
-	prNumber: number | undefined;
-	bookmark: string;
-	base: string;
-	status: NavigationStatus;
 }
 
 export type CorePublicationAction =
