@@ -65,6 +65,8 @@ describe("routeLand", () => {
 		});
 		assert.equal(ranSingle, false);
 		assert.equal(result.status, "landed");
+		assert.ok(!("autopilotRan" in result));
+		assert.deepEqual(result.recoveryOperationIds, ["op1", "op2"]);
 		assert.deepEqual(
 			result.frontiers.map((frontier) => frontier.prNumber),
 			[11, 12],
@@ -119,7 +121,7 @@ describe("routeLand", () => {
 						remainingRefs: ["feat1"],
 						completedMutations: [],
 						warnings: [],
-						recoveryOperationIds: ["op1"],
+						recoveryOperationIds: ["op1", "op2", "op3"],
 					},
 				},
 			}),
@@ -127,7 +129,8 @@ describe("routeLand", () => {
 		});
 		assert.equal(result.status, "indeterminate");
 		assert.equal(result.blockers[0], "merge acceptance unknown");
-		assert.equal(result.recoveryOperationId, "op1");
+		assert.deepEqual(result.recoveryOperationIds, ["op1", "op2", "op3"]);
+		assert.ok(!("autopilotRan" in result));
 	});
 
 	it("preserves completed mutations from a cancelled stack outcome", async () => {
@@ -178,7 +181,7 @@ describe("routeLand", () => {
 		assert.deepEqual(result.remainingRefs, ["feat2"]);
 		assert.deepEqual(result.completedMutations, ["landed #11"]);
 		assert.deepEqual(result.warnings, ["cleanup remains"]);
-		assert.equal(result.recoveryOperationId, "op1");
+		assert.deepEqual(result.recoveryOperationIds, ["op1"]);
 		assert.deepEqual(result.blockers, ["lock failed"]);
 	});
 
