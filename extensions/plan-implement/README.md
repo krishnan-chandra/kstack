@@ -153,37 +153,34 @@ workspace. Combining `--worktree` with `--stack` also fails before model calls.
 
 ### Stacked-PR mode (`--stack`)
 
-Stacked-PR mode builds a **local** Jujutsu stack of changes and bookmarks, one
-bookmark per PR, and reviews it once. The implementer never publishes; the
-final publish phase owns publication.
+Stacked-PR mode builds a **local** stack of changes (Jujutsu bookmarks or
+native Graphite branches), one pointer per PR, and reviews it once. The
+implementer never publishes; the parent's publication phase owns publication.
 
-Stack mode requires `vcs.backend: "jj"` and adds a preflight before any model
-call:
+Stack mode requires `vcs.backend: "jj"` or `vcs.backend: "graphite"` and
+preflights via the stack provider request channels (`kstack:stack:preflight`
+and `kstack:stack:capabilities`):
 
-- `jj >= 0.44` is available and the directory is a Jujutsu workspace;
-- `user.name` and `user.email` are configured for jj;
-- the workspace is colocated with a Git worktree;
-- the `trunk()` revset resolves to exactly one 40-hex Git-backed commit (used as
-  the immutable panel-review base);
-- the `jj-stacked-prs` extension is loaded (probed before any model call).
+- For `jj`: `jj >= 0.44`, configured user identity, colocated Git worktree,
+  immutable `trunk()` commit, and `jj-stacked-prs` loaded.
+- For `graphite`: Git repository root, valid Graphite trunk and SHA, clean
+  working tree, and `graphite-stacked-prs` loaded.
 
 Arena is **deterministically disabled** for both children: skill discovery is
 turned off with `--no-skills` and every other discovered skill is re-added with
 repeated `--skill`. This prevents parallel candidates from corrupting a shared
-jj operation log while preserving task-specific skills. The planner produces a
+VCS log while preserving task-specific skills. The planner produces a
 `Delivery: stacked-prs` plan with ordered PR slices; the implementer follows the
-local jj stack prompt, starts a new stack from `trunk()`, describes coherent
-`jj` changes incrementally, and places bookmarks at PR boundaries. Those
-described changes are the stacked equivalent of a Git task branch and
-incremental commits. The implementer never runs `/jj-stack publish`, `jj git
-push`, or `gh pr create`. After a successful implementation, panel review runs
-once against the immutable `trunk()` base. The review fixer amends findings into
-the correct slices of the local stack. Structural publication is owned by the
-loaded `jj-stacked-prs` extension: it derives or selects top/remote, confirms
-the exact plan, stale-checks, and applies. Only a completed publication writes a
-trusted PR map and offers a metadata/reviewer child. That child may edit titles
-and bodies for listed PRs and recommend reviewers; it does not push, create PRs,
-repair bases, or update navigation comments.
+local stack policy, describes coherent changes incrementally, and places
+bookmarks or branches at PR boundaries. The implementer never runs publication
+commands, raw pushes, or PR creation. After a successful implementation, panel
+review runs once against the immutable trunk base. The review fixer amends findings
+into the correct slices of the local stack. Structural publication is delegated
+to the loaded stack provider extension via `kstack:stack:publish`. Only a
+completed publication writes a trusted PR map and offers a metadata/reviewer
+child. That child may edit titles and bodies for listed PRs and recommend
+reviewers; it does not push, create PRs, repair bases, or update navigation
+comments.
 
 The Planner, Implementer, Review fixer, and Publisher cards identify the
 model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At

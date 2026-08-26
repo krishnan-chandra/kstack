@@ -1,11 +1,15 @@
+import { readFileSync } from "node:fs";
 import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /** Validated local Graphite stack evidence and parent-owned publication. */
 
 import { createHash } from "node:crypto";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
+import type { StackPreflight } from "../shared/stack/channel.ts";
 import type { StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
+import type { VcsResult } from "../shared/vcs/backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
+import { preflightVcs } from "../shared/vcs/preflight.ts";
 
 const MAX_SLICES = 50;
 const MAX_REF_CHARS = 240;
@@ -110,6 +114,69 @@ function safeRef(value: BoundaryValue, owned = false): value is string {
 	if (!isString(value) || value.length === 0 || value.length > MAX_REF_CHARS) return false;
 	if (!(owned ? OWNED_BRANCH_RE : SAFE_REF_RE).test(value)) return false;
 	return !value.includes("..") && !value.includes("//") && !value.endsWith(".") && !value.endsWith(".lock");
+}
+
+function graphiteChildPolicy(input: { trunkRef: string; trunkSha: string; manifestPath?: string }): string {
+	if (!input.manifestPath) throw new Error("Graphite stack mode requires a private manifest path.");
+	return [
+		"# Local Graphite stack policy",
+		"Build a local stack with native gt only; the parent owns publication.",
+		`Start from ${input.trunkRef} at immutable commit ${input.trunkSha}.`,
+		"Create one kstack/<slice> branch per approved PR slice with gt create, and record changes with gt add/gt modify.",
+		"Do not run gt submit, gt merge, gh mutations, git commit, git branch, git rebase, or git push.",
+		`After every create, modify, or restack, atomically replace ${input.manifestPath} with schemaVersion 1 JSON containing trunkRef, trunkSha, and the ordered slices [{branch, baseBranch, headSha, subject}].`,
+		"Leave a clean working tree with the manifest's top branch checked out. The manifest is evidence only; the parent revalidates every fact.",
+	].join("\n\n");
+}
+
+export async function preflightGraphiteStack(
+	cwd: string,
+	manifestPath: string | undefined,
+	exec: ExecFn,
+): Promise<VcsResult<StackPreflight>> {
+	const common = await preflightVcs(cwd, "graphite", exec);
+	if (!common.ok) return common;
+	let trunk: ExecFnResult;
+	try {
+		const status = await exec("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+			cwd: common.workspaceRoot,
+			timeout: 8_000,
+		});
+		if (status.code !== 0 || status.stdout.length > 0) {
+			return {
+				ok: false,
+				error: "Graphite stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
+			};
+		}
+		trunk = await exec("gt", ["--no-interactive", "trunk"], {
+			cwd: common.workspaceRoot,
+			timeout: 8_000,
+		});
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Could not resolve the Graphite trunk: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	const trunkRef = trunk.stdout.trim();
+	if (trunk.code !== 0 || !trunkRef) return { ok: false, error: "Could not resolve the Graphite trunk." };
+	const head = await exec("git", ["rev-parse", "--verify", `refs/heads/${trunkRef}^{commit}`], {
+		cwd: common.workspaceRoot,
+		timeout: 8_000,
+	});
+	const trunkSha = head.stdout.trim();
+	if (head.code !== 0 || !SHA_RE.test(trunkSha)) {
+		return { ok: false, error: `Could not resolve Graphite trunk ${trunkRef}.` };
+	}
+	if (!manifestPath) return { ok: false, error: "Graphite stack mode requires a private manifest path." };
+	const childPolicy = graphiteChildPolicy({ trunkRef, trunkSha, manifestPath });
+	return {
+		ok: true,
+		workspaceRoot: common.workspaceRoot,
+		trunkRef,
+		trunkSha,
+		childPolicy,
+	};
 }
 
 /** Parse bounded evidence. The parent still verifies every field against Git and Graphite. */
@@ -385,7 +452,7 @@ export async function planGraphitePublication(
 export async function submitGraphiteStack(
 	plan: GraphitePublicationPlan,
 	exec: ExecFn,
-	deps: { acquireLock?: typeof acquirePublicationLock; realpath?: (path: string) => string } = {},
+	deps: { acquireLock?: typeof acquirePublicationLock; realpath?: (path: string) => string; signal?: AbortSignal } = {},
 ): Promise<StackPublishOutcome> {
 	const lock = await acquireRepositoryPublicationLock(exec, plan.repositoryRoot, deps);
 	if (!lock.ok) {
@@ -406,6 +473,7 @@ export async function submitGraphiteStack(
 			submitted = await exec("gt", ["--no-interactive", "--no-ai", "submit", "--stack", "--draft", "--no-edit"], {
 				cwd: plan.repositoryRoot,
 				timeout: 60_000,
+				signal: deps.signal,
 			});
 		} catch (error) {
 			const inspected = await inspectPublishedStack(exec, plan);
@@ -429,4 +497,36 @@ export async function submitGraphiteStack(
 	} finally {
 		lock.lock.release();
 	}
+}
+
+export async function publishGraphiteStack(
+	cwd: string,
+	manifestPath: string | undefined,
+	confirm: (title: string, body: string) => Promise<boolean>,
+	exec: ExecFn,
+	signal?: AbortSignal,
+): Promise<StackPublishOutcome> {
+	if (!manifestPath) return { status: "failed", error: "Graphite stack manifest path is unavailable." };
+	let raw: string;
+	try {
+		raw = readFileSync(manifestPath, "utf8");
+	} catch (error) {
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "graphite-publish",
+					message: `Could not read the Graphite stack manifest: ${error instanceof Error ? error.message : String(error)}`,
+				},
+			],
+		};
+	}
+	const parsed = parseGraphiteStackManifest(raw);
+	if (!parsed.ok) return { status: "blocked", blockers: [{ code: "graphite-publish", message: parsed.error }] };
+	const verified = await verifyGraphiteStack(cwd, parsed.manifest, exec);
+	if (!verified.ok) return { status: "blocked", blockers: [{ code: "graphite-publish", message: verified.error }] };
+	const planned = await planGraphitePublication(verified.stack, exec);
+	if (!planned.ok) return { status: "blocked", blockers: [{ code: "graphite-publish", message: planned.error }] };
+	if (!(await confirm("Publish this Graphite stack?", planned.plan.preview))) return { status: "declined" };
+	return submitGraphiteStack(planned.plan, exec, { signal });
 }

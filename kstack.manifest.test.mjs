@@ -5,6 +5,7 @@ import test from "node:test";
 
 const REPO_ROOT = import.meta.dirname;
 const EXPECTED_EXTENSIONS = [
+	"graphite-stacked-prs",
 	"handoff",
 	"jj-stacked-prs",
 	"kstack-router",

@@ -1,35 +1,119 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createStackDeliveryAdapter } from "./stack-delivery.ts";
+import {
+	claimStackCapabilities,
+	claimStackPreflight,
+	claimStackPublication,
+	STACK_CAPABILITIES_EVENT,
+	STACK_PREFLIGHT_EVENT,
+	STACK_PUBLICATION_EVENT,
+} from "../shared/stack/channel.ts";
+import type { BoundaryValue } from "../shared/validation.ts";
+import { createStackDeliveryClient } from "./stack-delivery.ts";
 
-const exec = async () => ({ code: 0, stdout: "", stderr: "" });
+function createMockPi() {
+	const handlers = new Map<string, Array<(value: BoundaryValue) => void>>();
+	const pi = {
+		events: {
+			on: (event: string, handler: (value: BoundaryValue) => void) => {
+				const list = handlers.get(event) ?? [];
+				list.push(handler);
+				handlers.set(event, list);
+			},
+			emit: (event: string, value: BoundaryValue) => {
+				for (const handler of handlers.get(event) ?? []) {
+					handler(value);
+				}
+			},
+		},
+	};
+	return { pi, handlers };
+}
 
-describe("stack delivery adapter factory", () => {
-	it("selects an exhaustive adapter for each supported backend", () => {
-		const deps = { exec, jjPolicy: "local jj policy" };
-		assert.equal(createStackDeliveryAdapter("git", deps), undefined);
-		assert.equal(createStackDeliveryAdapter("jj", deps)?.backendId, "jj");
-		assert.equal(createStackDeliveryAdapter("graphite", deps)?.backendId, "graphite");
+describe("createStackDeliveryClient", () => {
+	it("returns undefined for Git backend", () => {
+		const { pi } = createMockPi();
+		const client = createStackDeliveryClient(
+			/* SAFETY: Test mock */ pi as never,
+			"git",
+			/* SAFETY: Test mock */ {} as never,
+		);
+		assert.equal(client, undefined);
 	});
 
-	it("injects a private manifest contract into the Graphite child policy", () => {
-		const adapter = createStackDeliveryAdapter("graphite", { exec, jjPolicy: "unused" });
-		const policy = adapter?.childPolicy({
-			workspaceRoot: "/repo",
-			trunkRef: "main",
-			trunkSha: "a".repeat(40),
-			manifestPath: "/private/stack.json",
-		});
-		assert.match(policy ?? "", /native gt only/);
-		assert.match(policy ?? "", /\/private\/stack\.json/);
-		assert.match(policy ?? "", /Do not run gt submit/);
+	it("preflights through provider channels", async () => {
+		const { pi } = createMockPi();
+		pi.events.on(STACK_CAPABILITIES_EVENT, (data) =>
+			claimStackCapabilities(data, "jj", async () => ({
+				schemaVersion: 1,
+				publication: true,
+			})),
+		);
+		pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
+			claimStackPreflight(data, "jj", async () => ({
+				ok: true,
+				workspaceRoot: "/repo",
+				trunkRef: "trunk()",
+				trunkSha: "a".repeat(40),
+				childPolicy: "jj-policy",
+			})),
+		);
+
+		const client = createStackDeliveryClient(
+			/* SAFETY: Test mock */ pi as never,
+			"jj",
+			/* SAFETY: Test mock */ {} as never,
+		);
+		assert.ok(client);
+		assert.equal(client.provider, "jj");
+
+		const preflight = await client.preflight("/repo");
+		assert.equal(preflight.ok, true);
+		if (preflight.ok) {
+			assert.equal(preflight.trunkRef, "trunk()");
+			assert.equal(preflight.childPolicy, "jj-policy");
+		}
 	});
 
-	it("fails closed when Graphite publication has no manifest", async () => {
-		const adapter = createStackDeliveryAdapter("graphite", { exec, jjPolicy: "unused" });
-		assert.deepEqual(await adapter?.publish("/repo", undefined, async () => true), {
-			status: "failed",
-			error: "Graphite stack manifest path is unavailable.",
-		});
+	it("publishes through provider channels", async () => {
+		const { pi } = createMockPi();
+		pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
+			claimStackPublication(data, "graphite", async () => ({
+				status: "completed",
+				planId: "p1",
+				publication: { topRef: "kstack/top", pullRequests: [] },
+				completedActions: [],
+			})),
+		);
+
+		const client = createStackDeliveryClient(
+			/* SAFETY: Test mock */ pi as never,
+			"graphite",
+			/* SAFETY: Test mock */ {} as never,
+		);
+		assert.ok(client);
+		assert.equal(client.provider, "graphite");
+
+		const published = await client.publish("/repo");
+		assert.equal(published.status, "completed");
+	});
+
+	it("handles missing provider extension gracefully", async () => {
+		const { pi } = createMockPi();
+		const client = createStackDeliveryClient(
+			/* SAFETY: Test mock */ pi as never,
+			"jj",
+			/* SAFETY: Test mock */ {} as never,
+		);
+		assert.ok(client);
+
+		const preflight = await client.preflight("/repo");
+		assert.equal(preflight.ok, false);
+		if (!preflight.ok) {
+			assert.match(preflight.error, /jj-stacked-prs extension to be loaded/);
+		}
+
+		const published = await client.publish("/repo");
+		assert.equal(published.status, "failed");
 	});
 });

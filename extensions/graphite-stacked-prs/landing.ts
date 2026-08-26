@@ -4,13 +4,11 @@ import { type BoundaryValue, isBoolean, isString } from "../shared/validation.ts
 import { createHash } from "node:crypto";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
-import { getPullRequest, waitForMerge } from "../shared/github.ts";
+import { getPullRequest, type MergeMethod, waitForMerge } from "../shared/github.ts";
 import { asRecord } from "../shared/narrow.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
+import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
-import { readinessBlockers } from "./orchestrator.ts";
-import { blockedLandResult } from "./result.ts";
-import type { FrontierResult, LandOptions, LandResult } from "./types.ts";
 
 const MAX_REFS = 50;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -34,9 +32,7 @@ interface GraphiteLandingPlan {
 	preview: string;
 }
 
-export type GraphiteLandingResponse = { status: "not-stack" } | { status: "stack"; outcome: LandResult };
-
-interface GraphiteLandingDeps {
+export interface GraphiteLandingDeps {
 	exec: ExecFn;
 	cwd: string;
 	signal: AbortSignal;
@@ -50,6 +46,26 @@ interface GraphiteLandingDeps {
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
 	waitForMerge?: typeof waitForMerge;
+}
+
+function blocked(message: string): StackLandOutcome {
+	return {
+		status: "blocked",
+		blockers: [{ code: "graphite-land", message }],
+	};
+}
+
+function readinessBlockers(
+	input: { readiness: "check" | "watch"; prNumber: number },
+	autopilot: AutopilotResult,
+): string[] {
+	if (input.readiness === "watch" && autopilot.blockedCodes?.includes("ci-pending-after-watch")) {
+		return [
+			`Watch is bounded. Inspect PR #${input.prNumber}, then retry /land after CI settles. Do not rebase or republish unless the PR head or base changed.`,
+			...autopilot.blockedReasons,
+		];
+	}
+	return autopilot.blockedReasons;
 }
 
 function diagnostic(result: ExecFnResult): string {
@@ -270,21 +286,21 @@ async function dryRun(
 }
 
 export async function requestGraphiteStackLanding(
-	options: LandOptions,
+	options: { prNumber: number; readiness: "check" | "watch"; method?: MergeMethod },
 	deps: GraphiteLandingDeps,
-): Promise<GraphiteLandingResponse> {
+): Promise<StackPrefixLandOutcome> {
 	let inspected: Awaited<ReturnType<typeof inspectPlan>>;
 	try {
-		inspected = await inspectPlan(deps.cwd, options.target.prNumber, deps.exec, deps.signal);
+		inspected = await inspectPlan(deps.cwd, options.prNumber, deps.exec, deps.signal);
 	} catch (error) {
-		return { status: "stack", outcome: blockedLandResult(error instanceof Error ? error.message : String(error)) };
+		return { status: "stack", outcome: blocked(error instanceof Error ? error.message : String(error)) };
 	}
-	if (!inspected.ok) return { status: "stack", outcome: blockedLandResult(inspected.error) };
+	if (!inspected.ok) return { status: "stack", outcome: blocked(inspected.error) };
 	if (!inspected.plan) return { status: "not-stack" };
 	if (options.method) {
 		return {
 			status: "stack",
-			outcome: blockedLandResult(
+			outcome: blocked(
 				"--method is not supported for Graphite stack landing; Graphite repository settings own the merge method.",
 			),
 		};
@@ -294,8 +310,9 @@ export async function requestGraphiteStackLanding(
 	const readinessEvidence = new Map<number, { ref: string; baseRef: string; headSha: string }>();
 	for (const pr of plan.pullRequests) {
 		const readiness = await deps.runAutopilot(options.readiness, pr.number);
-		if (!readiness.handled)
-			return { status: "stack", outcome: blockedLandResult("pr-autopilot extension is unavailable.") };
+		if (!readiness.handled) {
+			return { status: "stack", outcome: blocked("pr-autopilot extension is unavailable.") };
+		}
 		const result = readiness.outcome;
 		if (
 			result.status !== "merge-ready" ||
@@ -309,13 +326,7 @@ export async function requestGraphiteStackLanding(
 			const blockers = readinessBlockers({ readiness: options.readiness, prNumber: pr.number }, result);
 			return {
 				status: "stack",
-				outcome: {
-					...blockedLandResult(
-						`PR #${pr.number} is not exact-head merge-ready: ${blockers.join("; ") || result.status}.`,
-					),
-					autopilotRan: true,
-					autopilotStatus: result.status,
-				},
+				outcome: blocked(`PR #${pr.number} is not exact-head merge-ready: ${blockers.join("; ") || result.status}.`),
 			};
 		}
 		readinessEvidence.set(pr.number, {
@@ -325,14 +336,13 @@ export async function requestGraphiteStackLanding(
 		});
 	}
 
-	const refreshed = await inspectPlan(deps.cwd, options.target.prNumber, deps.exec, deps.signal);
-	if (!refreshed.ok || !refreshed.plan)
+	const refreshed = await inspectPlan(deps.cwd, options.prNumber, deps.exec, deps.signal);
+	if (!refreshed.ok || !refreshed.plan) {
 		return {
 			status: "stack",
-			outcome: blockedLandResult(
-				refreshed.ok ? "Graphite stack topology disappeared after readiness checks." : refreshed.error,
-			),
+			outcome: blocked(refreshed.ok ? "Graphite stack topology disappeared after readiness checks." : refreshed.error),
 		};
+	}
 	const refreshedPlan = refreshed.plan;
 	const readinessChanged =
 		refreshedPlan.pullRequests.length !== readinessEvidence.size ||
@@ -343,28 +353,22 @@ export async function requestGraphiteStackLanding(
 	if (readinessChanged) {
 		return {
 			status: "stack",
-			outcome: {
-				...blockedLandResult("Graphite PR heads or topology changed after readiness checks; no merge ran."),
-				autopilotRan: true,
-			},
+			outcome: blocked("Graphite PR heads or topology changed after readiness checks; no merge ran."),
 		};
 	}
 	plan = refreshedPlan;
-	if (plan.pullRequests.some((pr) => pr.draft))
+	if (plan.pullRequests.some((pr) => pr.draft)) {
 		return {
 			status: "stack",
-			outcome: blockedLandResult("Every Graphite prefix PR must be ready for review before landing."),
+			outcome: blocked("Every Graphite prefix PR must be ready for review before landing."),
 		};
+	}
 	const previewDryRun = await dryRun(plan, deps);
-	if (!previewDryRun.ok) return { status: "stack", outcome: blockedLandResult(previewDryRun.error) };
+	if (!previewDryRun.ok) return { status: "stack", outcome: blocked(previewDryRun.error) };
 	if (!(await deps.confirmMerge(plan.preview))) {
 		return {
 			status: "stack",
-			outcome: {
-				...blockedLandResult("Graphite stack landing confirmation declined."),
-				status: "declined",
-				autopilotRan: true,
-			},
+			outcome: { status: "declined" },
 		};
 	}
 
@@ -376,21 +380,22 @@ export async function requestGraphiteStackLanding(
 	if (!lock.ok) {
 		const reason =
 			lock.kind === "busy" ? "Another Graphite publication or landing is active for this repository." : lock.error;
-		return { status: "stack", outcome: blockedLandResult(reason) };
+		return {
+			status: "stack",
+			outcome: lock.kind === "busy" ? { status: "busy", message: reason } : blocked(reason),
+		};
 	}
 	try {
-		const final = await inspectPlan(deps.cwd, options.target.prNumber, deps.exec, deps.signal);
+		const final = await inspectPlan(deps.cwd, options.prNumber, deps.exec, deps.signal);
 		if (!final.ok || !final.plan || final.plan.planId !== plan.planId) {
 			return {
 				status: "stack",
-				outcome: blockedLandResult(
-					final.ok ? "Graphite landing plan changed after confirmation; no merge ran." : final.error,
-				),
+				outcome: blocked(final.ok ? "Graphite landing plan changed after confirmation; no merge ran." : final.error),
 			};
 		}
 		const finalPlan = final.plan;
 		const finalDryRun = await dryRun(finalPlan, deps);
-		if (!finalDryRun.ok) return { status: "stack", outcome: blockedLandResult(finalDryRun.error) };
+		if (!finalDryRun.ok) return { status: "stack", outcome: blocked(finalDryRun.error) };
 
 		let merged: ExecFnResult;
 		try {
@@ -403,11 +408,12 @@ export async function requestGraphiteStackLanding(
 			return {
 				status: "stack",
 				outcome: {
-					...blockedLandResult(
-						`gt merge may have started before the process failed: ${error instanceof Error ? error.message : String(error)}. Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
-					),
-					status: "partially-landed",
-					autopilotRan: true,
+					status: "partial",
+					error: `gt merge may have started before the process failed: ${error instanceof Error ? error.message : String(error)}. Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
+					frontiers: [],
+					remainingRefs: [],
+					completedMutations: [],
+					recoveryOperationIds: [],
 				},
 			};
 		}
@@ -415,11 +421,12 @@ export async function requestGraphiteStackLanding(
 			return {
 				status: "stack",
 				outcome: {
-					...blockedLandResult(
-						`gt merge returned ${diagnostic(merged)} after invocation. Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
-					),
-					status: "partially-landed",
-					autopilotRan: true,
+					status: "partial",
+					error: `gt merge returned ${diagnostic(merged)} after invocation. Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
+					frontiers: [],
+					remainingRefs: [],
+					completedMutations: [],
+					recoveryOperationIds: [],
 				},
 			};
 		}
@@ -430,7 +437,7 @@ export async function requestGraphiteStackLanding(
 				waiter(deps.exec, finalPlan.repositoryRoot, pr.number, pr.ref, pr.headSha, deps, deps.signal),
 			),
 		);
-		const frontiers: FrontierResult[] = [];
+		const frontiers: StackLandFrontier[] = [];
 		const completedMutations = [
 			`Graphite accepted the native merge for ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")}`,
 		];
@@ -440,7 +447,7 @@ export async function requestGraphiteStackLanding(
 		for (let index = 0; index < settlements.length; index++) {
 			const pr = finalPlan.pullRequests[index];
 			const settlement = settlements[index];
-			let state: FrontierResult["state"];
+			let state: StackLandFrontier["state"];
 			if (settlement.status === "rejected") {
 				allMerged = false;
 				state = "blocked";
@@ -465,6 +472,7 @@ export async function requestGraphiteStackLanding(
 				}
 			}
 			frontiers.push({
+				ref: pr.ref,
 				prNumber: pr.number,
 				url: pr.url,
 				expectedHeadSha: pr.headSha,
@@ -489,15 +497,24 @@ export async function requestGraphiteStackLanding(
 		}
 		return {
 			status: "stack",
-			outcome: {
-				status: allMerged ? "landed" : "partially-landed",
-				frontiers,
-				autopilotRan: true,
-				remainingRefs: [],
-				completedMutations,
-				warnings,
-				blockers,
-			},
+			outcome: allMerged
+				? {
+						status: "completed",
+						frontiers,
+						remainingRefs: [],
+						completedMutations,
+						warnings,
+						recoveryOperationIds: [],
+					}
+				: {
+						status: "partial",
+						error: blockers.join("; ") || "Graphite stack landing was partially completed.",
+						frontiers,
+						remainingRefs: [],
+						completedMutations,
+						warnings,
+						recoveryOperationIds: [],
+					},
 		};
 	} finally {
 		lock.lock.release();

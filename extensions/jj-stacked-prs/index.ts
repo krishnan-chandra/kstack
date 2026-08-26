@@ -4,19 +4,22 @@ import { Type, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getRepoMethod, loadLandConfig, requestLand } from "../land/api.ts";
 import { issueLandConfirmation } from "../land/confirmation.ts";
+import type { LandResult } from "../land/types.ts";
 import { issueAutopilotConfirmation } from "../pr-autopilot/api.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { isMergeMethod } from "../shared/github.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import {
-	claimJjStackCapabilities,
+	claimStackCapabilities,
 	claimStackLanding,
+	claimStackPreflight,
 	claimStackPublication,
-	JJ_STACK_CAPABILITIES,
-	JJ_STACK_CAPABILITIES_EVENT,
-	JJ_STACK_LANDING_EVENT,
-	JJ_STACK_PUBLICATION_EVENT,
-} from "./api.ts";
+	STACK_CAPABILITIES_EVENT,
+	STACK_LANDING_EVENT,
+	STACK_PREFLIGHT_EVENT,
+	STACK_PUBLICATION_EVENT,
+	type StackProviderCapabilities,
+} from "../shared/stack/channel.ts";
 import { completeJjStackArgs, parseJjStackArgs } from "./args.ts";
 import { landStack, landStackFromTool, landStackThroughPullRequest } from "./land.ts";
 import {
@@ -31,10 +34,18 @@ import {
 	syncStack,
 } from "./orchestrator.ts";
 import { generateDeterministicPrMetadata, type PrMetadataGenerator } from "./pr-metadata.ts";
+import { preflightJjStack } from "./preflight.ts";
 import { createProcessRunner } from "./process.ts";
 import { boundText, renderInspect, renderLandOutcome, renderOutcome, renderPlan } from "./render.ts";
 import { combinePublicationSignals } from "./signals.ts";
 import { DEFAULT_MAX_STACK, MIN_MAX_STACK, type StackPublicationRequestInput } from "./types.ts";
+
+const JJ_CAPABILITIES: StackProviderCapabilities = {
+	schemaVersion: 1,
+	publication: true,
+	commands: ["inspect", "plan", "publish", "sync", "advance", "land"],
+	tools: ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish", "jj_stack_land"],
+};
 
 class StackLifecycle extends SessionRunLifecycle {
 	begin() {
@@ -149,11 +160,14 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	pi.events.on(JJ_STACK_CAPABILITIES_EVENT, (data) =>
-		claimJjStackCapabilities(data, async () => JJ_STACK_CAPABILITIES),
+	pi.events.on(STACK_CAPABILITIES_EVENT, (data) => claimStackCapabilities(data, "jj", async () => JJ_CAPABILITIES));
+	pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
+		claimStackPreflight(data, "jj", async (payload) =>
+			preflightJjStack(payload.cwd, (command, args, options) => pi.exec(command, args, options)),
+		),
 	);
-	pi.events.on(JJ_STACK_PUBLICATION_EVENT, (data) =>
-		claimStackPublication(data, async (input, ctx) => {
+	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
+		claimStackPublication(data, "jj", async (input, ctx) => {
 			if (!ctx.hasUI) {
 				return {
 					status: "blocked",
@@ -164,14 +178,23 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 				ctx,
 				(signal) => {
 					const combined = combinePublicationSignals(signal, ctx.signal);
-					return requestPublicationFromInput(input, publicationDeps(ctx, combined).deps);
+					return requestPublicationFromInput(
+						{
+							repositoryPath: input.repositoryPath,
+							trunkRevset: input.trunk,
+							topBookmark: input.topRef,
+							remote: input.remote,
+							signal: input.signal,
+						},
+						publicationDeps(ctx, combined).deps,
+					);
 				},
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
 			);
 		}),
 	);
-	pi.events.on(JJ_STACK_LANDING_EVENT, (data) =>
-		claimStackLanding(data, async (input, ctx) => {
+	pi.events.on(STACK_LANDING_EVENT, (data) =>
+		claimStackLanding(data, "jj", async ({ input, capabilities, ctx }) => {
 			if (!ctx.hasUI) {
 				return {
 					status: "stack",
@@ -183,17 +206,32 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			}
 			return withRun(
 				ctx,
-				(signal) =>
-					landStackThroughPullRequest(
+				(signal) => {
+					const contextSignal = combinePublicationSignals(signal, ctx.signal);
+					const deps = landDeps(ctx, combinePublicationSignals(contextSignal, input.signal));
+					const landPr = capabilities.landPr;
+					const effectiveDeps: OrchestratorDeps = landPr
+						? {
+								...deps,
+								landPr: async (landInput) => {
+									const res = await landPr(landInput);
+									return /* SAFETY: The land capability owns and returns the LandResult contract. */ res as
+										| { handled: false }
+										| { handled: true; outcome: LandResult };
+								},
+							}
+						: deps;
+					return landStackThroughPullRequest(
 						{
 							cwd: input.repositoryPath,
 							prNumber: input.prNumber,
-							headBookmark: input.headBookmark,
+							headBookmark: input.headRef,
 							method: input.method,
 							readiness: input.readiness,
 						},
-						landDeps(ctx, combinePublicationSignals(signal, ctx.signal)),
-					),
+						effectiveDeps,
+					);
+				},
 				() => ({
 					status: "stack" as const,
 					outcome: { status: "busy" as const, message: "Another stacked-PR run is active." },
