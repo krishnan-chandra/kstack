@@ -1,6 +1,6 @@
 /**
  * Treat PR titles, bodies, comments, and CI logs as untrusted data.
- * Tiny-model children must never follow instructions embedded in them.
+ * Model children must never follow instructions embedded in them.
  */
 
 const BEGIN = "-----BEGIN UNTRUSTED PR DATA-----";
