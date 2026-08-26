@@ -51,6 +51,10 @@ export function summarizeLandResult(result: LandResult): string {
 				return `GitHub accepted ${prPhrase(numbers)}. Waiting to verify the merge.`;
 			}
 			return `${items.map(outcomePhrase).join(". ")}.${result.blockers[0] ? ` ${result.blockers[0]}` : ""}`;
+		case "indeterminate":
+			return items.length === 0
+				? "Landing acceptance is indeterminate. Inspect the remote state before retrying."
+				: `Landing ${prPhrase(numbers)} is indeterminate. Inspect the remote state before retrying.`;
 		case "declined":
 			return items.length === 0 ? "Declined landing." : `Declined landing ${prPhrase(numbers)}.`;
 		case "aborted":
