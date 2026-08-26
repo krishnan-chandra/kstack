@@ -9,7 +9,7 @@
 | `subagent-sessions.ts` | Owns native child-session identity, active leases, file resolution, and retention. |
 | `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
-| `git-exec.ts` | Defines the injected command-runner contract and adapts `pi.exec` for VCS modules. |
+| `git-exec.ts` | Defines the injected command-runner contract, normalizes bounded command failures and diagnostics, and adapts `pi.exec` for VCS modules. |
 | `github.ts` | Provides the single bounded, validated `gh` gateway for repository and PR reads, publication, merges, and merge verification. |
 | `subagent-console.ts` | Renders the full-screen read-only subagent console (sidebar + transcript) used by live dashboards. |
 | `live-dashboard.ts` | Stores and renders shared live-dashboard state with extension-specific copy and display policy. |

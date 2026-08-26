@@ -23,7 +23,7 @@ interface VcsPolicy {
 const gitChildGuidance = [
 	"VCS backend: git.",
 	"Use Git for all version-control state and mutations. Do not run jj commands.",
-	"Work only on the branch or worktree prepared by the parent, make incremental Git commits, and leave the working tree clean.",
+	"For single delivery, work only on the branch or worktree prepared by the parent. A stack policy may instead authorize the named local branches. Make incremental Git commits and leave the working tree clean.",
 ].join(" ");
 
 const jjChildGuidance = [

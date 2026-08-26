@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import githubStackedPrs from "./extensions/github-stacked-prs/index.ts";
 import graphiteStackedPrs from "./extensions/graphite-stacked-prs/index.ts";
 import handoff from "./extensions/handoff/index.ts";
 import jjStackedPrs from "./extensions/jj-stacked-prs/index.ts";
@@ -15,6 +16,7 @@ type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 
 const KSTACK_EXTENSIONS: ReadonlyArray<{ name: string; register: ExtensionFactory }> = [
 	{ name: "graphite-stacked-prs", register: graphiteStackedPrs },
+	{ name: "github-stacked-prs", register: githubStackedPrs },
 	{ name: "handoff", register: handoff },
 	{ name: "jj-stacked-prs", register: jjStackedPrs },
 	{ name: "kstack-router", register: kstackRouter },

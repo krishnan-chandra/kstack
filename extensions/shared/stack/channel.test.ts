@@ -43,14 +43,16 @@ describe("shared stack request channels", () => {
 			},
 		};
 
-		assert.equal(
-			isStackCapabilitiesRequest({
-				schemaVersion: 1,
-				payload: { provider: "jj" },
-				claimed: false,
-			}),
-			true,
-		);
+		for (const provider of ["jj", "graphite", "github"]) {
+			assert.equal(
+				isStackCapabilitiesRequest({
+					schemaVersion: 1,
+					payload: { provider },
+					claimed: false,
+				}),
+				true,
+			);
+		}
 
 		// Claim jj only
 		pi.events.on(STACK_CAPABILITIES_EVENT, (value) =>

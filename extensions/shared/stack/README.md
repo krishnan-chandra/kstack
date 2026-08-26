@@ -4,16 +4,17 @@ This module owns the cross-provider stacked-PR contract. It is a separate axis
 from [`../vcs/`](../vcs/README.md), which mutates the local repository.
 
 `outcome.ts` is the vocabulary every stack publisher and lander emits.
-`plan-implement` and `land` consume those types directly. There is no
-translation layer between producers.
+`manifest.ts` owns the bounded provider-neutral manifest and shared immutable
+Git-fact checks used by Graphite and GitHub. `plan-implement` and `land` consume
+these contracts directly.
 
 ## Stack topology
 
 `topology.ts` owns the remote stack-membership record. Callers reconcile or
 query ordered PR entries through `StackTopologyStore`; they do not read or
 write GitHub comments directly. The navigation-comment store is the only
-adapter today. A future GitHub-native store can implement the same contract
-without changing publication or landing orchestration.
+adapter today. The GitHub stack provider uses that adapter because GitHub has
+no native stacks API.
 
 The navigation-comment wire format is a compatibility contract with comments
 already live on GitHub. It uses the `<!-- kstack-stack-nav -->` marker, schema
@@ -66,13 +67,10 @@ The stack provider is a **separate axis** from the VCS backend: the VCS backend
 answers "which VCS mutates the repository", whereas the stack provider answers
 "which subsystem manages stacked PRs".
 
-The stack provider is **derived** from the configured backend (`jj` → `"jj"`,
-`graphite` → `"graphite"`, `git` → `undefined`). There is deliberately **no
-`stackProvider` key in `kstack.json`**: one mapping per backend is a
-hypothetical seam, and introducing a config key before a second Git mapping
-exists would be speculative surface. A GitHub-native stacks provider is the
-event that changes the Git mapping and earns the configuration key (touching
-`shared/vcs/config.ts` validation and the `setup-kstack` skill).
+The stack provider is derived from the configured backend. jj maps to `"jj"`,
+and Graphite maps to `"graphite"`. Git reads `vcs.stackProvider`: `"github"`
+is the default, and `"none"` disables stacked-PR routing. The key is ignored
+with a warning for jj and Graphite because those mappings are fixed.
 
 `StackProviderId` is intentionally not `VcsBackendId`; do not merge them.
 
@@ -89,8 +87,8 @@ with host workflows (`plan-implement` and `land`):
 All payloads identify the target `provider: StackProviderId`. Provider extensions
 claim requests matching their provider ID and ignore other providers, preserving
 claim-once mechanics. `StackLandingCapabilities` contains only the optional
-`runAutopilot` callback used by Graphite's native landing flow. jj delegates each
-frontier through Land's separate `kstack:land:request` interface.
+`runAutopilot` callback used by Graphite's native landing flow. jj and GitHub
+delegate each frontier through Land's separate `kstack:land:request` interface.
 
 If a channel request is unclaimed (`handled: false`), the provider extension is
 not loaded and callers refuse middle-of-stack mutations.

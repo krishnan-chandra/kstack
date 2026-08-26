@@ -91,7 +91,7 @@ export interface StackPublicationRequest extends RequestEnvelope<StackPublicatio
 export interface StackLandingRequest extends RequestEnvelope<StackLandingPayload, StackPrefixLandOutcome, 1> {}
 
 function isProvider(value: BoundaryValue): value is StackProviderId {
-	return value === "jj" || value === "graphite";
+	return value === "jj" || value === "graphite" || value === "github";
 }
 
 function isSafeRef(value: BoundaryValue, max = 240): value is string {

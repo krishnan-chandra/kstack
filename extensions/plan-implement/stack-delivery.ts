@@ -10,7 +10,7 @@ import {
 import type { StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { type StackProviderId, stackProviderFor } from "../shared/stack/provider.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
-import type { VcsBackendId } from "../shared/vcs/config.ts";
+import type { VcsBackendConfig } from "../shared/vcs/config.ts";
 
 interface StackDeliveryClient {
 	readonly provider: StackProviderId;
@@ -20,10 +20,10 @@ interface StackDeliveryClient {
 
 export function createStackDeliveryClient(
 	pi: ExtensionAPI,
-	backend: VcsBackendId,
+	config: VcsBackendConfig,
 	ctx: ExtensionCommandContext,
 ): StackDeliveryClient | undefined {
-	const provider = stackProviderFor(backend);
+	const provider = stackProviderFor(config);
 	if (!provider) return undefined;
 	return {
 		provider,

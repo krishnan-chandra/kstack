@@ -77,7 +77,7 @@ export function buildNavigationComment(entries: readonly NavigationEntry[], defa
 		const base = markdownCode(entry.base || defaultBranch);
 		lines.push(`| ${prRef} | ${bookmark} | ${base} | ${capitalize(entry.status)} |`);
 	}
-	lines.push("", "_Navigated by kstack. Update with `/jj-stack publish`._");
+	lines.push("", "_Navigated by kstack. Republish with the active stack provider._");
 	const body = lines.join("\n");
 	if (Buffer.byteLength(body, "utf8") > MAX_NAVIGATION_COMMENT_BYTES) {
 		throw new Error(`Navigation comment exceeds ${MAX_NAVIGATION_COMMENT_BYTES} bytes.`);

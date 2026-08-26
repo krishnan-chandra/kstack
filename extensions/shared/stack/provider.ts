@@ -1,11 +1,11 @@
 /** Provider mapping for stacked PR subsystems. */
 
-import type { VcsBackendId } from "../vcs/config.ts";
+import type { VcsBackendConfig } from "../vcs/config.ts";
 
-export type StackProviderId = "jj" | "graphite";
+export type StackProviderId = "jj" | "graphite" | "github";
 
-export function stackProviderFor(backend: VcsBackendId): StackProviderId | undefined {
-	if (backend === "jj") return "jj";
-	if (backend === "graphite") return "graphite";
-	return undefined;
+export function stackProviderFor(config: VcsBackendConfig): StackProviderId | undefined {
+	if (config.backend === "jj") return "jj";
+	if (config.backend === "graphite") return "graphite";
+	return config.gitStackProvider === "none" ? undefined : "github";
 }

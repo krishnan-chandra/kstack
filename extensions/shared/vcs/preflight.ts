@@ -88,7 +88,7 @@ export function parseSemver(text: string): [number, number, number] | null {
 	return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
-function compareSemver(left: readonly number[], right: readonly number[]): number {
+export function compareSemver(left: readonly number[], right: readonly number[]): number {
 	for (let index = 0; index < 3; index++) {
 		if (left[index] !== right[index]) return left[index] - right[index];
 	}
