@@ -78,8 +78,8 @@
         "thinking": "high"
       },
       {
-        "label": "kimi",
-        "model": "openrouter/moonshotai/kimi-k3",
+        "label": "gemini",
+        "model": "openrouter/google/gemini-3.7-flash",
         "thinking": "medium"
       }
     ],
