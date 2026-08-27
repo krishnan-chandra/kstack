@@ -120,7 +120,7 @@ vocabulary in [`extensions/shared/stack/`](../shared/stack/README.md)
 | Command timeout | 20s jj, 30s gh |
 | Abort grace | 5s SIGTERM then SIGKILL |
 | Tool content | 50 KiB / 2,000 lines |
-| Metadata input per slice | 128 KiB diff / 32 KiB log |
+| Metadata input per slice | 2 MiB diff / 32 KiB log |
 | Repository PR template | 24 KiB, exactly one default |
 | Generated PR body | 30 KiB |
 | Navigation comment | 100 entries / 60 KiB |

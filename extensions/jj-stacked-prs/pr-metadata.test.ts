@@ -30,9 +30,13 @@ const request: PrMetadataRequest = {
 
 describe("PR metadata evidence", () => {
 	it("collects the exact slice diff and log with bounded jj commands and timeouts", async () => {
-		const calls: Array<{ argv: string[]; timeoutMs?: number }> = [];
+		const calls: Array<{ argv: string[]; timeoutMs?: number; stdoutCapBytes?: number }> = [];
 		const run: ProcessRunner = async (argv, options) => {
-			calls.push({ argv: [...argv], timeoutMs: options?.timeoutMs });
+			calls.push({
+				argv: [...argv],
+				timeoutMs: options?.timeoutMs,
+				stdoutCapBytes: options?.stdoutCapBytes,
+			});
 			return {
 				kind: "ok",
 				code: 0,
@@ -72,6 +76,10 @@ describe("PR metadata evidence", () => {
 		for (const call of calls) {
 			assert.equal(call.timeoutMs, 20_000);
 		}
+		assert.deepEqual(
+			calls.map((call) => call.stdoutCapBytes),
+			[2 * 1024 * 1024, 32 * 1024, 16 * 1024],
+		);
 	});
 
 	it("fails instead of generating metadata from truncated evidence", async () => {

@@ -20,7 +20,7 @@ import {
 import type { ProcessRunner } from "./process.ts";
 import { DEFAULT_TIMEOUT_MS } from "./types.ts";
 
-const DIFF_CAP_BYTES = 128 * 1024;
+const DIFF_CAP_BYTES = 2 * 1024 * 1024;
 const LOG_CAP_BYTES = 32 * 1024;
 const NAME_CAP_BYTES = 16 * 1024;
 const BEGIN = "-----BEGIN UNTRUSTED SLICE DATA-----";
