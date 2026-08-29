@@ -73,13 +73,18 @@
         "thinking": "high"
       },
       {
-        "label": "glm",
-        "model": "openrouter/z-ai/glm-5.3",
-        "thinking": "high"
+        "label": "mistral",
+        "model": "openrouter/mistralai/mistral-small-2603",
+        "thinking": "medium"
       },
       {
-        "label": "gemini",
-        "model": "openrouter/google/gemini-3.7-flash",
+        "label": "qwen",
+        "model": "openrouter/qwen/qwen3.8-flash",
+        "thinking": "medium"
+      },
+      {
+        "label": "glimmer",
+        "model": "openrouter/meta/muse-glimmer-30b",
         "thinking": "medium"
       }
     ],
