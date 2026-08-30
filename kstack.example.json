@@ -78,8 +78,8 @@
         "thinking": "medium"
       },
       {
-        "label": "qwen",
-        "model": "openrouter/qwen/qwen3.8-flash",
+        "label": "mercury",
+        "model": "openrouter/inception/mercury-2",
         "thinking": "medium"
       },
       {
