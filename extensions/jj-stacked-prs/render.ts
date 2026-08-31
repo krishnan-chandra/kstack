@@ -46,6 +46,7 @@ export function renderPlan(plan: PublicationPlan): string {
 		`Remote: ${plan.remote.name} (${plan.remote.redactedUrl})`,
 		`Default branch: ${plan.defaultBranch}`,
 		`Shape: ${stackSummary(plan.changeCount, plan.slices.length)}`,
+		`Native stack: ${renderNativeMembership(plan.nativeMembership)}`,
 		"",
 		"Actions (base → top):",
 	];
@@ -61,6 +62,7 @@ export function renderPlan(plan: PublicationPlan): string {
 			lines.push(`- repair PR #${action.prNumber} base ${action.currentBase} → ${action.targetBase}`);
 		}
 	}
+	if (plan.slices.length >= 2) lines.push("- link and verify the complete GitHub-native stack by PR number");
 	lines.push("", "Navigation comments will be reconciled after core publication.");
 	if (plan.blockers.length > 0) {
 		lines.push("", "Blockers:");
@@ -69,23 +71,36 @@ export function renderPlan(plan: PublicationPlan): string {
 	return boundText(lines.join("\n"));
 }
 
+function renderNativeMembership(membership: PublicationPlan["nativeMembership"]): string {
+	if (membership.kind === "none") return "create after PR publication";
+	if (membership.kind === "exact") return `#${membership.stackNumber}, exact; verify idempotently`;
+	if (membership.kind === "remote-prefix") return `#${membership.stackNumber}; append the new top suffix`;
+	return membership.stackNumber === undefined ? "diverged" : `#${membership.stackNumber}, diverged`;
+}
+
 export function renderStackLandingPlan(input: {
 	changeCount: number;
 	slices: readonly { bookmark: string; prNumber: number; url: string; draft: boolean; alreadyMerged: boolean }[];
 	method: StackMergeMethod;
 	readiness: StackReadinessMode;
+	nativeStackNumber?: number;
+	queuePolicy?: boolean;
 }): { ok: true; body: string } | { ok: false; reason: string } {
 	const lines = [
-		`Land ${input.slices.length} stacked PR(s) bottom-up.`,
+		input.nativeStackNumber === undefined
+			? `Land ${input.slices.length} stacked PR(s) bottom-up.`
+			: `Prepare and submit complete native stack #${input.nativeStackNumber} as one GitHub stack merge.`,
 		`Shape: ${stackSummary(input.changeCount, input.slices.length)}`,
-		`Method: ${input.method}`,
+		`Method: ${input.queuePolicy ? `merge queue policy (configured assertion: ${input.method})` : input.method}`,
 		`Readiness: ${input.readiness}`,
 		...(input.readiness === "watch"
 			? [
 					"The readiness pass may merge remote bases, rerun failed CI jobs, edit code, push fixes, and update review threads without more prompts.",
 				]
 			: []),
-		"Later pull requests are re-pinned when they land, because restacks rewrite their heads.",
+		...(input.nativeStackNumber === undefined
+			? ["Later pull requests are re-pinned when they land, because restacks rewrite their heads."]
+			: ["All PR heads are pinned as one immutable generation. Partial-prefix native merges are refused."]),
 		"",
 		"Order:",
 	];
@@ -117,6 +132,14 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 					...(outcome.warnings.length > 0
 						? ["", "Warnings:", ...outcome.warnings.map((warning) => `- ${warning}`)]
 						: []),
+				].join("\n"),
+			);
+		case "queued":
+			return boundText(
+				[
+					`Submitted native stack #${outcome.nativeStackNumber} to the merge queue.`,
+					...outcome.frontiers.map(renderFrontierLine),
+					"Local jj changes and bookmarks were preserved until GitHub finishes merging the complete stack.",
 				].join("\n"),
 			);
 		case "partial":

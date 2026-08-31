@@ -4,6 +4,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 
 import { applyDelegatedFrontierSettlement } from "../land/api.ts";
 import { GitHubError, type GitHubGateway, isMergeMethod } from "../shared/github.ts";
+import { acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import {
 	emptyStackLandProgress,
 	type StackLandFrontier,
@@ -11,11 +12,26 @@ import {
 	type StackPrefixLandOutcome,
 } from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
-import { createJjGitHubGateway } from "./github-gateway.ts";
-import { createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
-import { applyAdvance, inspectStack, type OrchestratorDeps, publishStackFromTool } from "./orchestrator.ts";
+import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
+import { createJjAdapter, JjError } from "./jj.ts";
+import { runNativeLand } from "./native-land.ts";
+import {
+	type NativeStack,
+	NativeStackError,
+	type NativeStackGateway,
+	resolveNativeStackGateway,
+	samePrNumbers,
+} from "./native-stack.ts";
+import {
+	applyAdvance,
+	inspectStack,
+	type OrchestratorDeps,
+	publishStackFromTool,
+	type ResolvedOrchestratorDeps,
+} from "./orchestrator.ts";
 import { renderStackLandingPlan } from "./render.ts";
 import type { InspectModel, StackBlocker, StackMergeMethod, StackReadinessMode } from "./types.ts";
+import { identifyWorkingCopyToSettle, settleWorkingCopyOnTrunk } from "./working-copy-settlement.ts";
 
 interface LandStackOptions {
 	cwd: string;
@@ -47,11 +63,14 @@ export async function landStackThroughPullRequest(
 	},
 	deps: OrchestratorDeps,
 ): Promise<StackPrefixLandOutcome> {
-	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createJjGitHubGateway(deps.run);
+	const resolvedDeps = resolveLandingDeps(deps);
+	const jj = resolvedDeps.jj;
+	const github = resolvedDeps.github;
 	const localBookmarks = await jj.listLocalBookmarks(options.cwd, deps.signal);
 	const hasLocalHead = localBookmarks.some((bookmark) => bookmark.name === options.headBookmark);
-	const model = hasLocalHead ? await inspectStack({ cwd: options.cwd, top: options.headBookmark }, deps) : undefined;
+	const model = hasLocalHead
+		? await inspectStack({ cwd: options.cwd, top: options.headBookmark }, resolvedDeps)
+		: undefined;
 	if (model && model.slices.length > 1 && model.blockers.length > 0) {
 		return { status: "stack", outcome: { status: "blocked", blockers: model.blockers } };
 	}
@@ -81,14 +100,32 @@ export async function landStackThroughPullRequest(
 	const candidate = candidates[0];
 	let metadataConfirmsPrefix = false;
 	if (!model || model.slices.length <= 1) {
-		const membership = await createNavigationCommentStore(github).membership({
-			repo: candidate.repository,
-			prNumber: options.prNumber,
-			headRef: options.headBookmark,
-			cwd: options.cwd,
-			signal: deps.signal,
-		});
-		metadataConfirmsPrefix = membership.selectedIndex > 0;
+		const native = resolveNativeStackGateway(resolvedDeps.run, resolvedDeps.nativeStack);
+		let nativeMembership: NativeStack | undefined;
+		try {
+			nativeMembership = native
+				? await native.inspectForPullRequest({
+						cwd: options.cwd,
+						repo: candidate.repository,
+						prNumber: options.prNumber,
+						signal: deps.signal,
+					})
+				: undefined;
+		} catch (error) {
+			return { status: "stack", outcome: classifyNativePreparationError(error) };
+		}
+		if (nativeMembership) {
+			metadataConfirmsPrefix = nativeMembership.pullRequests.length > 1;
+		} else {
+			const membership = await createNavigationCommentStore(github).membership({
+				repo: candidate.repository,
+				prNumber: options.prNumber,
+				headRef: options.headBookmark,
+				cwd: options.cwd,
+				signal: deps.signal,
+			});
+			metadataConfirmsPrefix = membership.selectedIndex > 0;
+		}
 	}
 
 	if (!model) {
@@ -116,7 +153,7 @@ export async function landStackThroughPullRequest(
 				blockers: [
 					{
 						code: "not-rooted-at-trunk",
-						message: `PR #${options.prNumber} has kstack predecessors that are missing from the local stack.`,
+						message: `PR #${options.prNumber} belongs to a stack whose predecessors or descendants are missing from the selected local stack.`,
 					},
 				],
 			},
@@ -131,7 +168,7 @@ export async function landStackThroughPullRequest(
 			method: options.method,
 			readiness: options.readiness,
 		},
-		deps,
+		resolvedDeps,
 		"interactive-confirmation",
 		model,
 	);
@@ -139,17 +176,41 @@ export async function landStackThroughPullRequest(
 }
 
 export async function landStack(options: LandStackOptions, deps: OrchestratorDeps): Promise<StackLandOutcome> {
-	return landStackWithAuthorization(options, deps, "interactive-confirmation");
+	return landStackWithAuthorization(options, resolveLandingDeps(deps), "interactive-confirmation");
 }
 
 /** Land after an explicit model tool call, without a second UI confirmation. */
 export async function landStackFromTool(options: LandStackOptions, deps: OrchestratorDeps): Promise<StackLandOutcome> {
-	return landStackWithAuthorization(options, deps, "model-tool");
+	return landStackWithAuthorization(options, resolveLandingDeps(deps), "model-tool");
+}
+
+function classifyNativePreparationError(error: BoundaryValue): StackLandOutcome {
+	if (error instanceof NativeStackError && error.kind === "indeterminate") {
+		return {
+			status: "indeterminate",
+			inFlight: error.message,
+			recovery: "Retry native stack inspection before landing; no merge was submitted.",
+			...emptyStackLandProgress(),
+		};
+	}
+	if (error instanceof NativeStackError && error.kind === "unavailable") {
+		return { status: "blocked", blockers: [{ code: "native-stack-unavailable", message: error.message }] };
+	}
+	return { status: "failed", error: errorMessage(error), ...emptyStackLandProgress() };
+}
+
+function resolveLandingDeps(deps: OrchestratorDeps): ResolvedOrchestratorDeps {
+	return {
+		...deps,
+		jj: deps.jj ?? createJjAdapter(deps.run),
+		github: deps.github ?? createJjGitHubGateway(deps.run),
+		nativeStack: resolveNativeStackGateway(deps.run, deps.nativeStack) ?? false,
+	};
 }
 
 async function landStackWithAuthorization(
 	options: LandStackOptions,
-	deps: OrchestratorDeps,
+	deps: ResolvedOrchestratorDeps,
 	authorization: "interactive-confirmation" | "model-tool",
 	initialModel?: InspectModel,
 ): Promise<StackLandOutcome> {
@@ -160,7 +221,12 @@ async function landStackWithAuthorization(
 		};
 	}
 	if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
-	const prepared = await prepareLand(options, deps, initialModel);
+	let prepared: Awaited<ReturnType<typeof prepareLand>>;
+	try {
+		prepared = await prepareLand(options, deps, initialModel);
+	} catch (error) {
+		return classifyNativePreparationError(error);
+	}
 	if (prepared.status !== "ok") return prepared;
 	if (authorization === "interactive-confirmation") {
 		const confirmation = renderStackLandingPlan({
@@ -168,6 +234,8 @@ async function landStackWithAuthorization(
 			slices: prepared.mapped,
 			method: prepared.method,
 			readiness: options.readiness,
+			nativeStackNumber: prepared.nativeStack?.stackNumber,
+			queuePolicy: prepared.queuePolicy,
 		});
 		if (!confirmation.ok) {
 			return { status: "blocked", blockers: [{ code: "truncated", message: confirmation.reason }] };
@@ -176,6 +244,49 @@ async function landStackWithAuthorization(
 		const confirmed = await deps.ui.confirm("Land this stacked PR plan?", confirmation.body);
 		if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
 		if (!confirmed) return { status: "declined" };
+	}
+	if (prepared.nativeStack && prepared.nativeGateway) {
+		const injectedAcquireLock = deps.acquirePublicationLock;
+		const acquireLock = injectedAcquireLock
+			? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
+			: undefined;
+		const lockAttempt = await acquireRepositoryPublicationLock(execFromRunner(deps.run), options.cwd, {
+			acquireLock,
+			signal: deps.signal,
+		});
+		if (!lockAttempt.ok) {
+			if (lockAttempt.kind === "failed") {
+				return {
+					status: "failed",
+					error: `Unable to acquire native stack landing lock: ${lockAttempt.error}`,
+					...emptyStackLandProgress(),
+				};
+			}
+			return {
+				status: "blocked",
+				blockers: [
+					{
+						code: "publication-locked",
+						message: "Another stack publication or landing is active for this repository.",
+					},
+				],
+			};
+		}
+		try {
+			return await runNativeLand(
+				options,
+				deps,
+				prepared.method,
+				prepared.model,
+				prepared.mapped,
+				prepared.nativeStack,
+				prepared.repository,
+				prepared.nativeGateway,
+			);
+		} finally {
+			const released = lockAttempt.lock.release();
+			if (!released.ok) deps.ui.notify(`Native landing lock cleanup failed: ${released.error}`, "warning");
+		}
 	}
 	return runLandLoop(options, deps, prepared.method, prepared.model, prepared.mapped);
 }
@@ -196,10 +307,19 @@ async function remapLand(
 
 async function prepareLand(
 	options: LandStackOptions,
-	deps: OrchestratorDeps,
+	deps: ResolvedOrchestratorDeps,
 	initialModel?: InspectModel,
 ): Promise<
-	| { status: "ok"; mapped: MappedLandSlice[]; method: StackMergeMethod; model: InspectModel }
+	| {
+			status: "ok";
+			mapped: MappedLandSlice[];
+			method: StackMergeMethod;
+			model: InspectModel;
+			repository: { owner: string; repo: string };
+			nativeStack?: NativeStack;
+			nativeGateway?: NativeStackGateway;
+			queuePolicy: boolean;
+	  }
 	| { status: "blocked"; blockers: StackBlocker[] }
 > {
 	const remapped = await remapLand(options, deps, initialModel);
@@ -211,7 +331,76 @@ async function prepareLand(
 		deps.github ?? createJjGitHubGateway(deps.run),
 	);
 	if (method.status !== "ok") return method;
-	return { status: "ok", mapped: remapped.mapped, method: method.method, model: remapped.model };
+	const native = deps.nativeStack;
+	if (!native || remapped.mapped.length < 2) {
+		return {
+			status: "ok",
+			mapped: remapped.mapped,
+			method: method.method,
+			model: remapped.model,
+			repository: remapped.repository,
+			queuePolicy: false,
+		};
+	}
+	const top = remapped.mapped[remapped.mapped.length - 1];
+	const nativeStack = await native.inspectForPullRequest({
+		cwd: options.cwd,
+		repo: remapped.repository,
+		prNumber: top.prNumber,
+		signal: deps.signal,
+	});
+	if (!nativeStack) {
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "native-stack-unavailable",
+					message: "This multi-PR stack is not linked as a GitHub-native stack. Publish it before landing.",
+				},
+			],
+		};
+	}
+	const queuePolicy = await native.baseUsesMergeQueue({
+		cwd: options.cwd,
+		repo: remapped.repository,
+		base: nativeStack.baseRef,
+		signal: deps.signal,
+	});
+	if (queuePolicy && !deps.configuredMethodFor?.(`${remapped.repository.owner}/${remapped.repository.repo}`)) {
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "land-unavailable",
+					message:
+						'This branch uses a merge queue. Configure land.repos["owner/repo"] as an explicit squash or rebase queue-policy assertion before landing.',
+				},
+			],
+		};
+	}
+	const expected = remapped.mapped.map((slice) => slice.prNumber);
+	const actual = nativeStack.pullRequests.map((pr) => pr.number);
+	if (!samePrNumbers(expected, actual)) {
+		return {
+			status: "blocked",
+			blockers: [
+				{
+					code: "native-stack-diverged",
+					message: `Native stack #${nativeStack.stackNumber} contains ${actual.join(", ")}; full-stack landing requires selecting its top PR and matching the complete local stack.`,
+				},
+			],
+		};
+	}
+	return {
+		status: "ok",
+		mapped: remapped.mapped,
+		method: method.method,
+		model: remapped.model,
+		repository: remapped.repository,
+		nativeStack,
+		nativeGateway: native,
+		queuePolicy,
+	};
 }
 
 async function mapStackPullRequests(
@@ -669,74 +858,11 @@ async function runLandLoop(
 	}
 }
 
-interface WorkingCopySettlement {
-	changeId: string;
-	/** Expected parent when advancing abandons a selected bookmarked checkpoint. */
-	replacementParentCommitId?: string;
-}
-
-/** Identify the empty working-copy child of the selected stack before landing mutates history. */
-async function identifyWorkingCopyToSettle(
-	options: LandStackOptions,
-	deps: OrchestratorDeps,
-	jj: JjAdapter,
-	model: InspectModel,
-	warnings: string[],
-): Promise<WorkingCopySettlement | undefined> {
-	if (!model.topCommitId) return undefined;
-	try {
-		const [status, changeId] = await Promise.all([
-			jj.workingCopyStatus(options.cwd, deps.signal),
-			jj.workingCopyChangeId(options.cwd, deps.signal),
-		]);
-		if (!status?.empty || !changeId) return undefined;
-		const isSelectedCheckpoint = status.bookmarked && status.commitId === model.topCommitId;
-		const isUnbookmarkedChild =
-			!status.bookmarked && status.parentCommitIds.length === 1 && status.parentCommitIds[0] === model.topCommitId;
-		if (isSelectedCheckpoint) return { changeId, replacementParentCommitId: model.trunk.commitId };
-		return isUnbookmarkedChild ? { changeId } : undefined;
-	} catch (error) {
-		warnings.push(`Could not inspect the working copy before landing: ${errorMessage(error)}`);
-		return undefined;
-	}
-}
-
-/**
- * After the last frontier lands, move the same empty working-copy child onto
- * refreshed trunk. Best-effort: a failure never degrades a completed landing.
- */
-async function settleWorkingCopyOnTrunk(
-	options: LandStackOptions,
-	deps: OrchestratorDeps,
-	jj: JjAdapter,
-	candidate: WorkingCopySettlement | undefined,
-	refreshedTrunkCommitId: string | undefined,
-	completedMutations: string[],
-	warnings: string[],
-): Promise<void> {
-	if (!candidate || !refreshedTrunkCommitId) return;
-	try {
-		const [status, changeId] = await Promise.all([
-			jj.workingCopyStatus(options.cwd, deps.signal),
-			jj.workingCopyChangeId(options.cwd, deps.signal),
-		]);
-		if (!status?.empty || status.bookmarked) return;
-		const sameChange = changeId === candidate.changeId;
-		const expectedReplacement =
-			candidate.replacementParentCommitId !== undefined &&
-			status.parentCommitIds.length === 1 &&
-			status.parentCommitIds[0] === candidate.replacementParentCommitId;
-		if (!sameChange && !expectedReplacement) return;
-		if (await jj.isAncestor(options.cwd, refreshedTrunkCommitId, status.commitId, deps.signal)) return;
-		await jj.rebaseWorkingCopy(options.cwd, refreshedTrunkCommitId, deps.signal);
-		completedMutations.push("Rebased the empty working copy onto the refreshed trunk");
-	} catch (error) {
-		warnings.push(`Left the working copy in place: ${errorMessage(error)}`);
-	}
-}
-
 function isIndeterminate(error: BoundaryValue): boolean {
-	return (error instanceof JjError || error instanceof GitHubError) && error.kind === "indeterminate";
+	return (
+		(error instanceof JjError || error instanceof GitHubError || error instanceof NativeStackError) &&
+		error.kind === "indeterminate"
+	);
 }
 
 function errorMessage(error: BoundaryValue): string {

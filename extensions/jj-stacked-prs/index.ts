@@ -3,6 +3,7 @@
 import { Type, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getRepoMethod, loadLandConfig, requestStackFrontierLand } from "../land/api.ts";
+import { issueAutopilotConfirmation, requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { isMergeMethod } from "../shared/github.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
@@ -118,6 +119,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			ctx.ui.notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
 		}
 		const metadata = metadataGenerator(ctx);
+		const autopilotConfirmation = issueAutopilotConfirmation();
 		return {
 			run,
 			ui: uiFrom(ctx),
@@ -125,6 +127,8 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			generatePrMetadata: metadata.generate,
 			configuredMethodFor: (nameWithOwner) =>
 				configLoad.status === "loaded" ? getRepoMethod(configLoad.config, nameWithOwner) : undefined,
+			preparePr: ({ prNumber, readiness }) =>
+				requestPrAutopilot(pi, readiness, prNumber, ctx, cwd, autopilotConfirmation, signal),
 			landFrontier: ({ prNumber, expectedHeadSha, readiness, method }) =>
 				requestStackFrontierLand(pi, {
 					options: { target: { kind: "single", prNumber }, readiness, method, cwd },
@@ -279,7 +283,10 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 				);
 				ctx.ui.notify(
 					renderLandOutcome(landOutcome),
-					landOutcome.status === "completed" || landOutcome.status === "declined" || landOutcome.status === "busy"
+					landOutcome.status === "completed" ||
+						landOutcome.status === "queued" ||
+						landOutcome.status === "declined" ||
+						landOutcome.status === "busy"
 						? "info"
 						: "warning",
 				);
@@ -440,7 +447,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		name: "jj_stack_publish",
 		label: "Publish stacked PRs",
 		description:
-			"Publish a linear jj bookmark stack by generating write-pr metadata from each exact slice, pushing bookmarks, creating draft PRs, repairing PR bases, and reconciling navigation comments. Mutates the remote immediately without UI confirmation.",
+			"Publish a linear jj bookmark stack by pushing bookmarks, creating draft PRs, repairing bases, linking a GitHub-native stack, and reconciling compatibility navigation comments. Mutates the remote immediately without UI confirmation.",
 		promptSnippet: "Publish the current jj stack without a redundant confirmation after an explicit user request.",
 		promptGuidelines: [
 			"Call jj_stack_publish only when the user explicitly asks to publish the current stack; the tool mutates remotes without confirmation.",
@@ -489,7 +496,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		name: "jj_stack_land",
 		label: "Land stacked PRs",
 		description:
-			"Land a linear jj bookmark stack bottom-up through the land extension. Marks drafts ready, merges each frontier, advances locally, republishes the remainder, and deletes verified merged branches. Mutates remotes immediately without UI confirmation.",
+			"Prepare a complete native jj PR stack, submit one asynchronous GitHub stack merge, and settle verified merged history locally. Queued stacks preserve local history until merged. Mutates remotes immediately without UI confirmation.",
 		promptSnippet: "Land the current jj stack without a redundant confirmation after an explicit user request.",
 		promptGuidelines: [
 			"Call jj_stack_land only when the user explicitly asks to land the current stack; landing merges to trunk and cannot be undone.",

@@ -21,7 +21,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`plan-implement`](extensions/plan-implement/) | Selects or accepts a change kind, plans with a high-reason model, pauses for approval, implements on a dedicated Git/Graphite branch or jj bookmark with incremental local changes, runs panel review, addresses findings, then publishes a draft PR with reviewer recommendations and can optionally hand the published PR to `/land`. Supports local jj stacks and isolated managed Git/Graphite worktrees, with a live multi-phase TUI dashboard and full-screen subagent console. Add `--fast` to skip planning, review, and publishing for one bounded implementer. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
-| [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Inspects, plans, publishes, syncs, advances, and lands linear GitHub PR stacks on a colocated jj workspace. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
+| [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Publishes linear jj bookmarks as GitHub-native stacks and lands a complete stack with one asynchronous GitHub stack merge. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
 
 Writable workstreams use a dedicated `kstack/<task-slug>` Git/Graphite branch or jj
 bookmark and record coherent increments with the configured backend. Git
@@ -174,6 +174,7 @@ rows stay unnamed.
 - Node.js 22.18 or newer for Pi's runtime and local tooling
 - A local filesystem for Pi's agent directory
 - `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step
+- `github/gh-stack` 0.1.0 or newer (`gh extension install github/gh-stack`) — required for multi-PR jj publication and landing
 - `tar` — required to extract the temporary source snapshot for PR-scoped panel review
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior

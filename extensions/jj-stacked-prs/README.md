@@ -27,10 +27,11 @@ jj_stack_publish({ top, remote?, trunk?, maxStack?, ready? })
 jj_stack_land({ top, remote?, trunk?, method?, readiness?, maxStack? })
 ```
 
-`jj_stack_publish` pushes bookmarks, creates draft PRs, repairs PR bases, and
-reconciles navigation comments through the shared stack-topology store without a UI confirmation. `jj_stack_land` lands
-the stack the same way. Pi calls either tool only after the user explicitly
-asks. There is no sync, advance, or generic jj mutation tool. A plan ID proves
+`jj_stack_publish` pushes bookmarks, creates draft PRs, repairs PR bases, links
+two-or-more PR slices as a GitHub-native stack, and reconciles compatibility
+navigation comments without a UI confirmation. `jj_stack_land` prepares the
+complete native stack and submits one GitHub stack merge. Pi calls either tool
+only after the user explicitly asks. There is no sync, advance, or generic jj mutation tool. A plan ID proves
 freshness, not authorization.
 
 ## What it does
@@ -39,8 +40,11 @@ freshness, not authorization.
   landing confirmation output report jj change and PR slice counts separately.
 - Derives one PR slice per bookmark. Unbookmarked changes belong to the next
   bookmark. An empty working-copy child above the top is allowed.
-- Plans pushes, draft-PR creation, and base repairs from local/remote bookmark
-  targets and open PRs in the same GitHub repository.
+- Plans pushes, draft-PR creation, base repairs, and GitHub-native membership
+  from local/remote bookmark targets and open PRs in the same GitHub repository.
+  Existing native membership may stay exact or gain a top suffix. Removal,
+  reorder, middle insertion, cross-stack membership, and a base repair combined
+  with rewritten heads block before any push.
 - Generates each new draft's title and body from the slice subject, commit
   descriptions, and changed paths. When the repository defines one default
   pull-request template, publication preserves its headings, comments, and
@@ -61,26 +65,27 @@ freshness, not authorization.
   matches the local bottom bookmark, and GitHub reports that PR as `MERGED`.
   It abandons `<trunk>..<merged>` before fetch, then rebases any remainder. It
   does not republish; run `/jj-stack publish` separately.
-- Lands the stack bottom-up through the `land` extension. jj owns the frontier
-  loop and confirms the complete plan once, including each frontier's autopilot
-  pass. It delegates each pinned PR and resolved merge method through Land's
-  `stack-frontier` request mode, with no per-PR prompt. Land owns readiness,
-  repository merge policy, exact-head checks, merge submission, and remote
-  verification. jj then advances locally, republishes the remainder, and
-  deletes the remote branch only after verification. `--readiness`
-  defaults to `watch`. In jj mode, `/land --pr <number>` delegates here when the
-  selected PR closes a local stack with two or more slices. After the final
-  frontier lands, the same empty, bookmark-less working-copy child that began
-  directly above the selected stack is rebased onto refreshed trunk. Its change
-  ID is preserved, and unrelated working copies are left in place.
+- Lands a two-or-more-PR stack through GitHub's asynchronous native stack merge.
+  Kstack pins the complete generation, marks drafts ready, invokes PR Autopilot
+  for exact-head readiness, revalidates every native member, and calls
+  `gh stack merge` once for the top PR. Partial-prefix native landing is refused.
+  A direct merge is verified PR-by-PR before jj abandons the complete range once,
+  fetches once, verifies refreshed trunk, and deletes only branches still at
+  their pinned heads. A merge-queue submission returns `queued` and preserves
+  all local history and bookmarks; `--readiness watch` polls for bounded queue
+  settlement, while `check` returns after enqueue. Because the queue controls
+  its merge method, queued landing also requires `land.repos["owner/repo"]` as
+  an explicit squash or rebase policy assertion. The same empty working-copy
+  child is then rebased onto refreshed trunk with its change ID preserved.
 
 ## What it does not do
 
 - Non-linear, merge-commit, multi-base, or parallel stacks.
-- Install or authenticate `jj` or `gh`.
+- Install or authenticate `jj`, `gh`, or the `github/gh-stack` extension.
 - Assign reviewers, enable auto-merge, pass `--admin`, or force-push with raw Git.
 - One-line wrappers for `jj new`, `jj edit`, `jj split`, or `jj absorb`.
-- A custom TUI dashboard or a cross-process publication lock.
+- A custom TUI dashboard. Publication and native landing share an advisory
+  per-repository lock.
 - Landing without the `land` and `pr-autopilot` extensions.
 
 See [docs/workflows.md](docs/workflows.md) for manual local jj operations and
@@ -126,7 +131,8 @@ vocabulary in [`extensions/shared/stack/`](../shared/stack/README.md)
 | Navigation comment | 100 entries / 60 KiB |
 | Concurrent mutation runs | 1 per session |
 | Ready + branch-delete `gh` calls | 30s each |
-| Per-frontier merge verification | land's existing 30 min |
+| Native stack link / API reads | 30s each |
+| Native stack merge / queue watch | 30 min |
 
 Press **Ctrl+Shift+J** to abort an active mutation. Session shutdown aborts the
 active controller. Cancellation after a mutator starts is `indeterminate` when
@@ -159,7 +165,8 @@ one-hour grace period before reclamation. A live holder is never displaced just
 because publication runs for a long time. If a process is killed during the
 brief reclamation step, a `.reaper` file can conservatively block later stale
 cleanup; remove it only after verifying that no publication is active. The lock
-covers publication only; advance, sync, and land are not yet covered.
+covers publication and GitHub-native landing. Legacy advance, sync, and
+single-frontier landing are not covered.
 
 ## Development
 
@@ -169,7 +176,11 @@ npm run typecheck
 npm run check:exports
 ```
 
-GitHub effects use the shared gateway in `extensions/shared/github.ts`; navigation
-comment encoding and reconciliation live in `extensions/shared/stack/topology.ts`.
+General GitHub effects use the shared gateway in `extensions/shared/github.ts`.
+The validated public-preview adapter for `gh stack` and the Stacks REST API is
+`native-stack.ts`. Full-stack merge and queue settlement live in
+`native-land.ts`; shared empty-working-copy preservation lives in
+`working-copy-settlement.ts`. Navigation comment encoding and reconciliation
+live in `extensions/shared/stack/topology.ts`.
 Tests inject process and GitHub/jj adapters. They do not use real credentials
 or mutate a real GitHub repository.

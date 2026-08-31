@@ -7,6 +7,7 @@ import type {
 	BookmarkTarget,
 	CorePublicationAction,
 	GitHubRepository,
+	NativeMembership,
 	OpenPullRequest,
 	PublicationPlan,
 	PublicationSlice,
@@ -27,6 +28,7 @@ export interface PublicationSnapshot {
 	localBookmarks: readonly BookmarkTarget[];
 	remoteBookmarks: readonly BookmarkTarget[];
 	openPrs: readonly OpenPullRequest[];
+	nativeMembership: NativeMembership;
 }
 
 export function slicesForPublication(
@@ -120,6 +122,23 @@ export function buildPublicationPlan(snapshot: PublicationSnapshot): Publication
 		lastBookmark = slice.bookmark;
 	}
 
+	if (snapshot.nativeMembership.kind === "diverged") {
+		blockers.push({
+			code: "native-stack-diverged",
+			message: snapshot.nativeMembership.message,
+		});
+	}
+	if (
+		snapshot.nativeMembership.kind !== "none" &&
+		actions.some((action) => action.kind === "repair-pr-base") &&
+		actions.some((action) => action.kind === "push-bookmark")
+	) {
+		blockers.push({
+			code: "native-stack-diverged",
+			message: "Native stack base repair combined with rewritten heads is unsafe; rebuild the native stack explicitly.",
+		});
+	}
+
 	if (!snapshot.remote.github) {
 		blockers.push({
 			code: "non-github-remote",
@@ -133,6 +152,7 @@ export function buildPublicationPlan(snapshot: PublicationSnapshot): Publication
 		repository: snapshot.repository,
 		remote: snapshot.remote,
 		defaultBranch: snapshot.defaultBranch,
+		nativeMembership: snapshot.nativeMembership,
 		slices,
 		actions,
 		blockers,
@@ -156,6 +176,7 @@ function computePlanId(
 			urlFingerprint: snapshot.remote.redactedUrl,
 		},
 		defaultBranch: snapshot.defaultBranch,
+		nativeMembership: snapshot.nativeMembership,
 		localBookmarks: snapshot.localBookmarks.map((bookmark) => ({
 			name: bookmark.name,
 			commitId: bookmark.commitId,

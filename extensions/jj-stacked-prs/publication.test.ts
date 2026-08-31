@@ -27,6 +27,7 @@ function snapshot(overrides: Partial<Parameters<typeof buildPublicationPlan>[0]>
 			github: { owner: "o", repo: "r" },
 		},
 		defaultBranch: "main",
+		nativeMembership: { kind: "none" as const },
 		slices: [slice("feat1", null, ["aaa"], "feat: aaa")],
 		localBookmarks: [{ name: "feat1", commitId: "aaa-commit" }],
 		remoteBookmarks: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as {
@@ -259,6 +260,40 @@ describe("publication planning", () => {
 			}),
 		);
 		assert.notEqual(plan.planId, movedHead.planId);
+	});
+
+	it("blocks diverged native topology and unsafe base repair with rewritten heads", () => {
+		const diverged = buildPublicationPlan(
+			snapshot({
+				nativeMembership: {
+					kind: "diverged",
+					stackNumber: 9,
+					prNumbers: [12, 11],
+					message: "remote order differs",
+				},
+			}),
+		);
+		assert.ok(diverged.blockers.some((blocker) => blocker.code === "native-stack-diverged"));
+
+		const unsafe = buildPublicationPlan(
+			snapshot({
+				nativeMembership: { kind: "exact", stackNumber: 9, prNumbers: [11] },
+				remoteBookmarks: [{ name: "feat1", commitId: "old" }],
+				openPrs: [
+					{
+						number: 11,
+						headRef: "feat1",
+						headCommitId: "old",
+						baseRef: "wrong",
+						title: "feat",
+						draft: true,
+						url: "u",
+						headOwner: "o",
+					},
+				],
+			}),
+		);
+		assert.ok(unsafe.blockers.some((blocker) => blocker.message.includes("rewritten heads")));
 	});
 
 	it("does not change plan identity when rendering shortens ids", () => {
