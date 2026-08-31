@@ -25,18 +25,20 @@ export interface StackPublicationMap {
 	pullRequests: readonly StackPublishedPullRequest[];
 	remote?: string;
 	repository?: { owner: string; repo: string };
+	nativeStackNumber?: number;
 }
 
 export type CompletedPublicationAction =
 	| { kind: "push-bookmark"; ref: string }
 	| { kind: "create-draft-pr"; ref: string; prNumber: number; url: string }
 	| { kind: "repair-pr-base"; ref: string; prNumber: number; targetBase: string }
+	| { kind: "link-native-stack"; stackNumber: number; prNumbers: readonly number[] }
 	| { kind: "create-nav-comment"; prNumber: number }
 	| { kind: "update-nav-comment"; prNumber: number }
 	| { kind: "mark-pr-ready"; ref: string; prNumber: number };
 
 export type FailedPublicationAction = {
-	kind: "push-bookmark" | "create-draft-pr" | "repair-pr-base" | "nav-comment" | "mark-pr-ready";
+	kind: "push-bookmark" | "create-draft-pr" | "repair-pr-base" | "link-native-stack" | "nav-comment" | "mark-pr-ready";
 	ref?: string;
 	prNumber?: number;
 	error: string;
@@ -101,6 +103,7 @@ export function emptyStackLandProgress(): StackLandProgress {
 
 export type StackLandOutcome =
 	| ({ status: "completed" } & StackLandProgress)
+	| ({ status: "queued"; nativeStackNumber: number; submittedAt: string } & StackLandProgress)
 	| ({ status: "partial"; error: string } & StackLandProgress)
 	| { status: "blocked"; blockers: readonly StackBlocker[] }
 	| { status: "declined" }

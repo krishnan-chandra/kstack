@@ -3,6 +3,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 
 import { realpathSync } from "node:fs";
 import type { DelegatedFrontierResponse } from "../land/api.ts";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { GitHubError, type GitHubGateway } from "../shared/github.ts";
 import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import type {
@@ -14,6 +15,12 @@ import type {
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
+import {
+	type NativeStack,
+	NativeStackError,
+	type NativeStackGateway,
+	resolveNativeStackGateway,
+} from "./native-stack.ts";
 import { type PrDocument, renderPrDocument } from "./pr-document.ts";
 import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
 import {
@@ -30,6 +37,8 @@ import {
 	type AdvanceOutcome,
 	DEFAULT_MAX_STACK,
 	type InspectModel,
+	type NativeMembership,
+	type OpenPullRequest,
 	type PublicationPlan,
 	SCHEMA_VERSION,
 	type StackBlocker,
@@ -37,6 +46,7 @@ import {
 	type StackMergeMethod,
 	type StackPublicationRequestInput,
 	type StackReadinessMode,
+	type StackSlice,
 	type SyncOutcome,
 } from "./types.ts";
 
@@ -51,11 +61,18 @@ export interface StackUi {
 export interface OrchestratorDeps {
 	jj?: JjAdapter;
 	github?: GitHubGateway;
+	/** Inject a gateway, or explicitly disable native behavior for legacy adapter tests. Omission enables native stacks. */
+	nativeStack?: NativeStackGateway | false;
 	run: ProcessRunner;
 	ui: StackUi;
 	signal?: AbortSignal;
 	realpath?: (path: string) => string;
 	/** Delegated exact-head request into Land's single-PR implementation. */
+	preparePr?: (input: {
+		prNumber: number;
+		expectedHeadSha: string;
+		readiness: StackReadinessMode;
+	}) => Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
 	landFrontier?: (input: {
 		prNumber: number;
 		expectedHeadSha: string;
@@ -66,7 +83,15 @@ export interface OrchestratorDeps {
 	generatePrMetadata?: PrMetadataGenerator;
 	loadRepositoryPrTemplate?: (cwd: string) => RepositoryPrTemplate | undefined;
 	acquirePublicationLock?: (repositoryPath: string) => LockAttempt;
+	now?: () => number;
+	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
+
+export type ResolvedOrchestratorDeps = Omit<OrchestratorDeps, "jj" | "github" | "nativeStack"> & {
+	jj: JjAdapter;
+	github: GitHubGateway;
+	nativeStack: NativeStackGateway | false;
+};
 
 interface InspectOptions {
 	cwd: string;
@@ -619,6 +644,52 @@ async function applyPublication(
 		}
 	}
 
+	let nativeStackNumber: number | undefined;
+	const nativeGateway = resolveNativeStackGateway(deps.run, deps.nativeStack);
+	if (published.length >= 2 && nativeGateway) {
+		const prNumbers = published.map((slice) => slice.prNumber);
+		if (prNumbers.some((number) => number === undefined)) {
+			return {
+				status: "partial",
+				planId: plan.planId,
+				completedActions: completed,
+				failedAction: { kind: "link-native-stack", error: "Not every stack slice has a proven PR number." },
+			};
+		}
+		try {
+			const stack = await nativeGateway.link({
+				cwd: options.cwd,
+				repo: plan.repository,
+				base: plan.defaultBranch,
+				prNumbers: prNumbers.filter((number): number is number => number !== undefined),
+				signal: deps.signal,
+			});
+			nativeStackNumber = stack.stackNumber;
+			completed.push({
+				kind: "link-native-stack",
+				stackNumber: stack.stackNumber,
+				prNumbers: stack.pullRequests.map((pr) => pr.number),
+			});
+		} catch (error) {
+			const failed = { kind: "link-native-stack" as const, error: errorMessage(error) };
+			if (error instanceof NativeStackError && error.kind === "indeterminate") {
+				return {
+					status: "indeterminate",
+					planId: plan.planId,
+					inFlight: failed,
+					completedActions: completed,
+					recovery: "Inspect native stack membership before retrying publication.",
+				};
+			}
+			return {
+				status: "partial",
+				planId: plan.planId,
+				completedActions: completed,
+				failedAction: failed,
+			};
+		}
+	}
+
 	if (options.ready) {
 		for (const slice of published) {
 			if (slice.prNumber === undefined || !slice.draft) continue;
@@ -696,6 +767,7 @@ async function applyPublication(
 			remote: plan.remote.name,
 			topRef: plan.slices[plan.slices.length - 1].bookmark,
 			pullRequests,
+			...(nativeStackNumber !== undefined ? { nativeStackNumber } : undefined),
 		},
 		completedActions: [...completed, ...comments.completed],
 		...(commentErrors.length > 0 ? { commentErrors } : undefined),
@@ -726,10 +798,39 @@ async function snapshotPublication(
 			],
 		};
 	}
-	const defaultBranch = await github.getDefaultBranch(remote.github, options.cwd, deps.signal);
-	const openPrs = await github.listOpenPrs(remote.github, options.cwd, deps.signal);
-	const localBookmarks = await jj.listLocalBookmarks(options.cwd, deps.signal);
-	const remoteBookmarks = await jj.listRemoteBookmarks(options.cwd, options.remote, deps.signal);
+	const native = resolveNativeStackGateway(deps.run, deps.nativeStack);
+	const nativePreflight =
+		derived.slices.length >= 2 && native
+			? native.preflight({ cwd: options.cwd, repo: remote.github, signal: deps.signal })
+			: Promise.resolve(undefined);
+	const [defaultBranch, openPrs, localBookmarks, remoteBookmarks, capability] = await Promise.all([
+		github.getDefaultBranch(remote.github, options.cwd, deps.signal),
+		github.listOpenPrs(remote.github, options.cwd, deps.signal),
+		jj.listLocalBookmarks(options.cwd, deps.signal),
+		jj.listRemoteBookmarks(options.cwd, options.remote, deps.signal),
+		nativePreflight,
+	]);
+	let nativeMembership: NativeMembership = { kind: "none" };
+	if (derived.slices.length >= 2 && native && capability) {
+		if (capability.status === "unavailable") {
+			return {
+				blockers: [
+					{
+						code: "native-stack-unavailable",
+						message: `GitHub-native stacks are unavailable: ${capability.reason}`,
+					},
+				],
+			};
+		}
+		nativeMembership = await inspectNativeMembership(
+			derived.slices,
+			openPrs,
+			native,
+			remote.github,
+			options.cwd,
+			deps.signal,
+		);
+	}
 	return {
 		snapshot: {
 			changeCount: model.stack.length,
@@ -740,8 +841,57 @@ async function snapshotPublication(
 			localBookmarks,
 			remoteBookmarks,
 			openPrs,
+			nativeMembership,
 		},
 	};
+}
+
+async function inspectNativeMembership(
+	slices: readonly StackSlice[],
+	openPrs: readonly OpenPullRequest[],
+	native: NativeStackGateway,
+	repository: { owner: string; repo: string },
+	cwd: string,
+	signal?: AbortSignal,
+): Promise<NativeMembership> {
+	const plannedPrNumbers: number[] = [];
+	const memberships = new Map<number, NativeStack>();
+	const coveredPrNumbers = new Set<number>();
+	for (const slice of slices) {
+		const matches = openPrs.filter((pr) => pr.headRef === slice.bookmark);
+		if (matches.length !== 1) continue;
+		const pr = matches[0];
+		plannedPrNumbers.push(pr.number);
+		if (coveredPrNumbers.has(pr.number)) continue;
+		const stack = await native.inspectForPullRequest({ cwd, repo: repository, prNumber: pr.number, signal });
+		if (stack) {
+			memberships.set(stack.stackNumber, stack);
+			for (const member of stack.pullRequests) coveredPrNumbers.add(member.number);
+		}
+	}
+	if (memberships.size === 0) return { kind: "none" };
+	if (memberships.size > 1) {
+		return {
+			kind: "diverged",
+			prNumbers: plannedPrNumbers,
+			message: "The local slices span more than one GitHub-native stack.",
+		};
+	}
+	const stack = [...memberships.values()][0];
+	const remoteNumbers = stack.pullRequests.map((pr) => pr.number);
+	const remoteIsPrefix = remoteNumbers.every((number, index) => plannedPrNumbers[index] === number);
+	if (!remoteIsPrefix) {
+		return {
+			kind: "diverged",
+			stackNumber: stack.stackNumber,
+			prNumbers: remoteNumbers,
+			message: `Native stack #${stack.stackNumber} does not match the local PR order; removal, insertion, and reorder require an explicit rebuild.`,
+		};
+	}
+	if (remoteNumbers.length === slices.length && plannedPrNumbers.length === slices.length) {
+		return { kind: "exact", stackNumber: stack.stackNumber, prNumbers: remoteNumbers };
+	}
+	return { kind: "remote-prefix", stackNumber: stack.stackNumber, prNumbers: remoteNumbers };
 }
 
 function publicationBlockers(model: InspectModel): StackBlocker[] {

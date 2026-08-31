@@ -46,6 +46,12 @@ export interface StackSlice {
 	subject: string;
 }
 
+export type NativeMembership =
+	| { kind: "none" }
+	| { kind: "exact"; stackNumber: number; prNumbers: readonly number[] }
+	| { kind: "remote-prefix"; stackNumber: number; prNumbers: readonly number[] }
+	| { kind: "diverged"; stackNumber?: number; prNumbers: readonly number[]; message: string };
+
 export type StackBlocker =
 	| {
 			code: "missing-top" | "empty-stack" | "top-not-final-boundary" | "not-rooted-at-trunk" | "unbookmarked-tail";
@@ -68,7 +74,9 @@ export type StackBlocker =
 				| "head-mismatch"
 				| "out-of-order-merge"
 				| "publish-required"
-				| "land-unavailable";
+				| "land-unavailable"
+				| "native-stack-unavailable"
+				| "native-stack-diverged";
 			message: string;
 			ref?: string;
 	  }
@@ -112,6 +120,7 @@ export interface PublicationPlan {
 	repository: GitHubRepository;
 	remote: RemoteInfo;
 	defaultBranch: string;
+	nativeMembership: NativeMembership;
 	slices: readonly PublicationSlice[];
 	actions: readonly CorePublicationAction[];
 	blockers: readonly StackBlocker[];
