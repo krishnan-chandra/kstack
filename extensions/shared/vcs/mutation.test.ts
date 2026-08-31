@@ -194,31 +194,31 @@ describe("PrMutation.publishFix", () => {
 });
 
 describe("PrMutation with JjBackend", () => {
-	it("opens a native jj checkout, records a fix, and publishes its checkpoint", async () => {
+	it("opens an empty jj child, squashes a fix into its parent, and publishes the bookmark", async () => {
 		const changeId = "stable-change-id";
 		const calls: string[] = [];
-		let committed = false;
+		let squashed = false;
 		const exec: ExecFn = async (command, args) => {
 			assert.equal(command, "jj");
 			calls.push(args.join(" "));
+			if (args.includes('if(empty, "true", "false")')) return { code: 0, stdout: "true", stderr: "" };
+			if (args.includes("bookmark") && args.includes("list") && args.includes(`exact:${target.headRef}`)) {
+				return { code: 0, stdout: `${target.headRef}\t${squashed ? UPDATED_SHA : SHA}\n`, stderr: "" };
+			}
 			if (args.includes("bookmark") && args.includes("list") && args.includes("-r")) {
-				return { code: 0, stdout: `${target.headRef}\n`, stderr: "" };
+				return {
+					code: 0,
+					stdout: args.includes("parents(@)") ? `${target.headRef}\n` : "",
+					stderr: "",
+				};
 			}
-			if (args.includes('if(empty, "true", "false")')) {
-				return { code: 0, stdout: "true", stderr: "" };
-			}
-			if (args.includes('description.first_line() ++ "\\n"')) {
-				return { code: 0, stdout: "Automation checkpoint\n", stderr: "" };
-			}
-			if (args.includes('change_id ++ "\\n"')) {
-				return { code: 0, stdout: `${changeId}\n`, stderr: "" };
-			}
+			if (args.includes('change_id ++ "\\n"')) return { code: 0, stdout: `${changeId}\n`, stderr: "" };
 			if (args.includes('commit_id ++ "\\n"')) {
 				if (args.includes(`${target.headRef}@origin`)) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
-				return { code: 0, stdout: `${committed ? UPDATED_SHA : SHA}\n`, stderr: "" };
+				if (args.includes("parents(@)")) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
 			}
 			if (args.includes("--name-only")) return { code: 0, stdout: "src/fix.ts\n", stderr: "" };
-			if (args.includes("commit")) committed = true;
+			if (args.includes("squash")) squashed = true;
 			return { code: 0, stdout: "", stderr: "" };
 		};
 		const mutation = createPrMutation(new JjBackend(exec));
@@ -232,8 +232,8 @@ describe("PrMutation with JjBackend", () => {
 		});
 
 		assert.deepEqual(published, { kind: "pushed", headSha: UPDATED_SHA });
-		assert.ok(calls.some((call) => call.includes('commit cwd:"src/fix.ts" -m Apply fixes')));
-		assert.ok(calls.includes(`--no-pager bookmark set ${target.headRef} -r @`));
+		assert.ok(calls.includes('--no-pager squash --from @ --into @- cwd:"src/fix.ts" --use-destination-message'));
+		assert.ok(!calls.some((call) => call.includes("bookmark set")));
 		assert.ok(calls.includes(`--no-pager git push --remote origin --bookmark ${target.headRef}`));
 	});
 });

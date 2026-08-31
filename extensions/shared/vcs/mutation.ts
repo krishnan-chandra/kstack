@@ -45,35 +45,45 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 	}
 
 	async function openCheckout(cwd: string, target: MutationTarget): Promise<VcsResult<{ checkout: MutationCheckout }>> {
-		const [current, head, clean] = await Promise.all([
-			backend.currentRef(cwd),
-			backend.headSha(cwd),
-			backend.isWorkingCopyEmpty(cwd),
-		]);
-		if (!current.ok) return current;
-		const refName = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
-		if (refName !== target.headRef) {
-			const actual =
-				current.ref.kind === "no-bookmark"
-					? `jj change ${current.ref.changeId.slice(0, 12)} with no bookmark`
-					: (refName ?? "a detached HEAD");
-			return {
-				ok: false,
-				error: `Selected PR #${target.prNumber} uses ${target.headRef}, but the current workstream is ${actual}. Open the matching ${policy.workstreamNoun} before retrying.`,
-			};
+		let captured: VcsResult<{ snapshot: WorkstreamSnapshot }>;
+		if (backend.mutationWorkstream) {
+			captured = await backend.mutationWorkstream.open(cwd, target.headRef, target.headSha);
+		} else {
+			const [current, head, clean] = await Promise.all([
+				backend.currentRef(cwd),
+				backend.headSha(cwd),
+				backend.isWorkingCopyEmpty(cwd),
+			]);
+			if (!current.ok) return current;
+			const refName = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
+			if (refName !== target.headRef) {
+				const actual =
+					current.ref.kind === "no-bookmark"
+						? `jj change ${current.ref.changeId.slice(0, 12)} with no bookmark`
+						: (refName ?? "a detached HEAD");
+				return {
+					ok: false,
+					error: `Selected PR #${target.prNumber} uses ${target.headRef}, but the current workstream is ${actual}. Open the matching ${policy.workstreamNoun} before retrying.`,
+				};
+			}
+			if (!head.ok || head.sha !== target.headSha) {
+				return {
+					ok: false,
+					error: `Local HEAD ${head.ok ? head.sha : "could not be read"} does not match PR #${target.prNumber} head ${target.headSha}. Synchronize the PR worktree first.`,
+				};
+			}
+			if (!clean.ok) return clean;
+			if (!clean.empty) {
+				return {
+					ok: false,
+					error: `The ${policy.workstreamNoun} must be clean before pr-autopilot can mutate it.`,
+				};
+			}
+			captured = await backend.captureWorkstream(cwd);
 		}
-		if (!head.ok || head.sha !== target.headSha) {
-			return {
-				ok: false,
-				error: `Local HEAD ${head.ok ? head.sha : "could not be read"} does not match PR #${target.prNumber} head ${target.headSha}. Synchronize the PR worktree first.`,
-			};
-		}
-		if (!clean.ok) return clean;
-		if (!clean.empty) {
-			return {
-				ok: false,
-				error: `The ${policy.workstreamNoun} must be clean before pr-autopilot can mutate it.`,
-			};
+		if (!captured.ok) return captured;
+		if (captured.snapshot.ref !== target.headRef) {
+			return { ok: false, error: `The current workstream identity no longer names ${target.headRef}.` };
 		}
 		const remoteHead = await backend.fetchRemoteHead(cwd, target.headRef);
 		if (!remoteHead.ok) return remoteHead;
@@ -82,11 +92,6 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 				ok: false,
 				error: `The remote PR head advanced to ${remoteHead.sha}; refresh GitHub state before editing.`,
 			};
-		}
-		const captured = await backend.captureWorkstream(cwd);
-		if (!captured.ok) return captured;
-		if (captured.snapshot.ref !== target.headRef) {
-			return { ok: false, error: `The current workstream identity no longer names ${target.headRef}.` };
 		}
 		const guarded = await guardRewriteScope(cwd, target.headRef);
 		if (!guarded.ok) return guarded;
@@ -127,7 +132,9 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 		if (!recorded.ok) return { kind: "failed", error: recorded.error };
 		const published = await backend.publishRecordedChanges(cwd, checkout.snapshot.ref, { existingOnly: true });
 		if (!published.ok) return { kind: "failed", error: published.error };
-		const head = await backend.headSha(cwd);
+		const head = backend.mutationWorkstream
+			? await backend.mutationWorkstream.publishedHeadSha(cwd, checkout.snapshot.ref)
+			: await backend.headSha(cwd);
 		return head.ok ? { kind: "pushed", headSha: head.sha } : { kind: "pushed" };
 	}
 

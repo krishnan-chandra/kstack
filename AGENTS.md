@@ -16,6 +16,7 @@ npm ci
 npm test
 npm run typecheck
 npm run lint
+npm run lint:slop
 npm run check:exports
 npm run check:imports
 ```

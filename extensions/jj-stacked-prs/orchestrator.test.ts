@@ -19,8 +19,6 @@ import { renderInspect, renderPlan } from "./render.ts";
 import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
 import type { BookmarkTarget, NavigationEntry, OpenPullRequest } from "./types.ts";
 
-const NATIVE_STACK_DISABLED: false = false;
-
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -120,9 +118,9 @@ describe("inspect and plan", () => {
 			run: async () => ({ kind: "ok" as const, code: 0, stdout: "", stderr: "" }),
 			ui: ui(),
 			jj,
-			nativeStack: NATIVE_STACK_DISABLED,
+			nativeStack: false,
 			github: fakeGithub(),
-		};
+		} satisfies Parameters<typeof inspectStack>[1];
 		const model = await inspectStack({ cwd: "/repo", top: "feat2" }, deps);
 		assert.match(renderInspect(model), /3 jj changes → 1 PR slice/);
 
@@ -221,7 +219,7 @@ describe("publishStack", () => {
 						run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 						ui: ui({ hasUI: false }),
 						jj,
-						nativeStack: NATIVE_STACK_DISABLED,
+						nativeStack: false,
 						github,
 					},
 				)
@@ -236,7 +234,7 @@ describe("publishStack", () => {
 						run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 						ui: ui({ confirm: false }),
 						jj,
-						nativeStack: NATIVE_STACK_DISABLED,
+						nativeStack: false,
 						github,
 					},
 				)
@@ -255,7 +253,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					markPrReady: async (_repo, prNumber) => {
 						ready.push(prNumber);
@@ -281,7 +279,7 @@ describe("publishStack", () => {
 					},
 				},
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -347,7 +345,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: () => {
 					events.push("acquire");
@@ -392,7 +390,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 				generatePrMetadata: async (request) => {
@@ -442,7 +440,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					createDraftPr: async () => {
 						created = true;
@@ -477,7 +475,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					createDraftPr: async () => {
 						created = true;
@@ -519,7 +517,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					createDraftPr: async () => {
 						created = true;
@@ -582,7 +580,7 @@ describe("publishStack", () => {
 						{ name: "feat2", commitId: "bbb-commit" },
 					],
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -607,7 +605,7 @@ describe("publishStack", () => {
 				jj: fakeJj({
 					listRemoteBookmarks: async () => remoteBookmarks,
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -623,7 +621,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					getAuthenticatedUser: async () => undefined,
 					createOrUpdateComment: async () => {
@@ -648,7 +646,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					createOrUpdateComment: async () => {
 						throw new Error("comment API failed");
@@ -671,7 +669,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					createOrUpdateComment: async () => {
 						throw new GitHubError("comment acceptance unknown", "indeterminate");
@@ -698,7 +696,7 @@ describe("publishStack", () => {
 						throw new Error("push rejected");
 					},
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -719,7 +717,7 @@ describe("publishStack", () => {
 						controller.abort();
 					},
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				signal: controller.signal,
 				acquirePublicationLock: permissiveLock(),
@@ -747,7 +745,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -774,7 +772,7 @@ describe("publishStack", () => {
 					},
 				},
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				signal: controller.signal,
 				acquirePublicationLock: permissiveLock(),
@@ -793,7 +791,7 @@ describe("publishStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -822,7 +820,7 @@ describe("publishStack", () => {
 				jj: fakeJj({
 					listRemoteBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => existing }),
 			},
 		);
@@ -846,7 +844,7 @@ describe("publication lock", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: () => ({
 					ok: false,
@@ -872,7 +870,7 @@ describe("publication lock", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: () => {
 					throw new Error("permission denied");
@@ -899,7 +897,7 @@ describe("publication lock", () => {
 				},
 				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				realpath: (path) => `/canonical${path}`,
 				acquirePublicationLock: (repositoryPath) => {
@@ -923,7 +921,7 @@ describe("publication lock", () => {
 					notify: (message, level) => notifications.push({ message, level }),
 				},
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: () => ({
 					ok: true,
@@ -950,7 +948,7 @@ describe("publication lock", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: () => ({
 					ok: true,
@@ -978,7 +976,7 @@ describe("publication lock", () => {
 						throw new Error("push failure");
 					},
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				acquirePublicationLock: () => ({
 					ok: true,
@@ -1006,7 +1004,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(6),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => linearPrs(6),
 					getPrComments: async () => {
@@ -1065,7 +1063,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(4),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -1090,7 +1088,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(3),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => linearPrs(3),
 					getPrComments: async () => {
@@ -1143,7 +1141,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(2),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => linearPrs(2),
 					getPrComments: async () => [kstackComment(prior)],
@@ -1176,7 +1174,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(2),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => linearPrs(2),
 					createOrUpdateComment: async (input) => {
@@ -1222,7 +1220,7 @@ describe("navigation comment reconciliation concurrency", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: stackedJj(2),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 			},
@@ -1292,7 +1290,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				signal: controller.signal,
 			},
@@ -1312,7 +1310,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listPrsForHead: async () => [
 						{
@@ -1342,7 +1340,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listPrsForHead: async () => [
 						{
@@ -1372,7 +1370,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [
 						{
@@ -1402,7 +1400,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [
 						{
@@ -1435,7 +1433,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [
 						{
@@ -1472,7 +1470,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listPrsForHead: async (_repo, head) =>
 						head === "feat2"
@@ -1512,7 +1510,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listPrsForHead: async () => [
 						{
@@ -1545,7 +1543,7 @@ describe("sync and advance", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [
 						{
@@ -1579,7 +1577,7 @@ describe("requestPublicationFromInput", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				realpath: (path) => path,
 				signal: orchestrator.signal,
@@ -1595,7 +1593,7 @@ describe("requestPublicationFromInput", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj: fakeJj(),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub(),
 				realpath: (path) => path,
 				acquirePublicationLock: permissiveLock(),
@@ -1910,7 +1908,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				landFrontier: async ({ prNumber }) => {
 					calls.push(`land:${prNumber}`);
@@ -1949,7 +1947,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -1985,7 +1983,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2031,7 +2029,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2056,7 +2054,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2092,7 +2090,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2123,7 +2121,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2168,7 +2166,7 @@ describe("landStack", () => {
 					},
 				},
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				landFrontier: async ({ prNumber }) => {
 					calls.push(`land:${prNumber}`);
@@ -2188,7 +2186,7 @@ describe("landStack", () => {
 					run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 					ui: ui(),
 					jj: fakeJj(),
-					nativeStack: NATIVE_STACK_DISABLED,
+					nativeStack: false,
 					github: fakeGithub({ listOpenPrs: async () => openPrs() }),
 					landFrontier: async () => ({
 						handled: true,
@@ -2215,7 +2213,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
 				landFrontier: async () => ({
 					handled: true,
@@ -2254,7 +2252,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2281,7 +2279,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => openPrs(),
 					getMergeCommit: async () => ({
@@ -2309,7 +2307,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -2336,7 +2334,7 @@ describe("landStack", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[0]],
 					deleteRemoteBranch: async () => {

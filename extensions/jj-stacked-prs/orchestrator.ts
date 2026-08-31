@@ -4,7 +4,8 @@ import type { BoundaryValue } from "../shared/validation.ts";
 import { realpathSync } from "node:fs";
 import type { DelegatedFrontierResponse } from "../land/api.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
-import { GitHubError, type GitHubGateway } from "../shared/github.ts";
+import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
+import type { GitHubGateway } from "../shared/github.ts";
 import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import type {
 	CompletedPublicationAction,
@@ -13,8 +14,9 @@ import type {
 	StackPublishOutcome,
 } from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
-import { bookmarkRevset, createJjAdapter, type JjAdapter, JjError } from "./jj.ts";
+import { bookmarkRevset, createJjAdapter, type JjAdapter } from "./jj.ts";
 import {
 	type NativeStack,
 	NativeStackError,
@@ -49,6 +51,8 @@ import {
 	type StackSlice,
 	type SyncOutcome,
 } from "./types.ts";
+
+const NATIVE_INSPECTION_CONCURRENCY = 4;
 
 export interface StackUi {
 	hasUI: boolean;
@@ -854,20 +858,17 @@ async function inspectNativeMembership(
 	cwd: string,
 	signal?: AbortSignal,
 ): Promise<NativeMembership> {
-	const plannedPrNumbers: number[] = [];
-	const memberships = new Map<number, NativeStack>();
-	const coveredPrNumbers = new Set<number>();
-	for (const slice of slices) {
+	const plannedPrNumbers = slices.flatMap((slice) => {
 		const matches = openPrs.filter((pr) => pr.headRef === slice.bookmark);
-		if (matches.length !== 1) continue;
-		const pr = matches[0];
-		plannedPrNumbers.push(pr.number);
-		if (coveredPrNumbers.has(pr.number)) continue;
-		const stack = await native.inspectForPullRequest({ cwd, repo: repository, prNumber: pr.number, signal });
-		if (stack) {
-			memberships.set(stack.stackNumber, stack);
-			for (const member of stack.pullRequests) coveredPrNumbers.add(member.number);
-		}
+		return matches.length === 1 ? [matches[0].number] : [];
+	});
+	const uniquePrNumbers = [...new Set(plannedPrNumbers)];
+	const inspected = await mapWithConcurrencyLimit(uniquePrNumbers, NATIVE_INSPECTION_CONCURRENCY, (prNumber) =>
+		native.inspectForPullRequest({ cwd, repo: repository, prNumber, signal }),
+	);
+	const memberships = new Map<number, NativeStack>();
+	for (const stack of inspected) {
+		if (stack) memberships.set(stack.stackNumber, stack);
 	}
 	if (memberships.size === 0) return { kind: "none" };
 	if (memberships.size > 1) {
@@ -985,14 +986,6 @@ function provisionalPrMetadata(
 		],
 	};
 	return repositoryTemplate ? renderRepositoryPrTemplate(document, repositoryTemplate) : renderPrDocument(document);
-}
-
-function isIndeterminate(error: BoundaryValue): boolean {
-	return (error instanceof JjError || error instanceof GitHubError) && error.kind === "indeterminate";
-}
-
-function errorMessage(error: BoundaryValue): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 function mutationFailure(

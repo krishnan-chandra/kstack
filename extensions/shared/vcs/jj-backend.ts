@@ -47,6 +47,10 @@ export function filesetPath(path: string): string {
 
 export class JjBackend implements VcsBackend {
 	readonly id = "jj" as const;
+	readonly mutationWorkstream = {
+		open: async (cwd: string, ref: string, headSha: string) => this.openMutationWorkstream(cwd, ref, headSha),
+		publishedHeadSha: async (cwd: string, ref: string) => this.bookmarkTarget(cwd, ref),
+	};
 	private readonly exec: ExecFn;
 
 	constructor(exec: ExecFn) {
@@ -91,30 +95,8 @@ export class JjBackend implements VcsBackend {
 	}
 
 	async captureWorkstream(cwd: string): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>> {
-		const [current, change, parents] = await Promise.all([
-			this.currentRef(cwd),
-			this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE], 5_000),
-			this.jj(cwd, ["log", "-r", "parents(@)", "--no-graph", "-T", COMMIT_ID_TEMPLATE], 5_000),
-		]);
-		if (!current.ok) return current;
-		if (current.ref.kind !== "bookmark") {
-			return { ok: false, error: "The jj workstream has no unique bookmark on its current change." };
-		}
-		const changeId = output(change);
-		if (change.code !== 0 || !changeId) {
-			return { ok: false, error: `Could not resolve the current jj change identity: ${diagnostic(change)}` };
-		}
-		const parentCommitIds = lines(parents.stdout).sort();
-		if (parents.code !== 0 || parentCommitIds.length === 0 || parentCommitIds.some((sha) => !SHA_RE.test(sha))) {
-			return { ok: false, error: `Could not resolve the current jj parent commits: ${diagnostic(parents)}` };
-		}
-		return {
-			ok: true,
-			snapshot: {
-				ref: current.ref.name,
-				token: `${current.ref.name}@${changeId}/parents:${parentCommitIds.join(",")}`,
-			},
-		};
+		const captured = await this.captureWorkstreamLocation(cwd);
+		return captured.ok ? { ok: true, snapshot: captured.snapshot } : captured;
 	}
 
 	async assertWorkstreamUnchanged(cwd: string, expected: WorkstreamSnapshot): Promise<VcsResult> {
@@ -204,9 +186,13 @@ export class JjBackend implements VcsBackend {
 			: { ok: false, error: `Workstream postcondition failed: ${head.error}` };
 	}
 
-	async recordPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {
-		const result = await this.jj(cwd, ["commit", ...paths.map(filesetPath), "-m", message], 30_000);
-		return result.code === 0 ? { ok: true } : { ok: false, error: `jj commit failed: ${diagnostic(result)}` };
+	async recordPaths(cwd: string, paths: string[], _message: string): Promise<VcsResult> {
+		const result = await this.jj(
+			cwd,
+			["squash", "--from", "@", "--into", "@-", ...paths.map(filesetPath), "--use-destination-message"],
+			30_000,
+		);
+		return result.code === 0 ? { ok: true } : { ok: false, error: `jj squash failed: ${diagnostic(result)}` };
 	}
 
 	async restorePaths(cwd: string, paths: string[]): Promise<VcsResult> {
@@ -215,30 +201,35 @@ export class JjBackend implements VcsBackend {
 	}
 
 	async publishRecordedChanges(cwd: string, ref: string, _options?: { existingOnly?: boolean }): Promise<VcsResult> {
-		const description = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", 'description.first_line() ++ "\\n"']);
-		if (description.code !== 0) {
-			return { ok: false, error: `Could not inspect the current jj description: ${diagnostic(description)}` };
-		}
-		if (!output(description)) {
-			const empty = await this.isWorkingCopyEmpty(cwd);
-			if (!empty.ok) return empty;
-			if (!empty.empty) {
-				return {
-					ok: false,
-					error: "The current jj change is non-empty and has no description. Record or describe it before pushing.",
-				};
-			}
-			const described = await this.jj(cwd, ["describe", "-m", `Automation checkpoint for ${ref}`]);
-			if (described.code !== 0) {
-				return { ok: false, error: `Could not describe the jj push checkpoint: ${diagnostic(described)}` };
-			}
-		}
-		const moved = await this.jj(cwd, ["bookmark", "set", ref, "-r", "@"]);
-		if (moved.code !== 0) {
-			return { ok: false, error: `Could not move jj bookmark ${ref} to the current change: ${diagnostic(moved)}` };
-		}
+		const target = await this.bookmarkTarget(cwd, ref);
+		if (!target.ok) return { ok: false, error: `Could not publish jj bookmark ${ref}: ${target.error}` };
 		const result = await this.jj(cwd, ["git", "push", "--remote", "origin", "--bookmark", ref], 60_000);
 		return result.code === 0 ? { ok: true } : { ok: false, error: `jj git push failed: ${diagnostic(result)}` };
+	}
+
+	private async openMutationWorkstream(
+		cwd: string,
+		ref: string,
+		headSha: string,
+	): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>> {
+		const clean = await this.isWorkingCopyEmpty(cwd);
+		if (!clean.ok) return clean;
+		if (!clean.empty)
+			return { ok: false, error: "The jj working-copy child must be empty before pr-autopilot can mutate it." };
+		const captured = await this.captureWorkstreamLocation(cwd);
+		if (!captured.ok) return captured;
+		if (captured.rev !== "@-") {
+			return { ok: false, error: "pr-autopilot requires an unbookmarked empty child of the jj PR bookmark." };
+		}
+		if (captured.snapshot.ref !== ref) {
+			return { ok: false, error: `The current jj workstream is ${captured.snapshot.ref}, not ${ref}.` };
+		}
+		const target = await this.bookmarkTarget(cwd, ref);
+		if (!target.ok) return target;
+		if (target.sha !== headSha) {
+			return { ok: false, error: `Local bookmark ${ref} is ${target.sha}, not PR head ${headSha}.` };
+		}
+		return captured;
 	}
 
 	private async fetch(cwd: string, _ref?: string): Promise<VcsResult> {
@@ -259,25 +250,80 @@ export class JjBackend implements VcsBackend {
 		const remote = await this.resolveOne(cwd, `${baseRef}@origin`);
 		if (!remote.ok) return { kind: "failed", error: `Could not resolve ${baseRef}@origin: ${remote.error}` };
 		if (await this.isAncestorOfCurrent(cwd, remote.sha)) return { kind: "already-current" };
-		const current = await this.currentRef(cwd);
-		if (!current.ok || current.ref.kind !== "bookmark") {
-			return { kind: "failed", error: "Cannot merge the base because the current jj change has no unique bookmark." };
-		}
-		const merged = await this.createMerge(cwd, `${baseRef}@origin`, `Merge ${baseRef}@origin`);
+		const current = await this.currentWorkstreamLocation(cwd);
+		if (!current.ok) return { kind: "failed", error: current.error };
+		const merged = await this.createMerge(cwd, current.rev, `${baseRef}@origin`, `Merge ${baseRef}@origin`);
 		if (!merged.ok) {
 			return "files" in merged
 				? { kind: "needs-human", files: merged.files, error: merged.error }
 				: { kind: "failed", error: merged.error };
 		}
-		const moved = await this.jj(cwd, ["bookmark", "set", current.ref.name, "-r", "@"]);
+		const moved = await this.jj(cwd, ["bookmark", "set", current.ref, "-r", "@"]);
 		if (moved.code !== 0) {
 			return {
 				kind: "failed",
-				error: `Merge succeeded but bookmark ${current.ref.name} could not be moved: ${diagnostic(moved)}`,
+				error: `Merge succeeded but bookmark ${current.ref} could not be moved: ${diagnostic(moved)}`,
 			};
 		}
 		const head = await this.headSha(cwd);
 		return head.ok ? { kind: "clean", headSha: head.sha } : { kind: "failed", error: head.error };
+	}
+
+	private async captureWorkstreamLocation(
+		cwd: string,
+	): Promise<VcsResult<{ snapshot: WorkstreamSnapshot; rev: "@" | "@-" }>> {
+		const [atBookmarks, change, parents] = await Promise.all([
+			this.localBookmarksAt(cwd, "@"),
+			this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE], 5_000),
+			this.jj(cwd, ["log", "-r", "parents(@)", "--no-graph", "-T", COMMIT_ID_TEMPLATE], 5_000),
+		]);
+		if (!atBookmarks.ok) return atBookmarks;
+		const changeId = output(change);
+		if (change.code !== 0 || !changeId) {
+			return { ok: false, error: `Could not resolve the current jj change identity: ${diagnostic(change)}` };
+		}
+		const parentCommitIds = lines(parents.stdout).sort();
+		if (parents.code !== 0 || parentCommitIds.length === 0 || parentCommitIds.some((sha) => !SHA_RE.test(sha))) {
+			return { ok: false, error: `Could not resolve the current jj parent commits: ${diagnostic(parents)}` };
+		}
+		const location = await this.resolveWorkstreamLocation(cwd, atBookmarks.names, parentCommitIds);
+		if (!location.ok) return location;
+		return {
+			ok: true,
+			rev: location.rev,
+			snapshot: {
+				ref: location.ref,
+				token: `${location.ref}@${changeId}/parents:${parentCommitIds.join(",")}`,
+			},
+		};
+	}
+
+	private async currentWorkstreamLocation(cwd: string): Promise<VcsResult<{ ref: string; rev: "@" | "@-" }>> {
+		const at = await this.localBookmarksAt(cwd, "@");
+		if (!at.ok) return at;
+		if (at.names.length > 0) return this.resolveWorkstreamLocation(cwd, at.names, []);
+		const parents = await this.resolveMany(cwd, "parents(@)");
+		if (!parents.ok) return parents;
+		return this.resolveWorkstreamLocation(cwd, at.names, parents.shas);
+	}
+
+	private async resolveWorkstreamLocation(
+		cwd: string,
+		atBookmarks: readonly string[],
+		parentCommitIds: readonly string[],
+	): Promise<VcsResult<{ ref: string; rev: "@" | "@-" }>> {
+		if (atBookmarks.length === 1) return { ok: true, ref: atBookmarks[0], rev: "@" };
+		if (atBookmarks.length > 1) {
+			return { ok: false, error: `The current jj change has multiple bookmarks (${atBookmarks.join(", ")}).` };
+		}
+		if (parentCommitIds.length !== 1) {
+			return { ok: false, error: "The unbookmarked jj working copy must have exactly one parent." };
+		}
+		const parent = await this.localBookmarksAt(cwd, "parents(@)");
+		if (!parent.ok) return parent;
+		return parent.names.length === 1
+			? { ok: true, ref: parent.names[0], rev: "@-" }
+			: { ok: false, error: "The jj working-copy parent must have exactly one task bookmark." };
 	}
 
 	private async localBookmarksAt(cwd: string, rev: string): Promise<VcsResult<{ names: string[] }>> {
@@ -300,10 +346,17 @@ export class JjBackend implements VcsBackend {
 	}
 
 	private async resolveOne(cwd: string, rev: string): Promise<VcsResult<{ sha: string }>> {
+		const result = await this.resolveMany(cwd, rev);
+		return result.ok && result.shas.length === 1
+			? { ok: true, sha: result.shas[0] }
+			: { ok: false, error: result.ok ? `Revset ${rev} did not resolve to one commit.` : result.error };
+	}
+
+	private async resolveMany(cwd: string, rev: string): Promise<VcsResult<{ shas: string[] }>> {
 		const result = await this.jj(cwd, ["log", "-r", rev, "--no-graph", "-T", COMMIT_ID_TEMPLATE], 8_000);
-		const ids = lines(result.stdout);
-		return result.code === 0 && ids.length === 1 && SHA_RE.test(ids[0])
-			? { ok: true, sha: ids[0] }
+		const shas = lines(result.stdout);
+		return result.code === 0 && shas.every((sha) => SHA_RE.test(sha))
+			? { ok: true, shas }
 			: { ok: false, error: diagnostic(result) };
 	}
 
@@ -314,6 +367,7 @@ export class JjBackend implements VcsBackend {
 
 	private async createMerge(
 		cwd: string,
+		workstreamRev: "@" | "@-",
 		other: string,
 		message: string,
 	): Promise<VcsResult | { ok: false; error: string; files: string[] }> {
@@ -323,7 +377,7 @@ export class JjBackend implements VcsBackend {
 			return { ok: false, error: `Could not capture the pre-merge jj change: ${diagnostic(preMerge)}` };
 		}
 
-		const result = await this.jj(cwd, ["new", "@", other, "-m", message], 30_000);
+		const result = await this.jj(cwd, ["new", workstreamRev, other, "-m", message], 30_000);
 		if (result.code !== 0) return { ok: false, error: `jj new merge failed: ${diagnostic(result)}` };
 		const merge = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", CHANGE_ID_TEMPLATE]);
 		const mergeIds = lines(merge.stdout);

@@ -62,6 +62,7 @@ export function fakeJj(overrides: Partial<JjAdapter> = {}): JjAdapter & { calls:
 			calls.push(`abandon:${trunk}..${merged}`);
 		},
 		isAncestor: async () => true,
+		areAncestors: async (_cwd, ancestors) => ancestors.map(() => true),
 		...overrides,
 	};
 	return adapter;

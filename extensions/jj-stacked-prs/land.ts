@@ -3,7 +3,7 @@ import type { BoundaryValue } from "../shared/validation.ts";
 /** Stack landing loop: preflight, land, advance, verify, republish. */
 
 import { applyDelegatedFrontierSettlement } from "../land/api.ts";
-import { GitHubError, type GitHubGateway, isMergeMethod } from "../shared/github.ts";
+import { type GitHubGateway, isMergeMethod } from "../shared/github.ts";
 import { acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import {
 	emptyStackLandProgress,
@@ -12,8 +12,9 @@ import {
 	type StackPrefixLandOutcome,
 } from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
-import { createJjAdapter, JjError } from "./jj.ts";
+import { createJjAdapter } from "./jj.ts";
 import { runNativeLand } from "./native-land.ts";
 import {
 	type NativeStack,
@@ -856,15 +857,4 @@ async function runLandLoop(
 			return { status: "completed", ...progress() };
 		}
 	}
-}
-
-function isIndeterminate(error: BoundaryValue): boolean {
-	return (
-		(error instanceof JjError || error instanceof GitHubError || error instanceof NativeStackError) &&
-		error.kind === "indeterminate"
-	);
-}
-
-function errorMessage(error: BoundaryValue): string {
-	return error instanceof Error ? error.message : String(error);
 }

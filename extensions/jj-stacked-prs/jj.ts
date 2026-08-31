@@ -59,6 +59,7 @@ export interface JjAdapter {
 	rebaseStack(cwd: string, top: string, trunk: string, signal?: AbortSignal): Promise<void>;
 	abandonRange(cwd: string, trunk: string, mergedBookmark: string, signal?: AbortSignal): Promise<void>;
 	isAncestor(cwd: string, ancestor: string, descendant: string, signal?: AbortSignal): Promise<boolean>;
+	areAncestors(cwd: string, ancestors: readonly string[], descendant: string, signal?: AbortSignal): Promise<boolean[]>;
 }
 
 export function bookmarkRevset(bookmark: string): string {
@@ -216,6 +217,21 @@ export function createJjAdapter(run: ProcessRunner): JjAdapter {
 				{ cwd, signal },
 			);
 			return nonemptyLines(result.stdout).length > 0;
+		},
+		async areAncestors(cwd, ancestors, descendant, signal) {
+			if (ancestors.length === 0) return [];
+			if (ancestors.length > 100 || ancestors.some((commitId) => !/^[0-9a-f]{40}$/.test(commitId))) {
+				throw new JjError("Ancestry batches require at most 100 full Git commit IDs.");
+			}
+			assertBoundedName(descendant, "revset", MAX_REVSET_CHARS);
+			const candidates = ancestors.join(" | ");
+			const result = await runJj(
+				run,
+				["log", "-r", `(${candidates}) & ::${descendant}`, "--no-graph", "--no-pager", "-T", COMMIT_ID_TEMPLATE],
+				{ cwd, signal },
+			);
+			const found = new Set(nonemptyLines(result.stdout));
+			return ancestors.map((commitId) => found.has(commitId));
 		},
 	};
 }
