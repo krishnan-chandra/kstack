@@ -46,6 +46,35 @@ describe("JjBackend references and workstreams", () => {
 		});
 	});
 
+	it("identifies an empty working-copy child by its parent task bookmark", async () => {
+		const parent = "1".repeat(40);
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "working-copy-change\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "parents(@)", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${parent}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "parents(@)", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+		]);
+		assert.deepEqual(await new JjBackend(exec).captureWorkstream("/repo"), {
+			ok: true,
+			snapshot: { ref: "feature", token: `feature@working-copy-change/parents:${parent}` },
+		});
+	});
+
 	it("identifies a bookmarked workstream by stable change and parent commits", async () => {
 		const parent = "1".repeat(40);
 		const exec = scriptedExec([
@@ -152,11 +181,54 @@ describe("JjBackend mutations", () => {
 		]);
 	});
 
-	it("uses escaped jj filesets for path-scoped commit and restore commands", async () => {
+	it("rejects a mutation checkout whose empty working copy is itself bookmarked", async () => {
 		const exec = scriptedExec([
-			{ command: "jj", args: noPager(["commit", 'cwd:"a.ts"', 'cwd:"b.ts"', "-m", "Apply fixes"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")']),
+				result: { stdout: "true\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "bookmarked-change\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "parents(@)", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${"2".repeat(40)}\n` },
+			},
+		]);
+		const result = await new JjBackend(exec).mutationWorkstream.open("/repo", "feature", "1".repeat(40));
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /unbookmarked empty child/);
+	});
+
+	it("squashes escaped path-scoped fixes into the bookmarked parent", async () => {
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager([
+					"squash",
+					"--from",
+					"@",
+					"--into",
+					"@-",
+					'cwd:"a.ts"',
+					'cwd:"b.ts"',
+					"--use-destination-message",
+				]),
+			},
 			{ command: "jj", args: noPager(["restore", 'cwd:"forbidden.txt"']) },
-			{ command: "jj", args: noPager(["commit", 'cwd:"tilde~x"', "-m", "Apply hostile path"]) },
+			{
+				command: "jj",
+				args: noPager(["squash", "--from", "@", "--into", "@-", 'cwd:"tilde~x"', "--use-destination-message"]),
+			},
 		]);
 		const backend = new JjBackend(exec);
 		assert.deepEqual(await backend.recordPaths("/repo", ["a.ts", "b.ts"], "Apply fixes"), { ok: true });
@@ -164,22 +236,73 @@ describe("JjBackend mutations", () => {
 		assert.deepEqual(await backend.recordPaths("/repo", ["tilde~x"], "Apply hostile path"), { ok: true });
 	});
 
-	it("moves the task bookmark to the current checkpoint before pushing", async () => {
+	it("pushes the existing task bookmark without moving it to the empty child", async () => {
+		const head = "2".repeat(40);
 		const exec = scriptedExec([
 			{
 				command: "jj",
-				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'description.first_line() ++ "\\n"']),
+				args: noPager(["bookmark", "list", "exact:feature", "-T", bookmarkTargetTemplate]),
+				result: { stdout: `feature\t${head}\n` },
 			},
-			{
-				command: "jj",
-				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")']),
-				result: { stdout: "true" },
-			},
-			{ command: "jj", args: noPager(["describe", "-m", "Automation checkpoint for feature"]) },
-			{ command: "jj", args: noPager(["bookmark", "set", "feature", "-r", "@"]) },
 			{ command: "jj", args: noPager(["git", "push", "--remote", "origin", "--bookmark", "feature"]) },
 		]);
 		assert.deepEqual(await new JjBackend(exec).publishRecordedChanges("/repo", "feature"), { ok: true });
+	});
+
+	it("updates the base from an empty child of the bookmarked workstream", async () => {
+		const parent = "2".repeat(40);
+		const remote = "4".repeat(40);
+		const merged = "5".repeat(40);
+		const steps: Step[] = [
+			{ command: "jj", args: noPager(["git", "fetch", "--remote", "origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "main@origin", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${remote}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", `${remote} & ::@`, "--no-graph", "-T", commitTemplate]),
+			},
+			{ command: "jj", args: noPager(["bookmark", "list", "-r", "@", "-T", localBookmarkTemplate]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "parents(@)", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${parent}\n` },
+			},
+			{
+				command: "jj",
+				args: noPager(["bookmark", "list", "-r", "parents(@)", "-T", localBookmarkTemplate]),
+				result: { stdout: "feature\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "empty-child-change\n" },
+			},
+			{ command: "jj", args: noPager(["new", "@-", "main@origin", "-m", "Merge main@origin"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", changeTemplate]),
+				result: { stdout: "merge-change\n" },
+			},
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(conflict, "true", "false")']),
+				result: { stdout: "false\n" },
+			},
+			{ command: "jj", args: noPager(["bookmark", "set", "feature", "-r", "@"]) },
+			{
+				command: "jj",
+				args: noPager(["log", "-r", "@", "--no-graph", "-T", commitTemplate]),
+				result: { stdout: `${merged}\n` },
+			},
+		];
+		assert.deepEqual(await new JjBackend(scriptedExec(steps)).updateBase("/repo", "main"), {
+			kind: "clean",
+			headSha: merged,
+		});
+		assert.equal(steps.length, 0);
 	});
 
 	it("restores the pre-merge change when a base merge conflicts", async () => {

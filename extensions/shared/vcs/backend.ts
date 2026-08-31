@@ -52,11 +52,18 @@ export interface ParentOwnedPublication {
 	publish(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult>;
 }
 
+/** Backend-specific checkout semantics for mutating an existing review head. */
+interface MutationWorkstreamBackend {
+	open(cwd: string, ref: string, headSha: string): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>>;
+	publishedHeadSha(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>>;
+}
+
 export interface VcsBackend {
 	readonly id: VcsBackendId;
 	readonly isolation?: IsolationBackend;
 	readonly rewriteScope?: RewriteScopeGuard;
 	readonly parentOwnedPublication?: ParentOwnedPublication;
+	readonly mutationWorkstream?: MutationWorkstreamBackend;
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>>;
 	headSha(cwd: string): Promise<VcsResult<{ sha: string }>>;
 	currentRef(cwd: string): Promise<VcsResult<{ ref: CurrentRef }>>;

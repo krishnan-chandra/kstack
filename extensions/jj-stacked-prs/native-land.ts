@@ -1,17 +1,17 @@
 /** GitHub-native full-stack preparation, merge submission, queue watch, and jj settlement. */
 
 import { isCodeReady } from "../pr-autopilot/api.ts";
-import { GitHubError } from "../shared/github.ts";
+import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import type { StackLandFrontier, StackLandOutcome } from "../shared/stack/outcome.ts";
-import type { BoundaryValue } from "../shared/validation.ts";
-import { JjError } from "./jj.ts";
-import { type NativeStack, NativeStackError, type NativeStackGateway, samePrNumbers } from "./native-stack.ts";
+import { errorMessage, isIndeterminate } from "./errors.ts";
+import { type NativeStack, type NativeStackGateway, samePrNumbers } from "./native-stack.ts";
 import { applyAdvance, type ResolvedOrchestratorDeps } from "./orchestrator.ts";
 import type { InspectModel, StackMergeMethod, StackReadinessMode } from "./types.ts";
 import { identifyWorkingCopyToSettle, settleWorkingCopyOnTrunk } from "./working-copy-settlement.ts";
 
 const NATIVE_QUEUE_POLL_MS = 10_000;
 const NATIVE_QUEUE_WATCH_MS = 30 * 60_000;
+const NATIVE_READ_CONCURRENCY = 4;
 
 interface NativeLandOptions {
 	cwd: string;
@@ -178,9 +178,12 @@ export async function runNativeLand(
 		}
 		if (merged.status === "failed") return { status: "partial", error: merged.error, ...progress() };
 
+		const verifications = await mapWithConcurrencyLimit(mapped, NATIVE_READ_CONCURRENCY, (slice) =>
+			github.getMergeCommit(repository, slice.prNumber, options.cwd, deps.signal),
+		);
 		const mergeOids: string[] = [];
 		for (const [index, slice] of mapped.entries()) {
-			const verification = await github.getMergeCommit(repository, slice.prNumber, options.cwd, deps.signal);
+			const verification = verifications[index];
 			if (
 				!verification.merged ||
 				!verification.mergeCommitOid ||
@@ -223,13 +226,20 @@ export async function runNativeLand(
 		}
 		completedMutations.push(`Abandoned the landed native stack through ${topBookmark}`);
 		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
-		for (const oid of mergeOids) {
-			if (!(await jj.isAncestor(options.cwd, oid, trunk, deps.signal))) {
-				return { status: "partial", error: `Merged commit ${oid} is not on refreshed trunk.`, ...progress() };
-			}
+		const ancestry = await jj.areAncestors(options.cwd, mergeOids, trunk, deps.signal);
+		const missingMergeIndex = ancestry.findIndex((isAncestor) => !isAncestor);
+		if (missingMergeIndex >= 0) {
+			return {
+				status: "partial",
+				error: `Merged commit ${mergeOids[missingMergeIndex]} is not on refreshed trunk.`,
+				...progress(),
+			};
 		}
-		for (const slice of mapped) {
-			const remoteSha = await github.getRemoteBranchSha(repository, slice.bookmark, options.cwd, deps.signal);
+		const remoteShas = await mapWithConcurrencyLimit(mapped, NATIVE_READ_CONCURRENCY, (slice) =>
+			github.getRemoteBranchSha(repository, slice.bookmark, options.cwd, deps.signal),
+		);
+		for (const [index, slice] of mapped.entries()) {
+			const remoteSha = remoteShas[index];
 			if (remoteSha === slice.headCommitId) {
 				await github.deleteRemoteBranch(repository, slice.bookmark, options.cwd, deps.signal);
 				completedMutations.push(`Deleted remote branch ${slice.bookmark}`);
@@ -306,15 +316,4 @@ function nativeGenerationMatches(stack: NativeStack, mapped: readonly NativeLand
 			(pr, index) => pr.head.ref === mapped[index].bookmark && pr.head.sha === mapped[index].headCommitId,
 		)
 	);
-}
-
-function isIndeterminate(error: BoundaryValue): boolean {
-	return (
-		(error instanceof JjError || error instanceof GitHubError || error instanceof NativeStackError) &&
-		error.kind === "indeterminate"
-	);
-}
-
-function errorMessage(error: BoundaryValue): string {
-	return error instanceof Error ? error.message : String(error);
 }

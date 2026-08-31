@@ -4,8 +4,6 @@ import { buildNavigationComment } from "../shared/stack/topology.ts";
 import { landStackThroughPullRequest } from "./land.ts";
 import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
 
-const NATIVE_STACK_DISABLED: false = false;
-
 describe("stack-prefix landing", () => {
 	it("lands the complete prefix through a selected stacked PR", async () => {
 		const calls: number[] = [];
@@ -31,7 +29,7 @@ describe("stack-prefix landing", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
 				landFrontier: async ({ prNumber, expectedHeadSha }) => {
@@ -61,7 +59,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => stack,
 					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => [readyPr] }),
 				landFrontier: async () => ({ handled: false }),
 			},
@@ -90,7 +88,7 @@ describe("stack-prefix landing", () => {
 						stack = stack.filter((item) => !item.bookmarks.includes(mergedBookmark));
 					},
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => prs.filter((pr) => stack.some((item) => item.bookmarks.includes(pr.headRef))),
 					updatePrBase: async (input) => {
@@ -126,7 +124,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => stack,
 					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[1]],
 					listPrsForHead: async () => [],
@@ -158,7 +156,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => stack,
 					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[1]],
 					listPrsForHead: async (_repo, head) => (head === "feat1" ? [historical, openPrs()[0]] : []),
@@ -193,7 +191,7 @@ describe("stack-prefix landing", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({ listOpenPrs: async () => (stack.length > 0 ? [openPrs()[0]] : []) }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -221,7 +219,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => [one],
 					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
 				}),
-				nativeStack: NATIVE_STACK_DISABLED,
+				nativeStack: false,
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[0]],
 					getPrComments: async () => [{ id: 1, body: navigation, user: "publisher" }],

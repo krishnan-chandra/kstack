@@ -37,6 +37,39 @@ describe("jj adapters", () => {
 		]);
 	});
 
+	it("checks a batch of Git commit ancestors with one jj query", async () => {
+		const first = "1".repeat(40);
+		const second = "2".repeat(40);
+		const calls: string[][] = [];
+		const adapter = createJjAdapter(async (argv) => {
+			calls.push([...argv]);
+			return { kind: "ok", code: 0, stdout: `${second}\n`, stderr: "" };
+		});
+		assert.deepEqual(await adapter.areAncestors(".", [first, second], "trunk()"), [false, true]);
+		assert.deepEqual(calls, [
+			["jj", "log", "-r", `(${first} | ${second}) & ::trunk()`, "--no-graph", "--no-pager", "-T", 'commit_id ++ "\\n"'],
+		]);
+	});
+
+	it("rejects invalid and oversized ancestry batches before running jj", async () => {
+		let calls = 0;
+		const adapter = createJjAdapter(async () => {
+			calls++;
+			return { kind: "ok", code: 0, stdout: "", stderr: "" };
+		});
+		await assert.rejects(() => adapter.areAncestors(".", ["not-a-full-commit-id"], "trunk()"), /full Git commit IDs/);
+		await assert.rejects(
+			() =>
+				adapter.areAncestors(
+					".",
+					Array.from({ length: 101 }, () => "1".repeat(40)),
+					"trunk()",
+				),
+			/at most 100/,
+		);
+		assert.equal(calls, 0);
+	});
+
 	it("reads working-copy status and rejects malformed rows", async () => {
 		const calls: string[][] = [];
 		const byOutput = (stdout: string) =>

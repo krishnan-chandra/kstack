@@ -241,6 +241,35 @@ describe("native landing failures", () => {
 		if (result.status === "partial") assert.deepEqual(result.recoveryOperationIds, ["op1"]);
 	});
 
+	it("stops cleanup when a merged commit is missing from refreshed trunk", async () => {
+		const deleted: string[] = [];
+		const merged = {
+			...nativeStack,
+			pullRequests: nativeStack.pullRequests.map((pr) => ({ ...pr, mergedAt: "now" })),
+		};
+		const result = await runNativeLand(
+			options,
+			deps({
+				jj: fakeJj({ areAncestors: async () => [true, false] }),
+				github: fakeGithub({
+					deleteRemoteBranch: async (_repo, branch) => {
+						deleted.push(branch);
+						return "deleted";
+					},
+				}),
+			}),
+			"squash",
+			model,
+			slices,
+			nativeStack,
+			repository,
+			gateway({ mergeThrough: async () => ({ status: "merged", stack: merged }) }),
+		);
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") assert.match(result.error, /merge-12 is not on refreshed trunk/);
+		assert.deepEqual(deleted, []);
+	});
+
 	it("skips deleting a remote branch whose head changed", async () => {
 		const deleted: string[] = [];
 		const merged = {

@@ -1,6 +1,6 @@
 /** Preserve and restore an empty jj working-copy child across stack settlement. */
 
-import type { BoundaryValue } from "../shared/validation.ts";
+import { errorMessage } from "./errors.ts";
 import type { JjAdapter } from "./jj.ts";
 import type { OrchestratorDeps } from "./orchestrator.ts";
 import type { InspectModel } from "./types.ts";
@@ -8,10 +8,6 @@ import type { InspectModel } from "./types.ts";
 interface SettlementOptions {
 	cwd: string;
 	trunk?: string;
-}
-
-function errorMessage(error: BoundaryValue): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 interface WorkingCopySettlement {
