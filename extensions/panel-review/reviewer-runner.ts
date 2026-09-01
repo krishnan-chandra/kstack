@@ -1,4 +1,6 @@
 /** Thin panel-review adapter around the shared child-agent lifecycle. */
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	type ChildEvent,
 	type ChildRunnerDeps,
@@ -10,6 +12,10 @@ import {
 import { LIMITS, type ReviewerResult, type ReviewerSpec } from "./types.ts";
 
 export type { ChildEvent, SpawnedProcess, SpawnImpl };
+
+const SESSION_ARCHIVE_EXTENSION = join(dirname(fileURLToPath(import.meta.url)), "../session-archive/index.ts");
+const REVIEW_TOOLS = "bash,read,grep,find,ls,search_session_archive,read_session_archive";
+
 export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
 	timeoutMs?: number;
 }
@@ -21,8 +27,10 @@ export function buildChildArgs(opts: {
 }): string[] {
 	return [
 		...childIsolationArgs({ noContextFiles: opts.noContextFiles ?? false }),
+		"--extension",
+		SESSION_ARCHIVE_EXTENSION,
 		"--tools",
-		"read,grep,find,ls",
+		REVIEW_TOOLS,
 		"--model",
 		opts.model,
 		"--append-system-prompt",

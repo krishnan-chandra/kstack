@@ -19,7 +19,7 @@ describe("JsonLineParser", () => {
 });
 
 describe("buildChildArgs", () => {
-	it("is read-only with discovery disabled; session flags are added by the runner", () => {
+	it("enables investigation tools and only the archive extension; session flags are added by the runner", () => {
 		const args = buildChildArgs({ model: "a/b:high", promptFile: "/tmp/p.md", task: "Review /tmp/b.md" });
 		const joined = args.join(" ");
 		assert.match(joined, /--mode json/);
@@ -27,8 +27,8 @@ describe("buildChildArgs", () => {
 		assert.match(joined, /--no-extensions/);
 		assert.match(joined, /--no-skills/);
 		assert.match(joined, /--no-prompt-templates/);
-		assert.match(joined, /--tools read,grep,find,ls/);
-		assert.ok(!joined.includes("bash"));
+		assert.match(joined, /--extension .*session-archive\/index\.ts/);
+		assert.match(joined, /--tools bash,read,grep,find,ls,search_session_archive,read_session_archive/);
 		assert.ok(!joined.includes("write"));
 		assert.ok(!joined.includes("edit"));
 		assert.deepEqual(args[args.length - 1], "Review /tmp/b.md");
