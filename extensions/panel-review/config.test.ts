@@ -186,6 +186,25 @@ const find = (available: string[]) => (provider: string, modelId: string) =>
 	available.includes(`${provider}/${modelId}`) ? { provider, id: modelId } : undefined;
 
 describe("resolveReviewers", () => {
+	it("uses exact configured model IDs when the provider is authenticated but the catalog lags", () => {
+		const model = "openrouter/inception/mercury-2.5-preview";
+		const config = {
+			reviewers: [
+				{ label: "mercury", model },
+				{ label: "known", model: "openai/known" },
+			],
+			maxConcurrency: 2,
+		};
+		const result = resolveReviewers(config, {
+			find: find(["openai/known"]),
+			hasProviderAuth: (provider) => provider === "openrouter",
+			scopedModels: [],
+		});
+		assert.ok(result.ok);
+		assert.equal(result.reviewers[0].model, model);
+		assert.ok(result.warnings.some((warning) => warning.includes("local model catalog")));
+	});
+
 	it("uses config reviewers and reports unavailable models", () => {
 		const config = {
 			reviewers: [
@@ -292,6 +311,17 @@ describe("resolveSynthesisModel", () => {
 		assert.equal(r.model, "openrouter/z-ai/glm-5.2");
 		assert.equal(r.thinking, "low");
 		assert.equal(r.source, "config");
+	});
+
+	it("uses an exact configured synthesis ID when its provider is authenticated", () => {
+		const model = "openrouter/inception/mercury-2.5-preview";
+		const r = resolveSynthesisModel(
+			{ synthesis: { model } },
+			{ find: find([]), hasProviderAuth: (provider) => provider === "openrouter", scopedModels: [] },
+		);
+		assert.ok(r.ok);
+		assert.equal(r.model, model);
+		assert.ok(r.warnings.some((warning) => warning.includes("local model catalog")));
 	});
 
 	it("hard-errors when the configured synthesis model is unavailable", () => {
