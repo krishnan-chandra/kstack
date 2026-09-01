@@ -136,6 +136,9 @@ export default function (pi: ExtensionAPI): void {
 				const model = ctx.modelRegistry.find(provider, modelId);
 				return model && ctx.modelRegistry.hasConfiguredAuth(model) ? model : undefined;
 			},
+			hasProviderAuth: (provider) =>
+				!ctx.modelRegistry.getRegisteredProviderIds().includes(provider) &&
+				ctx.modelRegistry.getProviderAuthStatus(provider).configured,
 			scopedModels: ctx.scopedModels,
 			activeModel: ctx.model,
 		});

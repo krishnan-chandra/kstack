@@ -198,6 +198,8 @@ interface ModelLike {
 export interface ResolveDeps {
 	/** Resolve "provider/model" against the registry; return undefined when unavailable. */
 	find: (provider: string, modelId: string) => ModelLike | undefined;
+	/** True when an exact configured ID can use the provider despite catalog lag. */
+	hasProviderAuth?: (provider: string) => boolean;
 	/** Scoped models for the session (may be empty = unscoped). */
 	scopedModels: readonly { model: ModelLike; thinkingLevel?: ModelThinkingLevel }[];
 	/** Currently active model. */
@@ -232,12 +234,17 @@ export function resolveSynthesisModel(
 	if (config) {
 		const { provider, modelId } = splitModelRef(config.synthesis.model);
 		if (!deps.find(provider, modelId)) {
-			return {
-				ok: false,
-				error:
-					`Configured synthesis model is unavailable or unauthenticated: ${config.synthesis.model}\n` +
-					"Fix the panel-review section in kstack.json or authenticate the provider.",
-			};
+			if (!deps.hasProviderAuth?.(provider)) {
+				return {
+					ok: false,
+					error:
+						`Configured synthesis model is unavailable or unauthenticated: ${config.synthesis.model}\n` +
+						"Fix the panel-review section in kstack.json or authenticate the provider.",
+				};
+			}
+			warnings.push(
+				`Configured synthesis model ${config.synthesis.model} is absent from Pi's local model catalog; using the exact ID with authenticated provider ${provider}.`,
+			);
 		}
 		return { ok: true, model: config.synthesis.model, thinking: config.synthesis.thinking, source: "config", warnings };
 	}
@@ -280,7 +287,12 @@ export function resolveReviewers(
 		const unavailable: string[] = [];
 		for (const r of config.reviewers) {
 			const { provider, modelId } = splitModelRef(r.model);
-			if (!deps.find(provider, modelId)) {
+			if (deps.find(provider, modelId)) continue;
+			if (deps.hasProviderAuth?.(provider)) {
+				warnings.push(
+					`Configured reviewer model ${r.model} is absent from Pi's local model catalog; using the exact ID with authenticated provider ${provider}.`,
+				);
+			} else {
 				unavailable.push(`${r.label}: ${r.model}`);
 			}
 		}

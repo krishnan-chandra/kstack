@@ -204,9 +204,13 @@ the `"panel-review"` section:
 }
 ```
 
-- 2–5 reviewers, unique labels, models resolved through Pi's model registry.
-  `thinking` must be one of `off`, `minimal`, `low`, `medium`, `high`,
-  `xhigh`, `max`.
+- 2–5 reviewers with unique labels. Cataloged models resolve through Pi's
+  model registry. An exact configured model ID that is missing from the local
+  catalog is still accepted when its built-in provider is authenticated; this
+  supports provider catalogs such as OpenRouter that can update ahead of Pi.
+  Extension-registered providers are not accepted because isolated children run
+  with `--no-extensions`. `thinking` must be one of `off`, `minimal`, `low`,
+  `medium`, `high`, `xhigh`, `max`.
 - `timeoutMinutes` (default 10) is the per-child idle limit: any child output
   resets the timer, so a slow provider keeps running while it produces output
   and only stalled children are killed. `maxRuntimeMinutes` (default 30) is
@@ -215,8 +219,9 @@ the `"panel-review"` section:
   reports into the lead verdict after the panel finishes. Synthesis works on
   bounded reports, so a small, fast model is usually the right pick; an
   optional `thinking` level uses the same values as reviewers. A configured
-  synthesis model that is unavailable or unauthenticated aborts the run
-  before anything is launched. Without a config file, synthesis runs on the
+  synthesis model whose provider is unavailable or unauthenticated aborts the
+  run before anything is launched. Exact IDs use the same authenticated-provider
+  catalog-lag behavior as reviewer models. Without a config file, synthesis runs on the
   built-in default **GPT-5.6 Terra** (`openai/gpt-5.6-terra`, medium), falling
   back to the active model with a warning.
 - Without a config, a built-in low-cost default panel runs: **Claude Sonnet 5**
