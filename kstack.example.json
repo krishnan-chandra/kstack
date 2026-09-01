@@ -21,8 +21,8 @@
         "thinking": "medium"
       },
       {
-        "label": "deepseek",
-        "model": "openrouter/deepseek/deepseek-v4-flash",
+        "label": "mercury",
+        "model": "openrouter/inception/mercury-2.5-preview",
         "thinking": "medium"
       },
       {
