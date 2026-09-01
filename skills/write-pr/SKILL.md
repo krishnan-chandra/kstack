@@ -64,6 +64,10 @@ When signing is requested or required, inspect the signatures on every outgoing 
 
 Do not change user-level identity or signing configuration without the user's approval. If optional signing is not requested, continue without treating unsigned jj commits as an error.
 
+## Match the user's voice
+
+Before composing the title or body, consult the `my-voice` skill and read its voice profile when available. Apply that voice to the prose while preserving this skill's technical structure and the repository template. If no profile is available, use direct, plain language.
+
 ## Compose the title
 
 Write one concrete title that names the primary user-visible or developer-visible outcome. The repository template's title instructions are authoritative. Apply its required syntax, prefix, issue reference, capitalization, and length before the defaults below.

@@ -12,7 +12,7 @@ import {
 	type VerifiedStackManifest,
 	verifyStackManifestGitFacts,
 } from "../shared/stack/manifest.ts";
-import type { StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
+import type { CompletedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -41,28 +41,39 @@ function graphitePublication(pullRequests: readonly GraphitePublishedPullRequest
 	};
 }
 
+function graphiteCreatedActions(
+	plan: GraphitePublicationPlan,
+	pullRequests: readonly GraphitePublishedPullRequest[],
+): CompletedPublicationAction[] {
+	const existingRefs = new Set(plan.existing.map((pr) => pr.ref));
+	return pullRequests
+		.filter((pr) => !existingRefs.has(pr.ref))
+		.map((pr) => ({ kind: "create-draft-pr", ref: pr.ref, prNumber: pr.prNumber, url: pr.url }));
+}
+
 function blockedPublish(message: string): StackPublishOutcome {
 	return { status: "blocked", blockers: [{ code: "graphite-publish", message }] };
 }
 
 function graphiteSubmitFailure(
-	planId: string,
+	plan: GraphitePublicationPlan,
 	message: string,
 	pullRequests: readonly GraphitePublishedPullRequest[],
 ): StackPublishOutcome {
 	const error = message.trim();
 	if (pullRequests.length > 0) {
+		const createdActions = graphiteCreatedActions(plan, pullRequests);
 		return {
 			status: "partial",
-			planId,
-			completedActions: [],
+			planId: plan.planId,
+			completedActions: createdActions,
 			failedAction: { kind: "create-draft-pr", error },
 			publication: graphitePublication(pullRequests),
 		};
 	}
 	return {
 		status: "indeterminate",
-		planId,
+		planId: plan.planId,
 		inFlight: { kind: "create-draft-pr", error },
 		completedActions: [],
 	};
@@ -284,21 +295,22 @@ export async function submitGraphiteStack(
 		} catch (error) {
 			const inspected = await inspectPublishedStack(exec, plan);
 			const message = `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)} ${inspected.errors.join(" ")}`;
-			return graphiteSubmitFailure(plan.planId, message, inspected.pullRequests);
+			return graphiteSubmitFailure(plan, message, inspected.pullRequests);
 		}
 		const inspected = await inspectPublishedStack(exec, plan);
 		if (submitted.code !== 0) {
 			const message = `gt submit --stack returned ${commandDiagnostic(submitted)} after publication began. ${inspected.errors.join(" ")}`;
-			return graphiteSubmitFailure(plan.planId, message, inspected.pullRequests);
+			return graphiteSubmitFailure(plan, message, inspected.pullRequests);
 		}
 		if (inspected.errors.length > 0) {
-			return graphiteSubmitFailure(plan.planId, inspected.errors.join(" "), inspected.pullRequests);
+			return graphiteSubmitFailure(plan, inspected.errors.join(" "), inspected.pullRequests);
 		}
+		const createdActions = graphiteCreatedActions(plan, inspected.pullRequests);
 		return {
 			status: "completed",
 			planId: plan.planId,
 			publication: graphitePublication(inspected.pullRequests),
-			completedActions: [],
+			completedActions: createdActions,
 		};
 	} finally {
 		lock.lock.release();
