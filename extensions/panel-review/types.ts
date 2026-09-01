@@ -88,7 +88,7 @@ export type PanelReviewOutcome =
 	| { status: "aborted" }
 	| { status: "failed"; error: string };
 
-export type BaseStrategy = "explicit" | "upstream" | "remote-default" | "main" | "master" | "head" | "pr";
+export type BaseStrategy = "explicit" | "upstream" | "remote-default" | "main" | "master" | "head" | "jj-trunk" | "pr";
 
 export interface BaseResolution {
 	/** Ref the user asked for (or the fallback ref that resolved). */
@@ -103,7 +103,7 @@ export interface ScopeBundle {
 	path: string;
 	/** Temp directory containing the bundle; removed in finally. */
 	dir: string;
-	/** Git worktree used to build the immutable bundle. */
+	/** Git worktree or jj workspace used to build the bundle. */
 	repoRoot: string;
 	/** Source tree exposed to reviewer read-only tools. */
 	reviewRoot: string;

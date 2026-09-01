@@ -1,8 +1,8 @@
 # panel-review
 
 Run several isolated, non-editing Pi subagents in parallel against the same Git
-changeset, then synthesize their independent findings into one lead-review
-verdict.
+changeset, jj working-copy commit, or GitHub PR, then synthesize their
+independent findings into one lead-review verdict.
 
 ```
 /panel-review
@@ -40,6 +40,14 @@ ignores the outcome.
 ## How it works
 
 1. Resolves the review target:
+   - In a colocated jj workspace, snapshots the working copy through jj and
+     pins revision `@`. This works in both the primary workspace and secondary
+     workspaces created by `jj workspace add`, which do not have their own
+     `.git` entry. An explicit `--base` is resolved as a jj revision; otherwise
+     the base is `trunk()`. The committed diff covers
+     `merge-base(base, @)..@`, including the current jj change and its
+     description. Unresolved conflicts stop the run before reviewers launch.
+     Ignored files are excluded because jj does not snapshot them.
    - In PR mode (`--pr <number>`), fetches the PR head and base source refs
      from `origin` with an empty refmap, then verifies the pinned commit OIDs
      locally. The fetch writes objects but does not update local or
@@ -51,10 +59,14 @@ ignores the outcome.
      PR trees that contain symbolic links are rejected before extraction so
      reviewer reads cannot escape the snapshot root. The temporary snapshot is
      removed when the run ends.
-   - In standard mode, resolves the review base: explicit `--base`, else the
-     branch upstream, else `origin/HEAD`, else `main`/`master`, else `HEAD`
+   - In standard Git mode, resolves the review base: explicit `--base`, else
+     the branch upstream, else `origin/HEAD`, else `main`/`master`, else `HEAD`
      (working-tree only). The exact merge-base SHA is recorded so every reviewer
      sees an immutable baseline.
+   - jj and PR targets are extracted into private temporary source snapshots.
+     Reviewers inspect the pinned commit rather than the live workspace. The run
+     does not create, move, or reset Git worktrees, jj workspaces, branches, or
+     bookmarks.
 2. Builds a bounded bundle in a mode-`0600` temp file outside the repository:
    `git diff --find-renames --find-copies <merge-base>` (committed + staged +
    unstaged together), porcelain status, bounded contents of untracked text
@@ -225,10 +237,10 @@ the `"panel-review"` section:
 | Total bundle | 2 MiB |
 | Per untracked text file | 256 KiB |
 | Untracked files included | 200 (overflow disclosed, not named) |
-| PR snapshot tracked blob content | 512 MiB |
-| PR snapshot tracked entries | 200,000 |
-| PR snapshot tar archive | 512 MiB |
-| PR snapshot symbolic links | 0 (tree rejected before extraction) |
+| Pinned commit snapshot tracked blob content | 512 MiB |
+| Pinned commit snapshot tracked entries | 200,000 |
+| Pinned commit snapshot tar archive | 512 MiB |
+| Pinned commit snapshot symbolic links | 0 (tree rejected before extraction) |
 | Per reviewer report into synthesis | 256 KiB |
 | Aggregate synthesis input | 1 MiB |
 | Child stderr retention | 64 KiB |
@@ -238,9 +250,9 @@ the `"panel-review"` section:
 | Console transcript cap | 2 MiB / 5,000 entries per child (oldest evicted with notice) |
 | Console entry text cap | 256 KiB per entry (UTF-8 safe head/tail truncation) |
 
-PR snapshot materialization stops before archiving when the pinned tree exceeds
-the tracked-byte or entry limit. The archive and extracted tree can briefly use
-up to about twice the archive limit in the system temp directory.
+PR and jj snapshot materialization stops before archiving when the pinned tree
+exceeds the tracked-byte or entry limit. The archive and extracted tree can
+briefly use up to about twice the archive limit in the system temp directory.
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes
@@ -258,10 +270,14 @@ Review Limitations.
 - Temp cleanup failure: warned and the private path is reported. Bundle files
   remain mode `0600`; snapshot files remain contained by their owner-only temp
   directory.
-- Standard mode leaves the repository unchanged.
+- Standard Git mode leaves the repository unchanged.
+- jj mode performs jj's normal automatic working-copy snapshot, then reads the
+  pinned commit from the colocated Git object store. It does not move bookmarks,
+  create workspaces, or alter the working-copy commit.
 - PR mode fetches objects into the local object database. It leaves the current
-  working tree, refs, branches, Git worktrees, and jj workspaces unchanged. The
-  snapshot is created for the run and removed after completion, abort, or failure.
+  working tree, refs, branches, Git worktrees, and jj workspaces unchanged.
+- jj and PR snapshots are created for the run and removed after completion,
+  abort, or failure.
 
 ## Development
 
@@ -279,8 +295,10 @@ untracked, and binary changes, run
 progress, child argv (managed session flags, discovery flags, read-only tools),
 a single verdict message, no child session files, and an unchanged repository.
 For PR mode, also compare refs and
-`git worktree list --porcelain` before and after the run. Confirm that reviewers
-read the pinned head rather than dirty files from the current checkout.
+`git worktree list --porcelain` before and after the run. For jj mode, test both
+its primary workspace and a secondary `jj workspace add` workspace without a
+`.git` entry. Confirm that reviewers read the pinned `@` snapshot rather than
+later changes in the live workspace.
 
 `extensions/panel-review/prompts/thermo-nuclear.md` is the canonical lens.
 The explicit skill points to that resource, and panel-review loads it directly
