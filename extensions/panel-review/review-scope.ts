@@ -227,6 +227,8 @@ export interface CollectScopeOptions {
 	untrackedFiles?: number;
 	/** Pinned committed head. Omit to include the current index and working tree. */
 	headSha?: string;
+	/** Validated source root when Git commands use an explicit object store. */
+	repositoryRoot?: string;
 }
 
 /**
@@ -245,7 +247,7 @@ export function collectScope(
 	const fileCap = options.untrackedFileBytes ?? LIMITS.untrackedFileBytes;
 	const generatedAt = (options.now ?? (() => new Date()))().toISOString();
 
-	const repoRoot = requireWorkTree(exec, cwd);
+	const repoRoot = options.repositoryRoot ?? requireWorkTree(exec, cwd);
 	const isCommitTarget = options.headSha !== undefined;
 	const headSha = options.headSha ?? (tryGit(exec, ["rev-parse", "HEAD"], cwd) ?? "").trim();
 	if (!headSha) throw new Error("Cannot resolve HEAD.");

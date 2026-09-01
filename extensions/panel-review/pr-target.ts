@@ -1,4 +1,4 @@
-/** Resolve a pinned GitHub PR target and materialize a temporary source snapshot. */
+/** Resolve a pinned GitHub PR target and materialize pinned commit snapshots. */
 
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,7 +49,9 @@ function inspectTree(stdout: string) {
 		if (!match) throw new Error("Git returned invalid PR tree metadata.");
 		const [, mode, objectType, rawSize] = match;
 		if (mode === "120000") {
-			throw new Error("PR snapshot contains symbolic links; review refused because they can escape the snapshot root.");
+			throw new Error(
+				"Commit snapshot contains symbolic links; review refused because they can escape the snapshot root.",
+			);
 		}
 		trackedEntries++;
 		if (objectType !== "blob") continue;
@@ -63,7 +65,7 @@ function inspectTree(stdout: string) {
 }
 
 function assertLimit(name: string, actual: number, maximum: number): void {
-	if (actual > maximum) throw new Error(`PR snapshot ${name} (${actual}) exceeds the limit (${maximum}).`);
+	if (actual > maximum) throw new Error(`Commit snapshot ${name} (${actual}) exceeds the limit (${maximum}).`);
 }
 
 function git(
