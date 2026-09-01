@@ -1,6 +1,11 @@
 /** Bounded tables and confirmation summaries. */
 
-import type { StackLandFrontier, StackLandOutcome, StackPublishOutcome } from "../shared/stack/outcome.ts";
+import {
+	publicationMetadataFollowUp,
+	type StackLandFrontier,
+	type StackLandOutcome,
+	type StackPublishOutcome,
+} from "../shared/stack/outcome.ts";
 import { shortenId } from "./stack.ts";
 import {
 	CHANGE_ID_DISPLAY_CHARS,
@@ -221,6 +226,7 @@ export function renderConfirmation(plan: PublicationPlan): { ok: true; body: str
 }
 
 export function renderOutcome(outcome: StackPublishOutcome): string {
+	const followUp = publicationMetadataFollowUp(outcome);
 	switch (outcome.status) {
 		case "completed":
 			return boundText(
@@ -231,6 +237,7 @@ export function renderOutcome(outcome: StackPublishOutcome): string {
 					...outcome.publication.pullRequests.map(
 						(pr) => `#${pr.prNumber} ${pr.ref} → ${pr.baseRef ?? "trunk"} ${pr.url}`,
 					),
+					...(followUp ? ["", followUp] : []),
 					...(outcome.commentErrors?.length
 						? ["", "Navigation comment errors:", ...outcome.commentErrors.map((error) => `- ${error}`)]
 						: []),
@@ -250,10 +257,16 @@ export function renderOutcome(outcome: StackPublishOutcome): string {
 					"Publication stopped after a conclusive failure.",
 					...outcome.completedActions.map((action) => `- completed ${action.kind}`),
 					`- failed ${outcome.failedAction.kind}: ${outcome.failedAction.error}`,
+					...(followUp ? ["", followUp] : []),
 				].join("\n"),
 			);
 		case "indeterminate":
-			return `Publication is indeterminate: ${outcome.inFlight.kind} ${outcome.inFlight.error}. Capture a fresh plan before retrying.`;
+			return boundText(
+				[
+					`Publication is indeterminate: ${outcome.inFlight.kind} ${outcome.inFlight.error}. Capture a fresh plan before retrying.`,
+					...(followUp ? ["", followUp] : []),
+				].join("\n"),
+			);
 		case "declined":
 			return "Publication declined.";
 		case "busy":

@@ -339,6 +339,28 @@ async function applyPublication(
 		draft: slice.existingPr?.draft ?? true,
 		createPr: !slice.existingPr,
 	}));
+	const knownPublication = (): StackPublicationMap | undefined => {
+		const pullRequests = published
+			.filter(
+				(slice): slice is typeof slice & { prNumber: number; url: string } =>
+					slice.prNumber !== undefined && slice.url !== undefined,
+			)
+			.map((slice) => ({
+				ref: slice.ref,
+				baseRef: slice.baseRef,
+				headSha: slice.headSha,
+				prNumber: slice.prNumber,
+				url: slice.url,
+				draft: slice.draft,
+			}));
+		if (pullRequests.length === 0) return undefined;
+		return {
+			topRef: pullRequests.at(-1)?.ref ?? "",
+			remote: plan.remote,
+			repository: plan.repository,
+			pullRequests,
+		};
+	};
 	const plannedActions = plan.slices.flatMap((slice, index) => slice.actions.map((action) => ({ action, index })));
 	const orderedActions = [
 		...plannedActions.filter(({ action }) => action.kind === "push-bookmark"),
@@ -351,6 +373,7 @@ async function applyPublication(
 				status: "partial",
 				planId: plan.planId,
 				completedActions: completed,
+				publication: knownPublication(),
 				failedAction: failedAction(action, new Error("Publication was cancelled before this action started.")),
 			};
 		}
@@ -419,11 +442,18 @@ async function applyPublication(
 					planId: plan.planId,
 					inFlight: failed,
 					completedActions: completed,
+					publication: knownPublication(),
 					recovery: "Inspect remote branches and PRs, then publish again from a fresh plan.",
 				};
 			}
 			if (completed.length === 0) return { status: "failed", error: failed.error, completedActions: [] };
-			return { status: "partial", planId: plan.planId, completedActions: completed, failedAction: failed };
+			return {
+				status: "partial",
+				planId: plan.planId,
+				completedActions: completed,
+				publication: knownPublication(),
+				failedAction: failed,
+			};
 		}
 	}
 	const proven = published.filter(
@@ -435,6 +465,7 @@ async function applyPublication(
 			status: "partial",
 			planId: plan.planId,
 			completedActions: completed,
+			publication: knownPublication(),
 			failedAction: { kind: "create-draft-pr", error: "A published PR could not be proven." },
 		};
 	}

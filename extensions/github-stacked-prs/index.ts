@@ -18,7 +18,7 @@ import {
 	STACK_PUBLICATION_EVENT,
 	type StackProviderCapabilities,
 } from "../shared/stack/channel.ts";
-import type { StackPublishOutcome } from "../shared/stack/outcome.ts";
+import { publicationMetadataFollowUp, type StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { completeGitHubStackArgs, parseGitHubStackArgs } from "./args.ts";
 import { preflightGitHubStack, publishGitHubManifestFile, publishGitHubStack } from "./delivery.ts";
 import { discoverGitHubStack } from "./discovery.ts";
@@ -48,7 +48,8 @@ function combineSignals(primary: AbortSignal, ...others: Array<AbortSignal | und
 }
 
 export function renderOutcome(outcome: StackPublishOutcome): string {
-	const text = JSON.stringify(outcome, null, 2);
+	const followUp = publicationMetadataFollowUp(outcome);
+	const text = followUp ? `${JSON.stringify(outcome, null, 2)}\n\n${followUp}` : JSON.stringify(outcome, null, 2);
 	const marker = "\n[Output truncated]";
 	const truncated = truncateHead(text, {
 		maxBytes: 50 * 1024 - Buffer.byteLength(marker, "utf8"),

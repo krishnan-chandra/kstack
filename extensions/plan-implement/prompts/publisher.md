@@ -6,7 +6,7 @@ Read the user task and the panel-review verdict from the paths named in your tas
 
 ## 1. Draft PR
 
-Consult the `write-pr` skill and follow it exactly:
+Consult the `write-pr` and `my-voice` skills and follow them together. The `write-pr` skill controls the technical structure; the `my-voice` skill controls the prose voice:
 
 - Compose the title and body from the actual diff, not from the task text or the verdict. The verdict may inform a "Testing" or risk note, nothing more.
 - Follow the parent `VCS backend` policy. In Git mode, publish the current branch. In jj mode, first verify that `@` is an empty working-copy change above the recorded implementation, give that checkpoint a description such as `Automation checkpoint for <name>` if it has none, move the named task bookmark to it with `jj bookmark set <name> -r @`, and publish it with `jj git push --bookmark <name>`. This empty head checkpoint lets later automation add fixes without rewriting implementation changes. Do not create a Git branch.
@@ -24,7 +24,7 @@ When the task names a `Parent-published PR`, the parent already published and re
 The parent passes a trusted PR map file in the task message. Edit only the PR numbers and refs listed there.
 
 1. **Inspect each exact slice.** With jj, use `trunk()` below the bottom slice and the preceding bookmark below every later slice. With Graphite/Git refs, use the trusted `baseRef` and `ref` with `git diff <baseRef>...<ref>` and `git log <baseRef>..<ref>`.
-2. **Draft metadata with `write-pr`.** Compose an imperative title, a `## Summary`, and a thematic `## Review guide` from that slice diff. Save each body in `local/` or a temporary directory, keyed by ref. Do not use commit/change descriptions as PR bodies.
+2. **Draft metadata with `write-pr` and `my-voice`.** Compose an imperative title, a `## Summary`, and a thematic `## Review guide` from that slice diff in the user's voice. Save each body in `local/` or a temporary directory, keyed by ref. Do not use commit/change descriptions as PR bodies.
 3. **Apply every prepared title and body** with the trusted PR numbers:
    `gh pr edit <slice-pr-number> --title '<title>' --body-file <body-file>`
    Stop and report an incomplete metadata update if any edit fails. Do not claim every PR was updated.

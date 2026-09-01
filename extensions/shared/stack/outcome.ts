@@ -20,6 +20,9 @@ export interface StackPublishedPullRequest {
 	headSha?: string;
 }
 
+const PR_METADATA_FOLLOW_UP =
+	"Immediately rewrite each new draft's title and body with the write-pr skill, using the user's voice from the my-voice skill.";
+
 export interface StackPublicationMap {
 	topRef: string;
 	pullRequests: readonly StackPublishedPullRequest[];
@@ -74,9 +77,23 @@ export type StackPublishOutcome =
 			planId?: string;
 			inFlight: FailedPublicationAction;
 			completedActions: readonly CompletedPublicationAction[];
+			publication?: StackPublicationMap;
 			recovery?: string;
 	  }
 	| { status: "failed"; error: string; completedActions?: readonly CompletedPublicationAction[] };
+
+export function newlyCreatedDrafts(outcome: StackPublishOutcome): readonly StackPublishedPullRequest[] {
+	if (outcome.status !== "completed" && outcome.status !== "partial" && outcome.status !== "indeterminate") return [];
+	if (!outcome.publication) return [];
+	const createdPrNumbers = new Set(
+		outcome.completedActions.filter((action) => action.kind === "create-draft-pr").map((action) => action.prNumber),
+	);
+	return outcome.publication.pullRequests.filter((pr) => pr.draft && createdPrNumbers.has(pr.prNumber));
+}
+
+export function publicationMetadataFollowUp(outcome: StackPublishOutcome): string | undefined {
+	return newlyCreatedDrafts(outcome).length > 0 ? PR_METADATA_FOLLOW_UP : undefined;
+}
 
 export interface StackLandFrontier {
 	ref: string;

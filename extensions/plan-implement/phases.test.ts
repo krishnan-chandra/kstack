@@ -236,6 +236,58 @@ describe("plan-implement phases", () => {
 		assert.match(notifications.join("\n"), /declined/);
 	});
 
+	it("launches metadata repair for drafts created by a partial publication", async () => {
+		let trustedMap = "";
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				if (input.role === "publisher") {
+					const task = readFileSync(input.taskFile!, "utf8");
+					const mapPath = task.match(/Trusted published PR map: (.+)/)?.[1];
+					assert.ok(mapPath);
+					trustedMap = readFileSync(mapPath, "utf8");
+				}
+				return { status: "completed", role: input.role, model: input.model, output: "fixed", usage };
+			},
+			requestStackPublication: async () => ({
+				handled: true,
+				outcome: {
+					status: "partial",
+					planId: "plan",
+					completedActions: [{ kind: "create-draft-pr", ref: "feat1", prNumber: 11, url: "https://example/11" }],
+					failedAction: { kind: "create-draft-pr", ref: "feat2", error: "creation failed" },
+					publication: {
+						topRef: "feat1",
+						pullRequests: [{ ref: "feat1", baseRef: "main", prNumber: 11, url: "https://example/11", draft: true }],
+					},
+				},
+			}),
+		});
+		await runPostReviewPhases("nothing", options(), { workflowCwd: "/repo" }, fx);
+		assert.match(trustedMap, /"prNumber": 11/);
+		assert.match(notifications.join("\n"), /partial/);
+	});
+
+	it("does not launch metadata repair for a partial publication without created drafts", async () => {
+		let publisherRan = false;
+		const { fx } = effects({
+			runAgent: async (input) => {
+				if (input.role === "publisher") publisherRan = true;
+				return { status: "completed", role: input.role, model: input.model, output: "fixed", usage };
+			},
+			requestStackPublication: async () => ({
+				handled: true,
+				outcome: {
+					status: "partial",
+					planId: "plan",
+					completedActions: [{ kind: "push-bookmark", ref: "feat1" }],
+					failedAction: { kind: "create-draft-pr", ref: "feat1", error: "creation failed" },
+				},
+			}),
+		});
+		await runPostReviewPhases("nothing", options(), { workflowCwd: "/repo" }, fx);
+		assert.equal(publisherRan, false);
+	});
+
 	it("writes the trusted PR map and can decline metadata after completed publication", async () => {
 		let publisherRan = false;
 		let confirms = 0;

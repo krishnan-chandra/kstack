@@ -7,7 +7,12 @@ import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
-import type { StackPublishOutcome } from "../shared/stack/outcome.ts";
+import {
+	newlyCreatedDrafts,
+	publicationMetadataFollowUp,
+	type StackPublicationMap,
+	type StackPublishOutcome,
+} from "../shared/stack/outcome.ts";
 import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
 import { runAgent } from "./agent-runner.ts";
@@ -73,8 +78,11 @@ export function phaseErrorText(result: AgentRunResult): string {
 
 function describeStackPublication(outcome: StackPublishOutcome): string {
 	switch (outcome.status) {
-		case "completed":
-			return `Published ${outcome.publication.pullRequests.length} stacked PR(s).`;
+		case "completed": {
+			const summary = `Published ${outcome.publication.pullRequests.length} stacked PR(s).`;
+			const followUp = publicationMetadataFollowUp(outcome);
+			return followUp ? `${summary} ${followUp}` : summary;
+		}
 		case "declined":
 			return "Stacked publication declined; the metadata publisher was not launched.";
 		case "busy":
@@ -83,12 +91,18 @@ function describeStackPublication(outcome: StackPublishOutcome): string {
 			return `Stacked publication blocked: ${outcome.blockers.map((blocker) => blocker.message).join("; ")}`;
 		case "stale":
 			return "The stack publication plan changed after confirmation.";
-		case "partial":
-			return `Stacked publication was partial: ${outcome.failedAction.error}`;
+		case "partial": {
+			const summary = `Stacked publication was partial: ${outcome.failedAction.error}`;
+			const followUp = publicationMetadataFollowUp(outcome);
+			return followUp ? `${summary} ${followUp}` : summary;
+		}
 		case "cancelled":
 			return "Stacked publication was cancelled; the metadata publisher was not launched.";
-		case "indeterminate":
-			return `Stacked publication is indeterminate: ${outcome.inFlight.error}`;
+		case "indeterminate": {
+			const summary = `Stacked publication is indeterminate: ${outcome.inFlight.error}`;
+			const followUp = publicationMetadataFollowUp(outcome);
+			return followUp ? `${summary} ${followUp}` : summary;
+		}
 		case "failed":
 			return `Stacked publication failed: ${outcome.error}`;
 		default: {
@@ -230,15 +244,26 @@ export async function runPostReviewPhases(
 				return;
 			}
 			const outcome = published.outcome;
+			const createdDrafts = newlyCreatedDrafts(outcome);
 			if (outcome.status !== "completed") {
 				fx.notify(
 					describeStackPublication(outcome),
 					outcome.status === "declined" || outcome.status === "cancelled" ? "info" : "warning",
 				);
-				return;
+				if (createdDrafts.length === 0 || (outcome.status !== "partial" && outcome.status !== "indeterminate")) return;
 			}
+			const knownPublication = outcome.publication;
+			if (!knownPublication) return;
+			const publication: StackPublicationMap =
+				outcome.status === "completed"
+					? knownPublication
+					: {
+							...knownPublication,
+							pullRequests: createdDrafts,
+							topRef: createdDrafts.at(-1)?.ref ?? knownPublication.topRef,
+						};
 			trustedMapFile = join(reviewDir, "stack-prs.json");
-			writeFileSync(trustedMapFile, `${JSON.stringify(outcome.publication, null, 2)}\n`, {
+			writeFileSync(trustedMapFile, `${JSON.stringify(publication, null, 2)}\n`, {
 				encoding: "utf8",
 				mode: 0o600,
 			});

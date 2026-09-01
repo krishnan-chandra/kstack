@@ -166,6 +166,9 @@ describe("Graphite stack delivery", () => {
 		});
 		assert.equal(result.status, "completed");
 		assert.equal(result.status === "completed" ? result.publication.pullRequests[0].prNumber : undefined, 12);
+		assert.deepEqual(result.status === "completed" ? result.completedActions : undefined, [
+			{ kind: "create-draft-pr", ref: "kstack/one", prNumber: 12, url: "https://example.test/pr/12" },
+		]);
 		assert.equal(
 			base.calls.filter((call) => call === "gt --no-interactive --no-ai submit --stack --draft --no-edit").length,
 			1,
@@ -216,5 +219,8 @@ describe("Graphite stack delivery", () => {
 		});
 		assert.equal(result.status, "partial");
 		assert.equal(result.status === "partial" ? result.publication?.pullRequests.length : 0, 1);
+		assert.deepEqual(result.status === "partial" ? result.completedActions : [], [
+			{ kind: "create-draft-pr", ref: "kstack/one", prNumber: 12, url: "https://example.test/pr/12" },
+		]);
 	});
 });

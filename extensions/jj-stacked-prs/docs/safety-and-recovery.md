@@ -52,14 +52,18 @@ inspected revision after explicit approval.
 ## PR metadata generation
 
 Before any remote mutation, publication collects each new PR's exact slice diff
-and asks the active Pi model for a `write-pr` title and body. Missing model
-authentication, oversized evidence, cancellation, provider failure, and invalid
-JSON all stop the run with no pushes or PR creation. Fix the reported problem
-and rerun the publication plan.
+and generates deterministic metadata from the slice subject, commit
+descriptions, and changed paths. Repositories with one default pull-request
+template keep that template's headings, comments, and checklist items.
+Repositories without a template receive a `## Summary` and `## Review guide`.
+Metadata generation does not call a model, so model authentication and provider
+failures cannot block publication.
 
-Existing PR metadata is not regenerated or replaced during structural
-publication. Use `write-pr` explicitly when an existing title or body needs an
-update.
+After publication creates a draft, the outcome instructs the calling agent to
+rewrite the new title and body with `write-pr` and the user's `my-voice` profile.
+This follow-up produces human-readable, thematic prose without putting a model
+call inside the structural publication transaction. Existing PR metadata is not
+regenerated or replaced during structural publication.
 
 ## Partial `/jj-stack publish` failures
 

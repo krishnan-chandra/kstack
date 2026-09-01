@@ -10,6 +10,7 @@ import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/pu
 import type {
 	CompletedPublicationAction,
 	FailedPublicationAction,
+	StackPublicationMap,
 	StackPublishedPullRequest,
 	StackPublishOutcome,
 } from "../shared/stack/outcome.ts";
@@ -568,6 +569,16 @@ async function applyPublication(
 		targetBase: slice.targetBase,
 		createPr: slice.existingPr === undefined,
 	}));
+	const knownPublication = (): StackPublicationMap | undefined => {
+		const pullRequests = provenPullRequests(published);
+		if (pullRequests.length === 0) return undefined;
+		return {
+			repository: plan.repository,
+			remote: plan.remote.name,
+			topRef: pullRequests.at(-1)?.ref ?? plan.slices[0].bookmark,
+			pullRequests,
+		};
+	};
 
 	for (const [index, slice] of plan.slices.entries()) {
 		for (const action of slice.actions) {
@@ -577,6 +588,7 @@ async function applyPublication(
 					status: "partial",
 					planId: plan.planId,
 					completedActions: completed,
+					publication: knownPublication(),
 					failedAction: toFailedAction(
 						action.kind,
 						new Error("Publication was cancelled before this action started."),
@@ -632,6 +644,7 @@ async function applyPublication(
 						planId: plan.planId,
 						inFlight: failed,
 						completedActions: completed,
+						publication: knownPublication(),
 						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
 					};
 				}
@@ -642,6 +655,7 @@ async function applyPublication(
 					status: "partial",
 					planId: plan.planId,
 					completedActions: completed,
+					publication: knownPublication(),
 					failedAction: failed,
 				};
 			}
@@ -657,6 +671,7 @@ async function applyPublication(
 				status: "partial",
 				planId: plan.planId,
 				completedActions: completed,
+				publication: knownPublication(),
 				failedAction: { kind: "link-native-stack", error: "Not every stack slice has a proven PR number." },
 			};
 		}
@@ -682,6 +697,7 @@ async function applyPublication(
 					planId: plan.planId,
 					inFlight: failed,
 					completedActions: completed,
+					publication: knownPublication(),
 					recovery: "Inspect native stack membership before retrying publication.",
 				};
 			}
@@ -689,6 +705,7 @@ async function applyPublication(
 				status: "partial",
 				planId: plan.planId,
 				completedActions: completed,
+				publication: knownPublication(),
 				failedAction: failed,
 			};
 		}
@@ -703,6 +720,7 @@ async function applyPublication(
 					status: "partial",
 					planId: plan.planId,
 					completedActions: completed,
+					publication: knownPublication(),
 					failedAction: {
 						kind: "mark-pr-ready",
 						ref: slice.bookmark,
@@ -728,6 +746,7 @@ async function applyPublication(
 						planId: plan.planId,
 						inFlight: failed,
 						completedActions: completed,
+						publication: knownPublication(),
 						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
 					};
 				}
@@ -738,6 +757,7 @@ async function applyPublication(
 					status: "partial",
 					planId: plan.planId,
 					completedActions: completed,
+					publication: knownPublication(),
 					failedAction: failed,
 				};
 			}
@@ -759,6 +779,7 @@ async function applyPublication(
 			status: "partial",
 			planId: plan.planId,
 			completedActions: [...completed, ...comments.completed],
+			publication: knownPublication(),
 			failedAction: { kind: "create-draft-pr", error: "A created PR could not be proven by a fresh identity." },
 			commentErrors,
 		};
