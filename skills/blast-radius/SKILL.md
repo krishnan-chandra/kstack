@@ -7,7 +7,9 @@ compatibility: A repository checkout with its normal test or runtime commands. P
 
 # Blast radius
 
-Assess what a change can break beyond the lines that changed, then test the fact that makes the change safe. A caller list is not the result. Grep finds direct callers quickly; the useful work is finding contracts and runtime behavior that grep cannot reveal.
+Assess what a change can break beyond the lines that changed, then test the fact that makes the change safe. A caller list is not the result. Search finds direct callers quickly; the useful work is finding contracts and runtime behavior that search cannot reveal.
+
+Run the investigation directly in the model and session where the skill was invoked. Keep it focused on the concrete safety question; reserve Arena for the exceptional cases described below.
 
 Use this for a risky narrow change or a specific safety question. For a broad diff review, use `/panel-review` first. Do not run this automatically for every change: it costs attention and only helps when a concrete cross-boundary risk exists.
 
