@@ -16,8 +16,8 @@
     "maxRuntimeMinutes": 30,
     "reviewers": [
       {
-        "label": "gemma",
-        "model": "openrouter/google/gemma-4-31b-it",
+        "label": "gemini",
+        "model": "openrouter/google/gemini-3.8-flash",
         "thinking": "medium"
       },
       {
