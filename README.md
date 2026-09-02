@@ -366,6 +366,22 @@ Its primary metric is the `full` median - `empty` median. It writes raw JSON sam
 
 The benchmark is warm, offline, isolated, and headless. It does not measure MCP, TUI paint, disk-cold startup, network work, or an LLM request. Compare reports only when the machine, Pi executable and version, options, workload, and recorded startup-environment fingerprint match. Run `node scripts/startup-benchmark/index.mjs --help` to list options.
 
+### OMP compatibility spike
+
+Run the isolated OMP registration and runtime probes against a pinned source checkout and matching executable:
+
+```bash
+OMP_CHECKOUT=/absolute/path/to/oh-my-pi \
+OMP_EXECUTABLE=/absolute/path/to/omp \
+npm run test:omp-compat
+
+OMP_CHECKOUT=/absolute/path/to/oh-my-pi \
+OMP_RUNTIME_ROOT=/absolute/path/to/omp-runtime \
+npm run check:omp-contract
+```
+
+The harness strips inherited credentials and writes temporary profiles, sessions, logs, and generated reports under ignored `local/compatibility/` paths. It does not make model or remote-mutation requests.
+
 For focused runs, use the individual test commands:
 
 ```bash
