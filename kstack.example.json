@@ -16,8 +16,8 @@
     "maxRuntimeMinutes": 30,
     "reviewers": [
       {
-        "label": "gemini",
-        "model": "openrouter/google/gemini-3.8-flash",
+        "label": "mercury",
+        "model": "openrouter/inception/mercury-2.5-preview",
         "thinking": "medium"
       },
       {
