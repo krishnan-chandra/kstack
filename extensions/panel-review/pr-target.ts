@@ -1,10 +1,11 @@
 /** Resolve a pinned GitHub PR target and materialize pinned commit snapshots. */
 
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequestReviewTarget, type PullRequestReviewTarget } from "../shared/github.ts";
+import { isPathInside } from "./review-scope.ts";
 import { LIMITS } from "./types.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -43,17 +44,14 @@ function diagnostic(result: ExecFnResult): string {
 function inspectTree(stdout: string) {
 	let blobBytes = 0;
 	let trackedEntries = 0;
-	for (const line of stdout.split("\n")) {
-		if (!line) continue;
-		const match = /^(\d{6}) ([a-z]+) (\d+|-)$/.exec(line);
+	const symlinkPaths: string[] = [];
+	for (const record of stdout.split("\0")) {
+		if (!record) continue;
+		const match = /^(\d{6}) ([a-z]+) (\d+|-)\t([\s\S]+)$/.exec(record);
 		if (!match) throw new Error("Git returned invalid PR tree metadata.");
-		const [, mode, objectType, rawSize] = match;
-		if (mode === "120000") {
-			throw new Error(
-				"Commit snapshot contains symbolic links; review refused because they can escape the snapshot root.",
-			);
-		}
+		const [, mode, objectType, rawSize, path] = match;
 		trackedEntries++;
+		if (mode === "120000") symlinkPaths.push(path);
 		if (objectType !== "blob") continue;
 		if (rawSize === "-") throw new Error("Git returned an invalid PR blob size.");
 		const size = Number(rawSize);
@@ -61,7 +59,31 @@ function inspectTree(stdout: string) {
 		blobBytes += size;
 		if (!Number.isSafeInteger(blobBytes)) throw new Error("The PR tree is too large to measure safely.");
 	}
-	return { blobBytes, trackedEntries };
+	return { blobBytes, trackedEntries, symlinkPaths };
+}
+
+/**
+ * Refuse any extracted symlink that does not resolve to a path inside the
+ * snapshot. The filesystem resolves chains, `..` through directory links, and
+ * cycles with the same semantics reviewer reads will use. Dangling links are
+ * refused too: without a real target there is no way to prove containment.
+ */
+async function assertSymlinksContained(directory: string, symlinkPaths: string[]): Promise<void> {
+	if (symlinkPaths.length === 0) return;
+	const root = await realpath(directory);
+	for (const path of symlinkPaths) {
+		let resolved: string;
+		try {
+			resolved = await realpath(join(directory, path));
+		} catch (error) {
+			const code = error instanceof Error && "code" in error ? error.code : undefined;
+			if (code === "ELOOP") throw new Error(`Commit snapshot symlink ${JSON.stringify(path)} contains a cycle.`);
+			throw new Error(`Commit snapshot symlink ${JSON.stringify(path)} does not resolve to a snapshot file.`);
+		}
+		if (!isPathInside(root, resolved)) {
+			throw new Error(`Commit snapshot symlink ${JSON.stringify(path)} escapes the snapshot root.`);
+		}
+	}
 }
 
 function assertLimit(name: string, actual: number, maximum: number): void {
@@ -154,14 +176,14 @@ export async function materializePrSnapshot(
 	const tree = await git(
 		exec,
 		cwd,
-		["ls-tree", "-r", "--format=%(objectmode) %(objecttype) %(objectsize)", headSha],
+		["ls-tree", "-r", "-z", "--format=%(objectmode) %(objecttype) %(objectsize)%x09%(path)", headSha],
 		options.signal,
 	);
 	if (tree.code !== 0) throw new Error(`Could not inspect PR head ${headSha}: ${diagnostic(tree)}`);
-	const size = inspectTree(tree.stdout);
-	assertLimit("tracked blob bytes", size.blobBytes, options.maxBlobBytes ?? LIMITS.prSnapshotBytes);
+	const summary = inspectTree(tree.stdout);
+	assertLimit("tracked blob bytes", summary.blobBytes, options.maxBlobBytes ?? LIMITS.prSnapshotBytes);
 	// This counts every recursive tracked entry, including gitlinks, not only blobs.
-	assertLimit("tracked entries", size.trackedEntries, options.maxTrackedEntries ?? LIMITS.prSnapshotFiles);
+	assertLimit("tracked entries", summary.trackedEntries, options.maxTrackedEntries ?? LIMITS.prSnapshotFiles);
 
 	const root = await mkdtemp(join(options.tmpDir ?? tmpdir(), "pi-panel-pr-"));
 	const directory = join(root, "snapshot");
@@ -186,6 +208,7 @@ export async function materializePrSnapshot(
 		});
 		if (extracted.code !== 0) throw new Error(`Could not extract PR head ${headSha}: ${diagnostic(extracted)}`);
 		await rm(archivePath, { force: true });
+		await assertSymlinksContained(directory, summary.symlinkPaths);
 		return { directory, root };
 	} catch (error) {
 		await rm(root, { recursive: true, force: true });

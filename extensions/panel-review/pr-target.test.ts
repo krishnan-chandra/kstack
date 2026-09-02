@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	readlinkSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -45,6 +46,10 @@ function mockGhResponse(overrides: MockGhPrFields = {}) {
 
 function result(code: number, stdout = "", stderr = ""): ExecFnResult {
 	return { code, stdout, stderr };
+}
+
+function treeRecord(mode: string, objectType: string, size: number | "-", path: string): string {
+	return `${mode} ${objectType} ${size}\t${path}\0`;
 }
 
 function realExec(command: string, args: string[], options: { cwd: string; timeout?: number }): Promise<ExecFnResult> {
@@ -223,8 +228,54 @@ describe("materializePrSnapshot", () => {
 		}
 	});
 
-	it("rejects absolute and parent-relative symlinks before archiving", async () => {
-		for (const linkTarget of ["/etc/passwd", "../../outside"]) {
+	it("materializes repository-contained symlinks", async () => {
+		const repo = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-source-"));
+		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-snapshots-"));
+		let snapshotRoot: string | undefined;
+		try {
+			await runOk(repo, "git", ["init", "-q"]);
+			await runOk(repo, "git", ["config", "user.email", "test@example.com"]);
+			await runOk(repo, "git", ["config", "user.name", "Test"]);
+			mkdirSync(join(repo, "nested"));
+			mkdirSync(join(repo, "resources"));
+			writeFileSync(join(repo, "AGENTS.md"), "instructions\n");
+			writeFileSync(join(repo, "resources", "udd.json"), "{}\n");
+			symlinkSync("AGENTS.md", join(repo, "CLAUDE.md"));
+			symlinkSync("CLAUDE.md", join(repo, "INSTRUCTIONS.md"));
+			symlinkSync("../resources/udd.json", join(repo, "nested", "udd.json"));
+			// A chain that passes through the same directory link twice is not a cycle.
+			mkdirSync(join(repo, "resources", "inner"));
+			writeFileSync(join(repo, "resources", "inner", "keep"), "");
+			symlinkSync("resources", join(repo, "current"));
+			symlinkSync("../current/inner", join(repo, "resources", "alias"));
+			symlinkSync("current/alias/../udd.json", join(repo, "diamond.json"));
+			await runOk(repo, "git", ["add", "."]);
+			await runOk(repo, "git", ["commit", "-qm", "add contained symlinks"]);
+			const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
+
+			const snapshot = await materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots });
+			snapshotRoot = snapshot.root;
+			assert.equal(readlinkSync(join(snapshot.directory, "CLAUDE.md")), "AGENTS.md");
+			assert.equal(readFileSync(join(snapshot.directory, "CLAUDE.md"), "utf8"), "instructions\n");
+			assert.equal(readlinkSync(join(snapshot.directory, "INSTRUCTIONS.md")), "CLAUDE.md");
+			assert.equal(readFileSync(join(snapshot.directory, "INSTRUCTIONS.md"), "utf8"), "instructions\n");
+			assert.equal(readlinkSync(join(snapshot.directory, "nested", "udd.json")), "../resources/udd.json");
+			assert.equal(readFileSync(join(snapshot.directory, "nested", "udd.json"), "utf8"), "{}\n");
+			assert.equal(readFileSync(join(snapshot.directory, "diamond.json"), "utf8"), "{}\n");
+		} finally {
+			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
+			rmSync(repo, { recursive: true, force: true });
+			rmSync(snapshots, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects absolute, parent-relative, and dangling symlinks and removes the snapshot", async () => {
+		const cases: Array<[string, RegExp]> = [
+			["/etc/passwd", /symlink "review-target" escapes the snapshot root/],
+			["..", /symlink "review-target" escapes the snapshot root/],
+			["dist/generated.json", /symlink "review-target" does not resolve to a snapshot file/],
+		];
+		for (const [linkTarget, expected] of cases) {
 			const repo = mkdtempSync(join(tmpdir(), "panel-pr-symlink-source-"));
 			const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-symlink-snapshots-"));
 			try {
@@ -236,7 +287,39 @@ describe("materializePrSnapshot", () => {
 				await runOk(repo, "git", ["commit", "-qm", "add symlink"]);
 				const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
 
-				await assert.rejects(materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots }), /symbolic links/);
+				await assert.rejects(materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots }), expected);
+				assert.deepEqual(readdirSync(snapshots), []);
+			} finally {
+				rmSync(repo, { recursive: true, force: true });
+				rmSync(snapshots, { recursive: true, force: true });
+			}
+		}
+	});
+
+	it("rejects escaping symlink chains and cycles and removes the snapshot", async () => {
+		for (const fixture of ["escape-chain", "cycle"] as const) {
+			const repo = mkdtempSync(join(tmpdir(), `panel-pr-${fixture}-source-`));
+			const snapshots = mkdtempSync(join(tmpdir(), `panel-pr-${fixture}-snapshots-`));
+			try {
+				await runOk(repo, "git", ["init", "-q"]);
+				await runOk(repo, "git", ["config", "user.email", "test@example.com"]);
+				await runOk(repo, "git", ["config", "user.name", "Test"]);
+				if (fixture === "escape-chain") {
+					mkdirSync(join(repo, "nested"));
+					symlinkSync("..", join(repo, "nested", "dirlink"));
+					symlinkSync("nested/dirlink/../..", join(repo, "entry"));
+				} else {
+					symlinkSync("second", join(repo, "first"));
+					symlinkSync("first", join(repo, "second"));
+				}
+				await runOk(repo, "git", ["add", "."]);
+				await runOk(repo, "git", ["commit", "-qm", `add ${fixture}`]);
+				const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
+
+				await assert.rejects(
+					materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots }),
+					fixture === "cycle" ? /contains a cycle/ : /escapes the snapshot root/,
+				);
 				assert.deepEqual(readdirSync(snapshots), []);
 			} finally {
 				rmSync(repo, { recursive: true, force: true });
@@ -248,7 +331,9 @@ describe("materializePrSnapshot", () => {
 	it("rejects a tree that exceeds the tracked-byte or entry limit before archiving", async () => {
 		let archiveCalled = false;
 		const exec: ExecFn = async (_command, args) => {
-			if (args[0] === "ls-tree") return result(0, "100644 blob 9\n100644 blob 1\n");
+			if (args[0] === "ls-tree") {
+				return result(0, treeRecord("100644", "blob", 9, "first") + treeRecord("100644", "blob", 1, "second"));
+			}
 			archiveCalled = true;
 			return result(0);
 		};
@@ -262,7 +347,9 @@ describe("materializePrSnapshot", () => {
 	it("counts gitlinks as tracked entries without requiring a blob size", async () => {
 		let archiveCalled = false;
 		const exec: ExecFn = async (_command, args) => {
-			if (args[0] === "ls-tree") return result(0, "100644 blob 1\n160000 commit -\n");
+			if (args[0] === "ls-tree") {
+				return result(0, treeRecord("100644", "blob", 1, "file") + treeRecord("160000", "commit", "-", "submodule"));
+			}
 			archiveCalled = true;
 			return result(0);
 		};
@@ -278,7 +365,9 @@ describe("materializePrSnapshot", () => {
 		let tarCalled = false;
 		try {
 			const exec: ExecFn = async (command, args) => {
-				if (command === "git" && args[0] === "ls-tree") return result(0, "100644 blob 9\n");
+				if (command === "git" && args[0] === "ls-tree") {
+					return result(0, treeRecord("100644", "blob", 9, "file"));
+				}
 				if (command === "git") {
 					const outputArg = args.find((arg) => arg.startsWith("--output="));
 					assert.ok(outputArg);
@@ -305,7 +394,7 @@ describe("materializePrSnapshot", () => {
 			const controller = new AbortController();
 			const exec: ExecFn = async (_command, args, options) => {
 				assert.equal(options.signal, controller.signal);
-				if (args[0] === "ls-tree") return result(0, "100644 blob 9\n");
+				if (args[0] === "ls-tree") return result(0, treeRecord("100644", "blob", 9, "file"));
 				throw new Error("cancelled by signal");
 			};
 			await assert.rejects(
@@ -322,7 +411,7 @@ describe("materializePrSnapshot", () => {
 		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-failed-snapshot-"));
 		try {
 			const exec: ExecFn = async (_command, args) =>
-				args[0] === "ls-tree" ? result(0, "100644 blob 9\n") : result(1, "", "archive failed");
+				args[0] === "ls-tree" ? result(0, treeRecord("100644", "blob", 9, "file")) : result(1, "", "archive failed");
 			await assert.rejects(materializePrSnapshot(exec, "/repo", HEAD_SHA, { tmpDir: snapshots }), /archive failed/);
 			assert.deepEqual(readdirSync(snapshots), []);
 		} finally {
