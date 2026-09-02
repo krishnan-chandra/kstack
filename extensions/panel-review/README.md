@@ -56,9 +56,11 @@ ignores the outcome.
      working-tree changes. `git archive` extracts the pinned
      head into a private temporary directory for reviewer file access. The run
      does not create, move, or reset branches, Git worktrees, or jj workspaces.
-     PR trees that contain symbolic links are rejected before extraction so
-     reviewer reads cannot escape the snapshot root. The temporary snapshot is
-     removed when the run ends.
+     After extraction and before any reviewer reads, panel-review resolves every
+     tracked symbolic link inside the snapshot. Links that resolve to a snapshot
+     file are preserved. Links that escape the snapshot root, form a cycle, or
+     do not resolve stop the review and remove the snapshot. The temporary
+     snapshot is also removed when the run ends.
    - In standard Git mode, resolves the review base: explicit `--base`, else
      the branch upstream, else `origin/HEAD`, else `main`/`master`, else `HEAD`
      (working-tree only). The exact merge-base SHA is recorded so every reviewer
@@ -245,7 +247,6 @@ the `"panel-review"` section:
 | Pinned commit snapshot tracked blob content | 512 MiB |
 | Pinned commit snapshot tracked entries | 200,000 |
 | Pinned commit snapshot tar archive | 512 MiB |
-| Pinned commit snapshot symbolic links | 0 (tree rejected before extraction) |
 | Per reviewer report into synthesis | 256 KiB |
 | Aggregate synthesis input | 1 MiB |
 | Child stderr retention | 64 KiB |
@@ -256,8 +257,10 @@ the `"panel-review"` section:
 | Console entry text cap | 256 KiB per entry (UTF-8 safe head/tail truncation) |
 
 PR and jj snapshot materialization stops before archiving when the pinned tree
-exceeds the tracked-byte or entry limit. The archive and extracted tree can
-briefly use up to about twice the archive limit in the system temp directory.
+exceeds the tracked-byte or entry limit, and after extraction when a symbolic
+link escapes the snapshot root, contains a cycle, or does not resolve. The
+archive and extracted tree can briefly use up to about twice the archive limit
+in the system temp directory.
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes
@@ -300,7 +303,8 @@ untracked, and binary changes, run
 progress, child argv (managed session flags, discovery flags, read-only tools),
 a single verdict message, no child session files, and an unchanged repository.
 For PR mode, also compare refs and
-`git worktree list --porcelain` before and after the run. For jj mode, test both
+`git worktree list --porcelain` before and after the run. Include contained,
+escaping, dangling, and cyclic symbolic links in the PR fixture. For jj mode, test both
 its primary workspace and a secondary `jj workspace add` workspace without a
 `.git` entry. Confirm that reviewers read the pinned `@` snapshot rather than
 later changes in the live workspace.

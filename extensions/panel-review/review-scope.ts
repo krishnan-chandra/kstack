@@ -128,7 +128,8 @@ export function touchesContextFile(path: string): boolean {
 	return CONTEXT_FILE_NAMES.has(path.split("/").pop() ?? path);
 }
 
-function isPathInside(root: string, target: string): boolean {
+/** True when `target` (relative or absolute) stays at or under `root`. */
+export function isPathInside(root: string, target: string): boolean {
 	const rel = resolve(root, target);
 	return rel === root || rel.startsWith(root + sep);
 }
