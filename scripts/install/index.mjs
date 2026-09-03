@@ -65,8 +65,23 @@ function writeJsonAtomic(path, value) {
 	}
 }
 
+function mergeModels(current, defaults) {
+	const providers = { ...current.providers };
+	for (const [providerId, defaultProvider] of Object.entries(defaults.providers ?? {})) {
+		const currentProvider = providers[providerId] ?? {};
+		const models = new Map((currentProvider.models ?? []).map((model) => [model.id, model]));
+		for (const model of defaultProvider.models ?? []) models.set(model.id, model);
+		providers[providerId] = {
+			...currentProvider,
+			...defaultProvider,
+			models: [...models.values()],
+		};
+	}
+	return { ...current, ...defaults, providers };
+}
+
 export function applyPiDefaults({ agentDir = getAgentDir(), defaultsDir = DEFAULTS_DIR } = {}) {
-	const files = ["settings.json", "keybindings.json"];
+	const files = ["settings.json", "keybindings.json", "models.json"];
 	const updates = [];
 
 	// Parse everything before writing anything so malformed JSON cannot cause a partial update.
@@ -74,7 +89,8 @@ export function applyPiDefaults({ agentDir = getAgentDir(), defaultsDir = DEFAUL
 		const destination = join(agentDir, file);
 		const current = readJsonObject(destination, { allowMissing: true });
 		const defaults = readJsonObject(join(defaultsDir, file));
-		updates.push({ destination, value: { ...current, ...defaults } });
+		const value = file === "models.json" ? mergeModels(current, defaults) : { ...current, ...defaults };
+		updates.push({ destination, value });
 	}
 
 	for (const update of updates) {
@@ -154,7 +170,7 @@ export function install({
 	syncSkills = syncGlobalSkills,
 } = {}) {
 	// Preflight both source and destination JSON before pi changes package registration.
-	for (const file of ["settings.json", "keybindings.json"]) {
+	for (const file of ["settings.json", "keybindings.json", "models.json"]) {
 		readJsonObject(join(defaultsDir, file));
 		readJsonObject(join(agentDir, file), { allowMissing: true });
 	}

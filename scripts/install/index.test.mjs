@@ -43,6 +43,41 @@ test("applyPiDefaults merges managed preferences without removing existing confi
 	});
 });
 
+test("applyPiDefaults merges floor models without removing user models or providers", () => {
+	const agentDir = tempAgentDir();
+	writeFileSync(
+		join(agentDir, "models.json"),
+		`${JSON.stringify(
+			{
+				providers: {
+					openrouter: {
+						headers: { "X-Title": "Personal Pi" },
+						models: [
+							{ id: "custom/model", name: "Custom model" },
+							{ id: "openai/gpt-5.6-sol:floor", name: "Stale floor model" },
+						],
+					},
+					local: { baseUrl: "http://localhost:8080/v1", models: [] },
+				},
+			},
+			null,
+			2,
+		)}\n`,
+	);
+
+	applyPiDefaults({ agentDir, defaultsDir });
+
+	const models = readJson(join(agentDir, "models.json"));
+	assert.deepEqual(models.providers.openrouter.headers, { "X-Title": "Personal Pi" });
+	assert.equal(models.providers.openrouter.models[0].id, "custom/model");
+	assert.equal(models.providers.openrouter.models[1].name, "OpenAI: GPT-5.6 Sol (Floor)");
+	assert.deepEqual(
+		models.providers.openrouter.models.slice(1).map((model) => model.id),
+		["openai/gpt-5.6-sol:floor", "openai/gpt-5.6-sol-pro:floor", "google/gemini-3.8-flash:floor"],
+	);
+	assert.deepEqual(models.providers.local, { baseUrl: "http://localhost:8080/v1", models: [] });
+});
+
 test("install registers the package and global skills before merging Pi defaults", () => {
 	const agentDir = tempAgentDir();
 	const calls = [];
