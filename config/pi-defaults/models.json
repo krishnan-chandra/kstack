@@ -1,0 +1,107 @@
+{
+  "providers": {
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "openai/gpt-5.6-sol:floor",
+          "name": "OpenAI: GPT-5.6 Sol (Floor)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+          },
+          "input": ["text", "image"],
+          "cost": {
+            "input": 2,
+            "output": 10,
+            "cacheRead": 0.2,
+            "cacheWrite": 2.5,
+            "tiers": [
+              {
+                "inputTokensAbove": 272000,
+                "input": 4,
+                "output": 15,
+                "cacheRead": 0.4,
+                "cacheWrite": 5
+              }
+            ]
+          },
+          "contextWindow": 1050000,
+          "maxTokens": 128000,
+          "compat": {
+            "thinkingFormat": "openrouter"
+          }
+        },
+        {
+          "id": "openai/gpt-5.6-sol-pro:floor",
+          "name": "OpenAI: GPT-5.6 Sol Pro (Floor)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+          },
+          "input": ["text", "image"],
+          "cost": {
+            "input": 2,
+            "output": 10,
+            "cacheRead": 0.2,
+            "cacheWrite": 2.5,
+            "tiers": [
+              {
+                "inputTokensAbove": 272000,
+                "input": 4,
+                "output": 15,
+                "cacheRead": 0.4,
+                "cacheWrite": 5
+              }
+            ]
+          },
+          "contextWindow": 1050000,
+          "maxTokens": 128000,
+          "compat": {
+            "thinkingFormat": "openrouter"
+          }
+        },
+        {
+          "id": "google/gemini-3.8-flash:floor",
+          "name": "Google: Gemini 3.8 Flash (Floor)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "input": ["text", "image"],
+          "cost": {
+            "input": 0.75,
+            "output": 3.75,
+            "cacheRead": 0.075,
+            "cacheWrite": 0.041667
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 65536,
+          "compat": {
+            "supportsDeveloperRole": false,
+            "thinkingFormat": "openrouter"
+          }
+        }
+      ]
+    }
+  }
+}

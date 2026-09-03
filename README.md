@@ -202,9 +202,10 @@ cd /path/to/kstack
 
 The installer runs `pi install`, links each Kstack skill into
 `~/.agents/skills`, and merges
-[`config/pi-defaults/settings.json`](config/pi-defaults/settings.json) and
-[`config/pi-defaults/keybindings.json`](config/pi-defaults/keybindings.json)
-into `$PI_CODING_AGENT_DIR` (default `~/.pi/agent`). Set
+[`config/pi-defaults/settings.json`](config/pi-defaults/settings.json),
+[`config/pi-defaults/keybindings.json`](config/pi-defaults/keybindings.json), and
+[`config/pi-defaults/models.json`](config/pi-defaults/models.json) into
+`$PI_CODING_AGENT_DIR` (default `~/.pi/agent`). Set
 `AGENTS_SKILLS_DIR` to use another shared skills directory. The installer
 preserves unrelated settings and keybindings while making the tracked values
 authoritative:
@@ -215,9 +216,15 @@ authoritative:
   Enter and Alt+Enter in the main editor while Pi is working, so Enter queues
   follow-up messages and Alt+Enter steers. Enter keeps stock behavior for idle
   submission, autocomplete, inline prompts, and selectors.
+- OpenRouter includes floor variants for GPT-5.6 Sol, GPT-5.6 Sol Pro, and
+  Gemini 3.8 Flash. A `:floor` variant sorts eligible OpenRouter endpoints by
+  price. It can use flex capacity when that endpoint is cheapest, but it does
+  not require the flex service tier.
 
-Rerunning the installer is safe and reapplies these defaults. It refuses to
-modify either config file if existing JSON is malformed.
+The installer keeps user-defined providers and models. For tracked floor model
+IDs, Kstack's definitions are authoritative so rerunning the installer can
+refresh their capabilities and pricing metadata. It refuses to change any Pi
+config file if one of the existing or tracked JSON files is malformed.
 
 By default, `pi install` writes to the current user's global settings. It loads
 all Kstack extensions across Pi projects. Pi and other compatible harnesses
