@@ -39,14 +39,15 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
-	const tree = makeTempTree();
-	roots.push(tree.root);
-	const content = sessionJsonl([
+function fixture(
+	content = sessionJsonl([
 		messageEntry("u1", null, userMessage("initial architecture discussion")),
 		messageEntry("a1", "u1", assistantMessage("decided to use a reference-only handoff")),
 		messageEntry("u2", "a1", userMessage("resume by implementing the history reader")),
-	]);
+	]),
+) {
+	const tree = makeTempTree();
+	roots.push(tree.root);
 	const sessionFile = tree.writeSession(TEST_SESSION_ID, content);
 	const source: HandoffSource = {
 		version: 1,
@@ -56,6 +57,17 @@ function fixture() {
 	};
 	const env = { ...process.env, PI_CODING_AGENT_DIR: tree.agentDir };
 	return { tree, content, source, env };
+}
+
+function caseSearchFixture() {
+	return fixture(
+		sessionJsonl([
+			messageEntry("u1", null, userMessage("SQLite records HEAD and API with a Mixed Case Phrase.")),
+			messageEntry("a1", "u1", assistantMessage("Unicode marker: Überprüfung.")),
+			messageEntry("u2", "a1", userMessage("Later SQLite and API result keeps OriginalCase.")),
+			messageEntry("a2", "u2", assistantMessage("API-only tail marker.")),
+		]),
+	);
 }
 
 function archiveAndRemoveActive(tree: ReturnType<typeof makeTempTree>, content: string, source: HandoffSource): void {
@@ -303,6 +315,58 @@ describe("readHandoffHistory", () => {
 });
 
 describe("searchHandoffHistory", () => {
+	it("matches technical identifiers and a quoted phrase regardless of query case before and after archival", () => {
+		const { tree, content, source, env } = caseSearchFixture();
+		const queries = [
+			"SQLITE",
+			"sqlite",
+			"SqLiTe",
+			"HEAD",
+			"head",
+			"HeAd",
+			"API",
+			"api",
+			"aPi",
+			'"MIXED CASE PHRASE"',
+			'"mixed case phrase"',
+			'"MiXeD CaSe PhRaSe"',
+		];
+		for (const query of queries) {
+			assert.match(searchHandoffHistory(source, { query }, env), /Matches in active previous session/);
+		}
+
+		archiveAndRemoveActive(tree, content, source);
+		for (const query of queries) {
+			assert.match(searchHandoffHistory(source, { query }, env), /Matches in archived previous session/);
+		}
+	});
+
+	it("matches non-ASCII upper and lower case without changing result text", () => {
+		const { source, env } = caseSearchFixture();
+
+		for (const query of ["ÜBERPRÜFUNG", "überprüfung"]) {
+			const output = searchHandoffHistory(source, { query }, env);
+			assert.match(output, /Unicode marker: Überprüfung\./);
+		}
+	});
+
+	it("preserves AND, no-match, role, and tail-limit behavior", () => {
+		const { source, env } = caseSearchFixture();
+
+		const latestUserMatch = searchHandoffHistory(source, { query: "SQLITE api", role: "user", limit: 1 }, env);
+		assert.match(latestUserMatch, /Later SQLite and API result keeps OriginalCase\./);
+		assert.doesNotMatch(latestUserMatch, /Mixed Case Phrase/);
+
+		const assistantMatch = searchHandoffHistory(source, { query: "api", role: "assistant" }, env);
+		assert.match(assistantMatch, /API-only tail marker\./);
+		assert.doesNotMatch(assistantMatch, /OriginalCase/);
+
+		assert.match(
+			searchHandoffHistory(source, { query: "sqlite absent" }, env),
+			/No matches in active previous session/,
+		);
+	});
+
 	it("searches only normalized text in the active previous session", () => {
 		const { source, env } = fixture();
 		const output = searchHandoffHistory(source, { query: "reference handoff" }, env);
@@ -318,8 +382,9 @@ describe("searchHandoffHistory", () => {
 		assert.ok(output.includes("history reader"));
 	});
 
-	it("rejects an empty query", () => {
+	it("rejects empty queries and empty quoted phrases", () => {
 		const { source, env } = fixture();
 		assert.throws(() => searchHandoffHistory(source, { query: "  " }, env), /must not be empty/);
+		assert.throws(() => searchHandoffHistory(source, { query: '""' }, env), /at least one word or quoted phrase/);
 	});
 });

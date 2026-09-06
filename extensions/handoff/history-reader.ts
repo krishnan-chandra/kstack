@@ -375,11 +375,12 @@ export function searchHandoffHistory(
 	const active = readActiveSession(source, env, fsImpl);
 	let output: string;
 	if (active) {
+		const normalizedTerms = terms.map((term) => term.toLowerCase());
 		const hits = active.entries
 			.filter((entry) => !options.role || entry.role === options.role)
 			.filter((entry) => {
-				const haystack = (entry.textContent ?? "").toLocaleLowerCase();
-				return terms.every((term) => haystack.includes(term));
+				const haystack = (entry.textContent ?? "").toLowerCase();
+				return normalizedTerms.every((term) => haystack.includes(term));
 			})
 			.slice(-limit)
 			.map(parsedEntryView);
