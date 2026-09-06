@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, wri
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { isString } from "../shared/validation.ts";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { JjBackend } from "../shared/vcs/jj-backend.ts";
 import {
@@ -18,6 +19,7 @@ import {
 	summarizeTriage,
 } from "./autopilot-operations.ts";
 import { DEFAULT_AUTOPILOT_MODELS } from "./config.ts";
+import { attachFailedLogs } from "./github.ts";
 import type { GHPrJson } from "./github-parse.ts";
 import {
 	buildFixerTask,
@@ -28,7 +30,7 @@ import {
 	isMergeReady,
 	pickModel,
 } from "./pr-state.ts";
-import type { CheckRun, ExecFn, ReviewThread } from "./types.ts";
+import { type CheckRun, type ExecFn, LIMITS, type ReviewThread } from "./types.ts";
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
 	return {
@@ -48,6 +50,10 @@ function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
 
 function makeCheck(name: string, conclusion: CheckRun["conclusion"], status: CheckRun["status"] = "success"): CheckRun {
 	return { name, conclusion, status: conclusion === "pending" || conclusion === null ? "pending" : status };
+}
+
+function failedActionsCheck(name: string, runId: string): CheckRun {
+	return { name, status: "failure", conclusion: "failure", runId };
 }
 
 function makeThread(id: string, body = "Looks good to me"): ReviewThread {
@@ -348,7 +354,185 @@ describe("pr-autopilot state machine", () => {
 		});
 	});
 
+	describe("failed log hydration", () => {
+		function logExec(
+			responseForRun: (runId: string, call: number) => { code: number; stdout: string; stderr: string },
+		) {
+			const calls: string[] = [];
+			const exec: ExecFn = async (command, args) => {
+				const call = `${command} ${args.join(" ")}`;
+				calls.push(call);
+				const runId = args[2] ?? "";
+				return responseForRun(runId, calls.length);
+			};
+			return { calls, exec };
+		}
+
+		it("fetches one failed log for six checks sharing a run", async () => {
+			const checks = Array.from({ length: 6 }, (_, index) => failedActionsCheck(`job-${index + 1}`, "123"));
+			const { calls, exec } = logExec(() => ({ code: 0, stdout: "shared run failure\n", stderr: "" }));
+
+			const hydrated = await attachFailedLogs(exec, "/repo", checks, 3);
+
+			assert.deepEqual(calls, ["gh run view 123 --log-failed"]);
+			assert.deepEqual(
+				hydrated.map((check) => check.logExcerpt),
+				Array.from({ length: 6 }, () => "shared run failure"),
+			);
+			assert.deepEqual(
+				hydrated.map((check) => check.name),
+				checks.map((check) => check.name),
+			);
+		});
+
+		it("fetches one failed log for each of two distinct runs", async () => {
+			const checks = [
+				failedActionsCheck("build", "123"),
+				failedActionsCheck("unit", "456"),
+				failedActionsCheck("integration", "123"),
+				failedActionsCheck("lint", "456"),
+			];
+			const { calls, exec } = logExec((runId) => ({ code: 0, stdout: `failure from ${runId}\n`, stderr: "" }));
+
+			const hydrated = await attachFailedLogs(exec, "/repo", checks, 2);
+
+			assert.deepEqual(calls, ["gh run view 123 --log-failed", "gh run view 456 --log-failed"]);
+			assert.deepEqual(
+				hydrated.map((check) => check.logExcerpt),
+				["failure from 123", "failure from 456", "failure from 123", "failure from 456"],
+			);
+		});
+
+		for (const response of [
+			{ label: "failed", result: { code: 1, stdout: "", stderr: "not found" } },
+			{ label: "empty", result: { code: 0, stdout: "  \n", stderr: "" } },
+		]) {
+			it(`does not retry a ${response.label} shared failed-log request`, async () => {
+				const checks = [failedActionsCheck("build", "123"), failedActionsCheck("test", "123")];
+				const { calls, exec } = logExec(() => response.result);
+
+				const hydrated = await attachFailedLogs(exec, "/repo", checks, 2);
+
+				assert.deepEqual(calls, ["gh run view 123 --log-failed"]);
+				assert.deepEqual(hydrated, checks);
+			});
+		}
+
+		it("leaves nonfailing and non-Actions checks unchanged without fetching logs", async () => {
+			const checks: CheckRun[] = [
+				makeCheck("green", "success"),
+				makeCheck("external failure", "failure", "failure"),
+				{ name: "cancelled run", runId: "123", conclusion: "cancelled", status: "cancelled" },
+			];
+			const { calls, exec } = logExec(() => ({ code: 0, stdout: "must not fetch", stderr: "" }));
+
+			const hydrated = await attachFailedLogs(exec, "/repo", checks, 2);
+
+			assert.deepEqual(calls, []);
+			assert.strictEqual(hydrated, checks);
+		});
+
+		it("bounds concurrent failed-log requests across distinct runs", async () => {
+			const checks = ["1", "2", "3", "4"].map((runId) => failedActionsCheck(`job-${runId}`, runId));
+			let active = 0;
+			let maxActive = 0;
+			const exec: ExecFn = async () => {
+				active++;
+				maxActive = Math.max(maxActive, active);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				active--;
+				return { code: 0, stdout: "failed\n", stderr: "" };
+			};
+
+			await attachFailedLogs(exec, "/repo", checks, 2);
+
+			assert.equal(maxActive, 2);
+		});
+
+		it("caps a hydrated failed log while retaining its tail", async () => {
+			const marker = "LATEST-FAILURE-MARKER";
+			const { exec } = logExec(() => ({
+				code: 0,
+				stdout: `${"x".repeat(LIMITS.logExcerptBytes * 2)}${marker}\n`,
+				stderr: "",
+			}));
+
+			const [hydrated] = await attachFailedLogs(exec, "/repo", [failedActionsCheck("build", "123")], 1);
+
+			assert.ok(hydrated.logExcerpt);
+			assert.ok(Buffer.byteLength(hydrated.logExcerpt, "utf8") <= LIMITS.logExcerptBytes);
+			assert.ok(hydrated.logExcerpt.endsWith(marker));
+		});
+
+		it("fetches a fresh failed log on each hydration invocation", async () => {
+			const checks = [failedActionsCheck("build", "123")];
+			const { calls, exec } = logExec((_runId, call) => ({ code: 0, stdout: `attempt-${call}\n`, stderr: "" }));
+
+			const first = await attachFailedLogs(exec, "/repo", checks, 1);
+			const second = await attachFailedLogs(exec, "/repo", checks, 1);
+
+			assert.equal(first[0].logExcerpt, "attempt-1");
+			assert.equal(second[0].logExcerpt, "attempt-2");
+			assert.equal(calls.length, 2);
+		});
+	});
+
 	describe("required GitHub state", () => {
+		it("fetches failed-check metadata without downloading logs", async () => {
+			const calls: string[] = [];
+			const exec: ExecFn = async (command, args) => {
+				const call = `${command} ${args.join(" ")}`;
+				calls.push(call);
+				if (args[0] === "pr" && args[1] === "view") {
+					return { code: 0, stdout: JSON.stringify(makePr()), stderr: "" };
+				}
+				if (args[0] === "api" && args[1] === "graphql") {
+					return {
+						code: 0,
+						stdout: JSON.stringify({
+							data: {
+								repository: {
+									pullRequest: {
+										reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+									},
+								},
+							},
+						}),
+						stderr: "",
+					};
+				}
+				if (args[0] === "api" && args[1]?.includes("/issues/42/comments")) {
+					return { code: 0, stdout: "[]", stderr: "" };
+				}
+				if (args[0] === "pr" && args[1] === "checks") {
+					return {
+						code: 0,
+						stdout: JSON.stringify({
+							name: "build",
+							state: "FAILURE",
+							bucket: "fail",
+							link: "https://github.com/owner/repo/actions/runs/123",
+						}),
+						stderr: "",
+					};
+				}
+				if (args[0] === "run" && args[1] === "view") {
+					return { code: 0, stdout: "should not be fetched\n", stderr: "" };
+				}
+				return { code: 1, stdout: "", stderr: `unexpected command: ${call}` };
+			};
+
+			const result = await fetchPRState(exec, "/repo", 42, null, [], "owner/repo");
+
+			if (isString(result)) throw new Error(result);
+			assert.equal(result.checks[0]?.runId, "123");
+			assert.equal(result.checks[0]?.logExcerpt, undefined);
+			assert.deepEqual(
+				calls.filter((call) => call.startsWith("gh run view")),
+				[],
+			);
+		});
+
 		it("does not turn failed auxiliary fetches into empty successful state", async () => {
 			const pr = makePr();
 			const exec: ExecFn = async (command, args) => {
@@ -357,7 +541,7 @@ describe("pr-autopilot state machine", () => {
 				}
 				return { code: 1, stdout: "", stderr: "network unavailable" };
 			};
-			const result = await fetchPRState(exec, "/repo", 42, null, { concurrency: 1, handledThreadIds: [] });
+			const result = await fetchPRState(exec, "/repo", 42, null, []);
 			assert.match(String(result), /Could not fetch/);
 		});
 	});

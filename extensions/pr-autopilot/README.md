@@ -148,7 +148,12 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 
 ## Child agents
 
-Each run picks one configured model, then spawns two child agents with that model:
+Each run picks one configured model, then spawns two child agents with that model.
+Status and readiness checks fetch only PR, review, and check metadata. Autopilot
+fetches failed GitHub Actions logs when it is about to start the triager. It
+fetches each Actions run once for that triage cycle and shares the excerpt among
+checks from the same run. A later cycle fetches the run again so a new attempt
+can supply different logs.
 
 - **Triager** — receives bounded task data through stdin and has no tools. It
   classifies CI check failures (with log excerpts) and review threads without

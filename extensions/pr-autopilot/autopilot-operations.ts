@@ -27,7 +27,6 @@ import { getAgentDir } from "../shared/kstack-config.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
-	attachFailedLogs,
 	getCheckRuns,
 	getIssueComments,
 	getReviewThreads,
@@ -160,7 +159,7 @@ export async function savePersistedState(state: AutopilotPersistedState): Promis
 	}
 }
 
-function filterHandledThreads(threads: ReviewThread[], handled: string[]): ReviewThread[] {
+function filterHandledThreads(threads: ReviewThread[], handled: readonly string[]): ReviewThread[] {
 	const set = new Set(handled);
 	return threads.filter((t) => !set.has(t.id));
 }
@@ -170,7 +169,7 @@ export async function fetchPRState(
 	cwd: string,
 	prNumber: number,
 	existingVerifiedSha: string | null,
-	opts: { concurrency: number; handledThreadIds: string[] },
+	handledThreadIds: readonly string[],
 	repo?: string,
 ): Promise<PRState | string> {
 	const prResult = await viewPR(exec, cwd, prNumber);
@@ -192,9 +191,8 @@ export async function fetchPRState(
 			return `Could not fetch ${label} for PR #${prNumber}: ${result.stderr.trim() || "unknown GitHub error"}`;
 	}
 
-	const checks = await attachFailedLogs(exec, cwd, checksResult.checks, opts.concurrency);
-	const threads = filterHandledThreads([...threadsResult.threads, ...issueResult.threads], opts.handledThreadIds);
-	return buildPRState(prResult.pr, threads, checks, existingVerifiedSha);
+	const threads = filterHandledThreads([...threadsResult.threads, ...issueResult.threads], handledThreadIds);
+	return buildPRState(prResult.pr, threads, checksResult.checks, existingVerifiedSha);
 }
 
 export async function runChildRole(
