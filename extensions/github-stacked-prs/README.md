@@ -54,17 +54,36 @@ in a multi-PR stack, including its bottom PR, uses stack orchestration so the
 provider advances and republishes dependent PRs.
 
 Local branches are required. Before confirmation, every unmerged branch must
-match its remote PR head, and the branches must form a clean linear chain. For
-each frontier, the provider asks Land to merge the exact pinned 40-character
-head SHA. It then fetches trunk, rebases the remainder with
-`git rebase --update-refs`, revalidates every remote head, and atomically
-force-pushes the remainder with exact leases. It repairs PR bases, updates
+match its remote PR head, and the branches must form a clean linear chain. The
+provider also inventories every local branch and Git worktree that a landing
+rebase could affect. The remainder from the pinned frontier through the local
+top must be linear and contain no merge commits. Every branch in that commit
+range must be a confirmed remainder branch. An unrelated branch is allowed
+only when its tip is outside the range.
+
+The top remainder branch must be checked out in the worktree that started
+landing. No intermediate remainder branch may be checked out in any worktree.
+If a refusal names a worktree, check out another branch there. If it names an
+alias in the rewrite range, move or delete that alias before retrying.
+
+The provider repeats this inspection under the publication lock before each
+frontier merge and again after it fetches the merged trunk. For each frontier,
+the provider asks Land to merge the exact pinned 40-character head SHA. It
+then rebases the remainder with `git rebase --update-refs`. Before the first
+push, it verifies ordered ancestry from refreshed trunk and confirms that no
+branch outside the remainder moved, appeared, or disappeared. A valid no-op
+rebase is allowed. The provider revalidates every remote head, atomically
+force-pushes the remainder with exact leases, repairs PR bases, updates
 navigation comments, and deletes the verified merged branch.
 
 Before each advance, recovery handles record the old branch tips as
 `ref@sha`. A rebase conflict triggers `git rebase --abort` and returns a
-partial result. The merged PR remains merged; use the recovery handles to
-inspect or restore local refs before retrying.
+partial result. A failed late inspection or post-rebase check also returns a
+partial result before any remainder push or PR edit. The merged PR remains
+merged; use the recovery handles to inspect or restore local refs before
+retrying. The publication lock coordinates Kstack operations, but an external
+Git process can still race these observations. Kstack does not move a branch
+that another worktree has checked out or roll back a completed remote merge.
 
 ## Configuration
 
@@ -93,7 +112,9 @@ The provider refuses:
 - a non-GitHub remote;
 - a non-`kstack/` or ambiguous ancestry-derived stack;
 - remote-only stack landing or stale local branches;
-- an unbounded or non-linear stack.
+- an unbounded or non-linear stack;
+- merge commits or unconfirmed branch aliases in a landing rewrite range;
+- a remainder branch checked out outside the supported top worktree.
 
 Stacks contain at most 50 slices. Refs and subjects are bounded by the shared
 manifest parser. Confirmation previews are limited to 16 KiB, and tool output
@@ -122,5 +143,5 @@ npm run check:exports
 npm run check:imports
 ```
 
-Tests inject Git and GitHub effects. They do not mutate a real repository or
-remote.
+Tests inject GitHub effects and use disposable repositories for real Git
+rebase and worktree behavior. They do not mutate a user repository or remote.
