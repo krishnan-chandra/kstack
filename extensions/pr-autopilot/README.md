@@ -19,10 +19,10 @@ model.
 
 | Mode | Behavior |
 |---|---|
-| `check` | One status pass: fetch CI checks, unresolved review threads, and conflict state. Report and stop. No child agents are spawned. |
-| `threads` | Fetch state, spawn a model triager, then a fixer for threads marked `fix`. Dismiss/ask are handled by the parent. Commit and push. One cycle. |
-| `drive` | Loop: refresh → merge base if behind/conflicted → comments → watch pending CI → flake rerun → code CI, up to 3 fix cycles. |
-| `watch` | Same as `drive` with up to 15 fix cycles. Watches `gh pr checks --watch` when nothing is actionable and CI is still running. |
+| `check` | Read state twice, including CI checks, unresolved review threads, and conflict state. Report and stop without polling or spawning a child. |
+| `threads` | Fetch state, spawn a model triager, then a fixer for threads marked `fix`. Dismiss/ask are handled by the parent. Commit and push. One cycle. It performs the existing final settling read but does not poll mergeability. |
+| `drive` | Loop: refresh → merge base if behind/conflicted → comments → watch pending CI → flake rerun → code CI, up to 3 fix cycles. Poll pending mergeability as described under [Readiness](#readiness). |
+| `watch` | Same as `drive` with up to 15 fix cycles. Watches `gh pr checks --watch` when nothing is actionable and CI is still running, and uses the same bounded mergeability polling as `drive`. |
 | `cleanup` | In Git mode, verify and remove the current clean, unlocked Kstack-managed worktree, then safely delete its branch after confirmation. Dirty, untracked, locked, unregistered, and out-of-root worktrees are preserved. In jj mode, report a no-op. Session archival remains separate. |
 
 Tab-completion offers `--mode` and `--pr` as flags, and the five mode values once `--mode` is being entered. `--pr` never suggests a value — the autopilot never guesses a PR number.
@@ -130,7 +130,8 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 7. **Stop at merge-ready.** The autopilot declares a PR looks merge-ready and
    stops. It never merges, never arms merge-when-ready, and never touches
    branch protection. Drafts that are code-ready ask once to `gh pr ready`.
-   Use `/land` or `/jj-stack land` to merge.
+   After that transition, the same head-verification and mergeability rules
+   apply. Use `/land` or `/jj-stack land` to merge.
 
 8. **One autopilot per stack.** If a run is already active, a second
    `/pr-autopilot` is rejected.
@@ -145,6 +146,31 @@ These are enforced by the state machine and cannot be bypassed at runtime:
     and CI logs stay inside data fences. Prompts refer to checks and review
     items by local keys such as `check-1` and `thread-1`. The parent maps those
     keys back to the exact GitHub names and IDs before it acts.
+
+## Readiness
+
+A PR is merge-ready only when all of these conditions hold:
+
+- The PR is open and not a draft.
+- Two fresh observations verify the same head SHA.
+- GitHub reports `mergeable` as `MERGEABLE`.
+- `mergeStateStatus` is `CLEAN`, `HAS_HOOKS`, or `UNSTABLE`.
+- All observed checks are successful, skipped, or neutral, and no review
+  threads remain unresolved. `UNSTABLE` with no observed checks is not ready.
+
+Closed and merged PRs end as incomplete before Autopilot starts another child
+or mutation. `UNKNOWN` mergeability is also incomplete; it is never treated as
+a successful default.
+
+`check` always performs its two independent reads and returns immediately.
+`threads` can perform its existing settling read but does not poll. In `drive`
+and `watch`, when an open, non-draft PR is otherwise code-ready and only
+mergeability remains unknown, Autopilot makes at most five additional fresh
+observations. It waits one abortable second between observations. The budget is
+for the whole run and does not reset when the head changes. Each GitHub command
+keeps its own timeout, so this is an observation bound rather than a five-second
+wall-clock deadline. Autopilot does not start a triager or fixer only to wait for
+mergeability.
 
 ## Child agents
 
@@ -224,7 +250,8 @@ Autopilot child roles persist native Pi sessions under `~/.pi/kstack/subagents/`
 ## Aborting
 
 Press <kbd>Ctrl+Shift+B</kbd> during an autopilot run to stop it. Cancellation is
-observed at action boundaries and between review pagination requests. After it
+observed during mergeability waits, at action boundaries, and between review
+pagination requests. After it
 is observed, Autopilot starts no new fixer, VCS operation, GitHub mutation,
 reply resolution, rerun, or cleanup removal.
 

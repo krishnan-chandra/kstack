@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BoundaryValue } from "../shared/validation.ts";
 import type { DriverOps, runAutopilot } from "./driver.ts";
+import type { GHPrJson } from "./github-parse.ts";
 import type {
 	AutopilotPersistedState,
 	ExecFn,
@@ -35,9 +36,14 @@ export function deferred<T>() {
 	return { promise, resolve };
 }
 
+type ReadinessObservation = Partial<Pick<GHPrJson, "state" | "isDraft" | "mergeStateStatus" | "mergeable" | "headSha">>;
+
 interface Scenario {
-	mergeStateStatus?: "CLEAN" | "BEHIND";
-	mergeable?: "true" | "false";
+	state?: GHPrJson["state"];
+	mergeStateStatus?: GHPrJson["mergeStateStatus"];
+	mergeable?: GHPrJson["mergeable"];
+	prObservations?: ReadinessObservation[];
+	failPrReadAt?: number;
 	branch?: string;
 	dirty?: boolean;
 	checks?: Array<{ name: string; state: string; bucket: string; link?: string }>;
@@ -56,6 +62,7 @@ export interface Harness {
 	calls: string[];
 	roles: string[];
 	models: string[];
+	waits: number[];
 	unexpected: string[];
 	savedStates: AutopilotPersistedState[];
 	exec: ExecFn;
@@ -69,8 +76,10 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 	const calls: string[] = [];
 	const roles: string[] = [];
 	const models: string[] = [];
+	const waits: number[] = [];
 	const unexpected: string[] = [];
 	const savedStates: AutopilotPersistedState[] = [];
+	let prReads = 0;
 	let statusReads = 0;
 	let mergedBase = false;
 	const ok = (stdout = ""): ExecFnResult => ({ code: 0, stdout, stderr: "" });
@@ -78,21 +87,32 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		const key = `${command} ${args.join(" ")}`;
 		calls.push(key);
 		if (command === "gh" && args[0] === "pr" && args[1] === "view") {
+			prReads++;
+			if (scenario.failPrReadAt === prReads) {
+				return { code: 1, stdout: "", stderr: "mergeability read failed" };
+			}
+			const observations = scenario.prObservations;
+			const observation =
+				observations && observations.length > 0
+					? observations[Math.min(prReads - 1, observations.length - 1)]
+					: undefined;
+			const headSha = observation?.headSha ?? SHA;
 			return ok(
 				JSON.stringify({
 					number: 42,
 					title: "Fix the thing",
-					state: "OPEN",
-					isDraft: false,
-					mergeable: scenario.mergeable ?? "true",
-					mergeStateStatus: scenario.mergeStateStatus ?? "CLEAN",
+					state: observation?.state ?? scenario.state ?? "OPEN",
+					isDraft: observation?.isDraft ?? false,
+					mergeable: observation?.mergeable ?? scenario.mergeable ?? "true",
+					mergeStateStatus: observation?.mergeStateStatus ?? scenario.mergeStateStatus ?? "CLEAN",
 					headRefName: BRANCH,
 					baseRefName: "main",
-					headRefOid: SHA,
-					commits: [{ oid: SHA }],
+					headRefOid: headSha,
+					commits: [{ oid: headSha }],
 				}),
 			);
 		}
+		if (command === "gh" && args[0] === "pr" && args[1] === "ready") return ok();
 		if (command === "gh" && args[0] === "repo" && args[1] === "view") return ok("owner/repo\n");
 		if (command === "gh" && args[0] === "api" && args[1] === "graphql") {
 			if (args.some((arg) => arg.includes("resolveReviewThread"))) return ok("{}");
@@ -216,12 +236,17 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 				usage,
 			};
 		},
+		sleep: async (delayMs, signal) => {
+			waits.push(delayMs);
+			signal.throwIfAborted();
+		},
 	};
 	return {
 		cwd,
 		calls,
 		roles,
 		models,
+		waits,
 		unexpected,
 		savedStates,
 		exec,

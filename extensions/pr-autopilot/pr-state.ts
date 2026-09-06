@@ -73,32 +73,50 @@ export function hasFailingChecks(state: PRState): boolean {
 	return state.checks.some((c) => c.conclusion === "failure" || c.status === "failure" || c.status === "cancelled");
 }
 
-/** Green checks, no unresolved threads, not conflicting. Drafts can still be code-ready. */
+/** Open PR with green checks, no unresolved threads, and no known conflicts. Drafts can still be code-ready. */
 export function isCodeReady(state: PRState): boolean {
+	if (state.state !== "open") return false;
 	if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY") return false;
 	if (state.hasUnresolvedThreads) return false;
 	return checksGreen(state);
 }
 
-/** Code-ready, not a draft, GitHub merge box is CLEAN (or UNSTABLE with all observed checks green). */
+function hasSupportedMergeState(state: PRState): boolean {
+	return (
+		state.mergeStateStatus === "CLEAN" ||
+		state.mergeStateStatus === "HAS_HOOKS" ||
+		state.mergeStateStatus === "UNSTABLE"
+	);
+}
+
+/** Whether every merge-ready condition except exact-head verification holds. */
+export function isMergeReadyIgnoringHeadVerification(state: PRState): boolean {
+	if (state.isDraft || state.mergeStateStatus === "DRAFT") return false;
+	if (state.mergeable !== "mergeable" || !hasSupportedMergeState(state)) return false;
+	return isCodeReady(state);
+}
+
+/** Whether mergeability is pending while every non-head readiness condition is otherwise satisfied. */
+export function isMergeabilityPending(state: PRState): boolean {
+	if (!isCodeReady(state) || state.isDraft) return false;
+	if (state.mergeStateStatus !== "UNKNOWN" && !hasSupportedMergeState(state)) return false;
+	return state.mergeable === "unknown" || state.mergeStateStatus === "UNKNOWN";
+}
+
+/** Code-ready, not a draft, and confirmed mergeable in an explicitly supported GitHub merge state. */
 export function isMergeReady(state: PRState): boolean {
 	if (state.verifiedHeadSha !== state.headSha) return false;
-	if (state.isDraft || state.mergeStateStatus === "DRAFT") return false;
-	if (
-		state.mergeStateStatus === "BLOCKED" ||
-		state.mergeStateStatus === "DIRTY" ||
-		state.mergeStateStatus === "BEHIND"
-	) {
-		return false;
-	}
-	return isCodeReady(state);
+	return isMergeReadyIgnoringHeadVerification(state);
 }
 
 export function describeBlockers(state: PRState): string {
 	const issues: string[] = [];
+	if (state.state === "closed") issues.push("PR is closed");
+	if (state.state === "merged") issues.push("PR is merged");
 	if (state.verifiedHeadSha !== state.headSha) issues.push("head changed during verification");
 	if (state.isDraft || state.mergeStateStatus === "DRAFT") issues.push("draft");
 	if (state.mergeable === "conflicting" || state.mergeStateStatus === "DIRTY") issues.push("conflicts");
+	if (state.mergeable === "unknown" || state.mergeStateStatus === "UNKNOWN") issues.push("mergeability pending");
 	if (state.mergeStateStatus === "BEHIND") issues.push("behind base");
 	if (state.hasUnresolvedThreads) {
 		const unresolvedReviewThreads = state.threads.filter((thread) => thread.source === "review-thread").length;

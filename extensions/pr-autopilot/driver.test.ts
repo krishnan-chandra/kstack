@@ -8,9 +8,11 @@ import { applyThreadReplies, parseTriage } from "./autopilot-operations.ts";
 import { runAutopilot } from "./driver.ts";
 import { versionReviewItem } from "./review-handling.ts";
 import { BRANCH, config, createHarness, deferred, SHA, triage } from "./test-harness.ts";
-import type { ExecFn, ExecFnResult, PRState, ReviewThread } from "./types.ts";
+import type { AutopilotMode, ExecFn, ExecFnResult, PRState, ReviewThread } from "./types.ts";
 
-async function run(mode: "check" | "drive", scenario: Parameters<typeof createHarness>[0] = {}) {
+type DriverMode = Exclude<AutopilotMode, "cleanup">;
+
+async function run(mode: DriverMode, scenario: Parameters<typeof createHarness>[0] = {}) {
 	const harness = await createHarness(scenario);
 	const result = await runAutopilot(
 		mode,
@@ -146,6 +148,168 @@ test("check mode performs two fresh reads without fetching failed logs or mutati
 	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 2);
 	assert.deepEqual(failedLogCalls(harness.calls), []);
 	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+test("check mode reports pending mergeability after exactly two reads", async (t) => {
+	const { harness, result } = await run("check", {
+		mergeable: "UNKNOWN",
+		mergeStateStatus: "UNKNOWN",
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.match(result.blockedReasons.join("; "), /mergeability pending/);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 2);
+	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+for (const state of ["CLOSED", "MERGED"] as const) {
+	for (const mode of ["check", "threads", "drive", "watch"] as const) {
+		test(`${mode} mode stops on a ${state.toLowerCase()} PR before children or mutations`, async (t) => {
+			const { harness, result } = await run(mode, { state });
+			t.after(() => harness.cleanup());
+			assert.equal(result.status, "incomplete");
+			assert.match(result.blockedReasons.join("; "), new RegExp(state.toLowerCase()));
+			assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, mode === "check" ? 2 : 1);
+			assert.deepEqual(harness.waits, []);
+			assert.deepEqual(harness.roles, []);
+			assert.deepEqual(mutatingCalls(harness.calls), []);
+		});
+	}
+}
+
+for (const mode of ["drive", "watch"] as const) {
+	test(`${mode} mode waits for pending mergeability to become clean`, async (t) => {
+		const pending = { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" as const };
+		const { harness, result } = await run(mode, {
+			prObservations: [pending, pending, { mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }],
+		});
+		t.after(() => harness.cleanup());
+		assert.equal(result.status, "merge-ready");
+		assert.equal(result.prState?.verifiedHeadSha, SHA);
+		assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 3);
+		assert.deepEqual(harness.waits, [1000]);
+		assert.deepEqual(harness.roles, []);
+	});
+}
+
+test("threads mode reports pending mergeability without polling or model work", async (t) => {
+	const { harness, result } = await run("threads", {
+		mergeable: "UNKNOWN",
+		mergeStateStatus: "UNKNOWN",
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.match(result.blockedReasons.join("; "), /mergeability pending/);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 2);
+	assert.deepEqual(harness.waits, []);
+	assert.deepEqual(harness.roles, []);
+});
+
+test("drive mode stops after five extra pending-mergeability observations", async (t) => {
+	const { harness, result } = await run("drive", {
+		mergeable: "UNKNOWN",
+		mergeStateStatus: "UNKNOWN",
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.deepEqual(result.blockedReasons, ["mergeability pending after 5 additional observations"]);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 7);
+	assert.deepEqual(harness.waits, [1000, 1000, 1000, 1000, 1000]);
+	assert.deepEqual(harness.roles, []);
+});
+
+test("mergeability polling does not reset its budget when the head keeps moving", async (t) => {
+	const pending = { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" as const };
+	const observations = [
+		{ ...pending, headSha: SHA },
+		{ ...pending, headSha: SHA },
+		...Array.from({ length: 5 }, (_, index) => ({ ...pending, headSha: `${index + 1}`.repeat(40) })),
+	];
+	const { harness, result } = await run("drive", { prObservations: observations });
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.match(result.blockedReasons.join("; "), /mergeability pending after 5/);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 7);
+	assert.equal(harness.waits.length, 5);
+	assert.deepEqual(harness.roles, []);
+});
+
+test("a pending head that moves on the initial settle read enters bounded polling", async (t) => {
+	const movedSha = "abcdef0123456789abcdef0123456789abcdef01";
+	const { harness, result } = await run("drive", {
+		prObservations: [
+			{ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN", headSha: SHA },
+			{ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN", headSha: movedSha },
+			{ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", headSha: movedSha },
+		],
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "merge-ready");
+	assert.equal(result.prState?.verifiedHeadSha, movedSha);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 3);
+	assert.deepEqual(harness.waits, [1000]);
+	assert.deepEqual(harness.roles, []);
+});
+
+test("a head that moves during mergeability polling needs a fresh same-head observation", async (t) => {
+	const movedSha = "abcdef0123456789abcdef0123456789abcdef01";
+	const pending = { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" as const, headSha: SHA };
+	const cleanMoved = { mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" as const, headSha: movedSha };
+	const { harness, result } = await run("drive", {
+		prObservations: [pending, pending, cleanMoved, cleanMoved],
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "merge-ready");
+	assert.equal(result.prState?.headSha, movedSha);
+	assert.equal(result.prState?.verifiedHeadSha, movedSha);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 4);
+	assert.deepEqual(harness.waits, [1000, 1000]);
+	assert.deepEqual(harness.roles, []);
+});
+
+test("a PR that closes during mergeability polling ends incomplete", async (t) => {
+	const pending = { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" as const };
+	const { harness, result } = await run("drive", {
+		prObservations: [pending, pending, { ...pending, state: "CLOSED" }],
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.match(result.blockedReasons.join("; "), /closed/);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 3);
+	assert.deepEqual(harness.waits, [1000]);
+	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+test("a failed required read during mergeability polling fails the run", async (t) => {
+	const { harness, result } = await run("drive", {
+		mergeable: "UNKNOWN",
+		mergeStateStatus: "UNKNOWN",
+		failPrReadAt: 3,
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "failed");
+	assert.match(result.blockedReasons.join("; "), /mergeability read failed/);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 3);
+	assert.deepEqual(harness.waits, [1000]);
+	assert.deepEqual(harness.roles, []);
+});
+
+test("a confirmed draft uses bounded mergeability settling after mark-ready", async (t) => {
+	const { harness, result } = await run("drive", {
+		prObservations: [
+			{ isDraft: true, mergeable: "UNKNOWN", mergeStateStatus: "DRAFT" },
+			{ isDraft: false, mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" },
+			{ isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" },
+		],
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "merge-ready");
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr ready")).length, 1);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 3);
+	assert.deepEqual(harness.waits, [1000]);
+	assert.deepEqual(harness.roles, []);
 });
 
 test("check mode observes Actions failures without fetching failed logs", async (t) => {
@@ -341,6 +505,7 @@ test("a behind PR merges its base and pushes", async (t) => {
 	assert.ok(harness.calls.some((call) => call === "git fetch origin main"));
 	assert.ok(harness.calls.some((call) => call === "git merge --no-edit origin/main"));
 	assert.ok(harness.calls.some((call) => call === `git push origin HEAD:${BRANCH}`));
+	assert.deepEqual(harness.waits, []);
 });
 
 test("informational issue comments are ignored without posting and do not block readiness", async (t) => {
