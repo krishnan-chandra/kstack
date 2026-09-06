@@ -47,9 +47,10 @@ and delegated landing/readiness requests carry that identity explicitly.
 `GH_REPO`; link also uses full PR URLs to avoid interpreting numbers as local
 branches. Kstack does not change the parent process environment.
 
-Standalone `/land` and `/pr-autopilot` calls still use GitHub CLI repository
-discovery when no stack caller supplies repository coordinates. In a secondary
-workspace, use `/jj-stack land` or `jj_stack_land` for the scoped stack path.
+Standalone `/land` and `/pr-autopilot` calls use the configured jj backend to
+resolve the GitHub `origin` before they query GitHub. They therefore use the
+same explicit repository scope in colocated, non-colocated, and secondary
+workspaces.
 
 ## What it does
 

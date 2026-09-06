@@ -72,7 +72,12 @@ See [`kstack.example.json`](../../kstack.example.json) for the full schema. The
 shared `vcs.backend` setting selects `"git"`, `"graphite"`, or `"jj"` for
 checkout validation, base integration, path-scoped fixes, restore, and
 publication. Mutating modes run the selected backend's preflight before
-confirmation.
+confirmation. Before any standalone GitHub operation, Autopilot resolves the
+repository once and scopes its PR and run commands to that `owner/name`. In jj
+mode, it reads the GitHub `origin` with `jj git remote list`, so colocated,
+non-colocated, and secondary workspaces use the same path. A missing, malformed,
+duplicate, or non-GitHub `origin` blocks the run before confirmation. Cleanup
+mode remains repository-independent.
 
 The local checkout is validated lazily, immediately before a mutation (a base
 merge or a fixer edit). Readiness-only passes — merge-ready checks, CI
@@ -251,9 +256,10 @@ Autopilot child roles persist native Pi sessions under `~/.pi/kstack/subagents/`
 
 Press <kbd>Ctrl+Shift+B</kbd> during an autopilot run to stop it. Cancellation is
 observed during mergeability waits, at action boundaries, and between review
-pagination requests. After it
-is observed, Autopilot starts no new fixer, VCS operation, GitHub mutation,
-reply resolution, rerun, or cleanup removal.
+pagination requests. A caller that cancels repository resolution receives an
+aborted result, not a repository configuration error. After cancellation is
+observed, Autopilot starts no new fixer, VCS operation, GitHub mutation, reply
+resolution, rerun, or cleanup removal.
 
 An already-dispatched repository or GitHub mutation is allowed to settle so
 repository cleanup and remote diagnostics remain trustworthy. For example, an
@@ -282,7 +288,7 @@ When Land selects an upper PR in a local jj stack, `jj-stacked-prs` invokes PR
 Autopilot for each frontier in bottom-up order. Autopilot still handles one
 frontier at a time and returns exact-head readiness evidence. The stack caller
 passes an optional `repository` (`owner/name`) through `requestPrAutopilot`.
-When supplied, parent-side GitHub queries and mutations use that repository
-instead of cwd discovery, including in secondary jj workspaces. Standalone
-calls without it retain GitHub CLI discovery. The stack workflow, not
-Autopilot, performs each merge and continues through the selected PR.
+When supplied, parent-side GitHub queries and mutations use that repository.
+Standalone calls resolve the same coordinates from the configured backend
+before they query GitHub. The stack workflow, not Autopilot, performs each
+merge and continues through the selected PR.

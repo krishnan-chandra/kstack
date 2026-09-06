@@ -3,10 +3,155 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { requestPrAutopilot } from "./api.ts";
 import prAutopilotExtension from "./index.ts";
 import { config, createHarness, deferred } from "./test-harness.ts";
 
 // Exercise the registered command and its real lifecycle/driver with only Pi's host effects stubbed.
+test("standalone check scopes GitHub commands from a non-colocated jj origin", async (t) => {
+	const harness = await createHarness();
+	t.after(() => harness.cleanup());
+	const agentDir = join(harness.cwd, "agent");
+	await mkdir(agentDir);
+	await writeFile(
+		join(agentDir, "kstack.json"),
+		JSON.stringify({
+			"pr-autopilot": config,
+			vcs: { backend: "jj" },
+		}),
+	);
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	});
+
+	let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
+	const host: Partial<ExtensionAPI> = {
+		on() {},
+		registerCommand(_name, value) {
+			command = value;
+		},
+		registerShortcut() {},
+		registerMessageRenderer() {},
+		sendMessage() {},
+		events: { on: () => () => {}, emit() {} },
+		exec: async (program, args, options) => {
+			if (program === "jj" && args.join(" ") === "git remote list --no-pager --color=never") {
+				return { code: 0, stdout: "origin git@github.com:owner/repo.git\n", stderr: "", killed: false };
+			}
+			const result = await harness.exec(program, args, { ...options, cwd: harness.cwd });
+			return { ...result, killed: false };
+		},
+	};
+	prAutopilotExtension(
+		/* SAFETY: This host supplies every Pi capability used by the exercised command path. */ host as ExtensionAPI,
+	);
+	assert.ok(command);
+	const notices: string[] = [];
+	const context: Pick<ExtensionCommandContext, "cwd" | "mode" | "hasUI"> & {
+		ui: Partial<ExtensionCommandContext["ui"]>;
+	} = {
+		cwd: harness.cwd,
+		mode: "tui",
+		hasUI: true,
+		ui: {
+			confirm: async () => true,
+			notify: (message: string) => notices.push(message),
+			setStatus() {},
+		},
+	};
+	await command.handler(
+		"--pr 42 --mode check",
+		/* SAFETY: This context supplies every capability used by the exercised command path. */ context as ExtensionCommandContext,
+	);
+
+	const repositoryCalls = harness.calls.filter((call) => /^gh (?:pr|run) /.test(call));
+	assert.ok(repositoryCalls.length > 0);
+	assert.ok(
+		repositoryCalls.every((call) => call.endsWith(" --repo owner/repo")),
+		repositoryCalls.join("\n"),
+	);
+	assert.ok(harness.calls.some((call) => call.includes("api repos/owner/repo/issues/42/comments")));
+	assert.deepEqual(harness.unexpected, []);
+	assert.ok(notices.some((message) => /looks merge-ready/i.test(message)));
+});
+
+test("delegated repository-resolution cancellation returns aborted without an error notification", async (t) => {
+	const harness = await createHarness();
+	t.after(() => harness.cleanup());
+	const agentDir = join(harness.cwd, "agent");
+	await mkdir(agentDir);
+	await writeFile(join(agentDir, "kstack.json"), JSON.stringify({ vcs: { backend: "jj" } }));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	});
+
+	const controller = new AbortController();
+	const listeners = new Map<string, Array<(value: never) => void>>();
+	const notices: Array<{ message: string; level: string }> = [];
+	const host: Partial<ExtensionAPI> = {
+		on() {},
+		registerCommand() {},
+		registerShortcut() {},
+		registerMessageRenderer() {},
+		sendMessage() {},
+		events: {
+			on: (name, listener) => {
+				const current = listeners.get(name) ?? [];
+				current.push(listener);
+				listeners.set(name, current);
+				return () => {};
+			},
+			emit: (name, value) => {
+				for (const listener of listeners.get(name) ?? []) {
+					/* SAFETY: The test bus forwards the exact request value emitted by the typed helper. */
+					listener(value as never);
+				}
+			},
+		},
+		exec: async (program, args) => {
+			assert.equal(program, "jj");
+			assert.equal(args.join(" "), "git remote list --no-pager --color=never");
+			controller.abort();
+			return { code: 130, stdout: "", stderr: "aborted", killed: true };
+		},
+	};
+	prAutopilotExtension(
+		/* SAFETY: This host supplies every Pi capability used before repository resolution is cancelled. */ host as ExtensionAPI,
+	);
+	const ctx = {
+		cwd: harness.cwd,
+		hasUI: true,
+		ui: {
+			notify: (message: string, level: string) => notices.push({ message, level }),
+		},
+	};
+	const result = await requestPrAutopilot(
+		/* SAFETY: This host implements the request event bus used by the helper. */ host as ExtensionAPI,
+		"check",
+		42,
+		/* SAFETY: Repository cancellation occurs before any other context capability is used. */ ctx as never,
+		harness.cwd,
+		undefined,
+		controller.signal,
+	);
+
+	assert.equal(result.handled, true);
+	if (result.handled) {
+		assert.equal(result.outcome.status, "aborted");
+		assert.deepEqual(result.outcome.blockedReasons, ["repository resolution was cancelled"]);
+	}
+	assert.equal(
+		notices.some((notice) => notice.level === "error"),
+		false,
+	);
+});
+
 for (const cancel of ["shutdown", "shortcut"] as const) {
 	test(`${cancel} during a command refresh prevents repository mutations`, async (t) => {
 		const harness = await createHarness({ mergeStateStatus: "BEHIND" });

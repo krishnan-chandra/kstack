@@ -28,7 +28,6 @@ import { isString } from "../shared/validation.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { resolveRepoName } from "../shared/github.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { createPrMutation } from "../shared/vcs/mutation.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
@@ -111,6 +110,8 @@ export async function runAutopilot(
 		exec: ExecFn;
 		backend: VcsBackend;
 		cwd: string;
+		/** Validated owner/name; omitted only for repository-independent cleanup. */
+		repository?: string;
 		explicitPR?: number;
 		promptDir: string;
 		triagerPromptFile: string;
@@ -179,6 +180,11 @@ export async function runAutopilot(
 			return finish("blocked", [preflight.error]);
 		}
 	}
+	if (mode !== "cleanup" && params.repository === undefined) {
+		const reason = "PR autopilot requires a resolved GitHub repository.";
+		notify(reason, "error");
+		return finish("blocked", [reason]);
+	}
 	const target = await resolveTargetPR(exec, cwd, params.explicitPR);
 	if (signal.aborted) return finish("aborted");
 	if (target.error || !target.prNumber) {
@@ -188,8 +194,7 @@ export async function runAutopilot(
 	}
 	const prNumber = target.prNumber;
 	const repoKey = repoPersistKey(cwd);
-	let repoName: Promise<string | undefined> | undefined;
-	const resolveRepoOnce = () => (repoName ??= resolveRepoName(exec, cwd));
+	const repoName = params.repository;
 	const selected = params.selectedModel ?? pickModel(config.models);
 	const terminalPrReason = (snapshot: PRState): string | undefined =>
 		snapshot.state === "open" ? undefined : describeBlockers(snapshot);
@@ -207,7 +212,7 @@ export async function runAutopilot(
 		}
 		if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
 		if (signal.aborted) return finish("aborted");
-		const fetched = await fetchPRState(exec, cwd, prNumber, null, persisted, await resolveRepoOnce(), signal);
+		const fetched = await fetchPRState(exec, cwd, prNumber, null, persisted, repoName, signal);
 		if (signal.aborted) return finish("aborted");
 		if (isString(fetched)) {
 			notify(fetched, "error");
@@ -221,7 +226,7 @@ export async function runAutopilot(
 			await ops.savePersistedState(persisted);
 		}
 		if (signal.aborted) return finish("aborted");
-		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, persisted, await resolveRepoOnce(), signal);
+		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, persisted, repoName, signal);
 		if (signal.aborted) return finish("aborted");
 		if (isString(verified)) {
 			return finish("failed", [verified]);
@@ -266,15 +271,7 @@ export async function runAutopilot(
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking", cycle);
-		const fetched = await fetchPRState(
-			exec,
-			cwd,
-			prNumber,
-			verifiedHeadSha,
-			persisted,
-			await resolveRepoOnce(),
-			signal,
-		);
+		const fetched = await fetchPRState(exec, cwd, prNumber, verifiedHeadSha, persisted, repoName, signal);
 		if (signal.aborted || isString(fetched) || reviewMutationBlocker) return fetched;
 		const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, fetched.threads);
 		if (reconciled.length !== persisted.legacyPendingReplyIds.length) {
@@ -334,15 +331,7 @@ export async function runAutopilot(
 			if (signal.aborted) return { status: "aborted", blockedReasons };
 		}
 		setPhase("settling", cycle);
-		const settled = await fetchPRState(
-			exec,
-			cwd,
-			prNumber,
-			snapshot.headSha,
-			persisted,
-			await resolveRepoOnce(),
-			signal,
-		);
+		const settled = await fetchPRState(exec, cwd, prNumber, snapshot.headSha, persisted, repoName, signal);
 		if (signal.aborted) return { status: "aborted", blockedReasons };
 		if (isString(settled)) {
 			notify(settled, "error");
@@ -397,7 +386,7 @@ export async function runAutopilot(
 			}
 			if (signal.aborted) return { status: "aborted", blockedReasons };
 			mergeabilityPolls++;
-			const next = await fetchPRState(exec, cwd, prNumber, previousHeadSha, persisted, await resolveRepoOnce(), signal);
+			const next = await fetchPRState(exec, cwd, prNumber, previousHeadSha, persisted, repoName, signal);
 			if (isString(next)) {
 				notify(next, "error");
 				return { status: "failed", blockedReasons: [next] };
@@ -729,7 +718,7 @@ export async function runAutopilot(
 				pendingReviewReplies: persisted.pendingReviewReplies,
 				legacyPendingReplyIds: persisted.legacyPendingReplyIds,
 				reviewMutationBlocker,
-				repo: await resolveRepoOnce(),
+				repo: repoName,
 			},
 			notify,
 			signal,
