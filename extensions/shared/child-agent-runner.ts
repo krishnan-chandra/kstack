@@ -21,8 +21,16 @@ import {
 
 export type { ChildSession, ChildSessionIdentity, SubagentSessionStore };
 
+interface ChildStdinError extends Error {
+	code?: string;
+}
+
 export interface SpawnedProcess {
-	stdin?: { write(data: string): boolean; end(): void };
+	stdin?: {
+		write(data: string): boolean;
+		end(): void;
+		on(event: "error", cb: (error: ChildStdinError) => void): void;
+	};
 	stdout: { on(event: "data", cb: (data: Buffer) => void): void };
 	stderr: { on(event: "data", cb: (data: Buffer) => void): void };
 	on(event: "close", cb: (code: number | null) => void): void;
@@ -232,6 +240,8 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		let forcedMissingReason: "setup-failed" | "protocol-mismatch" | undefined;
 		let firstRecordSeen = false;
 		let spawnFailed = false;
+		let spawnError: string | undefined;
+		let stdinError: string | undefined;
 
 		const emit = () => options.onProgress?.({ turns: usage.turns, activity, ...(preview ? { preview } : undefined) });
 		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
@@ -390,8 +400,16 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		});
 		child.on("error", (error) => {
 			spawnFailed = true;
-			finish({ status: "failed", error: `Spawn failed: ${error.message}`, usage, stderr });
+			spawnError = `Spawn failed: ${error.message}`;
+			stop();
 		});
+		const handleStdinError = (error: ChildStdinError) => {
+			if (settled || closed) return;
+			const code = error.code ?? "UNKNOWN";
+			stdinError = `Child stdin failed (${code}).`;
+			stop();
+		};
+		child.stdin?.on("error", handleStdinError);
 		child.on("close", (code) => {
 			closed = true;
 			parser.flush();
@@ -414,6 +432,8 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 					activity,
 				});
 			if (protocolError) return finish({ status: "failed", error: protocolError, usage, stderr });
+			if (spawnError) return finish({ status: "failed", error: spawnError, usage, stderr });
+			if (stdinError) return finish({ status: "failed", error: stdinError, usage, stderr });
 			const exitCode = code ?? 1;
 			if (exitCode !== 0 || stopReason === "error" || stopReason === "aborted" || errorMessage) {
 				const diagnosticStderr = stripFreshSessionWarning(stderr, prepared.id);
@@ -449,8 +469,12 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			}, deps.maxRuntimeMs);
 		}
 		if (options.stdin !== undefined && child.stdin && !killStarted) {
-			child.stdin.write(options.stdin);
-			child.stdin.end();
+			try {
+				child.stdin.write(options.stdin);
+				child.stdin.end();
+			} catch (error) {
+				handleStdinError(error instanceof Error ? error : new Error(String(error)));
+			}
 		}
 	});
 }

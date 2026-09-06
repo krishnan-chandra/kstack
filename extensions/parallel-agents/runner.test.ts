@@ -55,7 +55,7 @@ describe("parallel agent child arguments", () => {
 					return {
 						stdout,
 						stderr: new EventEmitter(),
-						stdin: { write: () => true, end() {} },
+						stdin: { write: () => true, end() {}, on: () => {} },
 						on: (event: string, listener: (...args: BoundaryValue[]) => void) => events.on(event, listener),
 						kill: () => true,
 					};

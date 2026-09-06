@@ -29,7 +29,7 @@ const sessionStore = {
 
 const ENVELOPE = `${CLASSIFIER_SENTINEL_START}\n{"schemaVersion":1,"route":"investigate","confidence":"high","rationale":"read-only question"}\n${CLASSIFIER_SENTINEL_END}`;
 
-class FakeStdin {
+class FakeStdin extends EventEmitter {
 	writes: string[] = [];
 	ended = false;
 	write(data: string): boolean {
@@ -259,6 +259,7 @@ describe("runClassifier", () => {
 		const process = new FakeProcess();
 		const promise = runClassifier(options(process));
 		process.error(new Error("child_process error"));
+		process.close(null);
 		const result = await promise;
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /child_process error/);
