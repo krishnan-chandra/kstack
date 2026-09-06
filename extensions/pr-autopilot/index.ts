@@ -19,6 +19,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Box, Text } from "@earendil-works/pi-tui";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
+import { scopeGitHubExec } from "../shared/github-repository.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
@@ -124,6 +125,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		cwd = ctx.cwd,
 		confirmation?: AutopilotConfirmation,
 		callerSignal?: AbortSignal,
+		repository?: string,
 	): Promise<AutopilotResult> {
 		const early = (status: "blocked" | "declined" | "aborted" | "failed", reason: string): AutopilotResult => ({
 			status,
@@ -163,7 +165,8 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		for (const warning of config.warnings) notify(warning, "warning");
 		const vcsConfig = loadVcsBackend();
 		for (const warning of vcsConfig.warnings) notify(warning, "warning");
-		const exec = makeExec(pi);
+		const rawExec = makeExec(pi);
+		const exec = repository === undefined ? rawExec : scopeGitHubExec(rawExec, repository);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
 		const policy = vcsPolicy(backend.id);
 
@@ -317,8 +320,8 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 
 	// Listen for in-process API requests from the router or other extensions.
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
-		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd, confirmation, signal) =>
-			runAutopilotCommand(mode, prNumber, ctx, cwd, confirmation, signal),
+		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd, confirmation, signal, repository) =>
+			runAutopilotCommand(mode, prNumber, ctx, cwd, confirmation, signal, repository),
 		);
 	});
 }

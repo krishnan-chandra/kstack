@@ -1,6 +1,6 @@
 import { type BoundaryValue, isBoolean, isObject, isString, type JsonObject } from "../shared/validation.ts";
 
-/** Validated jj and read-only Git adapter. */
+/** Validated jj adapter for Git-backed repositories in any workspace layout. */
 
 import { parseGithubUrl, redactUrl } from "../shared/github.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -167,20 +167,18 @@ export function createJjAdapter(run: ProcessRunner): JjAdapter {
 			return parseStackCommits(result.stdout);
 		},
 		async listRemotes(cwd, signal) {
-			const names = await listRemoteNames(run, cwd, signal);
-			const remotes: RemoteInfo[] = [];
-			for (const name of names) remotes.push(await readRemote(run, cwd, name, signal));
-			return remotes;
+			return readRemotes(run, cwd, signal);
 		},
 		async getRemote(cwd, name, signal) {
 			assertBoundedName(name, "remote", MAX_NAME_CHARS);
-			const remotes = await listRemoteNames(run, cwd, signal);
-			if (!remotes.includes(name)) {
+			const remotes = await readRemotes(run, cwd, signal);
+			const remote = remotes.find((remote) => remote.name === name);
+			if (!remote) {
 				throw new JjError(
-					`Remote ${JSON.stringify(name)} does not exist. Available: ${remotes.join(", ") || "(none)"}.`,
+					`Remote ${JSON.stringify(name)} does not exist. Available: ${remotes.map((remote) => remote.name).join(", ") || "(none)"}.`,
 				);
 			}
-			return readRemote(run, cwd, name, signal);
+			return remote;
 		},
 		async currentOperationId(cwd, signal) {
 			const result = await runJj(run, ["op", "log", "--limit", "1", "--no-graph", "-T", OPERATION_ID_TEMPLATE], {
@@ -288,21 +286,18 @@ function parseStackCommit(value: BoundaryValue): StackCommit {
 	};
 }
 
-async function listRemoteNames(run: ProcessRunner, cwd: string, signal?: AbortSignal): Promise<string[]> {
-	const result = await runGit(run, ["remote"], { cwd, signal });
-	return nonemptyLines(result.stdout);
-}
-
-async function readRemote(run: ProcessRunner, cwd: string, name: string, signal?: AbortSignal): Promise<RemoteInfo> {
-	const result = await runGit(run, ["remote", "get-url", name], { cwd, signal });
-	const url = result.stdout.trim();
-	if (!url) throw new JjError(`Remote ${JSON.stringify(name)} has an empty URL.`);
-	return {
-		name,
-		url,
-		redactedUrl: redactUrl(url),
-		github: parseGithubUrl(url),
-	};
+async function readRemotes(run: ProcessRunner, cwd: string, signal?: AbortSignal): Promise<RemoteInfo[]> {
+	const result = await runJj(run, ["git", "remote", "list", "--no-pager", "--color=never"], { cwd, signal });
+	const seen = new Set<string>();
+	return nonemptyLines(result.stdout).map((line) => {
+		const match = /^(\S+)[ \t]+(\S.*)$/.exec(line);
+		if (!match) throw new JjError("Malformed jj git remote list output: expected a remote name and URL.");
+		const [, name, url] = match;
+		assertBoundedName(name, "remote", MAX_NAME_CHARS);
+		if (seen.has(name)) throw new JjError(`Duplicate remote name: ${JSON.stringify(name)}.`);
+		seen.add(name);
+		return { name, url, redactedUrl: redactUrl(url), github: parseGithubUrl(url) };
+	});
 }
 
 async function runJj(
@@ -318,25 +313,6 @@ async function runJj(
 	if (result.kind !== "ok") throw toJjError(result, "jj");
 	if (result.code !== 0) {
 		throw new JjError(`jj ${args[0]} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`);
-	}
-	return { stdout: result.stdout };
-}
-
-async function runGit(
-	run: ProcessRunner,
-	args: string[],
-	options: { cwd: string; signal?: AbortSignal },
-): Promise<{ stdout: string }> {
-	const result = await run(["git", ...args], {
-		cwd: options.cwd,
-		timeoutMs: DEFAULT_TIMEOUT_MS,
-		signal: options.signal,
-	});
-	if (result.kind !== "ok") throw toJjError(result, "git");
-	if (result.code !== 0) {
-		throw new JjError(
-			`git ${args[0]} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`,
-		);
 	}
 	return { stdout: result.stdout };
 }

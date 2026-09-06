@@ -19,7 +19,7 @@ function fakeExec(responses: Record<string, { code?: number; stdout?: string; st
 const validJjResponses = {
 	"jj --version": { stdout: "jj 0.44.0\n" },
 	"jj workspace root": { stdout: "/repo\n" },
-	"git rev-parse --show-toplevel": { stdout: "/repo\n" },
+	"jj git root": { stdout: "/repo/.git\n" },
 	"jj config get user.name": { stdout: "Example User\n" },
 	"jj config get user.email": { stdout: "user@example.com\n" },
 };
@@ -75,14 +75,33 @@ describe("VCS preflight", () => {
 		assert.match(result.ok ? "" : result.error, /jj >= 0\.44/);
 	});
 
-	it("rejects a jj workspace nested in a different Git worktree", async () => {
-		const result = await preflightVcs(
-			"/repo",
-			"jj",
-			fakeExec({ ...validJjResponses, "git rev-parse --show-toplevel": { stdout: "/outer\n" } }),
-		);
-		assert.equal(result.ok, false);
-		assert.match(result.ok ? "" : result.error, /differ/);
+	it("accepts a secondary jj workspace without ambient Git discovery", async () => {
+		const exec = fakeExec({
+			...validJjResponses,
+			"jj workspace root": { stdout: "/workspaces/task\n" },
+			"git rev-parse --show-toplevel": { code: 128, stderr: "not a git repository" },
+		});
+		assert.deepEqual(await preflightVcs("/workspaces/task/src", "jj", exec), {
+			ok: true,
+			workspaceRoot: "/workspaces/task",
+		});
+	});
+
+	it("does not inspect an unrelated enclosing Git worktree in jj mode", async () => {
+		const respond = fakeExec(validJjResponses);
+		const exec: ExecFn = async (command, args, options) => {
+			assert.equal(command, "jj");
+			return respond(command, args, options);
+		};
+		assert.deepEqual(await preflightVcs("/repo", "jj", exec), { ok: true, workspaceRoot: "/repo" });
+	});
+
+	it("requires a Git backend and reports the failed jj probe", async () => {
+		for (const response of [{ code: 1, stderr: "no Git backend" }, { stdout: "\n" }]) {
+			const result = await preflightVcs("/repo", "jj", fakeExec({ ...validJjResponses, "jj git root": response }));
+			assert.equal(result.ok, false);
+			assert.match(result.ok ? "" : result.error, /Git-backed.*jj git root/);
+		}
 	});
 
 	it("requires the jj user identity", async () => {

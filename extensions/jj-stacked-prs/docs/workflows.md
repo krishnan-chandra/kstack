@@ -184,5 +184,5 @@ Do not land a child PR before its base. Do not call `gh pr merge` directly.
 ## Choosing the remote
 
 `--remote` defaults to `origin`. If a repository uses another GitHub remote,
-pass it explicitly (e.g. `--remote upstream`). Confirm with `git remote -v`.
+pass it explicitly (e.g. `--remote upstream`). Confirm with `jj git remote list`.
 The extension rejects a non-GitHub remote.

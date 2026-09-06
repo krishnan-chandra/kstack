@@ -34,6 +34,23 @@ complete native stack and submits one GitHub stack merge. Pi calls either tool
 only after the user explicitly asks. There is no sync, advance, or generic jj mutation tool. A plan ID proves
 freshness, not authorization.
 
+## Workspace support
+
+Requires jj 0.44 or newer, a configured jj user name and email, and a
+Git-backed repository. Colocated, non-colocated, and secondary workspaces are
+supported, including workspaces without `.git`. Preflight uses `jj workspace
+root` and `jj git root`; remote discovery uses `jj git remote list`.
+
+The selected remote identifies the GitHub repository. API calls, PR commands,
+and delegated landing/readiness requests carry that identity explicitly.
+`gh stack` 0.1.0 has no `--repo` flag, so link and merge receive a per-process
+`GH_REPO`; link also uses full PR URLs to avoid interpreting numbers as local
+branches. Kstack does not change the parent process environment.
+
+Standalone `/land` and `/pr-autopilot` calls still use GitHub CLI repository
+discovery when no stack caller supplies repository coordinates. In a secondary
+workspace, use `/jj-stack land` or `jj_stack_land` for the scoped stack path.
+
 ## What it does
 
 - Inspects `trunk()..<top>` with structured `jj` templates. Inspect, plan, and
@@ -165,8 +182,10 @@ one-hour grace period before reclamation. A live holder is never displaced just
 because publication runs for a long time. If a process is killed during the
 brief reclamation step, a `.reaper` file can conservatively block later stale
 cleanup; remove it only after verifying that no publication is active. The lock
-covers publication and GitHub-native landing. Legacy advance, sync, and
-single-frontier landing are not covered.
+covers publication and GitHub-native landing. It resolves the common Git
+directory through `jj git root` and explicit Git plumbing, so all workspaces
+sharing that store use one lock. Legacy advance, sync, and single-frontier
+landing are not covered.
 
 ## Development
 
@@ -182,5 +201,7 @@ The validated public-preview adapter for `gh stack` and the Stacks REST API is
 `native-land.ts`; shared empty-working-copy preservation lives in
 `working-copy-settlement.ts`. Navigation comment encoding and reconciliation
 live in `extensions/shared/stack/topology.ts`.
-Tests inject process and GitHub/jj adapters. They do not use real credentials
-or mutate a real GitHub repository.
+Tests inject process and GitHub/jj adapters. `workspace.test.ts` also creates
+isolated colocated, non-colocated, and secondary jj workspaces to exercise
+preflight, stack planning, remote discovery, and lock contention. Tests do not
+use real credentials or mutate a real GitHub repository.

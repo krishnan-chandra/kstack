@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isMergeMethod, type MergeMethod } from "../shared/github.ts";
+import { isRepositoryName } from "../shared/github-repository.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import { type BoundaryValue, isNumber, isObject, isString } from "../shared/validation.ts";
 import type { DelegatedFrontierResponse } from "./frontier-settlement.ts";
@@ -23,6 +24,7 @@ interface StackFrontierLandRequest {
 	kind: "stack-frontier";
 	options: LandOptions & { method: MergeMethod };
 	expectedHeadSha: string;
+	repository?: string;
 	signal?: AbortSignal;
 	ctx: ExtensionContext;
 }
@@ -76,12 +78,18 @@ const channel = createRequestChannel<LandRequestPayload, LandResult, 1>({
 			return (
 				Object.keys(value).every(
 					(key) =>
-						key === "kind" || key === "options" || key === "expectedHeadSha" || key === "signal" || key === "ctx",
+						key === "kind" ||
+						key === "options" ||
+						key === "expectedHeadSha" ||
+						key === "repository" ||
+						key === "signal" ||
+						key === "ctx",
 				) &&
 				isOptions(value.options, true) &&
 				"expectedHeadSha" in value &&
 				isString(value.expectedHeadSha) &&
 				HEAD_SHA.test(value.expectedHeadSha) &&
+				(!("repository" in value) || value.repository === undefined || isRepositoryName(value.repository)) &&
 				(!("signal" in value) || value.signal === undefined || value.signal instanceof AbortSignal)
 			);
 		}

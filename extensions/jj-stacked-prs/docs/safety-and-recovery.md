@@ -32,7 +32,10 @@ and `git rebase` in colocated repos.
 ## Colocated Git caveats
 
 Do all history mutation through `jj`. Avoid `git commit`, `git rebase`,
-`git reset --hard`, and force-push. Read-only `git`/`gh` is fine.
+`git reset --hard`, and force-push. Read-only Git is permitted, but secondary
+jj workspaces may not have `.git`. Use jj for workspace state, or give Git an
+explicit `--git-dir` from `jj git root` for object queries. Give `gh` an explicit
+repository or PR URL.
 
 ## Session working state must live in ignored paths
 

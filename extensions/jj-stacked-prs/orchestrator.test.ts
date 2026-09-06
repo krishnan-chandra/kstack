@@ -884,13 +884,14 @@ describe("publication lock", () => {
 		assert.deepEqual(jj.calls, []);
 	});
 
-	it("keys the lock by the canonical common Git directory", async () => {
+	it("keys the lock by jj's canonical common Git directory", async () => {
 		let lockKey: string | undefined;
+		const commands: string[][] = [];
 		const result = await publishStackFromTool(
 			{ cwd: "/workspaces/task", top: "feat2", remote: "origin" },
 			{
 				run: async (argv, options) => {
-					assert.deepEqual(argv, ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+					commands.push([...argv]);
 					assert.equal(options.cwd, "/workspaces/task");
 					assert.equal(options.timeoutMs, 8_000);
 					return { kind: "ok", code: 0, stdout: "/repo/.git\n", stderr: "" };
@@ -908,6 +909,10 @@ describe("publication lock", () => {
 		);
 		assert.equal(result.status, "completed");
 		assert.equal(lockKey, "/canonical/repo/.git");
+		assert.deepEqual(commands, [
+			["jj", "git", "root"],
+			["git", "--git-dir=/repo/.git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+		]);
 	});
 
 	it("warns when lock cleanup fails", async () => {
@@ -1724,7 +1729,8 @@ describe("landStack", () => {
 					link: async () => nativeStack,
 					mergeThrough: async () => ({ status: "enqueued", stack: nativeStack }),
 				},
-				preparePr: async ({ prNumber, expectedHeadSha }) => {
+				preparePr: async ({ repository, prNumber, expectedHeadSha }) => {
+					assert.equal(repository, "o/r");
 					prepared.push(prNumber);
 					const ready = readyPr(prNumber, expectedHeadSha, prNumber === 11 ? "feat1" : "feat2");
 					if (prNumber === 11 && prepared.filter((number) => number === 11).length === 1) {

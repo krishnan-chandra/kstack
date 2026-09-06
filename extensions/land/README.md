@@ -60,7 +60,7 @@ Land stops before mutation.
 
 Land runs the configured backend's preflight before resolving or mutating the
 target. Git mode refuses jj-managed workspaces. jj mode requires jj 0.44 or
-newer, a configured identity, and a colocated jj/Git workspace. Automatic jj
+newer, a configured identity, and a Git-backed jj workspace. Automatic jj
 discovery requires a bookmark at `@`; otherwise Land reports the change ID and
 asks you to create a bookmark or pass `--pr`.
 
@@ -145,6 +145,12 @@ a provider cannot recurse into its own stack channel. Land checks the pinned
 head before readiness, against pr-autopilot's evidence, after readiness, and
 immediately before merge submission. It also passes the SHA to GitHub through
 `--match-head-commit`.
+
+A stack caller may also supply `repository` (`owner/name`). Land scopes its
+GitHub commands and the delegated Autopilot request to that repository. jj
+stack callers supply it so that secondary workspaces need no `.git` marker.
+Standalone `/land` requests retain GitHub CLI repository discovery; use
+`/jj-stack land` for the explicitly scoped path in those workspaces.
 
 The stack provider confirms the complete stack before it sends frontier
 requests. Land therefore skips only the per-PR merge prompt and mints readiness

@@ -127,12 +127,13 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			generatePrMetadata: metadata.generate,
 			configuredMethodFor: (nameWithOwner) =>
 				configLoad.status === "loaded" ? getRepoMethod(configLoad.config, nameWithOwner) : undefined,
-			preparePr: ({ prNumber, readiness }) =>
-				requestPrAutopilot(pi, readiness, prNumber, ctx, cwd, autopilotConfirmation, signal),
-			landFrontier: ({ prNumber, expectedHeadSha, readiness, method }) =>
+			preparePr: ({ repository, prNumber, readiness }) =>
+				requestPrAutopilot(pi, readiness, prNumber, ctx, cwd, autopilotConfirmation, signal, repository),
+			landFrontier: ({ repository, prNumber, expectedHeadSha, readiness, method }) =>
 				requestStackFrontierLand(pi, {
 					options: { target: { kind: "single", prNumber }, readiness, method, cwd },
 					expectedHeadSha,
+					repository,
 					signal,
 					ctx,
 				}),

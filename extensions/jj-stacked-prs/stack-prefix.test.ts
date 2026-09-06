@@ -32,7 +32,8 @@ describe("stack-prefix landing", () => {
 				nativeStack: false,
 				github,
 				acquirePublicationLock: permissiveLock(),
-				landFrontier: async ({ prNumber, expectedHeadSha }) => {
+				landFrontier: async ({ repository, prNumber, expectedHeadSha }) => {
+					assert.equal(repository, "o/r");
 					assert.equal(expectedHeadSha, prNumber === 11 ? "aaa-commit" : "bbb-commit");
 					calls.push(prNumber);
 					return {

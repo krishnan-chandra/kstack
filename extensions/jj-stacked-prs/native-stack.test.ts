@@ -19,13 +19,15 @@ const stackJson = JSON.stringify([
 
 function runner(responses: Array<{ kind: "ok"; code: 0; stdout: string; stderr: string }>) {
 	const calls: string[][] = [];
-	const run: ProcessRunner = async (argv) => {
+	const environments: Array<NodeJS.ProcessEnv | undefined> = [];
+	const run: ProcessRunner = async (argv, options) => {
 		calls.push([...argv]);
+		environments.push(options.env);
 		const response = responses.shift();
 		if (!response) throw new Error("unexpected process call");
 		return response;
 	};
-	return { calls, run };
+	return { calls, environments, run };
 }
 
 const ok = (stdout = "") => ({ kind: "ok" as const, code: 0 as const, stdout, stderr: "" });
@@ -54,7 +56,8 @@ test("rejects malformed and ambiguous native responses", async () => {
 	);
 });
 
-test("links by PR number and verifies exact membership", async () => {
+test("links explicit PR URLs in the selected repository and verifies exact membership", async () => {
+	const originalRepo = process.env.GH_REPO;
 	const fake = runner([ok("Linked\n"), ok(stackJson)]);
 	const stack = await createNativeStackGateway(fake.run).link({
 		cwd: "/repo",
@@ -63,7 +66,17 @@ test("links by PR number and verifies exact membership", async () => {
 		prNumbers: [101, 102],
 	});
 	assert.equal(stack.stackNumber, 17);
-	assert.deepEqual(fake.calls[0], ["gh", "stack", "link", "--base", "main", "101", "102"]);
+	assert.deepEqual(fake.calls[0], [
+		"gh",
+		"stack",
+		"link",
+		"--base",
+		"main",
+		"https://github.com/acme/widgets/pull/101",
+		"https://github.com/acme/widgets/pull/102",
+	]);
+	assert.equal(fake.environments[0]?.GH_REPO, "github.com/acme/widgets");
+	assert.equal(process.env.GH_REPO, originalRepo);
 });
 
 test("resolves an interrupted link with read-after-write verification", async () => {
@@ -121,4 +134,5 @@ test("classifies a successful non-merged stack merge as enqueued", async () => {
 	});
 	assert.equal(result.status, "enqueued");
 	assert.deepEqual(fake.calls[0], ["gh", "stack", "merge", "102", "--yes", "--squash"]);
+	assert.equal(fake.environments[0]?.GH_REPO, "github.com/acme/widgets");
 });

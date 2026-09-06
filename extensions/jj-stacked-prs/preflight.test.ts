@@ -16,7 +16,7 @@ function fakeExec(
 	opts: {
 		jjVersion?: ExecFnResult | Error;
 		workspace?: ExecFnResult;
-		gitTop?: ExecFnResult;
+		gitRoot?: ExecFnResult;
 		trunk?: ExecFnResult;
 		name?: ExecFnResult;
 		email?: ExecFnResult;
@@ -28,7 +28,7 @@ function fakeExec(
 			return opts.jjVersion ?? ok("jj 0.44.0\n");
 		}
 		if (command === "jj" && args[0] === "workspace" && args[1] === "root") return opts.workspace ?? ok("/repo\n");
-		if (command === "git" && args[0] === "rev-parse") return opts.gitTop ?? ok("/repo\n");
+		if (command === "jj" && args[0] === "git" && args[1] === "root") return opts.gitRoot ?? ok("/repo/.git\n");
 		if (command === "jj" && args[0] === "config" && args[2] === "user.name") return opts.name ?? ok("User\n");
 		if (command === "jj" && args[0] === "config" && args[2] === "user.email")
 			return opts.email ?? ok("user@example.com\n");
@@ -67,19 +67,19 @@ describe("preflightJjStack", () => {
 		if (!result.ok) assert.match(result.error, /Jujutsu workspace/);
 	});
 
-	it("fails when there is no colocated git worktree", async () => {
-		const result = await preflightJjStack("/repo", fakeExec({ gitTop: fail("not a git repo") }));
+	it("fails when jj cannot resolve its Git backend", async () => {
+		const result = await preflightJjStack("/repo", fakeExec({ gitRoot: fail("no Git backend") }));
 		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /colocated Git worktree/);
+		if (!result.ok) assert.match(result.error, /Git-backed.*jj git root/);
 	});
 
-	it("fails when the jj workspace root and git worktree differ", async () => {
+	it("accepts a secondary workspace sharing another workspace's Git store", async () => {
 		const result = await preflightJjStack(
-			"/repo",
-			fakeExec({ workspace: ok("/jj-workspace\n"), gitTop: ok("/unrelated-git-repo\n") }),
+			"/jj-workspace",
+			fakeExec({ workspace: ok("/jj-workspace\n"), gitRoot: ok("/primary/.git\n") }),
 		);
-		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /differ/);
+		assert.equal(result.ok, true);
+		if (result.ok) assert.equal(result.workspaceRoot, "/jj-workspace");
 	});
 
 	it("fails when the jj identity is incomplete", async () => {

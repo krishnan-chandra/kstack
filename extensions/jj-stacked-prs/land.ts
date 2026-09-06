@@ -252,6 +252,7 @@ async function landStackWithAuthorization(
 			? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
 			: undefined;
 		const lockAttempt = await acquireRepositoryPublicationLock(execFromRunner(deps.run), options.cwd, {
+			backend: "jj",
 			acquireLock,
 			signal: deps.signal,
 		});
@@ -289,7 +290,7 @@ async function landStackWithAuthorization(
 			if (!released.ok) deps.ui.notify(`Native landing lock cleanup failed: ${released.error}`, "warning");
 		}
 	}
-	return runLandLoop(options, deps, prepared.method, prepared.model, prepared.mapped);
+	return runLandLoop(options, deps, prepared.method, prepared);
 }
 
 async function remapLand(
@@ -620,8 +621,7 @@ async function runLandLoop(
 	options: LandStackOptions,
 	deps: OrchestratorDeps,
 	method: StackMergeMethod,
-	initialModel: InspectModel,
-	initialMapped: MappedLandSlice[],
+	initialPrepared: Extract<Awaited<ReturnType<typeof remapLand>>, { status: "ok" }>,
 ): Promise<StackLandOutcome> {
 	const jj = deps.jj ?? createJjAdapter(deps.run);
 	const github = deps.github ?? createJjGitHubGateway(deps.run);
@@ -631,7 +631,7 @@ async function runLandLoop(
 	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
 	let remainingRefs: string[] = [];
-	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialModel, warnings);
+	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialPrepared.model, warnings);
 	let preparedFirstIteration = true;
 
 	const progress = () => ({
@@ -648,9 +648,7 @@ async function runLandLoop(
 				? { status: "cancelled", ...progress() }
 				: { status: "partial", error: "Landing was cancelled after earlier mutations completed.", ...progress() };
 		}
-		const prepared = preparedFirstIteration
-			? { status: "ok" as const, mapped: initialMapped, model: initialModel }
-			: await remapLand(options, deps);
+		const prepared = preparedFirstIteration ? initialPrepared : await remapLand(options, deps);
 		preparedFirstIteration = false;
 		if (prepared.status !== "ok") {
 			return frontiers.length === 0
@@ -675,6 +673,7 @@ async function runLandLoop(
 		} else {
 			const landed = landFrontier
 				? await landFrontier({
+						repository: `${prepared.repository.owner}/${prepared.repository.repo}`,
 						prNumber: current.prNumber,
 						expectedHeadSha: current.headCommitId,
 						readiness: options.readiness,

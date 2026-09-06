@@ -177,10 +177,17 @@ export function createNativeStackGateway(run: ProcessRunner): NativeStackGateway
 		inspectForPullRequest: inspect,
 		async link(input) {
 			validatePrNumbers(input.prNumbers, 2);
-			const args = ["gh", "stack", "link", "--base", input.base, ...input.prNumbers.map(String)];
+			const args = [
+				"gh",
+				"stack",
+				"link",
+				"--base",
+				input.base,
+				...input.prNumbers.map((number) => `https://github.com/${input.repo.owner}/${input.repo.repo}/pull/${number}`),
+			];
 			let commandError: NativeStackError | undefined;
 			try {
-				await command(run, args, input.cwd, input.signal);
+				await command(run, args, input.cwd, input.signal, repositoryEnv(input.repo));
 			} catch (error) {
 				if (!(error instanceof NativeStackError) || error.kind !== "indeterminate") throw error;
 				commandError = error;
@@ -201,6 +208,7 @@ export function createNativeStackGateway(run: ProcessRunner): NativeStackGateway
 				cwd: input.cwd,
 				timeoutMs: GH_MERGE_TIMEOUT_MS,
 				signal: input.signal,
+				env: repositoryEnv(input.repo),
 			});
 			const existingRequest = result.kind === "nonzero" && /merge request already exists/i.test(resultMessage(result));
 			if (result.kind !== "ok" && !isIndeterminateResult(result) && !existingRequest) {
@@ -270,10 +278,16 @@ async function command(
 	argv: readonly string[],
 	cwd: string,
 	signal?: AbortSignal,
+	env?: NodeJS.ProcessEnv,
 ): Promise<Extract<Awaited<ReturnType<ProcessRunner>>, { kind: "ok" }>> {
-	const result = await run(argv, { cwd, timeoutMs: GH_TIMEOUT_MS, signal });
+	const result = await run(argv, { cwd, timeoutMs: GH_TIMEOUT_MS, signal, env });
 	if (result.kind === "ok") return result;
 	throw new NativeStackError(resultMessage(result), isIndeterminateResult(result) ? "indeterminate" : "failed");
+}
+
+// gh-stack 0.1.0 has no --repo flag; go-gh's repository.Current reads GH_REPO.
+function repositoryEnv(repo: GitHubRepository): NodeJS.ProcessEnv {
+	return { ...process.env, GH_REPO: `github.com/${repo.owner}/${repo.repo}` };
 }
 
 function requireObject(value: BoundaryValue, label: string): JsonObject {

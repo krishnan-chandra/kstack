@@ -34,6 +34,7 @@ test("dispatches interactive and delegated frontier requests", async () => {
 	pi.events.on(LAND_REQUEST_EVENT, (value) =>
 		claimLandRequest(value, async (request) => {
 			kinds.push(request.kind);
+			if (request.kind === "stack-frontier") assert.equal(request.repository, "acme/widgets");
 			return outcome;
 		}),
 	);
@@ -52,6 +53,7 @@ test("dispatches interactive and delegated frontier requests", async () => {
 			{
 				options: { target: { kind: "single", prNumber: 4 }, readiness: "watch", method: "squash" },
 				expectedHeadSha: SHA,
+				repository: "acme/widgets",
 				ctx,
 			},
 		),
@@ -99,6 +101,23 @@ test("validates request variants and exact delegated heads", () => {
 		isLandRequest(envelope({ kind: "interactive", options, signal: new AbortController().signal, ctx: {} })),
 		false,
 	);
+});
+
+test("rejects malformed delegated repository identities", () => {
+	for (const repository of ["a/b/c", "--repo", null]) {
+		assert.equal(
+			isLandRequest(
+				envelope({
+					kind: "stack-frontier",
+					expectedHeadSha: SHA,
+					repository,
+					ctx: {},
+					options: { target: { kind: "single", prNumber: 4 }, readiness: "check", method: "squash" },
+				}),
+			),
+			false,
+		);
+	}
 });
 
 test("rejects malformed options and contexts", () => {

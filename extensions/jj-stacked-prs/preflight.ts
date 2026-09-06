@@ -45,7 +45,7 @@ export async function preflightJjStack(cwd: string, exec: ExecFn): Promise<VcsRe
 	if (!SHA_RE.test(trunkSha)) {
 		return {
 			ok: false,
-			error: `trunk() resolved to a non-Git commit id "${trunkSha}"; a colocated Git-backed commit is required.`,
+			error: `trunk() resolved to a non-Git commit id "${trunkSha}"; a Git-backed commit is required.`,
 		};
 	}
 	return {

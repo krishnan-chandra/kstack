@@ -247,6 +247,60 @@ describe("shared publication lock", () => {
 		if (second.ok) second.lock.release();
 	});
 
+	it("resolves jj lock identity through an explicit Git store, not the workspace", async () => {
+		const calls: string[][] = [];
+		const signal = new AbortController().signal;
+		const exec: ExecFn = async (command, args, options) => {
+			calls.push([command, ...args]);
+			assert.equal(options.cwd, "/secondary");
+			assert.equal(options.signal, signal);
+			return { code: 0, stdout: command === "jj" ? "/repo/.git/worktrees/jj\n" : "/repo/.git\n", stderr: "" };
+		};
+		const result = await acquireRepositoryPublicationLock(exec, "/secondary", {
+			backend: "jj",
+			signal,
+			realpath: (path) => `/canonical${path}`,
+			acquireLock: ({ repositoryPath }) => {
+				assert.equal(repositoryPath, "/canonical/repo/.git");
+				return { ok: true, lock: { release: () => ({ ok: true }) } };
+			},
+		});
+		assert.equal(result.ok, true);
+		assert.deepEqual(calls, [
+			["jj", "git", "root"],
+			["git", "--git-dir=/repo/.git/worktrees/jj", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+		]);
+	});
+
+	it("does not fall back to ambient Git when the jj lock probe fails", async () => {
+		for (const response of [
+			{ code: 1, stdout: "", stderr: "no Git backend" },
+			{ code: 0, stdout: "", stderr: "" },
+		]) {
+			let calls = 0;
+			const result = await acquireRepositoryPublicationLock(
+				async (command) => {
+					assert.equal(command, "jj");
+					calls++;
+					return response;
+				},
+				"/secondary",
+				{
+					backend: "jj",
+					acquireLock: () => {
+						throw new Error("must not lock");
+					},
+				},
+			);
+			assert.equal(result.ok, false);
+			if (!result.ok) {
+				assert.equal(result.kind, "failed");
+				if (result.kind === "failed") assert.match(result.error, /jj git root/);
+			}
+			assert.equal(calls, 1);
+		}
+	});
+
 	it("serializes linked worktrees through their canonical common Git directory", async () => {
 		const locksDir = tempLocksDir();
 		const requestedCwds: string[] = [];
