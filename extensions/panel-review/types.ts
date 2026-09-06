@@ -116,8 +116,10 @@ export interface ScopeBundle {
 	untrackedCount: number;
 	binaryCount: number;
 	truncated: boolean;
-	/** True when the changeset touches AGENTS.md / CLAUDE.md / AGENTS.override.md. */
+	/** True when changed context provenance requires child --no-context-files. */
 	contextFilesTouched: boolean;
+	/** Exact repository-relative paths from the selected target, including rename endpoints. */
+	changedPaths: string[];
 	generatedAt: string;
 }
 

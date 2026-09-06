@@ -43,6 +43,7 @@ const testScope: ScopeBundle = {
 	binaryCount: 0,
 	truncated: false,
 	contextFilesTouched: false,
+	changedPaths: ["tracked.ts"],
 	generatedAt: "now",
 };
 
@@ -223,6 +224,48 @@ test("a partially aborted panel advances to synthesis with a fresh signal", asyn
 	assert.equal(result.status, "completed");
 	assert.equal(verdictSent, true);
 	assert.match(notifications[0] ?? "", /1 completed, 1 aborted.*Proceeding to synthesis/);
+});
+
+test("a provenance recheck suppresses synthesis and records accurate metadata", async () => {
+	const calls: Array<{ label: string; noContextFiles?: boolean }> = [];
+	let disabled: boolean | undefined;
+	const input = { ...testPipelineInput, scope: { ...testScope, contextFilesTouched: true } };
+	const fx: ReviewPipelineEffects = {
+		isCurrent: () => true,
+		notify: () => {},
+		setCompactStatus: () => {},
+		createDashboard: () => undefined,
+		runSignal: undefined,
+		beginSynthesisPhase: () => new AbortController().signal,
+		checkContextProvenance: () => true,
+		waitForIdle: async () => {},
+		sendVerdict: (_verdict, details) => {
+			disabled = details.contextFilesDisabled;
+		},
+	};
+	const ops: ReviewPipelineOps = {
+		runPanel: async (reviewers, _maxConcurrency, runOne) => {
+			const result = await runOne(reviewers[0], 0);
+			return { results: [result], completed: 1, failed: 0, aborted: 0 };
+		},
+		runReviewer: async (options) => {
+			calls.push({ label: options.spec.label, noContextFiles: options.noContextFiles });
+			return {
+				status: "completed",
+				label: options.spec.label,
+				model: options.model,
+				output: "ok",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+			};
+		},
+	};
+	const result = await runReviewPipeline(input, fx, ops);
+	assert.equal(result.status, "completed");
+	assert.deepEqual(calls, [
+		{ label: "one", noContextFiles: true },
+		{ label: "lead", noContextFiles: true },
+	]);
+	assert.equal(disabled, true);
 });
 
 test("pipeline aborts when a fresh synthesis phase cannot begin", async () => {
