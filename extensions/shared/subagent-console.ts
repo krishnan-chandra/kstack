@@ -182,46 +182,48 @@ function wrapPlainLine(line: string, width: number, widthOf: WidthMeasurer, brea
 	if (width <= 0) return [];
 	if (line === "") return [""];
 	if (widthOf(line) <= width) return [line];
+
+	const graphemes = Array.from(segmentGraphemesFallback(line));
 	const out: string[] = [];
-	let rest = line;
-	while (rest !== "" && widthOf(rest) > width) {
-		let prefix = "";
-		let prefixWidth = 0;
+	let start = 0;
+	while (start < graphemes.length) {
+		while (start < graphemes.length && /^\s$/u.test(graphemes[start] ?? "")) start++;
+		if (start >= graphemes.length) break;
+
+		let end = start;
+		let measuredWidth = 0;
 		let lastSpace = -1;
 		let lastBreak = -1;
-		const graphemes = Array.from(segmentGraphemesFallback(rest));
-		for (const grapheme of graphemes) {
+		while (end < graphemes.length) {
+			const grapheme = graphemes[end];
+			if (grapheme === undefined) break;
 			const graphemeWidth = widthOf(grapheme);
-			if (prefixWidth + graphemeWidth > width) break;
-			prefix += grapheme;
-			prefixWidth += graphemeWidth;
+			if (measuredWidth + graphemeWidth > width) break;
+			measuredWidth += graphemeWidth;
+			end++;
 			if (/^\s$/u.test(grapheme)) {
-				lastSpace = prefix.length - grapheme.length;
+				if (end - 1 > start) lastSpace = end - 1;
 			} else if (breakOnDelimiters && /^[/_\-:]$/u.test(grapheme)) {
-				lastBreak = prefix.length;
+				lastBreak = end;
 			}
 		}
-		if (prefix === "") {
-			// A single grapheme wider than the viewport: emit it anyway to make progress.
-			const first = graphemes[0];
-			if (first === undefined) break;
-			out.push(first);
-			rest = rest.slice(first.length);
-			continue;
-		}
-		if (lastSpace > 0) {
-			out.push(prefix.slice(0, lastSpace));
-			rest = rest.slice(lastSpace + 1);
-		} else if (breakOnDelimiters && lastBreak > 0) {
-			out.push(prefix.slice(0, lastBreak));
-			rest = rest.slice(lastBreak);
+
+		if (end === start) {
+			const grapheme = graphemes[start];
+			if (grapheme === undefined) break;
+			out.push(grapheme);
+			start++;
+		} else if (end < graphemes.length && lastSpace > start) {
+			out.push(graphemes.slice(start, lastSpace).join(""));
+			start = lastSpace + 1;
+		} else if (end < graphemes.length && breakOnDelimiters && lastBreak > start) {
+			out.push(graphemes.slice(start, lastBreak).join(""));
+			start = lastBreak;
 		} else {
-			out.push(prefix);
-			rest = rest.slice(prefix.length);
+			out.push(graphemes.slice(start, end).join(""));
+			start = end;
 		}
-		rest = rest.trimStart();
 	}
-	if (rest !== "") out.push(rest);
 	return out;
 }
 
@@ -259,6 +261,31 @@ function childCost(transcripts: ConsoleTranscripts, id: string): number {
 	return transcripts.getTotalCost(id);
 }
 
+function formatTranscriptEntry(
+	entry: TranscriptEntry,
+	wrapWidth: number,
+	theme: DashboardTheme,
+	text: TerminalText,
+): string[] {
+	switch (entry.kind) {
+		case "note":
+			return [theme.fg("dim", `— ${sanitizeDisplayText(entry.text, text)}`)];
+		case "tool": {
+			let line = `${theme.fg("accent", "●")} ${theme.fg("muted", sanitizeDisplayText(entry.summary, text))}`;
+			if (entry.durationMs !== undefined) line += ` ${theme.fg("dim", `· ${formatDuration(entry.durationMs)}`)}`;
+			return [line];
+		}
+		case "turn": {
+			const usage = entry.usage;
+			let line = `— turn ${entry.turn} · in ${formatTokens(usage.input)} out ${formatTokens(usage.output)}`;
+			if (usage.cost > 0) line += ` · ${formatCost(usage.cost)}`;
+			return [theme.fg("dim", line)];
+		}
+		case "text":
+			return wrapAndSanitizeText(entry.text, wrapWidth, text);
+	}
+}
+
 /** Compute flattened formatted transcript lines for the selected child. */
 function computeTranscriptLines(
 	dashboard: ConsoleDashboard,
@@ -269,62 +296,85 @@ function computeTranscriptLines(
 	text: TerminalText,
 ): string[] {
 	const rows = dashboard.getRows();
-	if (rows.length === 0) {
-		return [theme.fg("dim", "(no transcript yet)")];
-	}
+	if (rows.length === 0) return [theme.fg("dim", "(no transcript yet)")];
 	const clampedIndex = Math.max(0, Math.min(selectedIndex, rows.length - 1));
 	const selectedId = rows[clampedIndex].id;
-
 	const bodyLines: string[] = [];
-	if (transcripts.wasEvicted(selectedId)) {
-		bodyLines.push(theme.fg("warning", EVICTION_NOTICE));
-	}
-
+	if (transcripts.wasEvicted(selectedId)) bodyLines.push(theme.fg("warning", EVICTION_NOTICE));
 	for (const entry of transcripts.getEntries(selectedId)) {
-		switch (entry.kind) {
-			case "note": {
-				const safe = sanitizeDisplayText(entry.text, text);
-				bodyLines.push(theme.fg("dim", `— ${safe}`));
-				break;
-			}
-			case "tool": {
-				let line = `${theme.fg("accent", "●")} ${theme.fg("muted", sanitizeDisplayText(entry.summary, text))}`;
-				if (entry.durationMs !== undefined) {
-					line += ` ${theme.fg("dim", `· ${formatDuration(entry.durationMs)}`)}`;
-				}
-				bodyLines.push(line);
-				break;
-			}
-			case "turn": {
-				const u = entry.usage;
-				let turnLine = `— turn ${entry.turn} · in ${formatTokens(u.input)} out ${formatTokens(u.output)}`;
-				if (u.cost > 0) {
-					turnLine += ` · ${formatCost(u.cost)}`;
-				}
-				bodyLines.push(theme.fg("dim", turnLine));
-				break;
-			}
-			case "text": {
-				for (const wrapped of wrapAndSanitizeText(entry.text, wrapWidth, text)) {
-					bodyLines.push(wrapped);
-				}
-				break;
-			}
-		}
+		bodyLines.push(...formatTranscriptEntry(entry, wrapWidth, theme, text));
 	}
-
 	const liveTail = transcripts.getLiveTail(selectedId);
 	if (liveTail) {
-		for (const wrapped of wrapAndSanitizeText(liveTail, wrapWidth, text)) {
-			bodyLines.push(theme.fg("dim", wrapped));
-		}
+		bodyLines.push(...wrapAndSanitizeText(liveTail, wrapWidth, text).map((line) => theme.fg("dim", line)));
 	}
-
-	if (bodyLines.length === 0) {
-		bodyLines.push(theme.fg("dim", "(no transcript yet)"));
-	}
-
+	if (bodyLines.length === 0) bodyLines.push(theme.fg("dim", "(no transcript yet)"));
 	return bodyLines;
+}
+
+interface CachedEntryLayout {
+	wrapWidth: number;
+	durationMs: number | undefined;
+	lines: string[];
+}
+
+class TranscriptLayoutCache {
+	private entries = new WeakMap<TranscriptEntry, CachedEntryLayout>();
+	private liveId: string | undefined;
+	private liveText: string | undefined;
+	private liveWrapWidth: number | undefined;
+	private liveLines: string[] = [];
+
+	invalidate(): void {
+		this.entries = new WeakMap();
+		this.liveId = undefined;
+		this.liveText = undefined;
+		this.liveWrapWidth = undefined;
+		this.liveLines = [];
+	}
+
+	lines(
+		dashboard: ConsoleDashboard,
+		transcripts: ConsoleTranscripts,
+		selectedIndex: number,
+		wrapWidth: number,
+		theme: DashboardTheme,
+		text: TerminalText,
+	): string[] {
+		const rows = dashboard.getRows();
+		if (rows.length === 0) return [theme.fg("dim", "(no transcript yet)")];
+		const clampedIndex = Math.max(0, Math.min(selectedIndex, rows.length - 1));
+		const selectedId = rows[clampedIndex].id;
+		const bodyLines: string[] = [];
+		if (transcripts.wasEvicted(selectedId)) bodyLines.push(theme.fg("warning", EVICTION_NOTICE));
+		for (const entry of transcripts.getEntries(selectedId)) {
+			const durationMs = entry.kind === "tool" ? entry.durationMs : undefined;
+			let cached = this.entries.get(entry);
+			if (cached?.wrapWidth !== wrapWidth || cached.durationMs !== durationMs) {
+				cached = { wrapWidth, durationMs, lines: formatTranscriptEntry(entry, wrapWidth, theme, text) };
+				this.entries.set(entry, cached);
+			}
+			bodyLines.push(...cached.lines);
+		}
+
+		const liveTail = transcripts.getLiveTail(selectedId);
+		if (liveTail) {
+			if (this.liveId !== selectedId || this.liveText !== liveTail || this.liveWrapWidth !== wrapWidth) {
+				this.liveId = selectedId;
+				this.liveText = liveTail;
+				this.liveWrapWidth = wrapWidth;
+				this.liveLines = wrapAndSanitizeText(liveTail, wrapWidth, text).map((line) => theme.fg("dim", line));
+			}
+			bodyLines.push(...this.liveLines);
+		} else {
+			this.liveId = undefined;
+			this.liveText = undefined;
+			this.liveWrapWidth = undefined;
+			this.liveLines = [];
+		}
+		if (bodyLines.length === 0) bodyLines.push(theme.fg("dim", "(no transcript yet)"));
+		return bodyLines;
+	}
 }
 
 /** Apply follow/scroll windowing to a list of body lines. */
@@ -352,6 +402,7 @@ function renderNarrow(
 	theme: DashboardTheme,
 	text: TerminalText,
 	copy: ConsoleCopy,
+	preparedTranscriptLines?: string[],
 ): string[] {
 	const rows = dashboard.getRows();
 	const clampedIndex = Math.max(0, Math.min(state.selectedIndex, rows.length - 1));
@@ -378,14 +429,16 @@ function renderNarrow(
 	if (cost > 0) metaParts.push(formatCost(cost));
 	const metaLine = theme.fg("dim", `— ${metaParts.join(" · ")} —`);
 
-	const bodyLines = computeTranscriptLines(
-		dashboard,
-		transcripts,
-		clampedIndex,
-		Math.max(10, viewport.transcriptWidth - 2),
-		theme,
-		text,
-	);
+	const bodyLines =
+		preparedTranscriptLines ??
+		computeTranscriptLines(
+			dashboard,
+			transcripts,
+			clampedIndex,
+			Math.max(10, viewport.transcriptWidth - 2),
+			theme,
+			text,
+		);
 	const visibleBodyLines = windowBodyLines(bodyLines, scroll, viewport.bodyHeight);
 
 	const output: string[] = [];
@@ -510,6 +563,7 @@ function renderWide(
 	theme: DashboardTheme,
 	text: TerminalText,
 	copy: ConsoleCopy,
+	preparedTranscriptLines?: string[],
 ): string[] {
 	const rows = dashboard.getRows();
 	const clampedIndex = Math.max(0, Math.min(state.selectedIndex, rows.length - 1));
@@ -535,14 +589,16 @@ function renderWide(
 	// Body rows: sidebar window + transcript window assembled into bordered cells.
 	const sidebarBlocks = computeSidebarBlocks(dashboard, transcripts, clampedIndex, viewport.sidebarWidth, theme, text);
 	const sidebarLines = windowSidebarBlocks(sidebarBlocks, clampedIndex, viewport.bodyHeight);
-	const transcriptLines = computeTranscriptLines(
-		dashboard,
-		transcripts,
-		clampedIndex,
-		Math.max(10, viewport.transcriptWidth - 2),
-		theme,
-		text,
-	);
+	const transcriptLines =
+		preparedTranscriptLines ??
+		computeTranscriptLines(
+			dashboard,
+			transcripts,
+			clampedIndex,
+			Math.max(10, viewport.transcriptWidth - 2),
+			theme,
+			text,
+		);
 	const visibleTranscript = windowBodyLines(transcriptLines, scroll, viewport.bodyHeight);
 
 	const output: string[] = [];
@@ -571,15 +627,16 @@ export function renderSubagentConsole(
 	theme: DashboardTheme,
 	text: TerminalText = fallbackTerminalText,
 	copy: ConsoleCopy = DEFAULT_COPY,
+	preparedTranscriptLines?: string[],
 ): string[] {
 	const rows = dashboard.getRows();
 	if (rows.length === 0) {
 		return [text.truncateToWidth(theme.fg("muted", copy.emptyMessage), width)];
 	}
 	if (computeViewport(width, height).wide) {
-		return renderWide(dashboard, transcripts, state, width, height, theme, text, copy);
+		return renderWide(dashboard, transcripts, state, width, height, theme, text, copy, preparedTranscriptLines);
 	}
-	return renderNarrow(dashboard, transcripts, state, width, height, theme, text, copy);
+	return renderNarrow(dashboard, transcripts, state, width, height, theme, text, copy, preparedTranscriptLines);
 }
 
 export function parseWheelDirection(data: string): -1 | 1 | undefined {
@@ -629,6 +686,7 @@ export class SubagentConsoleComponent implements Component {
 	private lastWidth = 80;
 	private lastHeight = 24;
 	private lastBodyLineCounts = new Map<string, number>();
+	private readonly transcriptLayout = new TranscriptLayoutCache();
 	private unsubDashboard: (() => void) | undefined;
 	private unsubTranscripts: (() => void) | undefined;
 
@@ -686,22 +744,22 @@ export class SubagentConsoleComponent implements Component {
 		return rows[clampedIndex].id;
 	}
 
-	private bodyLineCount(id: string, viewport: ConsoleViewport): number {
+	private transcriptLines(id: string, viewport: ConsoleViewport): string[] {
 		const rows = this.dashboard.getRows();
 		const selectedIndex = rows.findIndex((row) => row.id === id);
-		if (selectedIndex < 0) return 0;
-		return computeTranscriptLines(
+		if (selectedIndex < 0) return [];
+		return this.transcriptLayout.lines(
 			this.dashboard,
 			this.transcripts,
 			selectedIndex,
 			Math.max(10, viewport.transcriptWidth - 2),
 			this.theme,
 			this.text,
-		).length;
+		);
 	}
 
-	private rememberBodyLineCount(id: string, viewport: ConsoleViewport): void {
-		this.lastBodyLineCounts.set(id, this.bodyLineCount(id, viewport));
+	private bodyLineCount(id: string, viewport: ConsoleViewport): number {
+		return this.transcriptLines(id, viewport).length;
 	}
 
 	private anchorScrolledViewport(id: string): void {
@@ -730,7 +788,10 @@ export class SubagentConsoleComponent implements Component {
 		this.lastHeight = this.height();
 		const viewport = computeViewport(width, this.lastHeight);
 		const id = this.selectedId();
-		if (id !== undefined) this.rememberBodyLineCount(id, viewport);
+		const preparedTranscriptLines = id === undefined ? undefined : this.transcriptLines(id, viewport);
+		if (id !== undefined && preparedTranscriptLines !== undefined) {
+			this.lastBodyLineCounts.set(id, preparedTranscriptLines.length);
+		}
 		return renderSubagentConsole(
 			this.dashboard,
 			this.transcripts,
@@ -740,11 +801,12 @@ export class SubagentConsoleComponent implements Component {
 			this.theme,
 			this.text,
 			this.copy,
+			preparedTranscriptLines,
 		);
 	}
 
 	invalidate(): void {
-		// No cached render state
+		this.transcriptLayout.invalidate();
 	}
 
 	handleInput(data: string): void {
@@ -846,6 +908,8 @@ export class SubagentConsoleComponent implements Component {
 	}
 
 	dispose(): void {
+		this.transcriptLayout.invalidate();
+		this.lastBodyLineCounts.clear();
 		this.unsubDashboard?.();
 		this.unsubDashboard = undefined;
 		this.unsubTranscripts?.();
