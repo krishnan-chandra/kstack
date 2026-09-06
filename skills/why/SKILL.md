@@ -51,7 +51,7 @@ Use the resolved model in every child command. A typical source-control run is:
 
 ```bash
 MODEL="$(node ../investigation-model.mjs)"
-pi -p --no-session --no-extensions --no-skills --no-context-files --model "$MODEL" "
+pi -p --no-session --no-extensions -e ../../kstack.ts --no-skills --no-context-files --model "$MODEL" "
 Investigate why <target> exists. Read only. Use this code anchor: <paths, symbols,
 commits>. Search source-control and linked PR or issue evidence for <question>.
 Return direct quotes or precise citations, null searches, contradictions, and clearly
@@ -59,7 +59,7 @@ labeled inferences. Do not infer intent from code alone. Do not edit or publish 
 "
 ```
 
-Keep extensions enabled only for an investigator that needs a named MCP. Before using an MCP, discover its tool and inspect its schema. Query only the target, symbols, linked IDs, author, and time window justified by the code anchor. If no matching source is available, report that gap rather than broadening the search.
+Add MCP tools to `--tools` only for an investigator that needs a named MCP. Before using an MCP, discover its tool and inspect its schema. Query only the target, symbols, linked IDs, author, and time window justified by the code anchor. If no matching source is available, report that gap rather than broadening the search.
 
 For a simple, well-documented change, one source-control investigator is enough. For a thin or disputed record, use the full three-worker budget. Do not add a heavyweight judge. Reconcile workers in the parent by spot-checking their citations.
 

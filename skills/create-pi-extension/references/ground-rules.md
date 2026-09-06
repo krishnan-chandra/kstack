@@ -80,7 +80,7 @@ Extensions execute with the user's full permissions. Security design must distin
 
 For project-local configuration, check project trust when the data should only be honored for trusted projects. Canonicalize and contain filesystem paths, account for symlinks and race-time revalidation, and never claim shell-command parsing is a complete security boundary.
 
-Subagents should receive only the tools and resources they need. Disable extensions, skills, prompts, or context files when repository-controlled content could become instructions. Pass large or sensitive payloads through protected files/stdin rather than command-line arguments. Bound wall-clock runtime, capture bounded diagnostics, terminate children, and clean up temporary artifacts.
+Subagents should receive only the tools and resources they need. Disable skills, prompts, or context files when repository-controlled content could become instructions, and bound tools with an explicit `--tools` allowlist. Kstack children use `--no-extensions -e <kstack>/kstack.ts` (see `childIsolationArgs`) so request-shaping extensions such as `openrouter-floor` apply without booting the user's other extensions; the allowlist is the tool boundary. Pass large or sensitive payloads through protected files/stdin rather than command-line arguments. Bound wall-clock runtime, capture bounded diagnostics, terminate children, and clean up temporary artifacts.
 
 ## Data, errors, and limits
 

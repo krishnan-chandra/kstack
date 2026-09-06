@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { summarizeToolCall } from "../shared/child-agent-runner.ts";
+import { KSTACK_ENTRY, summarizeToolCall } from "../shared/child-agent-runner.ts";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl } from "./reviewer-runner.ts";
@@ -19,15 +19,16 @@ describe("JsonLineParser", () => {
 });
 
 describe("buildChildArgs", () => {
-	it("enables investigation tools and only the archive extension; session flags are added by the runner", () => {
+	it("enables investigation tools through the explicit Kstack entry; session flags are added by the runner", () => {
 		const args = buildChildArgs({ model: "a/b:high", promptFile: "/tmp/p.md", task: "Review /tmp/b.md" });
 		const joined = args.join(" ");
 		assert.match(joined, /--mode json/);
 		assert.ok(!joined.includes("--no-session"));
 		assert.match(joined, /--no-extensions/);
+		assert.ok(args.includes(KSTACK_ENTRY));
+		assert.ok(!joined.includes("session-archive/index.ts"));
 		assert.match(joined, /--no-skills/);
 		assert.match(joined, /--no-prompt-templates/);
-		assert.match(joined, /--extension .*session-archive\/index\.ts/);
 		assert.match(joined, /--tools bash,read,grep,find,ls,search_session_archive,read_session_archive/);
 		assert.ok(!joined.includes("write"));
 		assert.ok(!joined.includes("edit"));

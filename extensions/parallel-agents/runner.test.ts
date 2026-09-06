@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
+import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { buildParallelAgentArgs, runParallelAgent } from "./runner.ts";
 
@@ -15,16 +16,18 @@ const baseTask = {
 describe("parallel agent child arguments", () => {
 	it("enforces the read-only tool boundary for Simplify", () => {
 		const args = buildParallelAgentArgs({ ...baseTask, access: "read-only" });
-		assert.deepEqual(args.slice(0, 7), [
+		assert.deepEqual(args.slice(0, 9), [
 			"--mode",
 			"json",
 			"-p",
 			"--no-extensions",
+			"-e",
+			KSTACK_ENTRY,
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-context-files",
 		]);
-		assert.deepEqual(args.slice(7), ["--tools", "read,grep,find,ls", "--model", "openai/model:high"]);
+		assert.deepEqual(args.slice(9), ["--tools", "read,grep,find,ls", "--model", "openai/model:high"]);
 	});
 
 	it("allows mutation tools only for isolated Arena workspaces", () => {

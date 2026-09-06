@@ -11,6 +11,7 @@ const EXPECTED_EXTENSIONS = [
 	"jj-stacked-prs",
 	"kstack-router",
 	"land",
+	"openrouter-floor",
 	"panel-review",
 	"parallel-agents",
 	"plan-implement",

@@ -158,7 +158,7 @@ can supply different logs.
 - **Triager** — receives bounded task data through stdin and has no tools. It
   classifies CI check failures (with log excerpts) and review threads without
   access to the local checkout, which may belong to another stacked PR. Runs with
-  `--no-extensions --no-skills`.
+  `--no-tools --no-skills` and, like every child, `--no-extensions -e <kstack>/kstack.ts`.
 - **Fixer** — has `read`, `grep`, `find`, `ls`, `bash`, `write`, `edit` tools.
   Generates code fixes for classified "code" failures and `fix` threads.
   It does not stage, commit, or push; the parent does that only after
@@ -178,8 +178,10 @@ after upgrading starts with an empty handled-item filter.
 
 ## Safety
 
-- Children run with `--no-extensions` and `--no-skills` — the autopilot
-  owns the workflow entirely.
+- Children run with `--no-extensions -e <kstack>/kstack.ts`, `--no-skills`,
+  and `--no-context-files` — the autopilot owns the workflow entirely. Only
+  Kstack loads, so provider request shaping (`openrouter-floor`) applies
+  without the user's other extensions; `--tools` bounds the tool set.
 - Task files are created in a temp directory with `0600` permissions and
   removed after the run.
 - `mergeStateStatus` (BEHIND / DIRTY) drives workstream-currency maintenance.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import { buildChildArgs } from "./agent-runner.ts";
 
 describe("pr-autopilot child isolation", () => {
@@ -7,6 +8,7 @@ describe("pr-autopilot child isolation", () => {
 		const args = buildChildArgs({ model: "provider/model", promptFile: "/tmp/prompt", taskFile: "/tmp/task" });
 		assert.ok(args.includes("--no-context-files"));
 		assert.ok(args.includes("--no-extensions"));
+		assert.ok(args.includes(KSTACK_ENTRY));
 		assert.ok(args.includes("--no-skills"));
 	});
 

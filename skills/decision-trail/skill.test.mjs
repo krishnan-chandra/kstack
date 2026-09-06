@@ -47,7 +47,7 @@ test("cross-model review resolves a model from the shared investigation allowlis
 	assert.match(skill, /investigation\.allowedModels/);
 	assert.match(skill, /Never bypass/);
 	assert.doesNotMatch(skill, /--model <provider\/model/);
-	assert.match(skill, /--no-extensions --no-skills --no-context-files/);
+	assert.match(skill, /--no-extensions -e \.\.\/\.\.\/kstack\.ts --no-skills --no-context-files/);
 	assert.match(skill, /--tools read,grep,find,ls/);
 	assert.match(skill, /reviewed by <model>/);
 	// Same boundary convention as reflect: allowlist, not prompt promises.

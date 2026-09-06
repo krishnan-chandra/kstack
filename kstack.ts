@@ -5,6 +5,7 @@ import handoff from "./extensions/handoff/index.ts";
 import jjStackedPrs from "./extensions/jj-stacked-prs/index.ts";
 import kstackRouter from "./extensions/kstack-router/index.ts";
 import land from "./extensions/land/index.ts";
+import openrouterFloor from "./extensions/openrouter-floor/index.ts";
 import panelReview from "./extensions/panel-review/index.ts";
 import parallelAgents from "./extensions/parallel-agents/index.ts";
 import planImplement from "./extensions/plan-implement/index.ts";
@@ -21,6 +22,7 @@ const KSTACK_EXTENSIONS: ReadonlyArray<{ name: string; register: ExtensionFactor
 	{ name: "jj-stacked-prs", register: jjStackedPrs },
 	{ name: "kstack-router", register: kstackRouter },
 	{ name: "land", register: land },
+	{ name: "openrouter-floor", register: openrouterFloor },
 	{ name: "panel-review", register: panelReview },
 	{ name: "parallel-agents", register: parallelAgents },
 	{ name: "plan-implement", register: planImplement },

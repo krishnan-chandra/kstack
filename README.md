@@ -11,6 +11,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
+| [`openrouter-floor`](extensions/openrouter-floor/) | Sends every OpenRouter request as the model's `:floor` variant, so OpenRouter sorts endpoints by price and can serve from a provider's flex tier with standard endpoints as fallback. Users keep selecting plain model IDs; models that already carry a variant pass through. |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
@@ -217,15 +218,14 @@ authoritative:
   Enter and Alt+Enter in the main editor while Pi is working, so Enter queues
   follow-up messages and Alt+Enter steers. Enter keeps stock behavior for idle
   submission, autocomplete, inline prompts, and selectors.
-- OpenRouter includes floor variants for GPT-5.6 Sol, GPT-5.6 Sol Pro, and
-  Gemini 3.8 Flash. A `:floor` variant sorts eligible OpenRouter endpoints by
-  price. It can use flex capacity when that endpoint is cheapest, but it does
-  not require the flex service tier.
+- OpenRouter requests use the `:floor` variant automatically through the
+  `openrouter-floor` extension, so no per-model `:floor` entries are needed in
+  `models.json`.
 
-The installer keeps user-defined providers and models. For tracked floor model
-IDs, Kstack's definitions are authoritative so rerunning the installer can
-refresh their capabilities and pricing metadata. It refuses to change any Pi
-config file if one of the existing or tracked JSON files is malformed.
+The installer keeps user-defined providers and models. It removes the `:floor`
+custom models that earlier Kstack releases installed, since they now duplicate
+the extension's behavior. It refuses to change any Pi config file if one of the
+existing or tracked JSON files is malformed.
 
 By default, `pi install` writes to the current user's global settings. It loads
 all Kstack extensions across Pi projects. Pi and other compatible harnesses

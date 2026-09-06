@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
+import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import type { BoundaryValue, JsonObject } from "../shared/validation.ts";
 import { buildChildArgs, runAgent, type SpawnedProcess, truncateUtf8 } from "./agent-runner.ts";
@@ -88,6 +89,7 @@ describe("plan-implement child runner", () => {
 	it("keeps skills/context enabled, restricts planner tools, and leaves implementer tools normal", () => {
 		const planner = buildChildArgs({ role: "planner", model: "a/p", promptFile: "/p", taskFile: "/t" });
 		assert.ok(planner.includes("--no-extensions"));
+		assert.ok(planner.includes(KSTACK_ENTRY));
 		assert.ok(planner.includes("--no-prompt-templates"));
 		assert.ok(!planner.includes("--no-skills"));
 		assert.ok(!planner.includes("--no-context-files"));

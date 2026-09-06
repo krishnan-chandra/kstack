@@ -86,12 +86,12 @@ Run the reviewer as an isolated headless Pi child with an enforced read-only all
 
 ```bash
 MODEL="$(node ../investigation-model.mjs)"
-pi -p --no-session --no-extensions --no-skills --no-context-files \
+pi -p --no-session --no-extensions -e ../../kstack.ts --no-skills --no-context-files \
   --tools read,grep,find,ls --model "$MODEL" \
   "Review the decision trail at <log path> against the transcript digest below. ..."
 ```
 
-Do not rely on the reviewer prompt to prevent writes: the tool allowlist is the boundary. Because extensions are disabled, inline the trail, the transcript digest, and any archive excerpts into the review brief. The reviewer flags what the user should pay attention to — not a redo of the work, a scan for what's suboptimal or risky:
+Do not rely on the reviewer prompt to prevent writes: the tool allowlist is the boundary. Because the allowlist excludes archive and MCP tools, inline the trail, the transcript digest, and any archive excerpts into the review brief. The reviewer flags what the user should pay attention to — not a redo of the work, a scan for what's suboptimal or risky:
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof in the transcript.
