@@ -1916,9 +1916,9 @@ describe("landStack", () => {
 				const pr = prs.find((item) => item.number === input.prNumber);
 				if (pr) pr.baseRef = input.base;
 			},
-			deleteRemoteBranch: async (_repo, branch) => {
-				calls.push(`delete:${branch}`);
-				return "deleted";
+			deleteRemoteBranch: async (input) => {
+				calls.push(`delete:${input.branch}`);
+				return { kind: "deleted" as const };
 			},
 		});
 		const result = await landStack(

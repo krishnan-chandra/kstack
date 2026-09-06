@@ -72,9 +72,19 @@ the provider asks Land to merge the exact pinned 40-character head SHA. It
 then rebases the remainder with `git rebase --update-refs`. Before the first
 push, it verifies ordered ancestry from refreshed trunk and confirms that no
 branch outside the remainder moved, appeared, or disappeared. A valid no-op
-rebase is allowed. The provider revalidates every remote head, atomically
-force-pushes the remainder with exact leases, repairs PR bases, updates
-navigation comments, and deletes the verified merged branch.
+rebase is allowed. The provider revalidates every remote head, atomically force-pushes the
+remainder with exact leases, repairs PR bases, updates navigation comments, and
+deletes the verified merged branch. Remote branch cleanup uses an atomic GraphQL
+`updateRefs` compare-and-delete against the pinned old SHA with forty zeros; if
+the remote ref changed or deletion fails, it logs a warning without retrying.
+Local branch cleanup inspects all worktrees (failing closed on unreadable or
+malformed inventory), pre-reads the ref, rejects symbolic refs, and removes
+ordinary refs with atomic `git update-ref --no-deref -d` matching the expected
+landed SHA. Local cleanup never falls back to force-delete (`git branch -D`) and
+retains `branch.<name>.*` configuration in `.git/config` so concurrently
+recreated branches do not lose settings. External worktree checkout changes are
+checked immediately before deletion but are not atomically coordinated with ref
+deletion.
 
 Before each advance, recovery handles record the old branch tips as
 `ref@sha`. A rebase conflict triggers `git rebase --abort` and returns a

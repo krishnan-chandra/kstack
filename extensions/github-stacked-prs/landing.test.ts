@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { GitHubError, type GitHubGateway, type OpenPullRequest } from "../shared/github.ts";
 import { buildNavigationComment } from "../shared/stack/topology.ts";
+import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import { requestGitHubStackLanding } from "./landing.ts";
 
 const one = "b".repeat(40);
@@ -54,7 +59,7 @@ function gateway(withComment = true): GitHubGateway {
 		getAllowedMergeMethods: async () => ["squash"],
 		getRemoteBranchSha: async () => undefined,
 		markPrReady: async () => {},
-		deleteRemoteBranch: async () => "deleted",
+		deleteRemoteBranch: async () => ({ kind: "deleted" as const }),
 		createDraftPr: async () => prs[0],
 		updatePrBase: async () => {},
 		createOrUpdateComment: async () => ({ id: 1 }),
@@ -156,7 +161,7 @@ async function runInvalidPostRebaseScenario(kind: "added-ref" | "moved-ref" | "s
 				},
 				deleteRemoteBranch: async () => {
 					remoteDeletes++;
-					return "deleted";
+					return { kind: "deleted" as const };
 				},
 			},
 			confirm: async () => true,
@@ -170,6 +175,174 @@ async function runInvalidPostRebaseScenario(kind: "added-ref" | "moved-ref" | "s
 }
 
 describe("GitHub stack landing", () => {
+	interface CleanupGitFixture {
+		root: string;
+		repo: string;
+		env: NodeJS.ProcessEnv;
+		oneSha: string;
+		twoSha: string;
+		mergeSha: string;
+	}
+
+	function runGit(fixture: Pick<CleanupGitFixture, "repo" | "env">, args: string[], cwd = fixture.repo): string {
+		const completed = spawnSync("git", args, {
+			cwd,
+			encoding: "utf8",
+			env: fixture.env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		assert.equal(completed.status, 0, completed.stderr || completed.error?.message);
+		return completed.stdout.trim();
+	}
+
+	function commitFile(
+		fixture: Pick<CleanupGitFixture, "repo" | "env">,
+		name: string,
+		contents: string,
+		message: string,
+	): string {
+		writeFileSync(join(fixture.repo, name), contents, "utf8");
+		runGit(fixture, ["add", name]);
+		runGit(fixture, ["commit", "-qm", message]);
+		return runGit(fixture, ["rev-parse", "HEAD"]);
+	}
+
+	function createRealGitExec(env: NodeJS.ProcessEnv): ExecFn {
+		return (command, args, options) => {
+			const completed = spawnSync(command, args, {
+				cwd: options.cwd,
+				encoding: "utf8",
+				env,
+				stdio: ["ignore", "pipe", "pipe"],
+				timeout: options.timeout,
+			});
+			return Promise.resolve({
+				code: completed.status ?? 1,
+				stdout: completed.stdout,
+				stderr: completed.stderr || completed.error?.message || "",
+			});
+		};
+	}
+
+	function readLandingHeads(fixture: Pick<CleanupGitFixture, "repo" | "env">): Map<string, string> {
+		const output = runGit(fixture, ["for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads"]);
+		return new Map(
+			output
+				.split("\n")
+				.filter((line) => line.length > 0)
+				.map((line) => {
+					const [branch, sha] = line.split("\t");
+					return [branch, sha];
+				}),
+		);
+	}
+
+	function createCleanupFixture(): CleanupGitFixture {
+		const root = mkdtempSync(join(tmpdir(), "github-landing-cleanup-"));
+		const repo = join(root, "repo");
+		mkdirSync(repo);
+		const env = createVcsTestEnv(root);
+		const partial = { repo, env };
+		runGit(partial, ["init", "-q"]);
+		commitFile(partial, "base.txt", "base\n", "base");
+		runGit(partial, ["branch", "-M", "main"]);
+		runGit(partial, ["switch", "-qc", "kstack/one"]);
+		const oneSha = commitFile(partial, "one.txt", "one\n", "one");
+		runGit(partial, ["switch", "-qc", "kstack/two"]);
+		const twoSha = commitFile(partial, "two.txt", "two\n", "two");
+		runGit(partial, ["switch", "-q", "main"]);
+		runGit(partial, ["merge", "--squash", "kstack/one"]);
+		const mergeSha = commitFile(partial, "one.txt", "one\n", "squash one");
+		const origin = join(root, "origin.git");
+		mkdirSync(origin);
+		runGit(partial, ["init", "-q", "--bare", origin]);
+		runGit(partial, ["remote", "add", "origin", "git@github.com:o/r.git"]);
+		// Make the GitHub-shaped remote URL fetchable from the disposable bare clone.
+		runGit(partial, ["config", `url.${origin}.insteadOf`, "git@github.com:o/r.git"]);
+		runGit(partial, ["push", "-q", "origin", "main", "kstack/one", "kstack/two"]);
+		runGit(partial, ["remote", "set-head", "origin", "--auto"]);
+		runGit(partial, ["switch", "-q", "kstack/two"]);
+		return { root, repo, env, oneSha, twoSha, mergeSha };
+	}
+
+	it("keeps a local landed branch that advanced after verification and warns instead of deleting", async () => {
+		const fixture = createCleanupFixture();
+		try {
+			const pushed: string[] = [];
+			const advanced = { value: "" };
+			const innerExec = createRealGitExec(fixture.env);
+			const racingExec: ExecFn = async (command, args, options) => {
+				// Report the GitHub-shaped remote URL while every other command runs
+				// against the disposable real repository.
+				if (command === "git" && args[0] === "remote" && args[1] === "get-url") {
+					return { code: 0, stdout: "git@github.com:o/r.git\n", stderr: "" };
+				}
+				const result = await innerExec(command, args, options);
+				// Advance the landed branch once the remainder push has succeeded,
+				// immediately before cleanup runs.
+				if (command === "git" && args[0] === "push" && result.code === 0) {
+					pushed.push(args.join(" "));
+					const update = spawnSync("git", ["update-ref", `refs/heads/kstack/one`, fixture.mergeSha], {
+						cwd: fixture.repo,
+						encoding: "utf8",
+						env: fixture.env,
+						stdio: ["ignore", "pipe", "pipe"],
+					});
+					assert.equal(update.status, 0, update.stderr);
+					advanced.value = "advanced";
+				}
+				return result;
+			};
+			const base = gateway();
+			const stackEntries = entries;
+			const prs = [pr(1, "kstack/one", fixture.oneSha, "main"), pr(2, "kstack/two", fixture.twoSha, "kstack/one")];
+			const result = await requestGitHubStackLanding(
+				{ cwd: fixture.repo, prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+				{
+					exec: racingExec,
+					gateway: {
+						...base,
+						listOpenPrs: async () => prs,
+						listPrsForHead: async (_repo, head) => prs.filter((item) => item.headRef === head),
+						getPrStatus: async (_repo, prNumber) => (prNumber === 1 ? "merged" : "open"),
+						getPrComments: async () => [{ id: 1, user: "me", body: buildNavigationComment(stackEntries, "main") }],
+						getMergeCommit: async () => ({
+							merged: true,
+							mergeCommitOid: fixture.mergeSha,
+							headCommitId: fixture.oneSha,
+							headRef: "kstack/one",
+						}),
+						getRemoteBranchSha: async (_repo, branch) => {
+							if (branch === "kstack/one") return fixture.oneSha;
+							if (branch === "kstack/two") return fixture.twoSha;
+							return undefined;
+						},
+					},
+					confirm: async () => true,
+					selectMethod: async () => "squash",
+					landFrontier: async () => ({ handled: false }),
+					acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+					realpath: realpathSync,
+				},
+			);
+			assert.equal(result.status === "stack" ? result.outcome.status : "", "completed");
+			assert.equal(pushed.length, 1);
+			assert.equal(advanced.value, "advanced");
+			const heads = readLandingHeads(fixture);
+			assert.equal(heads.get("kstack/one"), fixture.mergeSha);
+			assert.ok(
+				result.status === "stack" &&
+					result.outcome.status === "completed" &&
+					result.outcome.warnings.some((warning) => /kstack\/one/.test(warning)),
+				`expected a retained-branch warning, got: ${JSON.stringify(
+					result.status === "stack" && result.outcome.status === "completed" ? result.outcome.warnings : [],
+				)}`,
+			);
+		} finally {
+			rmSync(fixture.root, { recursive: true, force: true });
+		}
+	});
+
 	it("falls through when the selected PR has no stack membership", async () => {
 		const result = await requestGitHubStackLanding(
 			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "check", method: "squash" },
@@ -719,7 +892,7 @@ describe("GitHub stack landing", () => {
 					},
 					deleteRemoteBranch: async () => {
 						deleted++;
-						return "deleted";
+						return { kind: "deleted" as const };
 					},
 				},
 				confirm: async () => true,
@@ -856,7 +1029,7 @@ describe("GitHub stack landing", () => {
 						},
 						deleteRemoteBranch: async () => {
 							remoteDeletes++;
-							return "deleted";
+							return { kind: "deleted" as const };
 						},
 					},
 					confirm: async () => true,
@@ -1050,9 +1223,9 @@ describe("GitHub stack landing", () => {
 						if (branch === "kstack/two") return two;
 						return undefined;
 					},
-					deleteRemoteBranch: async (_repo, branch) => {
-						deletedBranch = branch;
-						return "deleted";
+					deleteRemoteBranch: async (input) => {
+						deletedBranch = input.branch;
+						return { kind: "deleted" as const };
 					},
 				},
 				confirm: async () => true,

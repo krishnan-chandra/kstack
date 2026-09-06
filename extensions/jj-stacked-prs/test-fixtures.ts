@@ -107,7 +107,7 @@ export function fakeGithub(overrides: Partial<GitHubGateway> = {}): GitHubGatewa
 		getAllowedMergeMethods: async () => ["squash"],
 		getRemoteBranchSha: async (_repo, branch) => (branch === "feat2" ? "bbb-commit" : "aaa-commit"),
 		markPrReady: async () => {},
-		deleteRemoteBranch: async () => "deleted",
+		deleteRemoteBranch: async () => ({ kind: "deleted" as const }),
 		...overrides,
 	};
 }

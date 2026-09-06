@@ -19,6 +19,7 @@ import {
 } from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore, type NavigationEntry } from "../shared/stack/topology.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
+import { cleanupLocalBranch } from "./branch-cleanup.ts";
 import {
 	inspectRebaseScope,
 	matchesConfirmedRebaseScope,
@@ -585,22 +586,21 @@ async function cleanupMergedBranch(input: {
 	const completedMutations: string[] = [];
 	const warnings: string[] = [];
 	try {
-		const remoteSha = await input.deps.gateway.getRemoteBranchSha(
-			input.repository,
-			input.current.entry.bookmark,
-			input.cwd,
-			input.deps.signal,
-		);
-		if (remoteSha === input.expectedHeadSha) {
-			await input.deps.gateway.deleteRemoteBranch(
-				input.repository,
-				input.current.entry.bookmark,
-				input.cwd,
-				input.deps.signal,
-			);
+		const remoteDelete = await input.deps.gateway.deleteRemoteBranch({
+			repo: input.repository,
+			branch: input.current.entry.bookmark,
+			expectedHeadSha: input.expectedHeadSha,
+			cwd: input.cwd,
+			signal: input.deps.signal,
+		});
+		if (remoteDelete.kind === "deleted") {
 			completedMutations.push(`Deleted remote branch ${input.current.entry.bookmark}`);
-		} else if (remoteSha !== undefined) {
-			warnings.push(`Skipped deleting ${input.current.entry.bookmark}: remote head changed to ${remoteSha}.`);
+		} else if (remoteDelete.kind === "already-gone") {
+			completedMutations.push(`Remote branch ${input.current.entry.bookmark} already deleted`);
+		} else if (remoteDelete.kind === "changed") {
+			warnings.push(
+				`Skipped deleting ${input.current.entry.bookmark}: remote head changed to ${remoteDelete.actualHeadSha}.`,
+			);
 		}
 	} catch (error) {
 		warnings.push(`Failed to delete remote branch ${input.current.entry.bookmark}: ${errorMessage(error)}`);
@@ -617,16 +617,15 @@ async function cleanupMergedBranch(input: {
 			warnings.push(`Could not switch to trunk ${input.trunkBranch}: ${commandDiagnostic(switched)}`);
 		}
 	}
-	const deletedLocal = await runCommand(
-		input.deps.exec,
-		"git",
-		["branch", "-D", input.current.entry.bookmark],
-		input.cwd,
-		input.deps.signal,
-	);
-	if (deletedLocal.code !== 0) {
-		warnings.push(`Failed to delete local branch ${input.current.entry.bookmark}: ${commandDiagnostic(deletedLocal)}`);
-	}
+	const localCleanup = await cleanupLocalBranch({
+		branch: input.current.entry.bookmark,
+		expectedHeadSha: input.expectedHeadSha,
+		cwd: input.cwd,
+		exec: input.deps.exec,
+		signal: input.deps.signal,
+	});
+	completedMutations.push(...localCleanup.completedMutations);
+	warnings.push(...localCleanup.warnings);
 	return { completedMutations, warnings };
 }
 

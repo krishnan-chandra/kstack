@@ -79,13 +79,21 @@ describe("landing adapters", () => {
 		const calls: string[][] = [];
 		const adapter = gatewayFor(async (argv) => {
 			calls.push([...argv]);
-			if (argv.includes("-X") && argv.includes("DELETE")) {
+			if (argv.some((arg) => arg.includes("/git/ref/heads/feat1"))) {
 				return { kind: "nonzero", code: 1, stdout: "", stderr: "HTTP 404: Not Found", message: "HTTP 404: Not Found" };
 			}
 			return { kind: "ok", code: 0, stdout: "", stderr: "" };
 		});
 		await adapter.markPrReady({ owner: "o", repo: "r" }, 11, ".");
 		assert.deepEqual(calls[0], ["gh", "pr", "ready", "11", "--repo", "o/r"]);
-		assert.equal(await adapter.deleteRemoteBranch({ owner: "o", repo: "r" }, "feat1", "."), "already-gone");
+		assert.deepEqual(
+			await adapter.deleteRemoteBranch({
+				repo: { owner: "o", repo: "r" },
+				branch: "feat1",
+				expectedHeadSha: "a".repeat(40),
+				cwd: ".",
+			}),
+			{ kind: "already-gone" },
+		);
 	});
 });

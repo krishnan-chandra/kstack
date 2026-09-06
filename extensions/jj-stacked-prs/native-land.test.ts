@@ -276,9 +276,9 @@ describe("native landing failures", () => {
 			deps({
 				jj: fakeJj({ areAncestors: async () => [true, false] }),
 				github: fakeGithub({
-					deleteRemoteBranch: async (_repo, branch) => {
-						deleted.push(branch);
-						return "deleted";
+					deleteRemoteBranch: async (input) => {
+						deleted.push(input.branch);
+						return { kind: "deleted" };
 					},
 				}),
 			}),
@@ -304,10 +304,12 @@ describe("native landing failures", () => {
 			options,
 			deps({
 				github: fakeGithub({
-					getRemoteBranchSha: async (_repo, branch) => (branch === "feat1" ? "changed" : "bbb-commit"),
-					deleteRemoteBranch: async (_repo, branch) => {
-						deleted.push(branch);
-						return "deleted";
+					deleteRemoteBranch: async (input) => {
+						if (input.branch === "feat1") {
+							return { kind: "changed", actualHeadSha: "changed" };
+						}
+						deleted.push(input.branch);
+						return { kind: "deleted" };
 					},
 				}),
 			}),

@@ -749,19 +749,20 @@ async function runSingleLand(
 	}
 
 	try {
-		const remoteSha = await github.getRemoteBranchSha(remote.github, current.bookmark, options.cwd, deps.signal);
-		if (remoteSha === undefined) {
+		const deleted = await github.deleteRemoteBranch({
+			repo: remote.github,
+			branch: current.bookmark,
+			expectedHeadSha: frontier.expectedHeadSha,
+			cwd: options.cwd,
+			signal: deps.signal,
+		});
+		if (deleted.kind === "deleted") {
+			completedMutations.push(`Deleted remote branch ${current.bookmark}`);
+		} else if (deleted.kind === "already-gone") {
 			completedMutations.push(`Remote branch ${current.bookmark} already deleted`);
-		} else if (remoteSha !== frontier.expectedHeadSha) {
+		} else if (deleted.kind === "changed") {
 			warnings.push(
-				`Skipped deleting ${current.bookmark}: remote SHA ${remoteSha} does not match landed head ${frontier.expectedHeadSha}`,
-			);
-		} else {
-			const deleted = await github.deleteRemoteBranch(remote.github, current.bookmark, options.cwd, deps.signal);
-			completedMutations.push(
-				deleted === "deleted"
-					? `Deleted remote branch ${current.bookmark}`
-					: `Remote branch ${current.bookmark} already deleted`,
+				`Skipped deleting ${current.bookmark}: remote SHA ${deleted.actualHeadSha} does not match landed head ${frontier.expectedHeadSha}`,
 			);
 		}
 	} catch (error) {

@@ -237,15 +237,28 @@ export async function runNativeLand(
 				...progress(),
 			};
 		}
-		const remoteShas = await mapWithConcurrencyLimit(mapped, NATIVE_READ_CONCURRENCY, (slice) =>
-			github.getRemoteBranchSha(repository, slice.bookmark, options.cwd, deps.signal),
-		);
-		for (const [index, slice] of mapped.entries()) {
-			const remoteSha = remoteShas[index];
-			if (remoteSha === slice.headCommitId) {
-				await github.deleteRemoteBranch(repository, slice.bookmark, options.cwd, deps.signal);
+		const deletionOutcomes = await mapWithConcurrencyLimit(mapped, NATIVE_READ_CONCURRENCY, async (slice) => {
+			try {
+				const deleted = await github.deleteRemoteBranch({
+					repo: repository,
+					branch: slice.bookmark,
+					expectedHeadSha: slice.headCommitId,
+					cwd: options.cwd,
+					signal: deps.signal,
+				});
+				return { slice, deleted };
+			} catch (error) {
+				return { slice, error };
+			}
+		});
+		for (const { slice, deleted, error } of deletionOutcomes) {
+			if (error) {
+				warnings.push(`Failed to delete remote branch ${slice.bookmark}: ${errorMessage(error)}`);
+			} else if (deleted?.kind === "deleted") {
 				completedMutations.push(`Deleted remote branch ${slice.bookmark}`);
-			} else if (remoteSha !== undefined) {
+			} else if (deleted?.kind === "already-gone") {
+				completedMutations.push(`Remote branch ${slice.bookmark} already deleted`);
+			} else if (deleted?.kind === "changed") {
 				warnings.push(`Skipped deleting ${slice.bookmark}: remote SHA no longer matches the pinned head`);
 			}
 		}
