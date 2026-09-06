@@ -44,7 +44,7 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
-import { isForbiddenStagingPath, markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
+import { attachFailedLogs, isForbiddenStagingPath, markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
 	buildFixerTask,
@@ -184,17 +184,7 @@ export async function runAutopilot(
 	if (mode === "check") {
 		setPhase("checking");
 		const persisted = await ops.loadPersistedState(repoKey, prNumber);
-		const fetched = await fetchPRState(
-			exec,
-			cwd,
-			prNumber,
-			null,
-			{
-				concurrency: config.maxConcurrency,
-				handledThreadIds: persisted.handledThreadIds,
-			},
-			await resolveRepoOnce(),
-		);
+		const fetched = await fetchPRState(exec, cwd, prNumber, null, persisted.handledThreadIds, await resolveRepoOnce());
 
 		if (isString(fetched)) {
 			notify(fetched, "error");
@@ -207,10 +197,7 @@ export async function runAutopilot(
 			cwd,
 			prNumber,
 			state.headSha,
-			{
-				concurrency: config.maxConcurrency,
-				handledThreadIds: persisted.handledThreadIds,
-			},
+			persisted.handledThreadIds,
 			await resolveRepoOnce(),
 		);
 		if (isString(verified)) {
@@ -242,17 +229,7 @@ export async function runAutopilot(
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking", cycle);
-		return fetchPRState(
-			exec,
-			cwd,
-			prNumber,
-			verifiedHeadSha,
-			{
-				concurrency: config.maxConcurrency,
-				handledThreadIds: persisted.handledThreadIds,
-			},
-			await resolveRepoOnce(),
-		);
+		return fetchPRState(exec, cwd, prNumber, verifiedHeadSha, persisted.handledThreadIds, await resolveRepoOnce());
 	};
 
 	const runChild = async (
@@ -308,10 +285,7 @@ export async function runAutopilot(
 			cwd,
 			prNumber,
 			snapshot.headSha,
-			{
-				concurrency: config.maxConcurrency,
-				handledThreadIds: persisted.handledThreadIds,
-			},
+			persisted.handledThreadIds,
 			await resolveRepoOnce(),
 		);
 		if (isString(settled)) {
@@ -433,6 +407,10 @@ export async function runAutopilot(
 		}
 
 		setPhase("triaging", cycle);
+		if (signal.aborted) return finish("aborted");
+		const checksWithLogs = await attachFailedLogs(exec, cwd, state.checks, config.maxConcurrency);
+		if (signal.aborted) return finish("aborted");
+		state = { ...state, checks: checksWithLogs };
 		const triagerResult = await runChild("triager", buildTriagerTask(state, backend.id));
 		if (signal.aborted) return finish("aborted");
 		if (!triagerResult.ok) {

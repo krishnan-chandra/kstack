@@ -224,28 +224,27 @@ async function fetchFailedLog(exec: ExecFn, cwd: string, runId: string): Promise
 	return clipLog(text, LIMITS.logExcerptBytes);
 }
 
-/** Attach capped failed-log excerpts to failing Actions checks, in parallel. */
+/** Attach one capped failed-log excerpt per distinct Actions run, in parallel. */
 export async function attachFailedLogs(
 	exec: ExecFn,
 	cwd: string,
 	checks: CheckRun[],
 	concurrency: number,
 ): Promise<CheckRun[]> {
-	const failing = checks.filter((c) => c.conclusion === "failure" && c.runId);
-	if (failing.length === 0) return checks;
-	const logs = await mapWithConcurrencyLimit(failing, concurrency, async (check) => {
-		const runId = check.runId;
-		if (!runId) return { id: check.name, log: undefined };
-		return { id: `${check.name}:${runId}`, log: await fetchFailedLog(exec, cwd, runId) };
-	});
-	const byKey = new Map<string, string | undefined>();
-	for (let i = 0; i < failing.length; i++) {
-		const check = failing[i];
-		byKey.set(`${check.name}:${check.runId}`, logs[i]?.log);
-	}
+	const runIds = [
+		...new Set(checks.flatMap((check) => (check.conclusion === "failure" && check.runId ? [check.runId] : []))),
+	];
+	if (runIds.length === 0) return checks;
+	const logsByRunId = new Map(
+		await mapWithConcurrencyLimit(
+			runIds,
+			concurrency,
+			async (runId): Promise<[string, string | undefined]> => [runId, await fetchFailedLog(exec, cwd, runId)],
+		),
+	);
 	return checks.map((check) => {
 		if (check.conclusion !== "failure" || !check.runId) return check;
-		const logExcerpt = byKey.get(`${check.name}:${check.runId}`);
+		const logExcerpt = logsByRunId.get(check.runId);
 		return logExcerpt ? { ...check, logExcerpt } : check;
 	});
 }

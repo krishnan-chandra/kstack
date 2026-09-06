@@ -122,9 +122,56 @@ function fencedCheck(key: CheckTriageKey, check: CheckRun): string {
 		`status: ${check.status}`,
 		`conclusion: ${check.conclusion ?? "(none)"}`,
 		check.detailsUrl ? `details URL: ${check.detailsUrl}` : "details URL: (none)",
-		check.logExcerpt ? `log:\n${check.logExcerpt}` : "log: (not fetched)",
 	];
 	return `  - ${key}\n${wrapUntrusted("check data", details.join("\n"))}`;
+}
+
+interface KeyedCheck {
+	check: CheckRun;
+	key: CheckTriageKey;
+}
+
+interface FailedLogGroup {
+	keys: CheckTriageKey[];
+	runId?: string;
+	logExcerpt?: string;
+}
+
+function failedLogGroups(failures: KeyedCheck[]): FailedLogGroup[] {
+	const groups: FailedLogGroup[] = [];
+	const byRunId = new Map<string, Map<string | undefined, FailedLogGroup>>();
+	for (const { check, key } of failures) {
+		if (!check.runId) {
+			groups.push({ keys: [key], logExcerpt: check.logExcerpt });
+			continue;
+		}
+		let byExcerpt = byRunId.get(check.runId);
+		if (!byExcerpt) {
+			byExcerpt = new Map();
+			byRunId.set(check.runId, byExcerpt);
+		}
+		const existing = byExcerpt.get(check.logExcerpt);
+		if (existing) {
+			existing.keys.push(key);
+			continue;
+		}
+		const group = { keys: [key], runId: check.runId, logExcerpt: check.logExcerpt };
+		byExcerpt.set(check.logExcerpt, group);
+		groups.push(group);
+	}
+	return groups;
+}
+
+function fencedFailedLogs(failures: KeyedCheck[]): string {
+	return failedLogGroups(failures)
+		.map((group) => {
+			const details = [
+				group.runId ? `run ID: ${group.runId}` : "run ID: (not available)",
+				group.logExcerpt ? `log:\n${group.logExcerpt}` : "log: (not fetched)",
+			];
+			return `  - ${group.keys.join(", ")}\n${wrapUntrusted("check data", details.join("\n"))}`;
+		})
+		.join("\n");
 }
 
 function fencedPendingCheck(key: CheckTriageKey, check: CheckRun): string {
@@ -174,6 +221,9 @@ ${wrapUntrusted("pr title", state.title)}
 ${failures.length > 0 ? `Failing (${failures.length}):\n${failureLines.join("\n")}` : "  (none failing)"}
 ${pending.length > 0 ? `Pending (${pending.length}):\n${pending.map(({ check, key }) => fencedPendingCheck(key, check)).join("\n")}` : "  (none pending)"}
 
+## Failed run logs
+${failures.length > 0 ? fencedFailedLogs(failures) : "  (none)"}
+
 ## Unresolved review items (${state.threads.length})
 ${threadLines.length > 0 ? threadLines.join("\n") : "  (none)"}
 
@@ -211,6 +261,9 @@ export type FixMode = "threads" | "ci" | "all";
 
 /** Build the fixer task file content from PR state + triage. */
 export function buildFixerTask(state: PRState, triage: string, fixMode: FixMode, backend: VcsBackendId): string {
+	const failures = state.checks
+		.map((check, index) => ({ check, key: checkTriageKey(index) }))
+		.filter(({ check }) => check.conclusion === "failure");
 	const modeLine =
 		fixMode === "threads"
 			? "address review threads marked fix only"
@@ -233,12 +286,11 @@ ${wrapUntrusted("triage json", triage)}
 ## Unresolved review items
 ${state.threads.map((thread, index) => fencedReviewItem(threadTriageKey(index), thread, thread.body)).join("\n\n") || "(none)"}
 
-## Failing check logs
-${
-	state.checks
-		.flatMap((check, index) => (check.conclusion === "failure" ? [fencedCheck(checkTriageKey(index), check)] : []))
-		.join("\n\n") || "(none)"
-}
+## Failing checks
+${failures.map(({ check, key }) => fencedCheck(key, check)).join("\n\n") || "(none)"}
+
+## Failed run logs
+${failures.length > 0 ? fencedFailedLogs(failures) : "(none)"}
 
 ## Instructions
 

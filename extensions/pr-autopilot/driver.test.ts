@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -126,6 +126,10 @@ test("a push confirmation resolving true after abort starts no publication", asy
 	assert.ok(!harness.calls.some((call) => call.startsWith("git add") || call.startsWith("git push")));
 });
 
+function failedLogCalls(calls: string[]): string[] {
+	return calls.filter((call) => call.startsWith("gh run view"));
+}
+
 function mutatingCalls(calls: string[]): string[] {
 	return calls.filter(
 		(call) =>
@@ -134,12 +138,30 @@ function mutatingCalls(calls: string[]): string[] {
 	);
 }
 
-test("check mode performs two fresh reads and never mutates", async (t) => {
+test("check mode performs two fresh reads without fetching failed logs or mutating", async (t) => {
 	const { harness, result } = await run("check");
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "merge-ready");
 	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 2);
+	assert.deepEqual(failedLogCalls(harness.calls), []);
 	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+test("check mode observes Actions failures without fetching failed logs", async (t) => {
+	const { harness, result } = await run("check", {
+		checks: [
+			{
+				name: "build",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+		],
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(failedLogCalls(harness.calls), []);
 });
 
 test("check mode does not treat top-level discussion as unresolved review feedback", async (t) => {
@@ -179,11 +201,12 @@ test("branch mismatch identifies the expected and actual branches", async (t) =>
 	assert.deepEqual(mutatingCalls(harness.calls), []);
 });
 
-test("a merge-ready readiness pass never validates the PR workspace", async (t) => {
+test("a merge-ready readiness pass never validates the PR workspace or fetches failed logs", async (t) => {
 	const { harness, result } = await run("drive", { branch: "kstack/other" });
 	t.after(() => harness.cleanup());
 	assert.equal(result.status, "merge-ready");
 	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(failedLogCalls(harness.calls), []);
 	assert.deepEqual(mutatingCalls(harness.calls), []);
 });
 
@@ -202,6 +225,112 @@ test("watching pending checks does not require the PR workspace", async (t) => {
 		"a readiness-only pass must not fail on workstream selection",
 	);
 	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(failedLogCalls(harness.calls), []);
+});
+
+test("triage fetches each distinct failed run log once", async (t) => {
+	const { harness, result } = await run("drive", {
+		checks: [
+			{
+				name: "build",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+			{
+				name: "unit",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+			{
+				name: "integration",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/456",
+			},
+		],
+		triage: triage({
+			checks: [
+				{ key: "check-1", cls: "unknown", action: "report" },
+				{ key: "check-2", cls: "unknown", action: "report" },
+				{ key: "check-3", cls: "unknown", action: "report" },
+			],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "blocked");
+	assert.deepEqual(harness.roles, ["triager"]);
+	assert.deepEqual(failedLogCalls(harness.calls), ["gh run view 123 --log-failed", "gh run view 456 --log-failed"]);
+});
+
+test("fixer input reuses the failed logs hydrated for its triage cycle", async (t) => {
+	const { harness, result } = await run("drive", {
+		checks: [
+			{
+				name: "build",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+		],
+		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix build" }] }),
+		confirm: false,
+	});
+	t.after(() => harness.cleanup());
+
+	assert.equal(result.status, "incomplete");
+	assert.match(await readFile(join(harness.cwd, "triager-1.md"), "utf8"), /test failed/);
+	assert.match(await readFile(join(harness.cwd, "fixer-1.md"), "utf8"), /test failed/);
+	assert.deepEqual(failedLogCalls(harness.calls), ["gh run view 123 --log-failed"]);
+});
+
+test("cancellation during failed-log hydration launches no model", async (t) => {
+	const harness = await createHarness({
+		checks: [
+			{
+				name: "build",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+		],
+	});
+	t.after(() => harness.cleanup());
+	const hydration = deferred<ExecFnResult>();
+	const hydrationStarted = deferred<void>();
+	const exec: ExecFn = async (command, args, options) => {
+		if (command === "gh" && args[0] === "run" && args[1] === "view") {
+			hydrationStarted.resolve();
+			return hydration.promise;
+		}
+		return harness.exec(command, args, options);
+	};
+	const controller = new AbortController();
+	const pending = runAutopilot(
+		"drive",
+		{
+			config,
+			exec,
+			backend: new GitBackend(exec),
+			cwd: harness.cwd,
+			explicitPR: 42,
+			promptDir: harness.cwd,
+			triagerPromptFile: join(harness.cwd, "triager.md"),
+			fixerPromptFile: join(harness.cwd, "fixer.md"),
+		},
+		harness.handlers,
+		controller.signal,
+		harness.ops,
+	);
+	await hydrationStarted.promise;
+	controller.abort();
+	hydration.resolve({ code: 0, stdout: "failure marker\n", stderr: "" });
+
+	const result = await pending;
+	assert.equal(result.status, "aborted");
+	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(mutatingCalls(harness.calls), []);
 });
 
 test("a behind PR merges its base and pushes", async (t) => {
@@ -285,9 +414,16 @@ test("triager and fixer use the same randomly chosen model", async (t) => {
 	assert.ok(config.models.some((model) => model.model === harness.models[0]));
 });
 
-test("drive mode stops at its configured cycle bound", async (t) => {
+test("drive mode stops at its configured cycle bound and hydrates each cycle afresh", async (t) => {
 	const { harness, result } = await run("drive", {
-		checks: [{ name: "test", state: "FAILURE", bucket: "fail" }],
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+		],
 		triage: triage({ checks: [{ key: "check-1", cls: "code", action: "fix test" }] }),
 		fixerChanges: true,
 	});
@@ -296,6 +432,7 @@ test("drive mode stops at its configured cycle bound", async (t) => {
 	assert.equal(result.cyclesCompleted, 3);
 	assert.ok(result.blockedReasons.some((reason) => reason.includes("max cycles reached")));
 	assert.equal(harness.roles.filter((role) => role === "fixer").length, 3);
+	assert.equal(failedLogCalls(harness.calls).length, 3);
 	assert.equal(harness.calls.filter((call) => call.startsWith("gh repo view")).length, 1);
 });
 
@@ -326,6 +463,7 @@ test("pending checks use the watch path without triage", async (t) => {
 	assert.ok(result.blockedCodes?.includes("ci-pending-after-watch"));
 	assert.ok(harness.calls.some((call) => call.includes("gh pr checks 42 --watch")));
 	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(failedLogCalls(harness.calls), []);
 });
 
 test("cleanup mode never resolves the repository", async (t) => {
