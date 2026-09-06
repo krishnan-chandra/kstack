@@ -113,8 +113,10 @@ These are enforced by the state machine and cannot be bypassed at runtime:
 
 4. **Classify before retrying.** The model triager classifies each
    failure as `code`, `stale-base`, `flake`, `infra`, or `unknown` from the
-   failing log, not the check name. Flake gets one `gh run rerun --failed` per
-   check+SHA. Blind retries never happen. Workflow files are never staged.
+   failing log, not the check name. Flaky jobs share one `gh run rerun --failed`
+   attempt per Actions run and exact head SHA. A check without an Actions run ID
+   cannot trigger or consume a rerun. Blind retries never happen. Workflow files
+   are never staged.
 
 5. **Fix / dismiss / ask / ignore.** Each unresolved GraphQL review thread and
    recent issue comment is classified by intent. Informational discussion,
@@ -213,14 +215,32 @@ read has the same fail-closed behavior.
 
 Versioned review state and flake reruns persist under the agent directory's
 `pr-autopilot/` subdirectory (`$PI_CODING_AGENT_DIR/pr-autopilot/`, default
-`~/.pi/agent/pr-autopilot/`). State schema 2 retains at most 1,000 completed
-handling records and 1,000 pending replies. Completed records are pruned oldest
-first; pending replies are never evicted. Legacy handled IDs are discarded as
-suppressions and receive one fresh triage. Legacy replies remain as unversioned
-pending records until a complete read proves that the thread is resolved or
-absent. A live legacy pending reply requires manual inspection before another
-reply or resolution. Invalid and future state schemas block automated review
-mutations instead of being overwritten.
+`~/.pi/agent/pr-autopilot/`). State schema 3 identifies a rerun attempt by its
+Actions run ID and exact head SHA. Jobs from one run share that attempt, while
+separate runs remain independent even when their job names match. Every settled
+request consumes the attempt, including a failed request or one whose acceptance
+GitHub did not confirm. Autopilot saves that record before it starts another
+rerun or returns after cancellation. A process crash between GitHub accepting a
+request and the local save can still leave uncertain state; Autopilot does not
+keep a remote-operation journal.
+
+Schema 3 carries legacy `name@SHA` retry entries as migration evidence but never
+writes new name-based entries. On the first complete checks snapshot for a head,
+a legacy job name consumes every matching Actions run. This is conservative when
+several runs used the same name because the old record cannot identify the run.
+Autopilot converts a matched name entry to run records and removes it. Unmatched
+legacy entries and run records from older heads remain in the file, so returning
+to an old head does not renew a consumed attempt. A run that appears after this
+one-time conversion has its own budget, even when its job name matches.
+
+The schema retains at most 1,000 completed review-handling records and 1,000
+pending replies. Completed records are pruned oldest first; pending replies are
+never evicted. Legacy handled IDs are discarded as suppressions and receive one
+fresh triage. Legacy replies remain as unversioned pending records until a
+complete read proves that the thread is resolved or absent. A live legacy
+pending reply requires manual inspection before another reply or resolution.
+Invalid and future state schemas block automated review mutations instead of
+being overwritten.
 
 Review inspection reads at most 20 outer pages of 50 threads, 500 comments per
 thread, and 5,000 comments per fetch. The first thread request reads 20 comments;
@@ -268,8 +288,9 @@ cancellation arrives after fixes were recorded or a base update completed but
 before publication started, Autopilot reports that local recorded work remains
 unpublished in both the command notifications and the returned result. It does
 not replay or automatically restore that work. Cancellation retains completed
-handling and a reply that was posted before its resolution boundary, along with
-any failure reported by an in-flight reply or push.
+handling, settled Actions rerun attempts, and a reply that was posted before its
+resolution boundary. It also reports any failure from an in-flight reply or
+push.
 
 ## Integration
 
