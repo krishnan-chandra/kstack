@@ -37,7 +37,7 @@ import {
 	viewPR,
 } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
-import { buildPRState } from "./pr-state.ts";
+import { buildPRState, emptyUsage } from "./pr-state.ts";
 import {
 	type CheckTriageKey,
 	checkForTriageKey,
@@ -210,6 +210,7 @@ export async function runChildRole(
 	ctx: { cwd: string; signal?: AbortSignal },
 ): Promise<{ ok: true; output: string; usage: UsageSummary } | { ok: false; error: string; usage: UsageSummary }> {
 	const triagerTask = role === "triager" ? await readFile(opts.taskFile, "utf8") : undefined;
+	if (ctx.signal?.aborted) return { ok: false, error: "aborted by user", usage: emptyUsage() };
 	const result = await runAgent({
 		role,
 		spec: { label: role, model: opts.model, thinking: opts.thinking },
@@ -239,12 +240,15 @@ export async function runCleanup(
 	cwd: string,
 	confirm: (label: string, body: string) => Promise<boolean>,
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
+	signal?: AbortSignal,
 ): Promise<boolean> {
+	if (signal?.aborted) return false;
 	if (!backend.isolation) {
 		notify("Cleanup is not supported by this backend because it has no managed worktrees.", "info");
 		return true;
 	}
 	const current = await backend.currentRef(cwd);
+	if (signal?.aborted) return false;
 	const branch = current.ok && current.ref.kind === "branch" ? current.ref.name : "";
 
 	if (!branch.startsWith("kstack/")) {
@@ -265,7 +269,7 @@ export async function runCleanup(
 			"Cleanup stops if the worktree is dirty, untracked, locked, outside Kstack's managed root, or no longer registered by Git. " +
 			"Session archival is a separate manual step. This cleanup is irreversible. Continue?",
 	);
-	if (!confirmed) return false;
+	if (!confirmed || signal?.aborted) return false;
 
 	const removed = await backend.isolation.remove(cwd, branch);
 	if (!removed.ok) {
@@ -423,6 +427,7 @@ export async function applyThreadReplies(
 	parsed: ParsedTriage,
 	opts: { resolveFix: boolean; repliedThreadIds: string[] },
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
+	signal?: AbortSignal,
 ): Promise<{ ok: true; handled: string[] } | { ok: false; handled: string[]; error: string }> {
 	const handled: string[] = [];
 	const failed = (message: string) => {
@@ -430,6 +435,7 @@ export async function applyThreadReplies(
 		return { ok: false as const, handled, error: message };
 	};
 	for (const thread of parsed.threads) {
+		if (signal?.aborted) return failed("aborted by user");
 		if (thread.decision === "ask") continue;
 		if (thread.decision === "fix" && !opts.resolveFix) continue;
 		const source = threadForTriageKey(state, thread.key);
@@ -451,6 +457,7 @@ export async function applyThreadReplies(
 				}
 				opts.repliedThreadIds.push(source.id);
 			}
+			if (signal?.aborted) return failed("aborted by user");
 			const resolved = await resolveReviewThread(exec, cwd, source.id);
 			if (resolved.code !== 0) {
 				return failed(`Could not resolve thread ${source.id}: ${resolved.stderr.trim()}`);

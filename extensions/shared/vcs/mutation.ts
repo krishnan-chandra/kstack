@@ -13,12 +13,17 @@ export interface MutationCheckout {
 	readonly affectedRefs: readonly string[];
 }
 
-type FixPublication = { kind: "pushed"; headSha?: string } | { kind: "unchanged" } | { kind: "failed"; error: string };
+type FixPublication =
+	| { kind: "pushed"; headSha?: string }
+	| { kind: "unchanged" }
+	| { kind: "cancelled"; completedActions: string[] }
+	| { kind: "failed"; error: string };
 
 type BaseUpdateOutcome =
 	| { kind: "published"; headSha: string }
 	| { kind: "already-current" }
 	| { kind: "precondition-failed"; error: string }
+	| { kind: "cancelled"; completedActions: string[] }
 	| { kind: "needs-human"; files: string[]; error: string }
 	| { kind: "failed"; error: string };
 
@@ -32,8 +37,9 @@ export interface PrMutation {
 	updateBaseAndPublish(cwd: string, target: MutationTarget & { baseRef: string }): Promise<BaseUpdateOutcome>;
 }
 
-export function createPrMutation(backend: VcsBackend): PrMutation {
+export function createPrMutation(backend: VcsBackend, options: { signal?: AbortSignal } = {}): PrMutation {
 	const policy = vcsPolicy(backend.id);
+	const isCancelled = () => options.signal?.aborted === true;
 
 	async function guardRewriteScope(
 		cwd: string,
@@ -45,15 +51,19 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 	}
 
 	async function openCheckout(cwd: string, target: MutationTarget): Promise<VcsResult<{ checkout: MutationCheckout }>> {
+		const cancelled = (): VcsResult<{ checkout: MutationCheckout }> => ({ ok: false, error: "aborted by user" });
+		if (isCancelled()) return cancelled();
 		let captured: VcsResult<{ snapshot: WorkstreamSnapshot }>;
 		if (backend.mutationWorkstream) {
 			captured = await backend.mutationWorkstream.open(cwd, target.headRef, target.headSha);
+			if (isCancelled()) return cancelled();
 		} else {
 			const [current, head, clean] = await Promise.all([
 				backend.currentRef(cwd),
 				backend.headSha(cwd),
 				backend.isWorkingCopyEmpty(cwd),
 			]);
+			if (isCancelled()) return cancelled();
 			if (!current.ok) return current;
 			const refName = current.ref.kind === "branch" || current.ref.kind === "bookmark" ? current.ref.name : undefined;
 			if (refName !== target.headRef) {
@@ -80,12 +90,14 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 				};
 			}
 			captured = await backend.captureWorkstream(cwd);
+			if (isCancelled()) return cancelled();
 		}
 		if (!captured.ok) return captured;
 		if (captured.snapshot.ref !== target.headRef) {
 			return { ok: false, error: `The current workstream identity no longer names ${target.headRef}.` };
 		}
 		const remoteHead = await backend.fetchRemoteHead(cwd, target.headRef);
+		if (isCancelled()) return cancelled();
 		if (!remoteHead.ok) return remoteHead;
 		if (remoteHead.sha !== target.headSha) {
 			return {
@@ -94,6 +106,7 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 			};
 		}
 		const guarded = await guardRewriteScope(cwd, target.headRef);
+		if (isCancelled()) return cancelled();
 		if (!guarded.ok) return guarded;
 		return {
 			ok: true,
@@ -106,10 +119,12 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 		checkout: MutationCheckout,
 		fix: { message: string; isForbiddenPath(path: string): boolean },
 	): Promise<FixPublication> {
+		if (isCancelled()) return { kind: "cancelled", completedActions: [] };
 		const [unchanged, changed] = await Promise.all([
 			backend.assertWorkstreamUnchanged(cwd, checkout.snapshot),
 			backend.changedPaths(cwd),
 		]);
+		if (isCancelled()) return { kind: "cancelled", completedActions: [] };
 		if (!unchanged.ok) {
 			return { kind: "failed", error: `The fixer changed workstream identity: ${unchanged.error}` };
 		}
@@ -127,9 +142,11 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 		}
 		const guarded = await guardRewriteScope(cwd, checkout.snapshot.ref);
 		if (!guarded.ok) return { kind: "failed", error: guarded.error };
+		if (isCancelled()) return { kind: "cancelled", completedActions: [] };
 
 		const recorded = await backend.recordPaths(cwd, paths, fix.message);
 		if (!recorded.ok) return { kind: "failed", error: recorded.error };
+		if (isCancelled()) return { kind: "cancelled", completedActions: ["recorded fixes locally"] };
 		const published = await backend.publishRecordedChanges(cwd, checkout.snapshot.ref, { existingOnly: true });
 		if (!published.ok) return { kind: "failed", error: published.error };
 		const head = backend.mutationWorkstream
@@ -142,7 +159,9 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 		cwd: string,
 		target: MutationTarget & { baseRef: string },
 	): Promise<BaseUpdateOutcome> {
+		if (isCancelled()) return { kind: "cancelled", completedActions: [] };
 		const opened = await openCheckout(cwd, target);
+		if (isCancelled()) return { kind: "cancelled", completedActions: [] };
 		if (!opened.ok) return { kind: "precondition-failed", error: opened.error };
 		const updated = await backend.updateBase(cwd, target.baseRef);
 		switch (updated.kind) {
@@ -153,8 +172,10 @@ export function createPrMutation(backend: VcsBackend): PrMutation {
 			case "failed":
 				return updated;
 			case "clean": {
+				if (isCancelled()) return { kind: "cancelled", completedActions: ["updated base locally"] };
 				const guarded = await guardRewriteScope(cwd, target.headRef);
 				if (!guarded.ok) return { kind: "failed", error: guarded.error };
+				if (isCancelled()) return { kind: "cancelled", completedActions: ["updated base locally"] };
 				const published = await backend.publishRecordedChanges(cwd, target.headRef, { existingOnly: true });
 				if (!published.ok) {
 					return { kind: "failed", error: `Could not publish the updated base: ${published.error}` };

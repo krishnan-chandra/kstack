@@ -124,8 +124,8 @@ These are enforced by the state machine and cannot be bypassed at runtime:
    the autopilot re-checks against the new SHA. Success is reported only after
    a second fresh status read (settle). The parent records only fixer-touched
    paths with the selected backend — never `git add -A`, never force-push. In
-   jj mode, each fix is recorded below a newly described empty `@` checkpoint,
-   and the task bookmark moves to that checkpoint before push.
+   jj mode, fixes are squashed from the working-copy child into the PR
+   bookmark’s commit before push.
 
 7. **Stop at merge-ready.** The autopilot declares a PR looks merge-ready and
    stops. It never merges, never arms merge-when-ready, and never touches
@@ -189,8 +189,19 @@ Autopilot child roles persist native Pi sessions under `~/.pi/kstack/subagents/`
 
 ## Aborting
 
-Press <kbd>Ctrl+Shift+B</kbd> during an autopilot run to abort the active child
-agent. The autopilot cleans up the child process and reports the abort.
+Press <kbd>Ctrl+Shift+B</kbd> during an autopilot run to stop it. Cancellation is
+observed at action boundaries: after it is observed, Autopilot starts no new
+fixer, VCS operation, GitHub mutation, reply resolution, rerun, or cleanup
+removal.
+
+An already-dispatched repository or GitHub mutation is allowed to settle so
+repository cleanup and remote diagnostics remain trustworthy. For example, an
+in-flight push or worktree removal finishes and reports its actual result. If
+cancellation arrives after fixes were recorded or a base update completed but before
+publication started, Autopilot reports that local recorded work remains
+unpublished in both the command notifications and the returned result. It does
+not replay or automatically restore that work. Cancellation retains completed
+reply bookkeeping and any failure reported by an in-flight reply or push.
 
 ## Integration
 
