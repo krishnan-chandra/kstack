@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
-import { createGitStoreExec, resolveJjReviewTarget } from "./jj-target.ts";
+import { resolveJjReviewTarget } from "./jj-target.ts";
 import { materializePrSnapshot } from "./pr-target.ts";
+import { type CommandExec, locateRepositorySource, type RepositorySource } from "./repository-source.ts";
 import { collectScope } from "./review-scope.ts";
 
 function run(cwd: string, command: string, args: string[], env?: NodeJS.ProcessEnv): string {
@@ -35,66 +36,114 @@ const createRealExec =
 
 const hasJj = spawnSync("jj", ["--version"], { stdio: "ignore" }).status === 0;
 
+/** Seed a jj repository whose `main` bookmark holds one base commit. */
+function seedJjRepo(repo: string, env: NodeJS.ProcessEnv, colocate: boolean): void {
+	run(repo, "jj", ["git", "init", colocate ? "--colocate" : "--no-colocate"], env);
+	writeFileSync(join(repo, "file.txt"), "base\n");
+	run(repo, "jj", ["describe", "-m", "base"], env);
+	run(repo, "jj", ["bookmark", "create", "main", "-r", "@"], env);
+	run(repo, "jj", ["new"], env);
+}
+
+function locate(path: string, env: NodeJS.ProcessEnv): RepositorySource {
+	const commandExec: CommandExec = (cmd, args, cwd) => run(cwd, cmd, args, env);
+	return locateRepositorySource(path, createRealExec(env), commandExec);
+}
+
+async function reviewWorkingCopy(source: RepositorySource, env: NodeJS.ProcessEnv, explicitBase?: string) {
+	const commandExec: CommandExec = (cmd, args, cwd) => run(cwd, cmd, args, env);
+	const target = resolveJjReviewTarget(source, explicitBase, commandExec);
+	assert.equal(target.headSha, run(source.root, "jj", ["log", "--no-graph", "-r", "@", "-T", "commit_id"], env));
+	const scope = collectScope(source.root, target.base, "review", {
+		exec: source.git,
+		headSha: target.headSha,
+		repositoryRoot: source.root,
+	});
+	const snapshot = await materializePrSnapshot(source.exec, source.root, target.headSha);
+	try {
+		return {
+			target,
+			bundle: readFileSync(scope.path, "utf8"),
+			file: readFileSync(join(snapshot.directory, "file.txt"), "utf8"),
+		};
+	} finally {
+		rmSync(snapshot.root, { recursive: true, force: true });
+		rmSync(scope.dir, { recursive: true, force: true });
+	}
+}
+
 describe("jj panel-review target", () => {
-	it("returns null outside a jj workspace", () => {
-		const dir = mkdtempSync(join(tmpdir(), "panel-not-jj-"));
+	for (const colocate of [true, false]) {
+		const label = colocate ? "colocated" : "non-colocated";
+
+		it(`pins @ in a ${label} primary workspace with a local main fallback for trunk()`, { skip: !hasJj }, async () => {
+			const root = mkdtempSync(join(tmpdir(), "panel-jj-primary-"));
+			const env = createVcsTestEnv(root);
+			const repo = join(root, "repo");
+			try {
+				run(root, "mkdir", [repo]);
+				seedJjRepo(repo, env, colocate);
+				writeFileSync(join(repo, "file.txt"), "primary change\n");
+				run(repo, "jj", ["describe", "-m", "primary change"], env);
+
+				const source = locate(repo, env);
+				assert.equal(source.root, realpathSync(repo));
+				assert.equal(source.layout, colocate ? "jj-colocated" : "jj-workspace");
+				assert.ok(source.gitDir);
+				assert.equal(existsSync(join(repo, ".git")), colocate);
+
+				const { target, bundle, file } = await reviewWorkingCopy(source, env);
+				assert.equal(target.base.strategy, "main");
+				assert.equal(target.warnings.length, 1);
+				assert.match(target.warnings[0], /root commit/);
+				assert.match(bundle, /primary change/);
+				assert.equal(file, "primary change\n");
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it(`pins @ in a ${label} secondary workspace without its own .git entry`, { skip: !hasJj }, async () => {
+			const root = mkdtempSync(join(tmpdir(), "panel-jj-secondary-"));
+			const env = createVcsTestEnv(root);
+			const repo = join(root, "repo");
+			const workspace = join(root, "secondary");
+			try {
+				run(root, "mkdir", [repo]);
+				seedJjRepo(repo, env, colocate);
+				run(repo, "jj", ["workspace", "add", workspace], env);
+				writeFileSync(join(workspace, "file.txt"), "secondary workspace\n");
+				run(workspace, "jj", ["describe", "-m", "secondary change"], env);
+
+				assert.equal(existsSync(join(workspace, ".git")), false);
+				const source = locate(workspace, env);
+				assert.equal(source.root, realpathSync(workspace));
+				assert.equal(source.layout, "jj-workspace");
+
+				const { target, bundle, file } = await reviewWorkingCopy(source, env, "main");
+				assert.equal(target.base.strategy, "explicit");
+				assert.deepEqual(target.warnings, []);
+				assert.match(bundle, /secondary change/);
+				assert.match(bundle, /secondary workspace/);
+				assert.equal(file, "secondary workspace\n");
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		});
+	}
+
+	it("fails clearly when trunk() is the root commit and no local main exists", { skip: !hasJj }, () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-jj-notrunk-"));
+		const env = createVcsTestEnv(root);
 		try {
-			const vcsEnv = createVcsTestEnv(dir);
-			assert.equal(
-				resolveJjReviewTarget(dir, "main", (cmd, args, cwd) => run(cwd, cmd, args, vcsEnv)),
-				null,
+			run(root, "jj", ["git", "init", "--colocate"], env);
+			writeFileSync(join(root, "file.txt"), "x\n");
+			const source = locate(root, env);
+			assert.throws(
+				() => resolveJjReviewTarget(source, undefined, (cmd, args, cwd) => run(cwd, cmd, args, env)),
+				/Pass --base/,
 			);
 		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it("pins and snapshots @ from a secondary workspace without a .git entry", { skip: !hasJj }, async () => {
-		const root = mkdtempSync(join(tmpdir(), "panel-jj-source-"));
-		const vcsEnv = createVcsTestEnv(root);
-		const workspace = join(root, "secondary");
-		const repo = join(root, "repo");
-		let bundleDir: string | undefined;
-		let snapshotRoot: string | undefined;
-		try {
-			run(root, "git", ["init", "-q", repo], vcsEnv);
-			run(repo, "git", ["config", "user.email", "test@example.com"], vcsEnv);
-			run(repo, "git", ["config", "user.name", "Test"], vcsEnv);
-			writeFileSync(join(repo, "file.txt"), "base\n");
-			run(repo, "git", ["add", "file.txt"], vcsEnv);
-			run(repo, "git", ["commit", "-qm", "base"], vcsEnv);
-			run(repo, "jj", ["git", "init", "--colocate"], vcsEnv);
-			run(repo, "jj", ["workspace", "add", workspace], vcsEnv);
-			writeFileSync(join(workspace, "file.txt"), "secondary workspace\n");
-			run(workspace, "jj", ["describe", "-m", "secondary change"], vcsEnv);
-
-			assert.equal(existsSync(join(workspace, ".git")), false);
-			const target = resolveJjReviewTarget(workspace, "main", (cmd, args, cwd) => run(cwd, cmd, args, vcsEnv));
-			assert.ok(target);
-			assert.equal(target.workspaceRoot, realpathSync(workspace));
-			assert.equal(target.headSha, run(workspace, "jj", ["log", "--no-graph", "-r", "@", "-T", "commit_id"], vcsEnv));
-
-			const gitExec = createGitStoreExec(target.gitRoot);
-			const scope = collectScope(target.workspaceRoot, target.base, "review secondary", {
-				exec: gitExec,
-				headSha: target.headSha,
-				repositoryRoot: target.workspaceRoot,
-			});
-			bundleDir = scope.dir;
-			const bundle = readFileSync(scope.path, "utf8");
-			assert.match(bundle, /secondary change/);
-			assert.match(bundle, /secondary workspace/);
-			assert.equal(scope.headSha, target.headSha);
-
-			const realExec = createRealExec(vcsEnv);
-			const gitStoreExec: ExecFn = (command, args, options) =>
-				realExec(command, command === "git" ? [`--git-dir=${target.gitRoot}`, ...args] : args, options);
-			const snapshot = await materializePrSnapshot(gitStoreExec, target.workspaceRoot, target.headSha);
-			snapshotRoot = snapshot.root;
-			assert.equal(readFileSync(join(snapshot.directory, "file.txt"), "utf8"), "secondary workspace\n");
-		} finally {
-			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
-			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			rmSync(root, { recursive: true, force: true });
 		}
 	});

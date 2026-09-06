@@ -58,7 +58,7 @@ export type ReviewerResult =
 
 interface PanelReviewContext {
 	intent?: string;
-	/** Internal callers may select another validated Git working tree. */
+	/** Git worktree or jj workspace to review; inferred from the cwd when omitted (`--repo`). */
 	repositoryPath?: string;
 	/** Approved plan and implementer ledger supplied by plan-implement. */
 	approvedPlan?: string;

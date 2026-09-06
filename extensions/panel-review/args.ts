@@ -8,6 +8,10 @@
  *   /panel-review --base origin/main "Implement handoff"
  *   /panel-review --pr 42
  *   /panel-review --pr 42 "Review the auth refactor"
+ *   /panel-review --repo ../other-workspace --pr 42
+ *
+ * `--repo` names the Git worktree or jj workspace to review when it is not the
+ * current directory; otherwise the repository is inferred from the cwd.
  *
  * Everything after the known flags is collected as the free-form intent.
  * When no positional intent is provided, the caller opens an editor for one.
@@ -17,11 +21,11 @@ import type { PanelArgs } from "./types.ts";
 
 export type ArgsParse = { ok: true; args: PanelArgs } | { ok: false; error: string };
 
-const PANEL_REVIEW_ARGUMENT_FLAGS = ["--base", "--base=", "--pr", "--pr="] as const;
+const PANEL_REVIEW_ARGUMENT_FLAGS = ["--base", "--base=", "--pr", "--pr=", "--repo", "--repo="] as const;
 
 /**
  * Complete the finite part of `/panel-review` arguments. `parseArgs` only
- * recognizes `--base` and `--pr` while they precede any positional token, so
+ * recognizes `--base`, `--pr`, and `--repo` while they precede any positional token, so
  * once a non-flag token has appeared the remaining text is free-form intent
  * and no flag completions are offered. The flag values and the intent itself
  * stay free-form.
@@ -44,7 +48,9 @@ export function getArgumentCompletions(prefix: string): Array<{ value: string; l
 		previousToken === "--base" ||
 		token.startsWith("--base=") ||
 		previousToken === "--pr" ||
-		token.startsWith("--pr=")
+		token.startsWith("--pr=") ||
+		previousToken === "--repo" ||
+		token.startsWith("--repo=")
 	) {
 		return null;
 	}
@@ -105,6 +111,7 @@ export function parseArgs(input: string): ArgsParse {
 
 	let base: string | undefined;
 	let pr: number | undefined;
+	let repositoryPath: string | undefined;
 	let i = 0;
 
 	// Parse known flags; unknown flags are rejected before positional intent.
@@ -142,10 +149,18 @@ export function parseArgs(input: string): ArgsParse {
 			}
 			pr = prNumber;
 			i++;
+		} else if (flag === "--repo") {
+			if (value === undefined) {
+				value = tokens[++i];
+				if (value === undefined) return { ok: false, error: `${flag} requires a value.` };
+			}
+			if (value.length === 0) return { ok: false, error: `${flag} requires a non-empty value.` };
+			repositoryPath = value;
+			i++;
 		} else {
 			return {
 				ok: false,
-				error: `Unknown argument "${token}". Usage: /panel-review [--base <ref> | --pr <number>] <intent>`,
+				error: `Unknown argument "${token}". Usage: /panel-review [--repo <path>] [--base <ref> | --pr <number>] <intent>`,
 			};
 		}
 	}
@@ -155,12 +170,10 @@ export function parseArgs(input: string): ArgsParse {
 	}
 
 	const intent = i < tokens.length ? tokens.slice(i).join(" ") : undefined;
-	if (pr !== undefined) return { ok: true, args: { pr, ...(intent !== undefined ? { intent } : undefined) } };
-	return {
-		ok: true,
-		args: {
-			...(base !== undefined ? { base } : undefined),
-			...(intent !== undefined ? { intent } : undefined),
-		},
+	const shared = {
+		...(intent !== undefined ? { intent } : undefined),
+		...(repositoryPath !== undefined ? { repositoryPath } : undefined),
 	};
+	if (pr !== undefined) return { ok: true, args: { pr, ...shared } };
+	return { ok: true, args: { ...(base !== undefined ? { base } : undefined), ...shared } };
 }

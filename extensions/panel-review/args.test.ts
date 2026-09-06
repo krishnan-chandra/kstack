@@ -70,6 +70,15 @@ describe("parseArgs", () => {
 		assert.ok(!parseArgs("--base").ok);
 		assert.ok(!parseArgs("--base=").ok);
 	});
+	it("accepts --repo with either target mode", () => {
+		assert.deepEqual(parseArgs("--repo ../ws --pr 7 check"), {
+			ok: true,
+			args: { pr: 7, intent: "check", repositoryPath: "../ws" },
+		});
+		assert.deepEqual(parseArgs("--repo=/w --base main"), { ok: true, args: { base: "main", repositoryPath: "/w" } });
+		assert.ok(!parseArgs("--repo").ok);
+		assert.ok(!parseArgs("--repo=").ok);
+	});
 });
 
 describe("getArgumentCompletions", () => {
@@ -79,6 +88,8 @@ describe("getArgumentCompletions", () => {
 			{ value: "--base=", label: "--base=" },
 			{ value: "--pr", label: "--pr" },
 			{ value: "--pr=", label: "--pr=" },
+			{ value: "--repo", label: "--repo" },
+			{ value: "--repo=", label: "--repo=" },
 		];
 		assert.deepEqual(getArgumentCompletions(""), expected);
 		assert.deepEqual(getArgumentCompletions("--"), expected);

@@ -1,29 +1,57 @@
-import type { ExecFn } from "../shared/git-exec.ts";
-import type { JjReviewTarget } from "./jj-target.ts";
+/**
+ * Choose what a panel review pins, given an already located repository.
+ *
+ * Targets are independent of repository layout: a PR resolves the same way
+ * from a Git worktree or a jj workspace, and the jj working-copy revision is
+ * pinned whenever jj owns the working copy.
+ */
+
+import { resolveJjReviewTarget } from "./jj-target.ts";
 import { type PrTarget, resolvePrTarget } from "./pr-target.ts";
+import type { CommandExec, RepositorySource } from "./repository-source.ts";
 import { collectScope, type GitExec, resolveBase, type ScopeBundle } from "./review-scope.ts";
 import type { BaseResolution, PanelArgs } from "./types.ts";
 
 export type ResolvedReviewTarget =
 	| { kind: "worktree"; base: BaseResolution }
-	| ({ kind: "jj" } & JjReviewTarget)
+	| { kind: "jj"; base: BaseResolution; headSha: string }
 	| { kind: "pr"; base: BaseResolution; pr: PrTarget };
 
+interface ReviewTargetResolution {
+	target: ResolvedReviewTarget;
+	warnings: string[];
+}
+
+interface ResolveTargetDeps {
+	/** Synchronous jj runner; defaults to a real process. */
+	commandExec?: CommandExec;
+	signal?: AbortSignal;
+}
+
 export async function resolveReviewTarget(
-	exec: ExecFn,
-	gitExec: GitExec,
-	repoRoot: string,
+	source: RepositorySource,
 	options: PanelArgs,
-): Promise<ResolvedReviewTarget> {
-	if (options.pr === undefined) {
-		return { kind: "worktree", base: resolveBase(gitExec, repoRoot, options.base) };
+	deps: ResolveTargetDeps = {},
+): Promise<ReviewTargetResolution> {
+	if (options.pr !== undefined) {
+		const pr = await resolvePrTarget(source.exec, source.root, options.pr, deps.signal, source.githubRepository);
+		return {
+			target: { kind: "pr", pr, base: { ref: pr.baseRefName, mergeBaseSha: pr.mergeBaseSha, strategy: "pr" } },
+			warnings: [],
+		};
 	}
-	const pr = await resolvePrTarget(exec, repoRoot, options.pr);
-	return {
-		kind: "pr",
-		pr,
-		base: { ref: pr.baseRefName, mergeBaseSha: pr.mergeBaseSha, strategy: "pr" },
-	};
+	if (source.layout === "git-worktree") {
+		return { target: { kind: "worktree", base: resolveBase(source.git, source.root, options.base) }, warnings: [] };
+	}
+	const jj = resolveJjReviewTarget(source, options.base, deps.commandExec);
+	return { target: { kind: "jj", base: jj.base, headSha: jj.headSha }, warnings: jj.warnings };
+}
+
+/** Commit pinned by the target, or undefined when reviewing the live working tree. */
+export function pinnedHeadSha(target: ResolvedReviewTarget): string | undefined {
+	if (target.kind === "pr") return target.pr.headSha;
+	if (target.kind === "jj") return target.headSha;
+	return undefined;
 }
 
 function gitSafe(exec: GitExec, args: string[], cwd: string): string {
@@ -43,27 +71,21 @@ export function buildIntentPrefill(target: ResolvedReviewTarget, gitExec: GitExe
 		);
 		return `Review PR #${target.pr.number}: ${target.pr.title}\n${subjects.trim() ? `\nCommits in PR:\n${subjects.trim()}\n` : ""}\nIntent: `;
 	}
-	const logHead = target.kind === "jj" ? target.headSha : "HEAD";
+	const logHead = pinnedHeadSha(target) ?? "HEAD";
 	const subjects = gitSafe(gitExec, ["log", "--format=%s", `${target.base.mergeBaseSha}..${logHead}`], repoRoot);
 	return subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
 }
 
 export function collectTargetScope(
 	target: ResolvedReviewTarget,
-	repoRoot: string,
+	source: RepositorySource,
 	intent: string,
-	gitExec?: GitExec,
 ): ScopeBundle {
-	if (target.kind === "pr") return collectScope(repoRoot, target.base, intent, { headSha: target.pr.headSha });
-	if (target.kind === "jj") {
-		if (!gitExec) throw new Error("A jj review target requires access to its Git object store.");
-		return collectScope(repoRoot, target.base, intent, {
-			exec: gitExec,
-			headSha: target.headSha,
-			repositoryRoot: target.workspaceRoot,
-		});
-	}
-	return collectScope(repoRoot, target.base, intent);
+	return collectScope(source.root, target.base, intent, {
+		exec: source.git,
+		repositoryRoot: source.root,
+		headSha: pinnedHeadSha(target),
+	});
 }
 
 export function noChangesMessage(target: ResolvedReviewTarget, scope: ScopeBundle): string {

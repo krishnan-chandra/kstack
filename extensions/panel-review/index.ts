@@ -2,6 +2,7 @@
 
 import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { getAgentPaneHost } from "../shared/agent-pane.ts";
@@ -11,15 +12,16 @@ import { getAgentDir } from "../shared/kstack-config.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
-import { createGitStoreExec, resolveJjReviewTarget } from "./jj-target.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
+import { locateRepositorySource, type RepositorySource } from "./repository-source.ts";
 import { contextFilesTouchChangedContent } from "./review-context.ts";
-import { defaultGitExec, requireWorkTree, type ScopeBundle } from "./review-scope.ts";
+import type { ScopeBundle } from "./review-scope.ts";
 import {
 	buildIntentPrefill,
 	collectTargetScope,
 	noChangesMessage,
+	pinnedHeadSha,
 	type ResolvedReviewTarget,
 	resolveReviewTarget,
 } from "./review-target.ts";
@@ -91,28 +93,14 @@ export default function (pi: ExtensionAPI): void {
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 
-		const requestedPath = options.repositoryPath ?? ctx.cwd;
-		let repoRoot: string;
+		const requestedPath = options.repositoryPath === undefined ? ctx.cwd : resolve(ctx.cwd, options.repositoryPath);
+		let source: RepositorySource;
 		let target: ResolvedReviewTarget;
-		let targetGitExec = defaultGitExec;
-		let snapshotExec = exec;
 		try {
-			if (options.pr !== undefined) {
-				repoRoot = requireWorkTree(defaultGitExec, requestedPath);
-				target = await resolveReviewTarget(exec, defaultGitExec, repoRoot, options);
-			} else {
-				const jjTarget = resolveJjReviewTarget(requestedPath, options.base);
-				if (jjTarget) {
-					repoRoot = jjTarget.workspaceRoot;
-					target = { kind: "jj", ...jjTarget };
-					targetGitExec = createGitStoreExec(jjTarget.gitRoot);
-					snapshotExec = (command, args, execOptions) =>
-						exec(command, command === "git" ? [`--git-dir=${jjTarget.gitRoot}`, ...args] : args, execOptions);
-				} else {
-					repoRoot = requireWorkTree(defaultGitExec, requestedPath);
-					target = await resolveReviewTarget(exec, defaultGitExec, repoRoot, options);
-				}
-			}
+			source = locateRepositorySource(requestedPath, exec);
+			const resolution = await resolveReviewTarget(source, options);
+			target = resolution.target;
+			for (const warning of resolution.warnings) notify(warning, "warning");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			notify(message, "error");
@@ -123,7 +111,7 @@ export default function (pi: ExtensionAPI): void {
 		if (!intent) {
 			const edited = await ctx.ui.editor(
 				"Panel review intent (required):",
-				buildIntentPrefill(target, targetGitExec, repoRoot),
+				buildIntentPrefill(target, source.git, source.root),
 			);
 			if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 			intent = edited?.trim() ?? "";
@@ -154,7 +142,7 @@ export default function (pi: ExtensionAPI): void {
 		let scope: ScopeBundle | undefined;
 		let prSnapshot: PrSnapshot | undefined;
 		try {
-			scope = collectTargetScope(target, repoRoot, intent, targetGitExec);
+			scope = collectTargetScope(target, source, intent);
 			if (scope.fileCount === 0 && scope.diffBytes === 0 && scope.untrackedCount === 0) {
 				notify(noChangesMessage(target, scope), "info");
 				return { status: "no-changes" };
@@ -167,10 +155,10 @@ export default function (pi: ExtensionAPI): void {
 			}
 			runToken = activeRunToken;
 			const runSignal = lifecycle.runSignal(activeRunToken);
-			if (target.kind === "pr" || target.kind === "jj") {
+			const snapshotHead = pinnedHeadSha(target);
+			if (snapshotHead !== undefined) {
 				try {
-					const snapshotHead = target.kind === "pr" ? target.pr.headSha : target.headSha;
-					prSnapshot = await materializePrSnapshot(snapshotExec, repoRoot, snapshotHead, { signal: runSignal });
+					prSnapshot = await materializePrSnapshot(source.exec, source.root, snapshotHead, { signal: runSignal });
 					scope = { ...scope, reviewRoot: prSnapshot.directory };
 				} catch (error) {
 					if (runSignal?.aborted) return { status: "aborted" };
@@ -228,7 +216,7 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("panel-review", {
 		description:
-			"Review current changes or a GitHub PR with a strict panel of isolated read-only reviewers: /panel-review [--base <ref> | --pr <number>] <intent>",
+			"Review current changes or a GitHub PR with a strict panel of isolated read-only reviewers: /panel-review [--repo <path>] [--base <ref> | --pr <number>] <intent>",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");

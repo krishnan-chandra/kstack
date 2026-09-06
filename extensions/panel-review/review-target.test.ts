@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { RepositorySource } from "./repository-source.ts";
 import type { GitExec } from "./review-scope.ts";
 import {
 	buildIntentPrefill,
@@ -48,8 +49,31 @@ const prTarget: ResolvedReviewTarget = {
 	},
 };
 
+function source(layout: RepositorySource["layout"], git: GitExec, githubRepository?: string): RepositorySource {
+	return {
+		root: "/repo",
+		layout,
+		gitDir: layout === "git-worktree" ? undefined : "/store",
+		git,
+		exec: async () => {
+			throw new Error("async executor must not run");
+		},
+		githubRepository,
+	};
+}
+
+const prJson = {
+	number: 42,
+	url: "https://github.com/o/r/pull/42",
+	title: "Change",
+	state: "OPEN",
+	headRefOid: "2".repeat(40),
+	baseRefName: "main",
+	baseRefOid: SHA,
+};
+
 describe("review target helpers", () => {
-	it("resolves the standard base without invoking the PR executor", async () => {
+	it("resolves the standard base in a Git worktree without invoking the PR executor", async () => {
 		const gitExec: GitExec = (args) => {
 			const key = args.join(" ");
 			if (key === "rev-parse --verify main^{commit}") return `${SHA}\n`;
@@ -57,15 +81,56 @@ describe("review target helpers", () => {
 			if (key.startsWith("rev-parse --abbrev-ref")) throw new Error("no upstream");
 			throw new Error(`unexpected git call: ${key}`);
 		};
-		const target = await resolveReviewTarget(
-			async () => {
-				throw new Error("PR executor must not run");
+		const resolution = await resolveReviewTarget(source("git-worktree", gitExec), { base: "main" });
+		assert.deepEqual(resolution, { target: worktreeTarget, warnings: [] });
+	});
+
+	it("pins the jj working copy in a jj workspace and surfaces base warnings", async () => {
+		const head = "3".repeat(40);
+		const gitExec: GitExec = (args) => {
+			if (args[0] === "merge-base") return `${SHA}\n`;
+			throw new Error(`unexpected git call: ${args.join(" ")}`);
+		};
+		const commandExec = (command: string, args: string[]) => {
+			const key = `${command} ${args.join(" ")}`;
+			if (key.includes("conflicts() & @")) return "";
+			if (key.includes("-r @ ")) return `${head}\n`;
+			if (key.includes("-r trunk()")) return `${"0".repeat(40)}\n`;
+			if (key.includes("present(main)")) return SHA;
+			throw new Error(`unexpected command: ${key}`);
+		};
+		const resolution = await resolveReviewTarget(source("jj-workspace", gitExec), {}, { commandExec });
+		assert.deepEqual(resolution.target, {
+			kind: "jj",
+			headSha: head,
+			base: { ref: "main", mergeBaseSha: SHA, strategy: "main" },
+		});
+		assert.equal(resolution.warnings.length, 1);
+	});
+
+	it("resolves a PR through gh -R and the source object store from any layout", async () => {
+		const seen: string[][] = [];
+		const store: RepositorySource = {
+			...source("jj-workspace", () => "", "acme/widgets"),
+			exec: async (command, args) => {
+				seen.push([command, ...args]);
+				if (command === "gh") return { code: 0, stdout: JSON.stringify(prJson), stderr: "" };
+				if (args[0] === "merge-base") return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+				return { code: 0, stdout: "", stderr: "" };
 			},
-			gitExec,
-			"/repo",
-			{ base: "main" },
-		);
-		assert.deepEqual(target, worktreeTarget);
+		};
+		const resolution = await resolveReviewTarget(store, { pr: 42 });
+		assert.equal(resolution.target.kind, "pr");
+		assert.deepEqual(seen[0], [
+			"gh",
+			"pr",
+			"view",
+			"42",
+			"-R",
+			"acme/widgets",
+			"--json",
+			"number,url,title,state,baseRefName,headRefOid,baseRefOid",
+		]);
 	});
 
 	it("builds mode-specific editor prefills", () => {
