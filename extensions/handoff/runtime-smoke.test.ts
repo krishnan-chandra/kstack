@@ -29,16 +29,23 @@ test("handoff applies an explicit model across isolated replacement module graph
 	const root = await mkdtemp(join(tmpdir(), "kstack-handoff-smoke-"));
 	const cwd = join(root, "project");
 	const agentDir = join(root, "agent");
-	const sessionDir = join(root, "sessions");
+	const sessionDir = join(agentDir, "sessions", "--project--");
 	await Promise.all([
 		mkdir(cwd, { recursive: true }),
 		mkdir(agentDir, { recursive: true }),
 		mkdir(sessionDir, { recursive: true }),
 	]);
 
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
 	let runtime: AgentSessionRuntime | undefined;
 	t.after(async () => {
 		await runtime?.dispose();
+		if (previousAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
 		await rm(root, { recursive: true, force: true });
 	});
 

@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { archiveDestination } from "../session-archive/archive-files.ts";
+import { makeTempTree, messageEntry, sessionJsonl, userMessage } from "../session-archive/test-helpers.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { createHandoffHandler as createHandler } from "./command.ts";
 import { DEFAULT_HANDOFF_GOAL } from "./handoff-context.ts";
+import { type HandoffSource, preflightHandoffHistory } from "./history-reader.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
 import type { ReplacementSelectionApi } from "./replacement-selection-api.ts";
 
@@ -20,11 +25,52 @@ const MODELS: HandoffModel[] = [
 const PARENT_MODEL: HandoffModel = { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus 4.6" };
 const ALL_EFFORTS: HandoffEffortLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
+const roots: string[] = [];
+afterEach(() => {
+	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+async function withAgentDir(agentDir: string, run: () => Promise<void>): Promise<void> {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await run();
+	} finally {
+		if (previous === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previous;
+		}
+	}
+}
+
+function writeArchiveSource(tree: ReturnType<typeof makeTempTree>): string {
+	return tree.writeSession(
+		SESSION_ID,
+		sessionJsonl([messageEntry("u1", null, userMessage("source history"))], { id: SESSION_ID, cwd: CWD }),
+	);
+}
+
+function writeOversizedArchiveSource(tree: ReturnType<typeof makeTempTree>): string {
+	const sessionFile = tree.writeSession(SESSION_ID, sessionJsonl([], { id: SESSION_ID, cwd: CWD }));
+	appendFileSync(
+		sessionFile,
+		'{"type":"custom_message","id":"x1","parentId":null,"timestamp":"2026-08-11T08:49:00.000Z","customType":"fixture","content":"',
+	);
+	const chunk = "x".repeat(1024 * 1024);
+	for (let i = 0; i < 65; i++) appendFileSync(sessionFile, chunk);
+	appendFileSync(sessionFile, '","display":true}\n');
+	return sessionFile;
+}
+
 function createHandoffHandler(
 	api: Parameters<typeof createHandler>[0],
 	replacementApi?: ReplacementSelectionApi | undefined,
 ) {
-	return createHandler(api, { sourceExists: () => true, getReplacementApi: () => replacementApi });
+	return createHandler(api, {
+		preflightHistory: () => ({ kind: "ready" }),
+		getReplacementApi: () => replacementApi,
+	});
 }
 
 // The predecessor session's extension API. The handler must only read the
@@ -69,6 +115,11 @@ interface FakeCtxOptions {
 	replacementSetModelResult?: boolean;
 	replacementSetModelError?: Error;
 	replacementAvailableEfforts?: string[];
+	onEditor?: (prefill: string) => string | undefined;
+	sessionDir?: string;
+	sessionName?: string;
+	expectedParentSession?: string | undefined;
+	beforeWithSession?: () => void | Promise<void>;
 }
 
 function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
@@ -80,9 +131,12 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
 		setEditorText:
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
+		oldSetEditorText:
+			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
 		sessionNames: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
 		newSession: 0,
 	};
+	let replacementStarted = false;
 
 	// Live replacement-session state, mutated only through the replacement API
 	// the way Pi's own setModel/setThinkingLevel mutate the active runtime.
@@ -132,6 +186,8 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 				order.push("getSessionId");
 				return SESSION_ID;
 			},
+			getSessionDir: () => opts.sessionDir ?? "/sessions",
+			getSessionName: () => opts.sessionName,
 		},
 		ui: {
 			notify: (message: string, level: string) => {
@@ -140,12 +196,16 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 			editor: async (_title: string, prefill: string) => {
 				order.push("editor");
 				calls.editorDrafts.push(prefill);
+				if (opts.onEditor) return opts.onEditor(prefill);
 				if ("editorResult" in opts) return opts.editorResult;
 				return `EDITED ${prefill}`;
 			},
-			setEditorText: () => {
-				throw new Error("stale UI used after replacement");
+			setEditorText: (text: string) => {
+				if (replacementStarted) throw new Error("stale UI used after replacement");
+				order.push("old.setEditorText");
+				calls.oldSetEditorText.push(text);
 			},
+			confirm: async () => true,
 		},
 		sendUserMessage: () => {
 			throw new Error("stale sendUserMessage used after replacement");
@@ -157,7 +217,14 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 		}) => {
 			order.push("newSession");
 			calls.newSession++;
-			assert.equal(options.parentSession, SESSION_FILE);
+			replacementStarted = true;
+			let expectedParent: string | undefined = SESSION_FILE;
+			if ("expectedParentSession" in opts) {
+				expectedParent = opts.expectedParentSession;
+			} else if ("sessionFile" in opts) {
+				expectedParent = opts.sessionFile;
+			}
+			assert.equal(options.parentSession, expectedParent);
 			if (opts.newSessionError) throw opts.newSessionError;
 			if (opts.newSessionResult?.cancelled) return opts.newSessionResult;
 
@@ -198,6 +265,7 @@ function makeFakeCtx(order: string[], opts: FakeCtxOptions = {}) {
 					if (opts.sendUserMessageError) throw opts.sendUserMessageError;
 				},
 			};
+			await opts.beforeWithSession?.();
 			await options.withSession?.(fresh);
 			return { cancelled: false };
 		},
@@ -234,18 +302,71 @@ describe("handoff command guards", () => {
 		assert.equal(calls.newSession, 0);
 	});
 
-	it("rejects a persisted source that disappeared before handoff", async () => {
+	it("preflight rejects an unsupported default source before opening the editor", async () => {
+		const tree = makeTempTree();
+		roots.push(tree.root);
+		const customFile = join(tree.root, "custom-session.jsonl");
+		writeFileSync(customFile, sessionJsonl([], { id: SESSION_ID, cwd: CWD }));
+		const env = { ...process.env, PI_CODING_AGENT_DIR: tree.agentDir };
+		const preflightHistory = (source: HandoffSource) => preflightHandoffHistory(source, env);
 		const order: string[] = [];
-		const { api } = makeFakeApi(order);
-		const { ctx, notifications, calls } = makeFakeCtx(order);
-		await createHandler(api, { sourceExists: () => false })(
+		const { api, apiCalls } = makeFakeApi(order);
+		const { ctx, notifications, calls, replacementCalls } = makeFakeCtx(order, { sessionFile: customFile });
+		await createHandler(api, { preflightHistory })(
 			"goal",
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
 		);
-		assert.deepEqual(order, ["waitForIdle", "getSessionFile"]);
-		assert.match(notifications[0].message, /no longer exists.*cannot create a durable handoff/i);
+		assert.match(notifications[0].message, /outside Pi's active session directory/i);
 		assert.equal(calls.editorDrafts.length, 0);
 		assert.equal(calls.newSession, 0);
+		assert.equal(calls.sendUserMessage.length, 0);
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+		assert.equal(replacementCalls.setModel.length, 0);
+		assert.equal(replacementCalls.setThinkingLevel.length, 0);
+	});
+
+	it("preflight retains the edited prompt when history becomes unreadable", async () => {
+		for (const change of ["delete", "replace"] as const) {
+			const tree = makeTempTree();
+			roots.push(tree.root);
+			const sessionFile = tree.writeSession(
+				SESSION_ID,
+				sessionJsonl([messageEntry("u1", null, userMessage("source history"))], { id: SESSION_ID, cwd: CWD }),
+			);
+			const env = { ...process.env, PI_CODING_AGENT_DIR: tree.agentDir };
+			const preflightHistory = (source: HandoffSource) => preflightHandoffHistory(source, env);
+			const edited = `edited prompt after ${change}`;
+			const order: string[] = [];
+			const { api, apiCalls } = makeFakeApi(order);
+			const fake = makeFakeCtx(order, {
+				sessionFile,
+				onEditor: () => {
+					if (change === "delete") {
+						unlinkSync(sessionFile);
+					} else {
+						const replacement = `${sessionFile}.replacement`;
+						writeFileSync(replacement, sessionJsonl([], { id: "22222222-3333-4444-5555-666666666666", cwd: CWD }));
+						renameSync(replacement, sessionFile);
+					}
+					return edited;
+				},
+			});
+
+			await createHandler(api, { preflightHistory })(
+				"goal",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			);
+
+			assert.equal(fake.calls.newSession, 0, change);
+			assert.equal(fake.calls.sendUserMessage.length, 0, change);
+			assert.deepEqual(fake.calls.oldSetEditorText, [edited], change);
+			assert.deepEqual(apiCalls.setModel, [], change);
+			assert.deepEqual(apiCalls.setThinkingLevel, [], change);
+			assert.equal(fake.replacementCalls.setModel.length, 0, change);
+			assert.equal(fake.replacementCalls.setThinkingLevel.length, 0, change);
+			assert.equal(fake.notifications.at(-1)?.level, "error", change);
+		}
 	});
 });
 
@@ -392,6 +513,121 @@ describe("handoff command lifecycle", () => {
 		// The replacement already starts on the requested model.
 		assert.deepEqual(fake.replacementCalls.setModel, []);
 		assert.deepEqual(fake.replacementCalls.setThinkingLevel, ["high"]);
+	});
+});
+
+describe("archive-first handoff", () => {
+	it("leaves malformed history active and does not replace or submit", async () => {
+		const tree = makeTempTree();
+		roots.push(tree.root);
+		const sessionFile = tree.writeSession(SESSION_ID, "not-json\n");
+		const order: string[] = [];
+		const { api, apiCalls } = makeFakeApi(order);
+		const fake = makeFakeCtx(order, {
+			sessionFile,
+			sessionDir: tree.sessionDir,
+			expectedParentSession: undefined,
+		});
+
+		await withAgentDir(tree.agentDir, async () => {
+			await createHandler(api)(
+				"--archive goal",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			);
+		});
+
+		assert.equal(fake.calls.editorDrafts.length, 1);
+		assert.equal(fake.calls.newSession, 0);
+		assert.equal(fake.calls.sendUserMessage.length, 0);
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
+		assert.deepEqual(fake.replacementCalls.setModel, []);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, []);
+		assert.ok(fake.notifications.some(({ message }) => /malformed session file/i.test(message)));
+		assert.equal(existsSync(sessionFile), true);
+	});
+
+	it("archives valid history before continuing in the replacement", async () => {
+		const tree = makeTempTree();
+		roots.push(tree.root);
+		const sessionFile = writeArchiveSource(tree);
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const fake = makeFakeCtx(order, {
+			sessionFile,
+			sessionDir: tree.sessionDir,
+			expectedParentSession: undefined,
+		});
+
+		await withAgentDir(tree.agentDir, async () => {
+			await createHandler(api)(
+				"--archive continue after archiving",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			);
+		});
+
+		assert.equal(fake.calls.newSession, 1);
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+		assert.equal(existsSync(sessionFile), false);
+		assert.ok(fake.notifications.some(({ message }) => message.startsWith("Session archived:")));
+		assert.ok(fake.customMessages[0].content.includes("Storage: archived before this handoff"));
+	});
+
+	it("accepts an oversized active source through archive staging", async () => {
+		const tree = makeTempTree();
+		roots.push(tree.root);
+		const sessionFile = writeOversizedArchiveSource(tree);
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const fake = makeFakeCtx(order, {
+			sessionFile,
+			sessionDir: tree.sessionDir,
+			expectedParentSession: undefined,
+		});
+
+		await withAgentDir(tree.agentDir, async () => {
+			await createHandler(api)(
+				"--archive continue after archiving",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			);
+		});
+
+		assert.equal(fake.calls.newSession, 1);
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+		assert.equal(existsSync(sessionFile), false);
+		assert.ok(fake.notifications.some(({ message }) => message.startsWith("Session archived:")));
+	});
+
+	it("does not auto-submit when archive finalization fails", async () => {
+		const tree = makeTempTree();
+		roots.push(tree.root);
+		const sessionFile = writeArchiveSource(tree);
+		const collision = archiveDestination(tree.archiveRoot, SESSION_ID, "2026-08-11T08:48:02.226Z");
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const fake = makeFakeCtx(order, {
+			sessionFile,
+			sessionDir: tree.sessionDir,
+			expectedParentSession: undefined,
+			beforeWithSession: () => {
+				mkdirSync(dirname(collision), { recursive: true });
+				writeFileSync(collision, "different archive content");
+			},
+		});
+
+		await withAgentDir(tree.agentDir, async () => {
+			await createHandler(api)(
+				"--archive goal",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			);
+		});
+
+		assert.equal(fake.calls.newSession, 1);
+		assert.equal(fake.calls.sendUserMessage.length, 0);
+		assert.equal(existsSync(sessionFile), true);
+		assert.ok(fake.notifications.some(({ message }) => /Archive finalization failed/i.test(message)));
+		assert.deepEqual(fake.replacementCalls.setModel, []);
+		assert.deepEqual(fake.replacementCalls.setThinkingLevel, []);
 	});
 });
 
