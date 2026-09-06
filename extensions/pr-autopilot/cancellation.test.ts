@@ -93,6 +93,43 @@ test("aborted final threads refresh returns aborted", async (t) => {
 	assert.equal(result.status, "aborted");
 });
 
+test("review-pagination cancellation remains aborted in check, drive, and watch modes", async (t) => {
+	for (const mode of ["check", "drive", "watch"] as const) {
+		const harness = await createHarness();
+		t.after(() => harness.cleanup());
+		const controller = new AbortController();
+		const notices: Array<{ message: string; level: string }> = [];
+		harness.handlers.notify = (message, level) => notices.push({ message, level });
+		const exec = harness.exec;
+		harness.exec = async (...args) => {
+			const result = await exec(...args);
+			if (
+				args[0] === "gh" &&
+				args[1][0] === "api" &&
+				args[1][1] === "graphql" &&
+				args[1].some((arg) => arg.includes("reviewThreads(first: 50"))
+			) {
+				const payload = JSON.parse(result.stdout);
+				payload.data.repository.pullRequest.reviewThreads.pageInfo = {
+					hasNextPage: true,
+					endCursor: "next-thread-page",
+				};
+				controller.abort();
+				return { ...result, stdout: JSON.stringify(payload) };
+			}
+			return result;
+		};
+
+		const result = await driveProbe(harness, controller, mode);
+		assert.equal(result.status, "aborted", `${mode} mode must preserve cancellation`);
+		assert.deepEqual(result.blockedReasons, ["aborted by user"]);
+		assert.equal(
+			notices.some(({ message, level }) => level === "error" && message.includes("Could not fetch review threads")),
+			false,
+		);
+	}
+});
+
 test("unpublished local recording is visible in driver notifications", async (t) => {
 	const harness = await createHarness(fixScenario);
 	t.after(() => harness.cleanup());
@@ -128,7 +165,7 @@ test("cancellation during last base publication reports aborted after saving hea
 	};
 	const result = await driveProbe(harness, controller, "threads", backend);
 	assert.equal(pushes, 1);
-	assert.equal((await harness.ops.loadPersistedState("repo", 42)).headSha, MERGED_SHA);
+	assert.equal((await harness.ops.loadPersistedState("repo", 42)).state.headSha, MERGED_SHA);
 	assert.equal(result.status, "aborted");
 });
 
@@ -151,9 +188,12 @@ test("cancellation after successful reply preserves pending resolution", async (
 	};
 	const result = await driveProbe(harness, controller);
 	assert.equal(result.status, "aborted");
-	const persisted = await harness.ops.loadPersistedState("repo", 42);
-	assert.deepEqual(persisted.repliedThreadIds, ["thread-1"]);
-	assert.deepEqual(persisted.handledThreadIds, []);
+	const persisted = (await harness.ops.loadPersistedState("repo", 42)).state;
+	assert.deepEqual(
+		persisted.pendingReviewReplies.map((record) => record.id),
+		["thread-1"],
+	);
+	assert.deepEqual(persisted.handled, []);
 	assert.ok(!harness.calls.some((call) => call.includes("resolveReviewThread")));
 });
 
@@ -286,7 +326,7 @@ test("abort during first CI rerun prevents second rerun and persists first", asy
 	};
 	assert.equal((await driveProbe(harness, controller)).status, "aborted");
 	assert.equal(reruns, 1);
-	assert.equal((await harness.ops.loadPersistedState("repo", 42)).flakeRetried.length, 1);
+	assert.equal((await harness.ops.loadPersistedState("repo", 42)).state.flakeRetried.length, 1);
 });
 
 test("failed publication in flight keeps its diagnostic and is not retried", async (t) => {
@@ -322,7 +362,7 @@ test("successful publication in flight persists head and never replies", async (
 	const result = await driveProbe(harness, controller, "drive", backend);
 	assert.equal(result.status, "aborted");
 	assert.equal(pushes, 1);
-	assert.equal((await harness.ops.loadPersistedState("repo", 42)).headSha, SHA);
+	assert.equal((await harness.ops.loadPersistedState("repo", 42)).state.headSha, SHA);
 	assert.match(notices.join("; "), /Pushed to/);
 	assert.ok(!harness.calls.some((call) => call.includes("resolveReviewThread") || call.includes("/pulls/42/comments")));
 });
@@ -359,9 +399,12 @@ test("abort after first resolution stops next reply and saves handled item", asy
 	assert.equal((await driveProbe(harness, controller)).status, "aborted");
 	assert.equal(replies, 1);
 	assert.equal(resolutions, 1);
-	const persisted = await harness.ops.loadPersistedState("repo", 42);
-	assert.deepEqual(persisted.handledThreadIds, ["thread-1"]);
-	assert.deepEqual(persisted.repliedThreadIds, []);
+	const persisted = (await harness.ops.loadPersistedState("repo", 42)).state;
+	assert.deepEqual(
+		persisted.handled.map((record) => record.id),
+		["thread-1"],
+	);
+	assert.deepEqual(persisted.pendingReviewReplies, []);
 });
 
 test("cleanup already in flight settles and reports removal", async (t) => {

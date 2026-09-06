@@ -14,17 +14,30 @@ import {
 	clipLog,
 	type GHPrJson,
 	type GraphqlPage,
+	type GraphqlThread,
 	graphqlThreadToReviewThread,
 	issueCommentToThread,
 	parseGHPr,
 	parseIssueComments,
 	parsePrChecksJson,
+	parseReviewThreadPage,
 	parseReviewThreadsPage,
 	pickLowestPrNumber,
 	splitRepo,
 } from "./github-parse.ts";
 import type { CheckRun, ExecFn, ExecFnResult, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
+
+const REVIEW_COMMENT_FIELDS = `
+  id
+  databaseId
+  body
+  updatedAt
+  path
+  line
+  url
+  author { login }
+`;
 
 const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -35,16 +48,23 @@ const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: In
           id
           isResolved
           comments(first: 20) {
-            nodes {
-              databaseId
-              body
-              path
-              line
-              url
-              author { login }
-            }
+            pageInfo { hasNextPage endCursor }
+            nodes { ${REVIEW_COMMENT_FIELDS} }
           }
         }
+      }
+    }
+  }
+}`;
+
+const REVIEW_THREAD_QUERY = `query($id: ID!, $pageSize: Int!, $cursor: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      id
+      isResolved
+      comments(first: $pageSize, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ${REVIEW_COMMENT_FIELDS} }
       }
     }
   }
@@ -111,7 +131,8 @@ async function fetchReviewThreadPage(
 	name: string,
 	prNumber: number,
 	cursor: string | undefined,
-): Promise<ExecFnResult & { page: GraphqlPage }> {
+	signal?: AbortSignal,
+): Promise<ExecFnResult & { page?: GraphqlPage }> {
 	const args = [
 		"api",
 		"graphql",
@@ -125,20 +146,156 @@ async function fetchReviewThreadPage(
 		`number=${prNumber}`,
 	];
 	if (cursor) args.push("-F", `cursor=${cursor}`);
-	const result = await gh(exec, cwd, args, 20_000);
-	if (result.code !== 0) {
-		return { ...result, page: { threads: [], hasNextPage: false } };
-	}
+	const result = await gh(exec, cwd, args, 20_000, signal);
+	if (result.code !== 0) return result;
 	try {
-		return { ...result, page: parseReviewThreadsPage(JSON.parse(result.stdout.trim() || "{}")) };
+		const parsed = parseReviewThreadsPage(JSON.parse(result.stdout.trim() || "{}"));
+		if (!parsed.ok) return { code: 1, stdout: "", stderr: parsed.error };
+		return { ...result, page: parsed.value };
 	} catch (error) {
 		return {
 			code: 1,
 			stdout: "",
 			stderr: `Could not parse review threads: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
-			page: { threads: [], hasNextPage: false },
 		};
 	}
+}
+
+async function fetchReviewThreadNodePage(
+	exec: ExecFn,
+	cwd: string,
+	threadId: string,
+	cursor: string | undefined,
+	signal?: AbortSignal,
+): Promise<ExecFnResult & { thread?: GraphqlThread; nodeAbsent?: boolean }> {
+	const pageSize = cursor === undefined ? 20 : 100;
+	const args = [
+		"api",
+		"graphql",
+		"-f",
+		`query=${REVIEW_THREAD_QUERY}`,
+		"-F",
+		`id=${threadId}`,
+		"-F",
+		`pageSize=${pageSize}`,
+	];
+	if (cursor !== undefined) args.push("-F", `cursor=${cursor}`);
+	const result = await gh(exec, cwd, args, 20_000, signal);
+	if (result.code !== 0) return result;
+	try {
+		const parsed = parseReviewThreadPage(JSON.parse(result.stdout.trim() || "{}"));
+		if (!parsed.ok) return { code: 1, stdout: "", stderr: parsed.error };
+		if (parsed.value === undefined) return { ...result, nodeAbsent: true };
+		return { ...result, thread: parsed.value };
+	} catch (error) {
+		return {
+			code: 1,
+			stdout: "",
+			stderr: `Could not parse review thread ${threadId}: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
+		};
+	}
+}
+
+interface CommentBudget {
+	total: number;
+}
+
+type CompletedThread =
+	| { ok: true; kind: "complete"; thread: GraphqlThread; last: ExecFnResult }
+	| { ok: true; kind: "resolved" | "absent"; last: ExecFnResult }
+	| { ok: false; error: ExecFnResult };
+
+async function completeReviewThread(
+	exec: ExecFn,
+	cwd: string,
+	initial: GraphqlThread,
+	budget: CommentBudget,
+	initialResult: ExecFnResult,
+	signal?: AbortSignal,
+): Promise<CompletedThread> {
+	if (initial.isResolved) return { ok: true, kind: "resolved", last: initialResult };
+	const comments = [...initial.commentPage.comments];
+	const commentIds = new Set<string>();
+	for (const comment of comments) {
+		if (commentIds.has(comment.id)) {
+			return {
+				ok: false,
+				error: { code: 1, stdout: "", stderr: `Review thread ${initial.id} repeated comment ${comment.id}.` },
+			};
+		}
+		commentIds.add(comment.id);
+	}
+	budget.total += comments.length;
+	if (comments.length > LIMITS.reviewCommentsPerThread || budget.total > LIMITS.reviewCommentsPerFetch) {
+		return {
+			ok: false,
+			error: { code: 1, stdout: "", stderr: `Review comment limits were exceeded while reading thread ${initial.id}.` },
+		};
+	}
+
+	let page = initial.commentPage;
+	let last = initialResult;
+	const cursors = new Set<string>();
+	while (page.hasNextPage) {
+		if (signal?.aborted) return { ok: false, error: { code: 130, stdout: "", stderr: "aborted" } };
+		const cursor = page.endCursor;
+		if (!cursor || cursors.has(cursor)) {
+			return {
+				ok: false,
+				error: { code: 1, stdout: "", stderr: `Review thread ${initial.id} returned a missing or repeated cursor.` },
+			};
+		}
+		if (comments.length >= LIMITS.reviewCommentsPerThread) {
+			return {
+				ok: false,
+				error: {
+					code: 1,
+					stdout: "",
+					stderr: `Review thread ${initial.id} still has comments after the ${LIMITS.reviewCommentsPerThread}-comment limit.`,
+				},
+			};
+		}
+		cursors.add(cursor);
+		const fetched = await fetchReviewThreadNodePage(exec, cwd, initial.id, cursor, signal);
+		last = fetched;
+		if (fetched.code !== 0) return { ok: false, error: fetched };
+		if (fetched.nodeAbsent) return { ok: true, kind: "absent", last };
+		if (!fetched.thread || fetched.thread.id !== initial.id) {
+			return {
+				ok: false,
+				error: { code: 1, stdout: "", stderr: `Review thread ${initial.id} returned a mismatched node.` },
+			};
+		}
+		if (fetched.thread.isResolved) return { ok: true, kind: "resolved", last };
+		for (const comment of fetched.thread.commentPage.comments) {
+			if (commentIds.has(comment.id)) {
+				return {
+					ok: false,
+					error: { code: 1, stdout: "", stderr: `Review thread ${initial.id} repeated comment ${comment.id}.` },
+				};
+			}
+			commentIds.add(comment.id);
+			comments.push(comment);
+			budget.total++;
+			if (comments.length > LIMITS.reviewCommentsPerThread || budget.total > LIMITS.reviewCommentsPerFetch) {
+				return {
+					ok: false,
+					error: {
+						code: 1,
+						stdout: "",
+						stderr: `Review comment limits were exceeded while reading thread ${initial.id}.`,
+					},
+				};
+			}
+		}
+		page = fetched.thread.commentPage;
+	}
+	return {
+		ok: true,
+		kind: "complete",
+		thread: { ...initial, commentPage: { comments, hasNextPage: false } },
+		last,
+	};
 }
 
 export async function getReviewThreads(
@@ -146,12 +303,12 @@ export async function getReviewThreads(
 	cwd: string,
 	prNumber: number,
 	repo?: string,
+	signal?: AbortSignal,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
 	const repoResult =
-		repo !== undefined ? { code: 0, stdout: repo, stderr: "", repo } : await resolveRepoNameResult(exec, cwd);
+		repo !== undefined ? { code: 0, stdout: repo, stderr: "", repo } : await resolveRepoNameResult(exec, cwd, signal);
 	const split = repoResult.repo ? splitRepo(repoResult.repo) : undefined;
 	if (!split) {
-		// Review threads are required GitHub state; neither a CLI failure nor malformed identity is complete state.
 		const reason = repoResult.stderr.trim() || "GitHub CLI returned an invalid repository identity.";
 		return {
 			code: 1,
@@ -162,37 +319,95 @@ export async function getReviewThreads(
 	}
 
 	const threads: ReviewThread[] = [];
+	const threadIds = new Set<string>();
+	const cursors = new Set<string>();
+	const budget = { total: 0 };
 	let cursor: string | undefined;
 	let last: ExecFnResult = repoResult;
-	for (let page = 0; page < 20; page++) {
-		const fetched = await fetchReviewThreadPage(exec, cwd, split.owner, split.name, prNumber, cursor);
+	for (let pageIndex = 0; pageIndex < LIMITS.reviewThreadPages; pageIndex++) {
+		if (signal?.aborted) return { code: 130, stdout: "", stderr: "aborted", threads };
+		const fetched = await fetchReviewThreadPage(exec, cwd, split.owner, split.name, prNumber, cursor, signal);
 		last = fetched;
-		if (fetched.code !== 0) return { ...fetched, threads };
+		if (fetched.code !== 0 || !fetched.page) return { ...fetched, threads };
 		for (const node of fetched.page.threads) {
-			const mapped = graphqlThreadToReviewThread(node);
+			if (threadIds.has(node.id)) {
+				return { code: 1, stdout: "", stderr: `Review thread ${node.id} was repeated.`, threads };
+			}
+			threadIds.add(node.id);
+			if (node.isResolved) continue;
+			const completed = await completeReviewThread(exec, cwd, node, budget, fetched, signal);
+			if (!completed.ok) return { ...completed.error, threads };
+			last = completed.last;
+			if (completed.kind !== "complete") continue;
+			const mapped = graphqlThreadToReviewThread(completed.thread);
 			if (mapped) threads.push(mapped);
 		}
-		if (!fetched.page.hasNextPage || !fetched.page.endCursor) break;
-		cursor = fetched.page.endCursor;
+		if (!fetched.page.hasNextPage) return { ...last, threads };
+		const nextCursor = fetched.page.endCursor;
+		if (!nextCursor || cursors.has(nextCursor)) {
+			return { code: 1, stdout: "", stderr: "Review threads returned a missing or repeated cursor.", threads };
+		}
+		cursors.add(nextCursor);
+		cursor = nextCursor;
 	}
-	return { ...last, threads };
+	return {
+		code: 1,
+		stdout: "",
+		stderr: `Review threads still have data after the ${LIMITS.reviewThreadPages}-page limit.`,
+		threads,
+	};
+}
+
+type ReviewThreadObservation = { kind: "absent" } | { kind: "resolved" } | { kind: "unresolved"; thread: ReviewThread };
+
+/** Read one complete thread immediately before resolution. */
+export async function getReviewThread(
+	exec: ExecFn,
+	cwd: string,
+	threadId: string,
+	signal?: AbortSignal,
+): Promise<ExecFnResult & { observation?: ReviewThreadObservation }> {
+	if (signal?.aborted) return { code: 130, stdout: "", stderr: "aborted" };
+	const fetched = await fetchReviewThreadNodePage(exec, cwd, threadId, undefined, signal);
+	if (fetched.code !== 0) return fetched;
+	if (fetched.nodeAbsent) return { ...fetched, observation: { kind: "absent" } };
+	if (!fetched.thread || fetched.thread.id !== threadId) {
+		return { code: 1, stdout: "", stderr: `Review thread ${threadId} returned a mismatched node.` };
+	}
+	const completed = await completeReviewThread(exec, cwd, fetched.thread, { total: 0 }, fetched, signal);
+	if (!completed.ok) return completed.error;
+	if (completed.kind !== "complete") {
+		return { ...completed.last, observation: { kind: completed.kind } };
+	}
+	const thread = graphqlThreadToReviewThread(completed.thread);
+	if (!thread) {
+		return { code: 1, stdout: "", stderr: `Review thread ${threadId} has no represented feedback.` };
+	}
+	return { ...completed.last, observation: { kind: "unresolved", thread } };
 }
 
 export async function getIssueComments(
 	exec: ExecFn,
 	cwd: string,
 	prNumber: number,
+	repo?: string,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
+	const repository = repo ?? "{owner}/{repo}";
+	if (repo !== undefined && !splitRepo(repo)) {
+		return { code: 1, stdout: "", stderr: "Invalid explicit repository for issue comments.", threads: [] };
+	}
 	const result = await gh(exec, cwd, [
 		"api",
-		`repos/{owner}/{repo}/issues/${prNumber}/comments`,
+		`repos/${repository}/issues/${prNumber}/comments`,
 		"--method",
 		"GET",
 		"--paginate",
 		"--slurp",
 	]);
 	if (result.code !== 0) return { ...result, threads: [] };
-	return { ...result, threads: parseIssueComments(result.stdout.trim() || "[]").map(issueCommentToThread) };
+	const parsed = parseIssueComments(result.stdout.trim() || "[]");
+	if (!parsed.ok) return { code: 1, stdout: "", stderr: parsed.error, threads: [] };
+	return { ...result, threads: parsed.value.map(issueCommentToThread) };
 }
 
 /**
@@ -284,10 +499,15 @@ export async function replyToReviewComment(
 	prNumber: number,
 	inReplyTo: number,
 	body: string,
+	repo?: string,
 ): Promise<ExecFnResult> {
+	const repository = repo ?? "{owner}/{repo}";
+	if (repo !== undefined && !splitRepo(repo)) {
+		return { code: 1, stdout: "", stderr: "Invalid explicit repository for review reply." };
+	}
 	return gh(exec, cwd, [
 		"api",
-		`repos/{owner}/{repo}/pulls/${prNumber}/comments`,
+		`repos/${repository}/pulls/${prNumber}/comments`,
 		"-f",
 		`body=${autopilotReplyBody(body)}`,
 		"-F",

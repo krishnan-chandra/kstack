@@ -6,6 +6,7 @@ import test from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { applyThreadReplies, parseTriage } from "./autopilot-operations.ts";
 import { runAutopilot } from "./driver.ts";
+import { versionReviewItem } from "./review-handling.ts";
 import { BRANCH, config, createHarness, deferred, SHA, triage } from "./test-harness.ts";
 import type { ExecFn, ExecFnResult, PRState, ReviewThread } from "./types.ts";
 
@@ -358,6 +359,69 @@ test("informational issue comments are ignored without posting and do not block 
 	assert.deepEqual(harness.roles, ["triager"]);
 });
 
+test("a pending reply keeps an otherwise ignored thread visible", async (t) => {
+	const body = "Please explain this design";
+	const version = versionReviewItem("review-thread", "thread-1", [
+		{
+			id: "PRRC_7",
+			body,
+			updatedAt: "2026-09-06T00:00:00Z",
+			author: "reviewer",
+			path: "src/a.ts",
+			line: 1,
+		},
+	]);
+	const { harness, result } = await run("drive", {
+		thread: { id: "thread-1", body },
+		persisted: {
+			schemaVersion: 2,
+			repoKey: "repo",
+			prNumber: 42,
+			headSha: "",
+			handled: [{ id: "thread-1", source: "review-thread", version, decision: "ignore" }],
+			pendingReviewReplies: [{ id: "thread-1", version: "a".repeat(64) }],
+			legacyPendingReplyIds: [],
+			flakeRetried: [],
+		},
+		triage: triage({ threads: [{ key: "thread-1", decision: "ask", action: "inspect pending reply" }] }),
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "blocked");
+	assert.deepEqual(harness.roles, ["triager"]);
+});
+
+test("blocked loaded state allows inspection but prevents review mutations and persistence", async (t) => {
+	const { harness, result } = await run("drive", {
+		thread: { id: "thread-1", body: "Please explain this design" },
+		loaded: {
+			kind: "blocked",
+			state: {
+				schemaVersion: 2,
+				repoKey: "repo",
+				prNumber: 42,
+				headSha: "",
+				handled: [],
+				pendingReviewReplies: [],
+				legacyPendingReplyIds: [],
+				flakeRetried: [],
+			},
+			reviewMutationBlocker: "PR autopilot state needs inspection: unsupported schemaVersion 99.",
+		},
+		triage: triage({
+			threads: [{ key: "thread-1", decision: "dismiss", action: "as intended", reply: "As intended." }],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockedReasons.join("; "), /needs inspection/);
+	assert.deepEqual(harness.roles, ["triager"]);
+	assert.deepEqual(harness.savedStates, []);
+	assert.equal(
+		harness.calls.some((call) => call.includes("/pulls/42/comments") || call.includes("resolveReviewThread")),
+		false,
+	);
+});
+
 test("ask threads block without invoking a fixer", async (t) => {
 	const { harness, result } = await run("drive", {
 		thread: { id: "thread-1", body: "Please explain this design" },
@@ -367,6 +431,48 @@ test("ask threads block without invoking a fixer", async (t) => {
 	assert.equal(result.status, "blocked");
 	assert.ok(result.blockedReasons.includes("ask threads: thread-1"));
 	assert.deepEqual(harness.roles, ["triager"]);
+});
+
+test("a live legacy pending reply blocks before triage or remote mutation", async (t) => {
+	const { harness, result } = await run("drive", {
+		thread: { id: "thread-1", body: "Please explain this design" },
+		persisted: {
+			schemaVersion: 2,
+			repoKey: "repo",
+			prNumber: 42,
+			headSha: "",
+			handled: [],
+			pendingReviewReplies: [],
+			legacyPendingReplyIds: ["thread-1"],
+			flakeRetried: [],
+		},
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockedReasons.join("; "), /Legacy pending replies need inspection/);
+	assert.deepEqual(harness.roles, []);
+	assert.equal(
+		harness.calls.some((call) => call.includes("/pulls/42/comments") || call.includes("resolveReviewThread")),
+		false,
+	);
+});
+
+test("a complete observation removes an absent legacy pending reply", async (t) => {
+	const { harness, result } = await run("drive", {
+		persisted: {
+			schemaVersion: 2,
+			repoKey: "repo",
+			prNumber: 42,
+			headSha: "",
+			handled: [],
+			pendingReviewReplies: [],
+			legacyPendingReplyIds: ["thread-1"],
+			flakeRetried: [],
+		},
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "merge-ready");
+	assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.legacyPendingReplyIds, []);
 });
 
 test("VERIFY_FAIL from a fixer is never pushed", async (t) => {
@@ -497,6 +603,17 @@ test("cleanup mode never resolves the repository", async (t) => {
 	assert.deepEqual(calls, []);
 });
 
+const REVIEW_VERSION = versionReviewItem("review-thread", "thread-1", [
+	{
+		id: "PRRC_7",
+		body: "rename this",
+		updatedAt: "2026-09-06T00:00:00Z",
+		author: "reviewer",
+		path: "src/a.ts",
+		line: 1,
+	},
+]);
+
 function makeThreadState(threads: ReviewThread[]): PRState {
 	return {
 		number: 42,
@@ -515,14 +632,53 @@ function makeThreadState(threads: ReviewThread[]): PRState {
 	};
 }
 
-function makeReplyExec(overrides: { replyCode?: number; resolveCode?: number; issueReplyCode?: number } = {}) {
+function makeReplyExec(
+	overrides: {
+		replyCode?: number;
+		resolveCode?: number;
+		issueReplyCode?: number;
+		observationCode?: number;
+		observedBody?: string;
+		resolvedBeforeMutation?: boolean;
+	} = {},
+) {
 	const calls: string[] = [];
 	const exec: ExecFn = async (command, args) => {
 		const key = `${command} ${args.join(" ")}`;
 		calls.push(key);
-		if (command === "gh" && args[0] === "api" && args[1] === "graphql" && args.some((a) => a.startsWith("id="))) {
-			const code = overrides.resolveCode ?? 0;
-			return { code, stdout: "", stderr: code === 0 ? "" : "resolve failed" };
+		if (command === "gh" && args[0] === "api" && args[1] === "graphql") {
+			if (args.some((arg) => arg.includes("resolveReviewThread"))) {
+				const code = overrides.resolveCode ?? 0;
+				return { code, stdout: "", stderr: code === 0 ? "" : "resolve failed" };
+			}
+			const code = overrides.observationCode ?? 0;
+			if (code !== 0) return { code, stdout: "", stderr: "inspection failed" };
+			return {
+				code: 0,
+				stdout: JSON.stringify({
+					data: {
+						node: {
+							id: "thread-1",
+							isResolved: overrides.resolvedBeforeMutation ?? false,
+							comments: {
+								pageInfo: { hasNextPage: false, endCursor: null },
+								nodes: [
+									{
+										id: "PRRC_7",
+										databaseId: 7,
+										body: overrides.observedBody ?? "rename this",
+										updatedAt: "2026-09-06T00:00:00Z",
+										path: "src/a.ts",
+										line: 1,
+										author: { login: "reviewer" },
+									},
+								],
+							},
+						},
+					},
+				}),
+				stderr: "",
+			};
 		}
 		if (command === "gh" && args[0] === "api" && args[1]?.includes("/pulls/42/comments")) {
 			const code = overrides.replyCode ?? 0;
@@ -543,6 +699,10 @@ function parseThreads(json: string) {
 	return parsed;
 }
 
+function replyOptions(resolveFix: boolean, pendingReviewReplies: Array<{ id: string; version: string }> = []) {
+	return { resolveFix, pendingReviewReplies, legacyPendingReplyIds: [] };
+}
+
 test("fix decision replies and resolves a review thread", async () => {
 	const state = makeThreadState([
 		{
@@ -553,6 +713,7 @@ test("fix decision replies and resolves a review thread", async () => {
 			line: 1,
 			replyToId: 7,
 			source: "review-thread",
+			version: REVIEW_VERSION,
 		},
 	]);
 	const parsed = parseThreads(
@@ -565,17 +726,21 @@ test("fix decision replies and resolves a review thread", async () => {
 		}),
 	);
 	const { exec, calls } = makeReplyExec();
-	const repliedThreadIds: string[] = [];
+	const pendingReviewReplies: Array<{ id: string; version: string }> = [];
 	const handled = await applyThreadReplies(
 		exec,
 		"/repo",
 		state,
 		parsed,
-		{ resolveFix: true, repliedThreadIds },
+		replyOptions(true, pendingReviewReplies),
 		() => {},
 	);
-	assert.deepEqual(handled, { ok: true, handled: ["thread-1"] });
-	assert.deepEqual(repliedThreadIds, ["thread-1"]);
+	assert.deepEqual(handled, {
+		ok: true,
+		handled: [{ id: "thread-1", source: "review-thread", version: REVIEW_VERSION, decision: "fix" }],
+		pendingReviewReplies: [],
+	});
+	assert.deepEqual(pendingReviewReplies, []);
 	assert.ok(calls.some((call) => call.startsWith("gh api repos/{owner}/{repo}/pulls/42/comments")));
 	assert.ok(calls.some((call) => call.startsWith("gh api graphql") && call.includes("id=thread-1")));
 });
@@ -588,6 +753,7 @@ test("ignore decision marks an issue comment handled without posting", async () 
 			body: "Thanks for the update",
 			source: "issue-comment",
 			replyToId: 1,
+			version: "issue-version-1",
 		},
 	]);
 	const parsed = parseThreads(
@@ -600,21 +766,32 @@ test("ignore decision marks an issue comment handled without posting", async () 
 		}),
 	);
 	const { exec, calls } = makeReplyExec();
-	const result = await applyThreadReplies(
-		exec,
-		"/repo",
-		state,
-		parsed,
-		{ resolveFix: false, repliedThreadIds: [] },
-		() => {},
-	);
-	assert.deepEqual(result, { ok: true, handled: ["issue-comment-1"] });
+	const result = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(false), () => {});
+	assert.deepEqual(result, {
+		ok: true,
+		handled: [
+			{
+				id: "issue-comment-1",
+				source: "issue-comment",
+				version: "issue-version-1",
+				decision: "ignore",
+			},
+		],
+		pendingReviewReplies: [],
+	});
 	assert.deepEqual(calls, []);
 });
 
 test("dismiss decision replies to an issue comment without resolving", async () => {
 	const state = makeThreadState([
-		{ id: "issue-comment-1", commenter: "reviewer", body: "remove this", source: "issue-comment", replyToId: 1 },
+		{
+			id: "issue-comment-1",
+			commenter: "reviewer",
+			body: "remove this",
+			source: "issue-comment",
+			replyToId: 1,
+			version: "issue-version-1",
+		},
 	]);
 	const parsed = parseThreads(
 		JSON.stringify({
@@ -626,15 +803,19 @@ test("dismiss decision replies to an issue comment without resolving", async () 
 		}),
 	);
 	const { exec, calls } = makeReplyExec();
-	const handled = await applyThreadReplies(
-		exec,
-		"/repo",
-		state,
-		parsed,
-		{ resolveFix: false, repliedThreadIds: [] },
-		() => {},
-	);
-	assert.deepEqual(handled, { ok: true, handled: ["issue-comment-1"] });
+	const handled = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(false), () => {});
+	assert.deepEqual(handled, {
+		ok: true,
+		handled: [
+			{
+				id: "issue-comment-1",
+				source: "issue-comment",
+				version: "issue-version-1",
+				decision: "dismiss",
+			},
+		],
+		pendingReviewReplies: [],
+	});
 	assert.ok(calls.some((call) => call.startsWith("gh pr comment 42") && call.includes("Dismissing: out of scope")));
 	assert.equal(
 		calls.some((call) => call.startsWith("gh api graphql") && call.includes("id=")),
@@ -652,6 +833,7 @@ test("failed review-thread reply does not resolve and warns", async () => {
 			line: 1,
 			replyToId: 7,
 			source: "review-thread",
+			version: REVIEW_VERSION,
 		},
 	]);
 	const parsed = parseThreads(
@@ -665,17 +847,22 @@ test("failed review-thread reply does not resolve and warns", async () => {
 	);
 	const { exec } = makeReplyExec({ replyCode: 1 });
 	const warnings: string[] = [];
-	const repliedThreadIds: string[] = [];
+	const pendingReviewReplies: Array<{ id: string; version: string }> = [];
 	const handled = await applyThreadReplies(
 		exec,
 		"/repo",
 		state,
 		parsed,
-		{ resolveFix: true, repliedThreadIds },
+		replyOptions(true, pendingReviewReplies),
 		(message) => warnings.push(message),
 	);
-	assert.deepEqual(handled, { ok: false, handled: [], error: "Could not reply to thread thread-1: reply failed" });
-	assert.deepEqual(repliedThreadIds, []);
+	assert.deepEqual(handled, {
+		ok: false,
+		handled: [],
+		pendingReviewReplies: [],
+		error: "Could not reply to thread thread-1: reply failed",
+	});
+	assert.deepEqual(pendingReviewReplies, []);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0] ?? "", /Could not reply to thread thread-1/);
 });
@@ -690,8 +877,16 @@ test("a reply failure stops later GitHub comment writes", async () => {
 			line: 1,
 			replyToId: 7,
 			source: "review-thread",
+			version: REVIEW_VERSION,
 		},
-		{ id: "issue-comment-2", commenter: "reviewer", body: "remove this", source: "issue-comment", replyToId: 2 },
+		{
+			id: "issue-comment-2",
+			commenter: "reviewer",
+			body: "remove this",
+			source: "issue-comment",
+			replyToId: 2,
+			version: "issue-version-2",
+		},
 	]);
 	const parsed = parseThreads(
 		JSON.stringify({
@@ -706,14 +901,7 @@ test("a reply failure stops later GitHub comment writes", async () => {
 		}),
 	);
 	const { exec, calls } = makeReplyExec({ replyCode: 1 });
-	const result = await applyThreadReplies(
-		exec,
-		"/repo",
-		state,
-		parsed,
-		{ resolveFix: true, repliedThreadIds: [] },
-		() => {},
-	);
+	const result = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(true), () => {});
 	assert.equal(result.ok, false);
 	assert.equal(calls.filter((call) => call.startsWith("gh pr comment 42")).length, 0);
 });
@@ -728,6 +916,7 @@ test("failed resolve keeps the reply id but not the handled id", async () => {
 			line: 1,
 			replyToId: 7,
 			source: "review-thread",
+			version: REVIEW_VERSION,
 		},
 	]);
 	const parsed = parseThreads(
@@ -740,15 +929,125 @@ test("failed resolve keeps the reply id but not the handled id", async () => {
 		}),
 	);
 	const { exec } = makeReplyExec({ resolveCode: 1 });
-	const repliedThreadIds: string[] = [];
+	const pendingReviewReplies: Array<{ id: string; version: string }> = [];
 	const handled = await applyThreadReplies(
 		exec,
 		"/repo",
 		state,
 		parsed,
-		{ resolveFix: true, repliedThreadIds },
+		replyOptions(true, pendingReviewReplies),
 		() => {},
 	);
-	assert.deepEqual(handled, { ok: false, handled: [], error: "Could not resolve thread thread-1: resolve failed" });
-	assert.deepEqual(repliedThreadIds, ["thread-1"]);
+	assert.deepEqual(handled, {
+		ok: false,
+		handled: [],
+		pendingReviewReplies: [{ id: "thread-1", version: REVIEW_VERSION }],
+		error: "Could not resolve thread thread-1: resolve failed",
+	});
+	assert.deepEqual(pendingReviewReplies, []);
+});
+
+function pendingReplyCase() {
+	const state = makeThreadState([
+		{
+			id: "thread-1",
+			commenter: "reviewer",
+			body: "rename this",
+			path: "src/a.ts",
+			line: 1,
+			replyToId: 7,
+			source: "review-thread",
+			version: REVIEW_VERSION,
+		},
+	]);
+	const parsed = parseThreads(
+		JSON.stringify({
+			checks: [],
+			threads: [{ key: "thread-1", decision: "dismiss", action: "as intended", reply: "As intended." }],
+			conflicts: false,
+			draft: false,
+			summary: "",
+		}),
+	);
+	return { state, parsed };
+}
+
+test("a matching pending reply resolves without posting twice", async () => {
+	const { state, parsed } = pendingReplyCase();
+	const { exec, calls } = makeReplyExec();
+	const pending = [{ id: "thread-1", version: REVIEW_VERSION }];
+	const result = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(false, pending), () => {});
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.pendingReviewReplies, []);
+	assert.deepEqual(pending, [{ id: "thread-1", version: REVIEW_VERSION }]);
+	assert.equal(
+		calls.some((call) => call.includes("/pulls/42/comments")),
+		false,
+	);
+	assert.equal(calls.filter((call) => call.includes("resolveReviewThread")).length, 1);
+});
+
+test("changed feedback after posting retains pending progress and does not resolve", async () => {
+	const { state, parsed } = pendingReplyCase();
+	const { exec, calls } = makeReplyExec({ observedBody: "new feedback" });
+	const pending: Array<{ id: string; version: string }> = [];
+	const result = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(false, pending), () => {});
+	assert.equal(result.ok, false);
+	if (!result.ok) assert.match(result.error, /changed after its reply/);
+	assert.deepEqual(result.pendingReviewReplies, [{ id: "thread-1", version: REVIEW_VERSION }]);
+	assert.deepEqual(pending, []);
+	assert.equal(calls.filter((call) => call.includes("/pulls/42/comments")).length, 1);
+	assert.equal(
+		calls.some((call) => call.includes("resolveReviewThread")),
+		false,
+	);
+});
+
+test("a failed final observation retains pending progress and does not resolve", async () => {
+	const { state, parsed } = pendingReplyCase();
+	const { exec, calls } = makeReplyExec({ observationCode: 1 });
+	const pending: Array<{ id: string; version: string }> = [];
+	const result = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(false, pending), () => {});
+	assert.equal(result.ok, false);
+	if (!result.ok) assert.match(result.error, /Could not inspect thread/);
+	assert.deepEqual(result.pendingReviewReplies, [{ id: "thread-1", version: REVIEW_VERSION }]);
+	assert.deepEqual(pending, []);
+	assert.equal(
+		calls.some((call) => call.includes("resolveReviewThread")),
+		false,
+	);
+});
+
+test("an already resolved thread settles pending progress without another mutation", async () => {
+	const { state, parsed } = pendingReplyCase();
+	const { exec, calls } = makeReplyExec({ resolvedBeforeMutation: true });
+	const pending = [{ id: "thread-1", version: REVIEW_VERSION }];
+	const result = await applyThreadReplies(exec, "/repo", state, parsed, replyOptions(false, pending), () => {});
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.pendingReviewReplies, []);
+	assert.deepEqual(pending, [{ id: "thread-1", version: REVIEW_VERSION }]);
+	assert.equal(
+		calls.some((call) => call.includes("/pulls/42/comments")),
+		false,
+	);
+	assert.equal(
+		calls.some((call) => call.includes("resolveReviewThread")),
+		false,
+	);
+});
+
+test("a live legacy pending reply blocks posting and resolution", async () => {
+	const { state, parsed } = pendingReplyCase();
+	const { exec, calls } = makeReplyExec();
+	const result = await applyThreadReplies(
+		exec,
+		"/repo",
+		state,
+		parsed,
+		{ ...replyOptions(false), legacyPendingReplyIds: ["thread-1"] },
+		() => {},
+	);
+	assert.equal(result.ok, false);
+	if (!result.ok) assert.match(result.error, /legacy pending reply/);
+	assert.deepEqual(calls, []);
 });

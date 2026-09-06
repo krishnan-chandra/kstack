@@ -59,6 +59,7 @@ import {
 	pickModel,
 	resolveTargetPR,
 } from "./pr-state.ts";
+import { appendHandledReviewRecords, reconcileLegacyPendingReplyIds } from "./review-handling.ts";
 import { checkForTriageKey, threadForTriageKey } from "./triage-keys.ts";
 import {
 	type AutopilotMode,
@@ -183,23 +184,31 @@ export async function runAutopilot(
 
 	if (mode === "check") {
 		setPhase("checking");
-		const persisted = await ops.loadPersistedState(repoKey, prNumber);
-		const fetched = await fetchPRState(exec, cwd, prNumber, null, persisted.handledThreadIds, await resolveRepoOnce());
-
+		const loaded = await ops.loadPersistedState(repoKey, prNumber);
+		let persisted = loaded.state;
+		const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;
+		const reviewMutationBlocker = loaded.kind === "blocked" ? loaded.reviewMutationBlocker : undefined;
+		if (migrationNote) {
+			notify(migrationNote, "warning");
+			await ops.savePersistedState(persisted);
+		}
+		if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
+		if (signal.aborted) return finish("aborted");
+		const fetched = await fetchPRState(exec, cwd, prNumber, null, persisted, await resolveRepoOnce(), signal);
+		if (signal.aborted) return finish("aborted");
 		if (isString(fetched)) {
 			notify(fetched, "error");
 			return finish("failed", [fetched]);
 		}
 		state = fetched;
+		const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, fetched.threads);
+		if (!reviewMutationBlocker && reconciled.length !== persisted.legacyPendingReplyIds.length) {
+			persisted = { ...persisted, legacyPendingReplyIds: reconciled };
+			await ops.savePersistedState(persisted);
+		}
 		if (signal.aborted) return finish("aborted");
-		const verified = await fetchPRState(
-			exec,
-			cwd,
-			prNumber,
-			state.headSha,
-			persisted.handledThreadIds,
-			await resolveRepoOnce(),
-		);
+		const verified = await fetchPRState(exec, cwd, prNumber, state.headSha, persisted, await resolveRepoOnce(), signal);
+		if (signal.aborted) return finish("aborted");
 		if (isString(verified)) {
 			return finish("failed", [verified]);
 		}
@@ -225,11 +234,34 @@ export async function runAutopilot(
 
 	let verifiedHeadSha: string | null = null;
 	const maxCycles = maxFixCycles(mode);
-	let persisted = await ops.loadPersistedState(repoKey, prNumber);
+	const loaded = await ops.loadPersistedState(repoKey, prNumber);
+	let persisted = loaded.state;
+	const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;
+	const reviewMutationBlocker = loaded.kind === "blocked" ? loaded.reviewMutationBlocker : undefined;
+	if (migrationNote) {
+		notify(migrationNote, "warning");
+		await ops.savePersistedState(persisted);
+	}
+	if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking", cycle);
-		return fetchPRState(exec, cwd, prNumber, verifiedHeadSha, persisted.handledThreadIds, await resolveRepoOnce());
+		const fetched = await fetchPRState(
+			exec,
+			cwd,
+			prNumber,
+			verifiedHeadSha,
+			persisted,
+			await resolveRepoOnce(),
+			signal,
+		);
+		if (signal.aborted || isString(fetched) || reviewMutationBlocker) return fetched;
+		const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, fetched.threads);
+		if (reconciled.length !== persisted.legacyPendingReplyIds.length) {
+			persisted = { ...persisted, legacyPendingReplyIds: reconciled };
+			await ops.savePersistedState(persisted);
+		}
+		return fetched;
 	};
 
 	const runChild = async (
@@ -285,9 +317,11 @@ export async function runAutopilot(
 			cwd,
 			prNumber,
 			snapshot.headSha,
-			persisted.handledThreadIds,
+			persisted,
 			await resolveRepoOnce(),
+			signal,
 		);
+		if (signal.aborted) return { status: "aborted", blockedReasons };
 		if (isString(settled)) {
 			notify(settled, "error");
 			return { status: "failed", blockedReasons: [settled] };
@@ -315,6 +349,7 @@ export async function runAutopilot(
 		if (signal.aborted) return finish("aborted");
 
 		const fetched = await refresh();
+		if (signal.aborted) return finish("aborted");
 		if (isString(fetched)) {
 			notify(fetched, "error");
 			return finish("failed", [fetched]);
@@ -329,6 +364,16 @@ export async function runAutopilot(
 		const hasUntriagedDiscussion = state.threads.some((thread) => thread.source === "issue-comment");
 		const ready = hasUntriagedDiscussion ? undefined : await declareReady(state);
 		if (ready) return finish(ready.status, ready.blockedReasons);
+		const liveLegacyPending = state.threads
+			.filter((thread) => thread.source === "review-thread")
+			.filter((thread) => persisted.legacyPendingReplyIds.includes(thread.id))
+			.map((thread) => thread.id);
+		if (liveLegacyPending.length > 0) {
+			const reason = `Legacy pending replies need inspection before mutation: ${liveLegacyPending.join(", ")}`;
+			notify(reason, "warning");
+			blockedReasons.push(reason);
+			break;
+		}
 
 		if (
 			state.mergeable === "conflicting" ||
@@ -364,7 +409,7 @@ export async function runAutopilot(
 					);
 					verifiedHeadSha = null;
 					persisted = { ...persisted, headSha: updated.headSha };
-					await ops.savePersistedState(persisted);
+					if (!reviewMutationBlocker) await ops.savePersistedState(persisted);
 					cycle++;
 					continue;
 				case "needs-human":
@@ -392,6 +437,7 @@ export async function runAutopilot(
 				notify(`CI watch ended: ${watched.stderr.trim() || "a check failed or the watch timed out"}.`, "warning");
 			}
 			const afterWatch = await refresh();
+			if (signal.aborted) return finish("aborted");
 			if (isString(afterWatch)) {
 				notify(afterWatch, "error");
 				return finish("failed", [afterWatch]);
@@ -439,7 +485,10 @@ export async function runAutopilot(
 			notify(`Ask (not guessing): ${lines.join("; ")}`, "error");
 			blockedReasons.push(`ask threads: ${askThreads.map(({ source }) => source.id).join(", ")}`);
 		}
-
+		if (reviewMutationBlocker && parsed.threads.some((thread) => thread.decision !== "ask")) {
+			blockedReasons.push(reviewMutationBlocker);
+			break;
+		}
 		const flakeKey = (name: string) => `${name}@${state?.headSha ?? ""}`;
 		const flakeChecks = parsed.checks.flatMap((classification) => {
 			if (classification.cls !== "flake" || !state) return [];
@@ -461,11 +510,11 @@ export async function runAutopilot(
 					reran = true;
 				}
 				if (signal.aborted) {
-					await ops.savePersistedState(persisted);
+					if (!reviewMutationBlocker) await ops.savePersistedState(persisted);
 					return finish("aborted");
 				}
 			}
-			await ops.savePersistedState(persisted);
+			if (!reviewMutationBlocker) await ops.savePersistedState(persisted);
 			if (reran) {
 				cycle++;
 				continue;
@@ -575,22 +624,27 @@ export async function runAutopilot(
 		}
 
 		setPhase("replying", cycle);
-		const repliedThreadIds = [...persisted.repliedThreadIds];
 		const replyResult = await applyThreadReplies(
 			exec,
 			cwd,
 			state,
 			parsed,
-			{ resolveFix: pushedAFix, repliedThreadIds },
+			{
+				resolveFix: pushedAFix,
+				pendingReviewReplies: persisted.pendingReviewReplies,
+				legacyPendingReplyIds: persisted.legacyPendingReplyIds,
+				reviewMutationBlocker,
+				repo: await resolveRepoOnce(),
+			},
 			notify,
 			signal,
 		);
 		persisted = {
 			...persisted,
-			handledThreadIds: [...persisted.handledThreadIds, ...replyResult.handled],
-			repliedThreadIds: repliedThreadIds.filter((id) => !replyResult.handled.includes(id)),
+			handled: appendHandledReviewRecords(persisted.handled, replyResult.handled),
+			pendingReviewReplies: replyResult.pendingReviewReplies,
 		};
-		await ops.savePersistedState(persisted);
+		if (!reviewMutationBlocker) await ops.savePersistedState(persisted);
 		if (!replyResult.ok) blockedReasons.push(replyResult.error);
 		if (signal.aborted) return finish("aborted");
 		if (!replyResult.ok) break;
@@ -601,6 +655,7 @@ export async function runAutopilot(
 		if (mode === "threads") {
 			cycle++;
 			const recheck = await refresh();
+			if (signal.aborted) return finish("aborted");
 			if (isString(recheck)) {
 				return finish("incomplete", [recheck]);
 			}

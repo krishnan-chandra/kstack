@@ -1,4 +1,4 @@
-import { type BoundaryValue, isObject, isString, type JsonObject } from "../shared/validation.ts";
+import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } from "../shared/validation.ts";
 /**
  * Bounded PR autopilot state machine.
  *
@@ -21,14 +21,16 @@ import { type BoundaryValue, isObject, isString, type JsonObject } from "../shar
 
 import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { type FileHandle, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { commandDiagnostic } from "../shared/git-exec.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
 import {
 	getCheckRuns,
 	getIssueComments,
+	getReviewThread,
 	getReviewThreads,
 	replyToIssueComment,
 	replyToReviewComment,
@@ -37,6 +39,12 @@ import {
 } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import { buildPRState, emptyUsage } from "./pr-state.ts";
+import {
+	appendPendingReviewReply,
+	filterHandledReviewItems,
+	hasPendingReviewReply,
+	removePendingReviewReplies,
+} from "./review-handling.ts";
 import {
 	type CheckTriageKey,
 	checkForTriageKey,
@@ -52,9 +60,11 @@ import {
 	type AutopilotThinkingLevel,
 	type ExecFn,
 	type FailureClass,
+	type HandledReviewRecord,
 	LIMITS,
+	type LoadedAutopilotState,
+	type PendingReviewReply,
 	type PRState,
-	type ReviewThread,
 	type ThreadDecision,
 	type UsageSummary,
 } from "./types.ts";
@@ -69,30 +79,134 @@ export function persistPath(repoKey: string, prNumber: number): string {
 }
 
 function emptyPersistedState(repoKey: string, prNumber: number): AutopilotPersistedState {
-	return { repoKey, prNumber, headSha: "", handledThreadIds: [], repliedThreadIds: [], flakeRetried: [] };
+	return {
+		schemaVersion: 2,
+		repoKey,
+		prNumber,
+		headSha: "",
+		handled: [],
+		pendingReviewReplies: [],
+		legacyPendingReplyIds: [],
+		flakeRetried: [],
+	};
 }
 
-function parsePersistedState(raw: BoundaryValue, repoKey: string, prNumber: number): AutopilotPersistedState {
+function blockedState(repoKey: string, prNumber: number, reason: string): LoadedAutopilotState {
+	return {
+		kind: "blocked",
+		state: emptyPersistedState(repoKey, prNumber),
+		reviewMutationBlocker: `PR autopilot state needs inspection: ${reason}`,
+	};
+}
+
+function isStringArray(value: BoundaryValue): value is string[] {
+	return Array.isArray(value) && value.every(isString);
+}
+
+function isReviewVersion(value: BoundaryValue): value is string {
+	return isString(value) && /^[0-9a-f]{64}$/.test(value);
+}
+
+function parseHandledRecord(raw: BoundaryValue): HandledReviewRecord | undefined {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) return undefined;
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
+	if (!isString(record.id) || record.id.length === 0 || !isReviewVersion(record.version)) return undefined;
+	const decision = parseDecision(record.decision);
+	if (!decision || decision === "ask") return undefined;
+	if (record.source !== "review-thread" && record.source !== "issue-comment") return undefined;
+	return { id: record.id, source: record.source, version: record.version, decision };
+}
+
+function parsePendingReply(raw: BoundaryValue): PendingReviewReply | undefined {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) return undefined;
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
+	if (!isString(record.id) || record.id.length === 0 || !isReviewVersion(record.version)) return undefined;
+	return { id: record.id, version: record.version };
+}
+
+function parseV2State(obj: JsonObject, repoKey: string, prNumber: number): LoadedAutopilotState {
+	if (obj.repoKey !== repoKey || obj.prNumber !== prNumber || !isString(obj.headSha)) {
+		return blockedState(repoKey, prNumber, "schema 2 identity or head fields are malformed.");
+	}
+	if (
+		!Array.isArray(obj.handled) ||
+		!Array.isArray(obj.pendingReviewReplies) ||
+		!isStringArray(obj.legacyPendingReplyIds) ||
+		!isStringArray(obj.flakeRetried)
+	) {
+		return blockedState(repoKey, prNumber, "schema 2 arrays are malformed.");
+	}
+	const handled = obj.handled.map(parseHandledRecord);
+	const pending = obj.pendingReviewReplies.map(parsePendingReply);
+	if (handled.some((record) => record === undefined) || pending.some((record) => record === undefined)) {
+		return blockedState(repoKey, prNumber, "schema 2 review records are malformed.");
+	}
+	if (
+		handled.length > LIMITS.reviewHandlingRecords ||
+		pending.length > LIMITS.reviewHandlingRecords ||
+		obj.legacyPendingReplyIds.length > LIMITS.reviewHandlingRecords
+	) {
+		return blockedState(repoKey, prNumber, "schema 2 review records exceed their bounds.");
+	}
+	return {
+		kind: "ready",
+		state: {
+			schemaVersion: 2,
+			repoKey,
+			prNumber,
+			headSha: obj.headSha,
+			handled: handled.flatMap((record) => (record ? [record] : [])),
+			pendingReviewReplies: pending.flatMap((record) => (record ? [record] : [])),
+			legacyPendingReplyIds: [...new Set(obj.legacyPendingReplyIds)],
+			flakeRetried: [...new Set(obj.flakeRetried)],
+		},
+	};
+}
+
+function parseLegacyState(obj: JsonObject, repoKey: string, prNumber: number): LoadedAutopilotState {
+	if (obj.repoKey !== repoKey || obj.prNumber !== prNumber) {
+		return blockedState(repoKey, prNumber, "legacy state identity does not match its repository and PR.");
+	}
+	if (
+		!isString(obj.headSha) ||
+		!isStringArray(obj.handledThreadIds) ||
+		!isStringArray(obj.repliedThreadIds) ||
+		!isStringArray(obj.flakeRetried)
+	) {
+		return blockedState(repoKey, prNumber, "legacy state is malformed.");
+	}
+	if (obj.repliedThreadIds.length > LIMITS.reviewHandlingRecords) {
+		return blockedState(repoKey, prNumber, "legacy pending replies exceed their bound.");
+	}
+	return {
+		kind: "ready",
+		state: {
+			...emptyPersistedState(repoKey, prNumber),
+			headSha: obj.headSha,
+			legacyPendingReplyIds: [...new Set(obj.repliedThreadIds)],
+			flakeRetried: [...new Set(obj.flakeRetried)],
+		},
+		migrationNote:
+			"Migrated legacy review state: prior handled IDs will be triaged once more; unversioned pending replies need inspection before resolution.",
+	};
+}
+
+function parsePersistedState(raw: BoundaryValue, repoKey: string, prNumber: number): LoadedAutopilotState {
 	if (!isObject(raw) || raw === null || Array.isArray(raw)) {
-		return emptyPersistedState(repoKey, prNumber);
+		return blockedState(repoKey, prNumber, "the state file is not an object.");
 	}
 	const obj =
 		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
-	const handled = Array.isArray(obj.handledThreadIds)
-		? obj.handledThreadIds.filter((id): id is string => isString(id))
-		: [];
-	const replied = Array.isArray(obj.repliedThreadIds)
-		? obj.repliedThreadIds.filter((id): id is string => isString(id))
-		: [];
-	const flake = Array.isArray(obj.flakeRetried) ? obj.flakeRetried.filter((id): id is string => isString(id)) : [];
-	return {
-		repoKey,
-		prNumber,
-		headSha: isString(obj.headSha) ? obj.headSha : "",
-		handledThreadIds: handled,
-		repliedThreadIds: replied,
-		flakeRetried: flake,
-	};
+	if (obj.schemaVersion === undefined) return parseLegacyState(obj, repoKey, prNumber);
+	if (!isNumber(obj.schemaVersion) || !Number.isInteger(obj.schemaVersion)) {
+		return blockedState(repoKey, prNumber, "schemaVersion is malformed.");
+	}
+	if (obj.schemaVersion !== 2) {
+		return blockedState(repoKey, prNumber, `unsupported schemaVersion ${obj.schemaVersion}.`);
+	}
+	return parseV2State(obj, repoKey, prNumber);
 }
 
 type StateDirCheck = "missing" | "directory" | "unsafe";
@@ -112,21 +226,30 @@ async function checkStateDir(dir: string): Promise<StateDirCheck> {
 	}
 }
 
-export async function loadPersistedState(repoKey: string, prNumber: number): Promise<AutopilotPersistedState> {
+export async function loadPersistedState(repoKey: string, prNumber: number): Promise<LoadedAutopilotState> {
 	const path = persistPath(repoKey, prNumber);
-	if ((await checkStateDir(dirname(path))) !== "directory") {
-		return emptyPersistedState(repoKey, prNumber);
+	const stateDir = await checkStateDir(dirname(path));
+	if (stateDir === "missing") return { kind: "ready", state: emptyPersistedState(repoKey, prNumber) };
+	if (stateDir === "unsafe") return blockedState(repoKey, prNumber, "the state directory is unsafe.");
+	let handle: FileHandle;
+	try {
+		handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	} catch (error) {
+		const code = /* SAFETY: Node filesystem errors expose an optional string code. */ (error as NodeJS.ErrnoException)
+			.code;
+		if (code === "ENOENT") return { kind: "ready", state: emptyPersistedState(repoKey, prNumber) };
+		return blockedState(repoKey, prNumber, "the state file could not be opened safely.");
 	}
 	try {
-		const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		let raw: BoundaryValue;
 		try {
-			const raw: BoundaryValue = JSON.parse(await handle.readFile("utf8"));
-			return parsePersistedState(raw, repoKey, prNumber);
-		} finally {
-			await handle.close();
+			raw = JSON.parse(await handle.readFile("utf8"));
+		} catch {
+			return blockedState(repoKey, prNumber, "the state file is not valid JSON.");
 		}
-	} catch {
-		return emptyPersistedState(repoKey, prNumber);
+		return parsePersistedState(raw, repoKey, prNumber);
+	} finally {
+		await handle.close();
 	}
 }
 
@@ -159,25 +282,21 @@ export async function savePersistedState(state: AutopilotPersistedState): Promis
 	}
 }
 
-function filterHandledThreads(threads: ReviewThread[], handled: readonly string[]): ReviewThread[] {
-	const set = new Set(handled);
-	return threads.filter((t) => !set.has(t.id));
-}
-
 export async function fetchPRState(
 	exec: ExecFn,
 	cwd: string,
 	prNumber: number,
 	existingVerifiedSha: string | null,
-	handledThreadIds: readonly string[],
+	reviewHandling: Pick<AutopilotPersistedState, "handled" | "pendingReviewReplies" | "legacyPendingReplyIds">,
 	repo?: string,
+	signal?: AbortSignal,
 ): Promise<PRState | string> {
 	const prResult = await viewPR(exec, cwd, prNumber);
 	if (!prResult.pr) return prResult.stderr || `Could not view PR #${prNumber}.`;
 
 	const [threadsResult, issueResult, checksResult] = await Promise.all([
-		getReviewThreads(exec, cwd, prNumber, repo),
-		getIssueComments(exec, cwd, prNumber),
+		getReviewThreads(exec, cwd, prNumber, repo, signal),
+		getIssueComments(exec, cwd, prNumber, repo),
 		getCheckRuns(exec, cwd, prNumber),
 	]);
 
@@ -191,7 +310,12 @@ export async function fetchPRState(
 			return `Could not fetch ${label} for PR #${prNumber}: ${result.stderr.trim() || "unknown GitHub error"}`;
 	}
 
-	const threads = filterHandledThreads([...threadsResult.threads, ...issueResult.threads], handledThreadIds);
+	const uncertainPending = new Set([
+		...reviewHandling.pendingReviewReplies.map((record) => record.id),
+		...reviewHandling.legacyPendingReplyIds,
+	]);
+	const suppressions = reviewHandling.handled.filter((record) => !uncertainPending.has(record.id));
+	const threads = filterHandledReviewItems([...threadsResult.threads, ...issueResult.threads], suppressions);
 	return buildPRState(prResult.pr, threads, checksResult.checks, existingVerifiedSha);
 }
 
@@ -417,23 +541,46 @@ export async function applyThreadReplies(
 	cwd: string,
 	state: PRState,
 	parsed: ParsedTriage,
-	opts: { resolveFix: boolean; repliedThreadIds: string[] },
+	opts: {
+		resolveFix: boolean;
+		pendingReviewReplies: readonly PendingReviewReply[];
+		legacyPendingReplyIds: readonly string[];
+		reviewMutationBlocker?: string;
+		repo?: string;
+	},
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 	signal?: AbortSignal,
-): Promise<{ ok: true; handled: string[] } | { ok: false; handled: string[]; error: string }> {
-	const handled: string[] = [];
+): Promise<
+	| { ok: true; handled: HandledReviewRecord[]; pendingReviewReplies: PendingReviewReply[] }
+	| { ok: false; handled: HandledReviewRecord[]; pendingReviewReplies: PendingReviewReply[]; error: string }
+> {
+	const handled: HandledReviewRecord[] = [];
+	let pendingReviewReplies = [...opts.pendingReviewReplies];
 	const failed = (message: string) => {
 		notify(message, "warning");
-		return { ok: false as const, handled, error: message };
+		return { ok: false as const, handled, pendingReviewReplies, error: message };
 	};
 	for (const thread of parsed.threads) {
 		if (signal?.aborted) return failed("aborted by user");
 		if (thread.decision === "ask") continue;
-		if (thread.decision === "fix" && !opts.resolveFix) continue;
 		const source = threadForTriageKey(state, thread.key);
 		if (!source) continue;
+		const pendingForThread = pendingReviewReplies.some((record) => record.id === source.id);
+		const matchingPending = hasPendingReviewReply(pendingReviewReplies, source.id, source.version);
+		if (thread.decision === "fix" && !opts.resolveFix && !matchingPending) continue;
+		if (opts.reviewMutationBlocker) return failed(opts.reviewMutationBlocker);
+		if (opts.legacyPendingReplyIds.includes(source.id)) {
+			return failed(
+				`Review thread ${source.id} has a legacy pending reply with no evidence version; inspect it before posting or resolving.`,
+			);
+		}
 		if (thread.decision === "ignore") {
-			handled.push(source.id);
+			if (source.source === "review-thread" && pendingForThread) {
+				return failed(
+					`Review thread ${source.id} has a pending reply; only a fresh fix or dismiss decision can resolve it.`,
+				);
+			}
+			handled.push({ id: source.id, source: source.source, version: source.version, decision: "ignore" });
 			continue;
 		}
 		const body =
@@ -442,28 +589,59 @@ export async function applyThreadReplies(
 				? `Dismissing: ${thread.action}`
 				: `Addressed in a follow-up commit. ${thread.action}`);
 		if (source.source === "review-thread") {
-			if (source.replyToId !== undefined && !opts.repliedThreadIds.includes(source.id)) {
-				const posted = await replyToReviewComment(exec, cwd, state.number, source.replyToId, body);
-				if (posted.code !== 0) {
-					return failed(`Could not reply to thread ${source.id}: ${posted.stderr.trim()}`);
+			if (!matchingPending) {
+				if (source.replyToId === undefined) {
+					return failed(`Could not reply to thread ${source.id}: the reply anchor is missing.`);
 				}
-				opts.repliedThreadIds.push(source.id);
+				const appended = appendPendingReviewReply(pendingReviewReplies, {
+					id: source.id,
+					version: source.version,
+				});
+				if (!appended.ok) return failed(appended.error);
+				const posted = await replyToReviewComment(exec, cwd, state.number, source.replyToId, body, opts.repo);
+				if (posted.code !== 0) {
+					return failed(`Could not reply to thread ${source.id}: ${commandDiagnostic(posted)}`);
+				}
+				pendingReviewReplies = appended.records;
 			}
 			if (signal?.aborted) return failed("aborted by user");
-			const resolved = await resolveReviewThread(exec, cwd, source.id);
-			if (resolved.code !== 0) {
-				return failed(`Could not resolve thread ${source.id}: ${resolved.stderr.trim()}`);
+			const observed = await getReviewThread(exec, cwd, source.id, signal);
+			if (observed.code !== 0 || !observed.observation) {
+				return failed(`Could not inspect thread ${source.id} before resolution: ${commandDiagnostic(observed)}`);
 			}
-			handled.push(source.id);
+			if (observed.observation.kind === "unresolved") {
+				if (observed.observation.thread.version !== source.version) {
+					return failed(
+						`Review thread ${source.id} changed after its reply; pending progress was kept and the new feedback needs fresh triage.`,
+					);
+				}
+				if (signal?.aborted) return failed("aborted by user");
+				const resolved = await resolveReviewThread(exec, cwd, source.id);
+				if (resolved.code !== 0) {
+					return failed(`Could not resolve thread ${source.id}: ${commandDiagnostic(resolved)}`);
+				}
+			}
+			pendingReviewReplies = removePendingReviewReplies(pendingReviewReplies, source.id);
+			handled.push({
+				id: source.id,
+				source: source.source,
+				version: source.version,
+				decision: thread.decision,
+			});
 		} else {
 			const posted = await replyToIssueComment(exec, cwd, state.number, body);
 			if (posted.code !== 0) {
-				return failed(`Could not reply to discussion ${source.id}: ${posted.stderr.trim()}`);
+				return failed(`Could not reply to discussion ${source.id}: ${commandDiagnostic(posted)}`);
 			}
-			handled.push(source.id);
+			handled.push({
+				id: source.id,
+				source: source.source,
+				version: source.version,
+				decision: thread.decision,
+			});
 		}
 	}
-	return { ok: true, handled };
+	return { ok: true, handled, pendingReviewReplies };
 }
 
 export function maxFixCycles(mode: AutopilotMode): number {
