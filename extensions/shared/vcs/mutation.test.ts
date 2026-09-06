@@ -7,6 +7,14 @@ import { createPrMutation, type MutationCheckout, type MutationTarget } from "./
 
 const SHA = "1".repeat(40);
 const UPDATED_SHA = "2".repeat(40);
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((settle) => {
+		resolve = settle;
+	});
+	return { promise, resolve };
+}
+
 const target: MutationTarget = {
 	prNumber: 42,
 	headRef: "kstack/fix-thing",
@@ -97,6 +105,31 @@ describe("PrMutation.openCheckout", () => {
 				affectedRefs: [target.headRef],
 			},
 		});
+	});
+
+	it("starts no later validation after cancellation during remote-head validation", async () => {
+		const fetched = deferred<{ ok: true; sha: string }>();
+		const started = deferred<void>();
+		const controller = new AbortController();
+		let guardCalls = 0;
+		const backend = fakeBackend({
+			fetchRemoteHead: async () => {
+				started.resolve();
+				return fetched.promise;
+			},
+			rewriteScope: {
+				assertSingleRef: async () => {
+					guardCalls++;
+					return { ok: true, affectedRefs: [target.headRef] };
+				},
+			},
+		});
+		const pending = createPrMutation(backend, { signal: controller.signal }).openCheckout("/repo", target);
+		await started.promise;
+		controller.abort();
+		fetched.resolve({ ok: true, sha: SHA });
+		assert.deepEqual(await pending, { ok: false, error: "aborted by user" });
+		assert.equal(guardCalls, 0);
 	});
 
 	it("returns guarded affected refs and blocks a rejected rewrite scope", async () => {
@@ -260,6 +293,71 @@ describe("PrMutation.updateBaseAndPublish", () => {
 		assert.deepEqual(result, { kind: "published", headSha: UPDATED_SHA });
 		assert.equal(guardCalls, 2);
 		assert.deepEqual(backend.calls, [`publish:${target.headRef}`]);
+	});
+
+	it("stops after recording when cancellation arrives before publication", async () => {
+		const recorded = deferred<{ ok: true }>();
+		const started = deferred<void>();
+		const controller = new AbortController();
+		const backend = fakeBackend({
+			changedPaths: async () => ({ ok: true, paths: ["src/fix.ts"] }),
+			recordPaths: async () => {
+				started.resolve();
+				return recorded.promise;
+			},
+		});
+		const pending = createPrMutation(backend, { signal: controller.signal }).publishFix("/repo", checkout(), {
+			message: "Apply fixes",
+			isForbiddenPath: () => false,
+		});
+		await started.promise;
+		controller.abort();
+		recorded.resolve({ ok: true });
+		assert.deepEqual(await pending, { kind: "cancelled", completedActions: ["recorded fixes locally"] });
+		assert.deepEqual(backend.calls, []);
+	});
+
+	it("stops after a clean base update when cancellation arrives before publication", async () => {
+		const updated = deferred<{ kind: "clean"; headSha: string }>();
+		const started = deferred<void>();
+		const controller = new AbortController();
+		const backend = fakeBackend({
+			updateBase: async () => {
+				started.resolve();
+				return updated.promise;
+			},
+		});
+		const pending = createPrMutation(backend, { signal: controller.signal }).updateBaseAndPublish("/repo", {
+			...target,
+			baseRef: "main",
+		});
+		await started.promise;
+		controller.abort();
+		updated.resolve({ kind: "clean", headSha: UPDATED_SHA });
+		assert.deepEqual(await pending, { kind: "cancelled", completedActions: ["updated base locally"] });
+		assert.deepEqual(backend.calls, []);
+	});
+
+	it("awaits publication already in flight and retains its result", async () => {
+		const published = deferred<{ ok: true }>();
+		const publicationStarted = deferred<void>();
+		const controller = new AbortController();
+		const backend = fakeBackend({
+			changedPaths: async () => ({ ok: true, paths: ["src/fix.ts"] }),
+			publishRecordedChanges: async () => {
+				publicationStarted.resolve();
+				return published.promise;
+			},
+			headSha: async () => ({ ok: true, sha: UPDATED_SHA }),
+		});
+		const pending = createPrMutation(backend, { signal: controller.signal }).publishFix("/repo", checkout(), {
+			message: "Apply fixes",
+			isForbiddenPath: () => false,
+		});
+		await publicationStarted.promise;
+		controller.abort();
+		published.resolve({ ok: true });
+		assert.deepEqual(await pending, { kind: "pushed", headSha: UPDATED_SHA });
 	});
 
 	it("preserves a human-required conflict", async () => {

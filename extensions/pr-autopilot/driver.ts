@@ -117,10 +117,34 @@ export async function runAutopilot(
 	const { config, exec, backend, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
 	const { setPhase, notify, confirm } = handlers;
 	const policy = vcsPolicy(backend.id);
-	const mutation = createPrMutation(backend);
+	const mutation = createPrMutation(backend, { signal });
+	let state: PRState | null = null;
+	let cycle = 0;
 	let usage = emptyUsage();
 	const blockedReasons: string[] = [];
 	const blockedCodes: NonNullable<AutopilotResult["blockedCodes"]> = [];
+
+	// Every mode finishes here, after any in-flight operation has settled.
+	const finish = (
+		status: AutopilotResult["status"],
+		reasons: string[] = blockedReasons,
+		completedActions: string[] = [],
+	): AutopilotResult => {
+		const cancelled = signal.aborted || status === "aborted";
+		const unpublished = completedActions.map((action) => `${action}; changes remain unpublished by this run`);
+		for (const message of unpublished) notify(message, "warning");
+		setPhase("idle", cycle);
+		return {
+			status: cancelled ? "aborted" : status,
+			prState: state ?? undefined,
+			mergeReady:
+				!cancelled && (status === "merge-ready" || (status === "blocked" && state !== null && isMergeReady(state))),
+			cyclesCompleted: cycle,
+			blockedReasons: [...new Set([...(cancelled ? ["aborted by user"] : []), ...reasons, ...unpublished])],
+			blockedCodes,
+			usage,
+		};
+	};
 
 	const accumulateUsage = (u: Partial<UsageSummary>) => {
 		usage = {
@@ -133,25 +157,22 @@ export async function runAutopilot(
 		};
 	};
 
+	if (signal.aborted) return finish("aborted");
 	setPhase("discovering");
 	if (mode !== "check") {
 		const preflight = await backend.preflight(cwd);
+		if (signal.aborted) return finish("aborted");
 		if (!preflight.ok) {
 			notify(preflight.error, "error");
-			return {
-				status: "blocked",
-				mergeReady: false,
-				cyclesCompleted: 0,
-				blockedReasons: [preflight.error],
-				usage,
-			};
+			return finish("blocked", [preflight.error]);
 		}
 	}
 	const target = await resolveTargetPR(exec, cwd, params.explicitPR);
+	if (signal.aborted) return finish("aborted");
 	if (target.error || !target.prNumber) {
 		const msg = target.error ?? "No PR to drive.";
 		notify(msg, "error");
-		return { status: "blocked", mergeReady: false, cyclesCompleted: 0, blockedReasons: [msg], usage };
+		return finish("blocked", [msg]);
 	}
 	const prNumber = target.prNumber;
 	const repoKey = repoPersistKey(cwd);
@@ -163,7 +184,7 @@ export async function runAutopilot(
 	if (mode === "check") {
 		setPhase("checking");
 		const persisted = await ops.loadPersistedState(repoKey, prNumber);
-		const state = await fetchPRState(
+		const fetched = await fetchPRState(
 			exec,
 			cwd,
 			prNumber,
@@ -174,11 +195,13 @@ export async function runAutopilot(
 			},
 			await resolveRepoOnce(),
 		);
-		setPhase("idle");
-		if (isString(state)) {
-			notify(state, "error");
-			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [state], usage };
+
+		if (isString(fetched)) {
+			notify(fetched, "error");
+			return finish("failed", [fetched]);
 		}
+		state = fetched;
+		if (signal.aborted) return finish("aborted");
 		const verified = await fetchPRState(
 			exec,
 			cwd,
@@ -191,41 +214,29 @@ export async function runAutopilot(
 			await resolveRepoOnce(),
 		);
 		if (isString(verified)) {
-			return { status: "failed", mergeReady: false, cyclesCompleted: 0, blockedReasons: [verified], usage };
+			return finish("failed", [verified]);
 		}
-		setPhase("idle");
+		state = verified;
+		if (signal.aborted) return finish("aborted");
+
 		const ready = isMergeReady(verified);
 		if (ready) {
 			notify(`PR #${prNumber} looks merge-ready after a fresh status read.`, "info");
 		} else {
 			notify(`PR #${prNumber} is not ready: ${describeBlockers(verified)}.`, "warning");
 		}
-		return {
-			status: ready ? "merge-ready" : "incomplete",
-			prState: verified,
-			mergeReady: ready,
-			cyclesCompleted: 0,
-			blockedReasons: ready ? [] : [describeBlockers(verified)],
-			usage,
-		};
+		return finish(ready ? "merge-ready" : "incomplete", ready ? [] : [describeBlockers(verified)]);
 	}
 
 	if (mode === "cleanup") {
 		setPhase("cleaning");
-		const ok = await runCleanup(backend, cwd, confirm, notify);
-		setPhase("idle");
-		return {
-			status: ok ? "cleaned" : "blocked",
-			mergeReady: false,
-			cyclesCompleted: 0,
-			blockedReasons: ok ? [] : ["cleanup not confirmed"],
-			usage,
-		};
+		const ok = await runCleanup(backend, cwd, confirm, notify, signal);
+
+		if (signal.aborted) return finish("aborted");
+		return finish(ok ? "cleaned" : "blocked", ok ? [] : ["cleanup not confirmed"]);
 	}
 
-	let state: PRState | null = null;
 	let verifiedHeadSha: string | null = null;
-	let cycle = 0;
 	const maxCycles = maxFixCycles(mode);
 	let persisted = await ops.loadPersistedState(repoKey, prNumber);
 
@@ -244,36 +255,52 @@ export async function runAutopilot(
 		);
 	};
 
-	const declareReady = async (snapshot: PRState): Promise<AutopilotResult | undefined> => {
+	const runChild = async (
+		role: "triager" | "fixer",
+		task: string,
+	): Promise<Awaited<ReturnType<DriverOps["runChildRole"]>>> => {
+		if (signal.aborted) return { ok: false, error: "aborted by user", usage: emptyUsage() };
+		const taskFile = join(promptDir, `${role}-${cycle + 1}.md`);
+		await writeFile(taskFile, task, { mode: 0o600 });
+		if (signal.aborted) return { ok: false, error: "aborted by user", usage: emptyUsage() };
+		const result = await ops.runChildRole(
+			role,
+			{
+				model: selected.model,
+				thinking: selected.thinking,
+				promptFile: role === "triager" ? triagerPromptFile : fixerPromptFile,
+				taskFile,
+				timeoutMinutes: config.timeoutMinutes,
+				maxRuntimeMinutes: config.maxRuntimeMinutes,
+			},
+			{ cwd, signal },
+		);
+		accumulateUsage(result.usage);
+		return result;
+	};
+
+	const declareReady = async (
+		snapshot: PRState,
+	): Promise<Pick<AutopilotResult, "status" | "blockedReasons"> | undefined> => {
+		state = snapshot;
+		if (signal.aborted) return { status: "aborted", blockedReasons };
 		if (!isCodeReady(snapshot)) return undefined;
 		if (snapshot.isDraft || snapshot.mergeStateStatus === "DRAFT") {
 			const mark = await confirm(
 				`PR #${prNumber} is code-ready but still a draft. Mark it ready for review?`,
 				"The autopilot will not merge. Marking ready is a PR state change and needs your say.",
 			);
+			if (signal.aborted) return { status: "aborted", blockedReasons };
 			if (!mark) {
 				blockedReasons.push("code-ready but still a draft (mark-ready not confirmed)");
-				return {
-					status: "incomplete",
-					prState: snapshot,
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: [...blockedReasons],
-					usage,
-				};
+				return { status: "incomplete", blockedReasons };
 			}
 			const readyResult = await markPrReady(exec, cwd, prNumber);
 			if (readyResult.code !== 0) {
 				blockedReasons.push(`could not mark ready: ${readyResult.stderr.trim()}`);
-				return {
-					status: "blocked",
-					prState: snapshot,
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: [...blockedReasons],
-					usage,
-				};
+				return { status: "blocked", blockedReasons };
 			}
+			if (signal.aborted) return { status: "aborted", blockedReasons };
 		}
 		setPhase("settling", cycle);
 		const settled = await fetchPRState(
@@ -289,51 +316,37 @@ export async function runAutopilot(
 		);
 		if (isString(settled)) {
 			notify(settled, "error");
-			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [settled], usage };
+			return { status: "failed", blockedReasons: [settled] };
 		}
+		state = settled;
+		if (signal.aborted) return { status: "aborted", blockedReasons };
 		if (settled.headSha !== snapshot.headSha) {
 			notify(
 				`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} during verification; rechecking.`,
 				"warning",
 			);
-			state = settled;
 			return undefined;
 		}
 		if (!isMergeReady(settled)) {
 			notify(`PR #${prNumber} looked ready, then the settle re-read showed: ${describeBlockers(settled)}.`, "warning");
-			state = settled;
 			return undefined;
 		}
 		verifiedHeadSha = settled.headSha;
-		setPhase("idle", cycle);
+
 		notify(`PR #${prNumber} looks merge-ready after a fresh status read. Not merging.`, "info");
-		return {
-			status: "merge-ready",
-			prState: settled,
-			mergeReady: true,
-			cyclesCompleted: cycle,
-			blockedReasons: [],
-			usage,
-		};
+		return { status: "merge-ready", blockedReasons: [] };
 	};
 
 	while (cycle < maxCycles) {
-		if (signal.aborted) {
-			return {
-				status: "aborted",
-				mergeReady: false,
-				cyclesCompleted: cycle,
-				blockedReasons: ["aborted by user"],
-				usage,
-			};
-		}
+		if (signal.aborted) return finish("aborted");
 
 		const fetched = await refresh();
 		if (isString(fetched)) {
 			notify(fetched, "error");
-			return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [fetched], usage };
+			return finish("failed", [fetched]);
 		}
 		state = fetched;
+		if (signal.aborted) return finish("aborted");
 		notify(
 			`PR #${prNumber} — ${describeBlockers(state) === "unknown blocker" && isCodeReady(state) ? "code-ready" : describeBlockers(state)} (sha ${state.headSha.slice(0, 8)})`,
 			"info",
@@ -341,7 +354,7 @@ export async function runAutopilot(
 
 		const hasUntriagedDiscussion = state.threads.some((thread) => thread.source === "issue-comment");
 		const ready = hasUntriagedDiscussion ? undefined : await declareReady(state);
-		if (ready) return ready;
+		if (ready) return finish(ready.status, ready.blockedReasons);
 
 		if (
 			state.mergeable === "conflicting" ||
@@ -361,16 +374,11 @@ export async function runAutopilot(
 				baseRef: state.baseRef,
 			});
 			switch (updated.kind) {
+				case "cancelled":
+					return finish("aborted", blockedReasons, updated.completedActions);
 				case "precondition-failed":
 					notify(updated.error, "error");
-					return {
-						status: "blocked",
-						prState: state,
-						mergeReady: false,
-						cyclesCompleted: cycle,
-						blockedReasons: [updated.error],
-						usage,
-					};
+					return finish("blocked", [updated.error]);
 				case "already-current":
 					notify(`${remoteBase} is already in the current workstream; refreshing GitHub state.`, "info");
 					cycle++;
@@ -405,24 +413,17 @@ export async function runAutopilot(
 				"info",
 			);
 			const watched = await watchChecks(exec, cwd, prNumber, LIMITS.watchTimeoutMinutes * 60_000, signal);
-			if (signal.aborted) {
-				return {
-					status: "aborted",
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: ["aborted by user"],
-					usage,
-				};
-			}
+			if (signal.aborted) return finish("aborted");
 			if (watched.code !== 0) {
 				notify(`CI watch ended: ${watched.stderr.trim() || "a check failed or the watch timed out"}.`, "warning");
 			}
 			const afterWatch = await refresh();
 			if (isString(afterWatch)) {
 				notify(afterWatch, "error");
-				return { status: "failed", mergeReady: false, cyclesCompleted: cycle, blockedReasons: [afterWatch], usage };
+				return finish("failed", [afterWatch]);
 			}
 			state = afterWatch;
+			if (signal.aborted) return finish("aborted");
 			if (hasPendingChecks(state) && !hasFailingChecks(state) && !state.hasUnresolvedThreads) {
 				blockedReasons.push("CI still pending after watch");
 				blockedCodes.push("ci-pending-after-watch");
@@ -432,27 +433,13 @@ export async function runAutopilot(
 		}
 
 		setPhase("triaging", cycle);
-		const taskFile = join(promptDir, `triager-${cycle + 1}.md`);
-		await writeFile(taskFile, buildTriagerTask(state, backend.id), { mode: 0o600 });
-		const triagerResult = await ops.runChildRole(
-			"triager",
-			{
-				model: selected.model,
-				thinking: selected.thinking,
-				promptFile: triagerPromptFile,
-				taskFile,
-				timeoutMinutes: config.timeoutMinutes,
-				maxRuntimeMinutes: config.maxRuntimeMinutes,
-			},
-			{ cwd, signal },
-		);
+		const triagerResult = await runChild("triager", buildTriagerTask(state, backend.id));
+		if (signal.aborted) return finish("aborted");
 		if (!triagerResult.ok) {
 			notify(`Triager failed: ${triagerResult.error}`, "error");
-			accumulateUsage(triagerResult.usage);
-			blockedReasons.push("triager failed");
+			blockedReasons.push(triagerResult.error);
 			break;
 		}
-		accumulateUsage(triagerResult.usage);
 		const parsedRaw = parseTriage(triagerResult.output);
 		if ("error" in parsedRaw) {
 			notify(`Triage parse failed: ${parsedRaw.error}`, "error");
@@ -485,14 +472,19 @@ export async function runAutopilot(
 		if (newFlakes.length > 0 && state) {
 			let reran = false;
 			for (const check of newFlakes) {
+				if (signal.aborted) return finish("aborted");
 				if (!check.runId) continue;
 				const rerun = await rerunFailedRun(exec, cwd, check.runId);
 				persisted = { ...persisted, flakeRetried: [...persisted.flakeRetried, flakeKey(check.name)] };
-				if (rerun.code === 0) {
+				if (rerun.code !== 0) {
+					notify(`Could not rerun ${check.name}: ${rerun.stderr.trim()}`, "warning");
+				} else {
 					notify(`Cause: flake on ${check.name}. Reran failed jobs once on SHA ${state.headSha.slice(0, 8)}.`, "info");
 					reran = true;
-				} else {
-					notify(`Could not rerun ${check.name}: ${rerun.stderr.trim()}`, "warning");
+				}
+				if (signal.aborted) {
+					await ops.savePersistedState(persisted);
+					return finish("aborted");
 				}
 			}
 			await ops.savePersistedState(persisted);
@@ -546,40 +538,18 @@ export async function runAutopilot(
 				headRef: state.headRef,
 				headSha: state.headSha,
 			});
+			if (signal.aborted) return finish("aborted");
 			if (!opened.ok) {
 				notify(opened.error, "error");
-				return {
-					status: "blocked",
-					prState: state,
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: [opened.error],
-					usage,
-				};
+				return finish("blocked", [opened.error]);
 			}
-			const fixerTaskFile = join(promptDir, `fixer-${cycle + 1}.md`);
-			await writeFile(fixerTaskFile, buildFixerTask(state, JSON.stringify(parsed), fixMode, backend.id), {
-				mode: 0o600,
-			});
-			const fixerResult = await ops.runChildRole(
-				"fixer",
-				{
-					model: selected.model,
-					thinking: selected.thinking,
-					promptFile: fixerPromptFile,
-					taskFile: fixerTaskFile,
-					timeoutMinutes: config.timeoutMinutes,
-					maxRuntimeMinutes: config.maxRuntimeMinutes,
-				},
-				{ cwd, signal },
-			);
+			const fixerResult = await runChild("fixer", buildFixerTask(state, JSON.stringify(parsed), fixMode, backend.id));
+			if (signal.aborted) return finish("aborted");
 			if (!fixerResult.ok) {
 				notify(`Fixer failed: ${fixerResult.error}`, "error");
-				accumulateUsage(fixerResult.usage);
-				blockedReasons.push("fixer failed");
+				blockedReasons.push(fixerResult.error);
 				break;
 			}
-			accumulateUsage(fixerResult.usage);
 			fixerOutput = fixerResult.output;
 
 			setPhase("pushing", cycle);
@@ -589,15 +559,10 @@ export async function runAutopilot(
 					`Integrating the remote PR head, recording only touched paths with ${backend.id}, then publishing ${opened.checkout.affectedRefs.join(", ")}.\n` +
 					policy.fixPublicationDisclosure,
 			);
+			if (signal.aborted) return finish("aborted");
 			if (!confirmed) {
 				notify("Push not confirmed. Stopping.", "info");
-				return {
-					status: "incomplete",
-					mergeReady: false,
-					cyclesCompleted: cycle,
-					blockedReasons: ["push not confirmed"],
-					usage,
-				};
+				return finish("incomplete", ["push not confirmed"]);
 			}
 			const pushResult = /\bVERIFY_FAIL\b/.test(fixerOutput)
 				? {
@@ -612,6 +577,8 @@ export async function runAutopilot(
 				case "unchanged":
 					notify("Fixer found nothing to commit. Skipping push.", "warning");
 					break;
+				case "cancelled":
+					return finish("aborted", blockedReasons, pushResult.completedActions);
 				case "failed":
 					notify(`Push failed: ${pushResult.error}`, "error");
 					blockedReasons.push(`push failed: ${pushResult.error}`);
@@ -638,6 +605,7 @@ export async function runAutopilot(
 			parsed,
 			{ resolveFix: pushedAFix, repliedThreadIds },
 			notify,
+			signal,
 		);
 		persisted = {
 			...persisted,
@@ -645,37 +613,25 @@ export async function runAutopilot(
 			repliedThreadIds: repliedThreadIds.filter((id) => !replyResult.handled.includes(id)),
 		};
 		await ops.savePersistedState(persisted);
-		if (!replyResult.ok) {
-			blockedReasons.push(replyResult.error);
-			break;
-		}
+		if (!replyResult.ok) blockedReasons.push(replyResult.error);
+		if (signal.aborted) return finish("aborted");
+		if (!replyResult.ok) break;
 		if (replyResult.handled.length > 0) {
 			notify(`Handled ${replyResult.handled.length} review item(s).`, "info");
 		}
 
 		if (mode === "threads") {
+			cycle++;
 			const recheck = await refresh();
-			setPhase("idle", cycle + 1);
 			if (isString(recheck)) {
-				return {
-					status: "incomplete",
-					mergeReady: false,
-					cyclesCompleted: cycle + 1,
-					blockedReasons: [recheck],
-					usage,
-				};
+				return finish("incomplete", [recheck]);
 			}
+			state = recheck;
+			if (signal.aborted) return finish("aborted");
 			const done = await declareReady(recheck);
-			if (done) return done;
+			if (done) return finish(done.status, done.blockedReasons);
 			notify(`PR #${prNumber} still not ready after threads: ${describeBlockers(recheck)}.`, "warning");
-			return {
-				status: "incomplete",
-				prState: recheck,
-				mergeReady: false,
-				cyclesCompleted: cycle + 1,
-				blockedReasons: [describeBlockers(recheck)],
-				usage,
-			};
+			return finish("incomplete", [describeBlockers(recheck)]);
 		}
 
 		if (askThreads.length > 0 && fixThreads.length === 0 && codeChecks.length === 0) {
@@ -685,14 +641,6 @@ export async function runAutopilot(
 		cycle++;
 	}
 
-	setPhase("idle", cycle);
-	if (blockedReasons.length === 0) blockedReasons.push("max cycles reached without merge-ready");
-	return {
-		status: "blocked",
-		mergeReady: state ? isMergeReady(state) : false,
-		cyclesCompleted: cycle,
-		blockedReasons,
-		blockedCodes,
-		usage,
-	};
+	if (!signal.aborted && blockedReasons.length === 0) blockedReasons.push("max cycles reached without merge-ready");
+	return finish("blocked");
 }

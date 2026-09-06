@@ -59,12 +59,12 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 
 	pi.registerShortcut("ctrl+shift+b", {
-		description: "Abort the running pr-autopilot child agent",
+		description: "Stop pr-autopilot",
 		handler: async (ctx) => {
 			if (lifecycle.abortRun()) {
-				ctx.ui.setStatus("pr-autopilot", "pr-autopilot: aborting child agent…");
+				ctx.ui.setStatus("pr-autopilot", "pr-autopilot: stopping…");
 			} else {
-				ctx.ui.notify("No pr-autopilot child agent is running.", "info");
+				ctx.ui.notify("No pr-autopilot run is active.", "info");
 			}
 		},
 	});
@@ -257,7 +257,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 								notify(`pr-autopilot: auto-approved (pre-authorized run): ${label}`, "info");
 								return true;
 							}
-						: (label, body) => ctx.ui.confirm(label, body),
+						: (label, body) => ctx.ui.confirm(label, body, { signal: runSignal }),
 				},
 				runSignal,
 			);
