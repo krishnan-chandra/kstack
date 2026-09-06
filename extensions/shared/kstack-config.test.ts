@@ -10,6 +10,7 @@ import {
 	loadKstackSection,
 	loadValidatedSection,
 	MODEL_ID_RE,
+	validatePlanAdversaryConfig,
 } from "./kstack-config.ts";
 import { type BoundaryValue, isString } from "./validation.ts";
 
@@ -66,5 +67,51 @@ describe("shared kstack config", () => {
 		assert.equal(isThinkingLevel(""), false);
 		assert.equal(isThinkingLevel(42), false);
 		assert.equal(MODEL_ID_RE.test("openrouter/vendor/model"), true);
+	});
+});
+
+function planAdversaryError(value: BoundaryValue): string {
+	const result = validatePlanAdversaryConfig(value);
+	assert.equal(result.ok, false);
+	if (result.ok) throw new Error("expected plan-adversary validation to fail");
+	return result.error;
+}
+
+describe("validatePlanAdversaryConfig", () => {
+	it("accepts an object model and applies defaults", () => {
+		assert.deepEqual(
+			validatePlanAdversaryConfig({ adversary: { model: "openai/gpt-5.6-astra", thinking: "medium" } }),
+			{
+				ok: true,
+				config: {
+					adversary: { model: "openai/gpt-5.6-astra", thinking: "medium" },
+					maxRounds: 3,
+					timeoutMinutes: 15,
+				},
+			},
+		);
+	});
+
+	it("accepts an alias and explicit bounds", () => {
+		assert.deepEqual(validatePlanAdversaryConfig({ adversary: "fable", maxRounds: 5, timeoutMinutes: 60 }), {
+			ok: true,
+			config: { adversary: "fable", maxRounds: 5, timeoutMinutes: 60 },
+		});
+	});
+
+	it("rejects malformed models and aliases", () => {
+		assert.match(planAdversaryError({ adversary: {} }), /model/);
+		assert.match(planAdversaryError({ adversary: "not an alias" }), /alias/);
+		assert.match(planAdversaryError({ adversary: { model: "astra", thinking: "medium" } }), /provider\/model/);
+		assert.match(planAdversaryError({ adversary: { model: "openai/astra", thinking: "enormous" } }), /thinking/);
+	});
+
+	it("rejects round and timeout values outside their integer bounds", () => {
+		for (const maxRounds of [0, 6, 1.5]) {
+			assert.match(planAdversaryError({ adversary: "fable", maxRounds }), /maxRounds/);
+		}
+		for (const timeoutMinutes of [0, 61, 1.5]) {
+			assert.match(planAdversaryError({ adversary: "fable", timeoutMinutes }), /timeoutMinutes/);
+		}
 	});
 });

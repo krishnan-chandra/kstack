@@ -53,6 +53,14 @@
     },
     "timeoutMinutes": 30
   },
+  "plan-adversary": {
+    "adversary": {
+      "model": "anthropic/claude-fable-5-1",
+      "thinking": "medium"
+    },
+    "maxRounds": 3,
+    "timeoutMinutes": 15
+  },
   "kstack-router": {
     "classifier": {
       "model": "openai/gpt-5.6-luna",
