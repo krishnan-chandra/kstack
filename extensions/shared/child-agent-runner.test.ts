@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import {
 	type ChildEvent,
 	childIsolationArgs,
 	runChildAgent,
 	type SpawnedProcess,
 	type SubagentSessionStore,
+	truncateHeadUtf8,
 } from "./child-agent-runner.ts";
-import type { JsonObject } from "./validation.ts";
+import { isObject, type JsonObject } from "./validation.ts";
 
 const sessionStore: SubagentSessionStore = {
 	prepare: (_identity, cwd) => ({
@@ -26,19 +30,25 @@ const sessionStore: SubagentSessionStore = {
 	finish: (prepared) => ({ kind: "persisted", id: prepared.id, name: prepared.name, file: "/sessions/test.jsonl" }),
 };
 
+class FakeStdin extends EventEmitter {
+	writes: string[] = [];
+	ended = false;
+	writeError?: Error;
+	endError?: Error;
+	write(data: string): boolean {
+		if (this.writeError) throw this.writeError;
+		this.writes.push(data);
+		return true;
+	}
+	end(): void {
+		if (this.endError) throw this.endError;
+		this.ended = true;
+	}
+}
+
 class FakeProcess implements SpawnedProcess {
 	private headerSent = false;
-	stdin = {
-		writes: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ [] as string[],
-		ended: false,
-		write: (data: string) => {
-			this.stdin.writes.push(data);
-			return true;
-		},
-		end: () => {
-			this.stdin.ended = true;
-		},
-	};
+	stdin = new FakeStdin();
 	stdout =
 		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ new EventEmitter() as SpawnedProcess["stdout"] &
 			EventEmitter;
@@ -169,6 +179,51 @@ describe("childIsolationArgs", () => {
 });
 
 describe("runChildAgent", () => {
+	it("returns a failed result when a real child closes stdin before reading a large prompt", async () => {
+		const runnerUrl = pathToFileURL(resolve("extensions/shared/child-agent-runner.ts")).href;
+		const script = `
+			import { runChildAgent } from ${JSON.stringify(runnerUrl)};
+			const id = "00000000-0000-4000-8000-000000000001";
+			const sessionStore = {
+				prepare: (_identity, cwd) => ({ ok: true, prepared: { id, name: "test/stdin", root: "/sessions", expectedCwd: cwd, cliArgs: [], leaseFile: "/lease" } }),
+				markSpawned: () => ({ ok: true }),
+				finish: () => ({ kind: "missing", reason: "not-reported" }),
+			};
+			const result = await runChildAgent({
+				args: [],
+				cwd: process.cwd(),
+				session: { owner: "test", label: "stdin" },
+				stdin: "private-prompt-marker" + "x".repeat(512 * 1024),
+				deps: {
+					piInvocation: () => ({ command: process.execPath, args: ["--input-type=module", "-e", "import fs from 'node:fs'; fs.closeSync(0); process.exit(0);"] }),
+					sessionStore,
+					killGraceMs: 10,
+				},
+			});
+			process.stdout.write(JSON.stringify(result));
+		`;
+		const outer = spawn(process.execPath, ["--input-type=module", "-e", script], {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		let stdout = "";
+		let stderr = "";
+		outer.stdout.on("data", (chunk: Buffer) => {
+			stdout = truncateHeadUtf8(stdout + chunk.toString("utf8"), 64 * 1024, "outer stdout");
+		});
+		outer.stderr.on("data", (chunk: Buffer) => {
+			stderr = truncateHeadUtf8(stderr + chunk.toString("utf8"), 64 * 1024, "outer stderr");
+		});
+		const exitCode = await new Promise<number | null>((resolveClose) => outer.on("close", resolveClose));
+
+		assert.equal(exitCode, 0, stderr);
+		const result: unknown = JSON.parse(stdout);
+		assert.ok(isObject(result));
+		assert.ok("status" in result);
+		assert.equal(result.status, "failed");
+		assert.doesNotMatch(stdout + stderr, /private-prompt-marker/);
+	});
+
 	it("completes with final output and accumulated usage", async () => {
 		const child = new FakeProcess();
 		const promise = run(child);
@@ -267,6 +322,111 @@ describe("runChildAgent", () => {
 		child.close(0);
 		assert.equal((await promise).status, "completed");
 	});
+	it("fails prompt delivery on an asynchronous stdin error and finalizes once after close", async () => {
+		const child = new FakeProcess();
+		let finishCalls = 0;
+		const countingStore: SubagentSessionStore = {
+			...sessionStore,
+			finish: (prepared, outcome) => {
+				finishCalls++;
+				return sessionStore.finish(prepared, outcome);
+			},
+		};
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "child" },
+			stdin: "private-prompt-marker",
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), sessionStore: countingStore },
+		});
+		const error = Object.assign(new Error("broken pipe"), { code: "EPIPE" });
+		child.stdin.emit("error", error);
+		assert.deepEqual(child.kills, ["SIGTERM"]);
+		assert.equal(finishCalls, 0);
+		child.close(0);
+		const result = await promise;
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") {
+			assert.match(result.error, /EPIPE/);
+			assert.doesNotMatch(result.error, /private-prompt-marker/);
+		}
+		assert.equal(finishCalls, 1);
+	});
+
+	it("routes synchronous stdin write and end exceptions through close cleanup", async () => {
+		for (const operation of ["write", "end"] as const) {
+			const child = new FakeProcess();
+			const error = Object.assign(new Error(`${operation} failed`), { code: `E${operation.toUpperCase()}` });
+			if (operation === "write") child.stdin.writeError = error;
+			else child.stdin.endError = error;
+			const promise = runChildAgent({
+				args: [],
+				cwd: "/repo",
+				session: { owner: "test", label: operation },
+				stdin: "prompt",
+				deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), sessionStore },
+			});
+			child.close(0);
+			const result = await promise;
+			assert.equal(result.status, "failed");
+			if (result.status === "failed") assert.match(result.error, new RegExp(`E${operation.toUpperCase()}`));
+		}
+	});
+
+	it("keeps abort precedence over a secondary stdin error", async () => {
+		const child = new FakeProcess();
+		const controller = new AbortController();
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "abort-stdin" },
+			stdin: "prompt",
+			signal: controller.signal,
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), sessionStore },
+		});
+		controller.abort();
+		child.stdin.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
+		child.close(null);
+		assert.equal((await promise).status, "aborted");
+	});
+
+	it("keeps timeout precedence over a secondary stdin error", async () => {
+		const child = new FakeProcess();
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "timeout-stdin" },
+			stdin: "prompt",
+			deps: {
+				spawnImpl: () => child,
+				piInvocation: (args) => ({ command: "pi", args }),
+				idleTimeoutMs: 5,
+				sessionStore,
+			},
+		});
+		await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+		child.stdin.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
+		child.close(null);
+		const result = await promise;
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") assert.match(result.error, /Timed out/);
+	});
+
+	it("keeps the stdin error listener after child close", async () => {
+		const child = new FakeProcess();
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "late-stdin" },
+			stdin: "prompt",
+			deps: { spawnImpl: () => child, piInvocation: (args) => ({ command: "pi", args }), sessionStore },
+		});
+		child.output(event("done"));
+		child.close(0);
+		assert.equal((await promise).status, "completed");
+		assert.doesNotThrow(() => child.stdin.emit("error", Object.assign(new Error("late"), { code: "EPIPE" })));
+	});
+
 	it("raises output and stderr caps via KSTACK_CHILD_DEBUG_CAP_BYTES", async () => {
 		const previous = process.env.KSTACK_CHILD_DEBUG_CAP_BYTES;
 		try {

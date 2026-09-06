@@ -303,6 +303,7 @@ describe("plan-implement child runner", () => {
 		const process = new FakeProcess();
 		const promise = runAgent(options(process));
 		process.error(new Error("child_process error"));
+		process.close(null);
 		const result = await promise;
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /child_process error/);
