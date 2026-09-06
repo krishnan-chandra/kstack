@@ -70,6 +70,28 @@ test("cancellation during fixer task write launches no fixer", async (t) => {
 	assert.deepEqual(harness.roles, ["triager"]);
 });
 
+test("cancellation during a mergeability wait stops before the next observation", async (t) => {
+	const harness = await createHarness({ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" });
+	t.after(() => harness.cleanup());
+	const waitStarted = deferred<void>();
+	const releaseWait = deferred<void>();
+	harness.ops.sleep = async (delayMs, signal) => {
+		assert.equal(delayMs, 1000);
+		waitStarted.resolve();
+		await releaseWait.promise;
+		signal.throwIfAborted();
+	};
+	const controller = new AbortController();
+	const pending = driveProbe(harness, controller);
+	await waitStarted.promise;
+	controller.abort();
+	releaseWait.resolve();
+	const result = await pending;
+	assert.equal(result.status, "aborted");
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh pr view")).length, 2);
+	assert.deepEqual(harness.roles, []);
+});
+
 test("aborted final threads refresh returns aborted", async (t) => {
 	const harness = await createHarness({
 		issueComment: { id: 9, body: "Thanks for the update" },

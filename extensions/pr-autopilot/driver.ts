@@ -18,7 +18,7 @@ import { isString } from "../shared/validation.ts";
  * bookmarks are not checked out.
  *
  * Modes:
- *   check    — one status pass, report, stop.
+ *   check    — two fresh status reads, report, stop.
  *   threads  — address review threads only, then push.
  *   drive    — loop until merge-ready or a hard blocker (3 fix cycles).
  *   watch    — same as drive with more cycles, watching CI between ticks.
@@ -27,6 +27,7 @@ import { isString } from "../shared/validation.ts";
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { resolveRepoName } from "../shared/github.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { createPrMutation } from "../shared/vcs/mutation.ts";
@@ -55,7 +56,9 @@ import {
 	hasFailingChecks,
 	hasPendingChecks,
 	isCodeReady,
+	isMergeabilityPending,
 	isMergeReady,
+	isMergeReadyIgnoringHeadVerification,
 	pickModel,
 	resolveTargetPR,
 } from "./pr-state.ts";
@@ -89,9 +92,17 @@ export interface DriverOps {
 	runChildRole: typeof runChildRole;
 	loadPersistedState: typeof loadPersistedState;
 	savePersistedState: typeof savePersistedState;
+	sleep: (delayMs: number, signal: AbortSignal) => Promise<void>;
 }
 
-const defaultOps: DriverOps = { runChildRole, loadPersistedState, savePersistedState };
+const MERGEABILITY_POLL_LIMIT = 5;
+const MERGEABILITY_POLL_DELAY_MS = 1000;
+const defaultOps: DriverOps = {
+	runChildRole,
+	loadPersistedState,
+	savePersistedState,
+	sleep: (delayMs, signal) => sleep(delayMs, undefined, { signal }),
+};
 
 export async function runAutopilot(
 	mode: AutopilotMode,
@@ -180,6 +191,8 @@ export async function runAutopilot(
 	let repoName: Promise<string | undefined> | undefined;
 	const resolveRepoOnce = () => (repoName ??= resolveRepoName(exec, cwd));
 	const selected = params.selectedModel ?? pickModel(config.models);
+	const terminalPrReason = (snapshot: PRState): string | undefined =>
+		snapshot.state === "open" ? undefined : describeBlockers(snapshot);
 	notify(`Driving PR #${prNumber} in ${mode} mode. Model: ${selected.label}`, "info");
 
 	if (mode === "check") {
@@ -201,6 +214,7 @@ export async function runAutopilot(
 			return finish("failed", [fetched]);
 		}
 		state = fetched;
+		const firstTerminalReason = terminalPrReason(fetched);
 		const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, fetched.threads);
 		if (!reviewMutationBlocker && reconciled.length !== persisted.legacyPendingReplyIds.length) {
 			persisted = { ...persisted, legacyPendingReplyIds: reconciled };
@@ -214,6 +228,11 @@ export async function runAutopilot(
 		}
 		state = verified;
 		if (signal.aborted) return finish("aborted");
+		const terminalReason = firstTerminalReason ?? terminalPrReason(verified);
+		if (terminalReason) {
+			notify(`PR #${prNumber} is not ready: ${terminalReason}.`, "warning");
+			return finish("incomplete", [terminalReason]);
+		}
 
 		const ready = isMergeReady(verified);
 		if (ready) {
@@ -233,6 +252,7 @@ export async function runAutopilot(
 	}
 
 	let verifiedHeadSha: string | null = null;
+	let mergeabilityPolls = 0;
 	const maxCycles = maxFixCycles(mode);
 	const loaded = await ops.loadPersistedState(repoKey, prNumber);
 	let persisted = loaded.state;
@@ -293,6 +313,8 @@ export async function runAutopilot(
 	): Promise<Pick<AutopilotResult, "status" | "blockedReasons"> | undefined> => {
 		state = snapshot;
 		if (signal.aborted) return { status: "aborted", blockedReasons };
+		const terminalReason = terminalPrReason(snapshot);
+		if (terminalReason) return { status: "incomplete", blockedReasons: [terminalReason] };
 		if (!isCodeReady(snapshot)) return undefined;
 		if (snapshot.isDraft || snapshot.mergeStateStatus === "DRAFT") {
 			const mark = await confirm(
@@ -328,21 +350,87 @@ export async function runAutopilot(
 		}
 		state = settled;
 		if (signal.aborted) return { status: "aborted", blockedReasons };
-		if (settled.headSha !== snapshot.headSha) {
+		const settledTerminalReason = terminalPrReason(settled);
+		if (settledTerminalReason) return { status: "incomplete", blockedReasons: [settledTerminalReason] };
+		const headMoved = settled.headSha !== snapshot.headSha;
+		if (!headMoved && isMergeReady(settled)) {
+			notify(`PR #${prNumber} looks merge-ready after a fresh status read. Not merging.`, "info");
+			return { status: "merge-ready", blockedReasons: [] };
+		}
+		const headVerificationPending =
+			settled.verifiedHeadSha !== settled.headSha && isMergeReadyIgnoringHeadVerification(settled);
+		if (!isMergeabilityPending(settled) && !headVerificationPending) {
+			if (headMoved) {
+				notify(
+					`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} during verification; rechecking.`,
+					"warning",
+				);
+			} else {
+				notify(
+					`PR #${prNumber} looked ready, then the settle re-read showed: ${describeBlockers(settled)}.`,
+					"warning",
+				);
+			}
+			return undefined;
+		}
+		if (headMoved) {
 			notify(
-				`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} during verification; rechecking.`,
+				`PR #${prNumber} advanced from ${snapshot.headSha.slice(0, 8)} to ${settled.headSha.slice(0, 8)} while readiness was settling; verifying the new head.`,
 				"warning",
 			);
-			return undefined;
 		}
-		if (!isMergeReady(settled)) {
-			notify(`PR #${prNumber} looked ready, then the settle re-read showed: ${describeBlockers(settled)}.`, "warning");
-			return undefined;
+		if (mode === "threads") {
+			const reason = describeBlockers(settled);
+			notify(`PR #${prNumber} is not ready: ${reason}.`, "warning");
+			return { status: "incomplete", blockedReasons: [reason] };
 		}
-		verifiedHeadSha = settled.headSha;
 
-		notify(`PR #${prNumber} looks merge-ready after a fresh status read. Not merging.`, "info");
-		return { status: "merge-ready", blockedReasons: [] };
+		let previousHeadSha = settled.headSha;
+		while (mergeabilityPolls < MERGEABILITY_POLL_LIMIT) {
+			try {
+				await ops.sleep(MERGEABILITY_POLL_DELAY_MS, signal);
+			} catch (error) {
+				if (signal.aborted) return { status: "aborted", blockedReasons };
+				const reason = `Could not wait for mergeability: ${error instanceof Error ? error.message : String(error)}`;
+				notify(reason, "error");
+				return { status: "failed", blockedReasons: [reason] };
+			}
+			if (signal.aborted) return { status: "aborted", blockedReasons };
+			mergeabilityPolls++;
+			const next = await fetchPRState(exec, cwd, prNumber, previousHeadSha, persisted, await resolveRepoOnce(), signal);
+			if (isString(next)) {
+				notify(next, "error");
+				return { status: "failed", blockedReasons: [next] };
+			}
+			state = next;
+			if (signal.aborted) return { status: "aborted", blockedReasons };
+			const polledTerminalReason = terminalPrReason(next);
+			if (polledTerminalReason) {
+				notify(`PR #${prNumber} is not ready: ${polledTerminalReason}.`, "warning");
+				return { status: "incomplete", blockedReasons: [polledTerminalReason] };
+			}
+			if (next.headSha !== previousHeadSha) {
+				notify(
+					`PR #${prNumber} advanced from ${previousHeadSha.slice(0, 8)} to ${next.headSha.slice(0, 8)} while mergeability was settling; verifying the new head.`,
+					"warning",
+				);
+			}
+			if (isMergeReady(next)) {
+				notify(`PR #${prNumber} looks merge-ready after mergeability settled. Not merging.`, "info");
+				return { status: "merge-ready", blockedReasons: [] };
+			}
+			const onlyHeadVerificationPending =
+				next.verifiedHeadSha !== next.headSha && isMergeReadyIgnoringHeadVerification(next);
+			if (!isMergeabilityPending(next) && !onlyHeadVerificationPending) {
+				notify(`PR #${prNumber} changed while mergeability was settling: ${describeBlockers(next)}.`, "warning");
+				return undefined;
+			}
+			previousHeadSha = next.headSha;
+		}
+
+		const reason = `mergeability pending after ${MERGEABILITY_POLL_LIMIT} additional observations`;
+		notify(`PR #${prNumber} is not ready: ${reason}.`, "warning");
+		return { status: "incomplete", blockedReasons: [reason] };
 	};
 
 	while (cycle < maxCycles) {
@@ -356,6 +444,11 @@ export async function runAutopilot(
 		}
 		state = fetched;
 		if (signal.aborted) return finish("aborted");
+		const terminalReason = terminalPrReason(state);
+		if (terminalReason) {
+			notify(`PR #${prNumber} is not ready: ${terminalReason}.`, "warning");
+			return finish("incomplete", [terminalReason]);
+		}
 		notify(
 			`PR #${prNumber} — ${describeBlockers(state) === "unknown blocker" && isCodeReady(state) ? "code-ready" : describeBlockers(state)} (sha ${state.headSha.slice(0, 8)})`,
 			"info",
@@ -444,6 +537,8 @@ export async function runAutopilot(
 			}
 			state = afterWatch;
 			if (signal.aborted) return finish("aborted");
+			const terminalReasonAfterWatch = terminalPrReason(state);
+			if (terminalReasonAfterWatch) return finish("incomplete", [terminalReasonAfterWatch]);
 			if (hasPendingChecks(state) && !hasFailingChecks(state) && !state.hasUnresolvedThreads) {
 				blockedReasons.push("CI still pending after watch");
 				blockedCodes.push("ci-pending-after-watch");
