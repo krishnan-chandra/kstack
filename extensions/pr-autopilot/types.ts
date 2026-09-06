@@ -110,6 +110,12 @@ export interface PendingReviewReply {
 	version: string;
 }
 
+/** One settled Actions rerun request, scoped to the exact PR head. */
+export interface FlakeRunRetry {
+	runId: string;
+	headSha: string;
+}
+
 /**
  * A check-run classification produced by the model triager: tells the
  * autopilot whether a failure is the diff's own code, a stale base, or
@@ -164,7 +170,7 @@ export interface AutopilotResult {
 
 /** Persisted across ticks so a later drive/watch resume does not re-handle work. */
 export interface AutopilotPersistedState {
-	schemaVersion: 2;
+	schemaVersion: 3;
 	repoKey: string;
 	prNumber: number;
 	headSha: string;
@@ -174,8 +180,10 @@ export interface AutopilotPersistedState {
 	pendingReviewReplies: PendingReviewReply[];
 	/** Migrated v1 reply IDs whose evidence version cannot be proven. */
 	legacyPendingReplyIds: string[];
-	/** Check name + SHA pairs already given one flake rerun. */
+	/** Legacy check-name and head evidence retained until a complete snapshot can migrate it. */
 	flakeRetried: string[];
+	/** Actions runs already given one flake rerun on an exact head. */
+	flakeRunRetries: FlakeRunRetry[];
 }
 
 /** Load diagnostics stay out of the versioned on-disk schema. */

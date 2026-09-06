@@ -602,7 +602,7 @@ describe("pr-autopilot state machine", () => {
 
 		function persistedState(repoKey: string, prNumber = 5): AutopilotPersistedState {
 			return {
-				schemaVersion: 2,
+				schemaVersion: 3,
 				repoKey,
 				prNumber,
 				headSha: "abc",
@@ -617,6 +617,7 @@ describe("pr-autopilot state machine", () => {
 				pendingReviewReplies: [{ id: "thread-2", version: "b".repeat(64) }],
 				legacyPendingReplyIds: [],
 				flakeRetried: ["check@sha"],
+				flakeRunRetries: [{ runId: "123", headSha: "abc" }],
 			};
 		}
 
@@ -624,7 +625,7 @@ describe("pr-autopilot state machine", () => {
 			assert.notEqual(persistPath("repo-a", 5), persistPath("repo-b", 5));
 		});
 
-		it("round-trips schema 2 with private permissions", async () => {
+		it("round-trips schema 3 with private permissions", async () => {
 			await withAgentDir(async () => {
 				const repoKey = `test-${process.pid}-${Date.now()}`;
 				const path = persistPath(repoKey, 5);
@@ -659,7 +660,7 @@ describe("pr-autopilot state machine", () => {
 			});
 		});
 
-		it("migrates legacy handling without suppressing it and preserves uncertain replies", async () => {
+		it("migrates schema 1 review handling and retains legacy retry evidence", async () => {
 			await withAgentDir(async () => {
 				const repoKey = "legacy";
 				const path = persistPath(repoKey, 7);
@@ -672,16 +673,83 @@ describe("pr-autopilot state machine", () => {
 						headSha: "old",
 						handledThreadIds: ["handled-before"],
 						repliedThreadIds: ["pending-before"],
-						flakeRetried: ["check@sha"],
+						flakeRetried: ["check@sha", "check@sha"],
 					}),
 				);
 				const migrated = await loadPersistedState(repoKey, 7);
 				assert.equal(migrated.kind, "ready");
+				assert.equal(migrated.state.schemaVersion, 3);
 				assert.deepEqual(migrated.state.handled, []);
 				assert.deepEqual(migrated.state.legacyPendingReplyIds, ["pending-before"]);
-				if (migrated.kind === "ready") assert.match(migrated.migrationNote ?? "", /triaged once more/);
+				assert.deepEqual(migrated.state.flakeRetried, ["check@sha"]);
+				assert.deepEqual(migrated.state.flakeRunRetries, []);
+				if (migrated.kind === "ready") assert.match(migrated.migrationNote ?? "", /every matching Actions run/);
 				await savePersistedState(migrated.state);
 				assert.equal((await loadPersistedState(repoKey, 7)).kind, "ready");
+			});
+		});
+
+		it("migrates schema 2 without reinterpreting versioned review state", async () => {
+			await withAgentDir(async () => {
+				const repoKey = "schema-2";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				await writeFile(
+					path,
+					JSON.stringify({
+						schemaVersion: 2,
+						repoKey,
+						prNumber: 7,
+						headSha: "old",
+						handled: [
+							{
+								id: "thread-1",
+								source: "review-thread",
+								version: "a".repeat(64),
+								decision: "fix",
+							},
+						],
+						pendingReviewReplies: [{ id: "thread-2", version: "b".repeat(64) }],
+						legacyPendingReplyIds: ["thread-3"],
+						flakeRetried: ["test@old"],
+					}),
+				);
+				const migrated = await loadPersistedState(repoKey, 7);
+				assert.equal(migrated.kind, "ready");
+				assert.equal(migrated.state.schemaVersion, 3);
+				assert.deepEqual(migrated.state.handled, [
+					{ id: "thread-1", source: "review-thread", version: "a".repeat(64), decision: "fix" },
+				]);
+				assert.deepEqual(migrated.state.pendingReviewReplies, [{ id: "thread-2", version: "b".repeat(64) }]);
+				assert.deepEqual(migrated.state.legacyPendingReplyIds, ["thread-3"]);
+				assert.deepEqual(migrated.state.flakeRetried, ["test@old"]);
+				assert.deepEqual(migrated.state.flakeRunRetries, []);
+				if (migrated.kind === "ready") assert.match(migrated.migrationNote ?? "", /schema 2/);
+			});
+		});
+
+		it("deduplicates exact schema 3 run retry records", async () => {
+			await withAgentDir(async () => {
+				const repoKey = "deduplicated";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				const state = persistedState(repoKey, 7);
+				await writeFile(
+					path,
+					JSON.stringify({
+						...state,
+						flakeRunRetries: [
+							{ runId: "123", headSha: "abc" },
+							{ runId: "123", headSha: "abc" },
+							{ runId: "123", headSha: "another-head" },
+						],
+					}),
+				);
+				const loaded = await loadPersistedState(repoKey, 7);
+				assert.deepEqual(loaded.state.flakeRunRetries, [
+					{ runId: "123", headSha: "abc" },
+					{ runId: "123", headSha: "another-head" },
+				]);
 			});
 		});
 
@@ -720,7 +788,7 @@ describe("pr-autopilot state machine", () => {
 					"not json",
 					JSON.stringify({ schemaVersion: 99 }),
 					JSON.stringify({
-						schemaVersion: 2,
+						schemaVersion: 3,
 						repoKey,
 						prNumber: 7,
 						headSha: "abc",
@@ -728,6 +796,18 @@ describe("pr-autopilot state machine", () => {
 						pendingReviewReplies: [],
 						legacyPendingReplyIds: [],
 						flakeRetried: [],
+						flakeRunRetries: [],
+					}),
+					JSON.stringify({
+						schemaVersion: 3,
+						repoKey,
+						prNumber: 7,
+						headSha: "abc",
+						handled: [],
+						pendingReviewReplies: [],
+						legacyPendingReplyIds: [],
+						flakeRetried: [],
+						flakeRunRetries: [{ runId: "", headSha: "abc" }],
 					}),
 				]) {
 					await writeFile(path, raw);

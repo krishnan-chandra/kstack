@@ -349,7 +349,9 @@ test("abort during first CI rerun prevents second rerun and persists first", asy
 	};
 	assert.equal((await driveProbe(harness, controller)).status, "aborted");
 	assert.equal(reruns, 1);
-	assert.equal((await harness.ops.loadPersistedState("repo", 42)).state.flakeRetried.length, 1);
+	assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.flakeRunRetries, [
+		{ runId: "1", headSha: SHA },
+	]);
 });
 
 test("failed publication in flight keeps its diagnostic and is not retried", async (t) => {

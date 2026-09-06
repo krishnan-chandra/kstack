@@ -28,6 +28,7 @@ import { isString } from "../shared/validation.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { commandDiagnostic } from "../shared/git-exec.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { createPrMutation } from "../shared/vcs/mutation.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
@@ -44,6 +45,12 @@ import {
 	savePersistedState,
 	summarizeTriage,
 } from "./autopilot-operations.ts";
+import {
+	appendFlakeRunRetry,
+	groupFlakeRuns,
+	pendingFlakeRunGroups,
+	reconcileLegacyFlakeRetries,
+} from "./ci-retries.ts";
 import { attachFailedLogs, isForbiddenStagingPath, markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
 import {
@@ -66,6 +73,7 @@ import { checkForTriageKey, threadForTriageKey } from "./triage-keys.ts";
 import {
 	type AutopilotMode,
 	type AutopilotModelSpec,
+	type AutopilotPersistedState,
 	type AutopilotResult,
 	type ExecFn,
 	LIMITS,
@@ -102,6 +110,28 @@ const defaultOps: DriverOps = {
 	savePersistedState,
 	sleep: (delayMs, signal) => sleep(delayMs, undefined, { signal }),
 };
+
+async function reconcileSnapshotRetryState(options: {
+	snapshot: PRState;
+	persisted: AutopilotPersistedState;
+	stateWritesBlocked: boolean;
+	save: DriverOps["savePersistedState"];
+}): Promise<AutopilotPersistedState> {
+	const reconciled = reconcileLegacyFlakeRetries({
+		checks: options.snapshot.checks,
+		headSha: options.snapshot.headSha,
+		legacyRetryKeys: options.persisted.flakeRetried,
+		runRetries: options.persisted.flakeRunRetries,
+	});
+	if (!reconciled.changed) return options.persisted;
+	const persisted = {
+		...options.persisted,
+		flakeRetried: reconciled.legacyRetryKeys,
+		flakeRunRetries: reconciled.runRetries,
+	};
+	if (!options.stateWritesBlocked) await options.save(persisted);
+	return persisted;
+}
 
 export async function runAutopilot(
 	mode: AutopilotMode,
@@ -200,17 +230,34 @@ export async function runAutopilot(
 		snapshot.state === "open" ? undefined : describeBlockers(snapshot);
 	notify(`Driving PR #${prNumber} in ${mode} mode. Model: ${selected.label}`, "info");
 
+	if (mode === "cleanup") {
+		setPhase("cleaning");
+		const ok = await runCleanup(backend, cwd, confirm, notify, signal);
+
+		if (signal.aborted) return finish("aborted");
+		return finish(ok ? "cleaned" : "blocked", ok ? [] : ["cleanup not confirmed"]);
+	}
+
+	const loaded = await ops.loadPersistedState(repoKey, prNumber);
+	let persisted = loaded.state;
+	const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;
+	const reviewMutationBlocker = loaded.kind === "blocked" ? loaded.reviewMutationBlocker : undefined;
+	if (migrationNote) {
+		notify(migrationNote, "warning");
+		await ops.savePersistedState(persisted);
+	}
+	if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
+	const reconcileSnapshot = async (snapshot: PRState): Promise<void> => {
+		persisted = await reconcileSnapshotRetryState({
+			snapshot,
+			persisted,
+			stateWritesBlocked: reviewMutationBlocker !== undefined,
+			save: ops.savePersistedState,
+		});
+	};
+
 	if (mode === "check") {
 		setPhase("checking");
-		const loaded = await ops.loadPersistedState(repoKey, prNumber);
-		let persisted = loaded.state;
-		const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;
-		const reviewMutationBlocker = loaded.kind === "blocked" ? loaded.reviewMutationBlocker : undefined;
-		if (migrationNote) {
-			notify(migrationNote, "warning");
-			await ops.savePersistedState(persisted);
-		}
-		if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
 		if (signal.aborted) return finish("aborted");
 		const fetched = await fetchPRState(exec, cwd, prNumber, null, persisted, repoName, signal);
 		if (signal.aborted) return finish("aborted");
@@ -218,6 +265,7 @@ export async function runAutopilot(
 			notify(fetched, "error");
 			return finish("failed", [fetched]);
 		}
+		await reconcileSnapshot(fetched);
 		state = fetched;
 		const firstTerminalReason = terminalPrReason(fetched);
 		const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, fetched.threads);
@@ -231,6 +279,7 @@ export async function runAutopilot(
 		if (isString(verified)) {
 			return finish("failed", [verified]);
 		}
+		await reconcileSnapshot(verified);
 		state = verified;
 		if (signal.aborted) return finish("aborted");
 		const terminalReason = firstTerminalReason ?? terminalPrReason(verified);
@@ -248,31 +297,16 @@ export async function runAutopilot(
 		return finish(ready ? "merge-ready" : "incomplete", ready ? [] : [describeBlockers(verified)]);
 	}
 
-	if (mode === "cleanup") {
-		setPhase("cleaning");
-		const ok = await runCleanup(backend, cwd, confirm, notify, signal);
-
-		if (signal.aborted) return finish("aborted");
-		return finish(ok ? "cleaned" : "blocked", ok ? [] : ["cleanup not confirmed"]);
-	}
-
 	let verifiedHeadSha: string | null = null;
 	let mergeabilityPolls = 0;
 	const maxCycles = maxFixCycles(mode);
-	const loaded = await ops.loadPersistedState(repoKey, prNumber);
-	let persisted = loaded.state;
-	const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;
-	const reviewMutationBlocker = loaded.kind === "blocked" ? loaded.reviewMutationBlocker : undefined;
-	if (migrationNote) {
-		notify(migrationNote, "warning");
-		await ops.savePersistedState(persisted);
-	}
-	if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
 
 	const refresh = async (): Promise<PRState | string> => {
 		setPhase("checking", cycle);
 		const fetched = await fetchPRState(exec, cwd, prNumber, verifiedHeadSha, persisted, repoName, signal);
-		if (signal.aborted || isString(fetched) || reviewMutationBlocker) return fetched;
+		if (signal.aborted || isString(fetched)) return fetched;
+		await reconcileSnapshot(fetched);
+		if (reviewMutationBlocker) return fetched;
 		const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, fetched.threads);
 		if (reconciled.length !== persisted.legacyPendingReplyIds.length) {
 			persisted = { ...persisted, legacyPendingReplyIds: reconciled };
@@ -337,6 +371,7 @@ export async function runAutopilot(
 			notify(settled, "error");
 			return { status: "failed", blockedReasons: [settled] };
 		}
+		await reconcileSnapshot(settled);
 		state = settled;
 		if (signal.aborted) return { status: "aborted", blockedReasons };
 		const settledTerminalReason = terminalPrReason(settled);
@@ -387,10 +422,12 @@ export async function runAutopilot(
 			if (signal.aborted) return { status: "aborted", blockedReasons };
 			mergeabilityPolls++;
 			const next = await fetchPRState(exec, cwd, prNumber, previousHeadSha, persisted, repoName, signal);
+			if (signal.aborted) return { status: "aborted", blockedReasons };
 			if (isString(next)) {
 				notify(next, "error");
 				return { status: "failed", blockedReasons: [next] };
 			}
+			await reconcileSnapshot(next);
 			state = next;
 			if (signal.aborted) return { status: "aborted", blockedReasons };
 			const polledTerminalReason = terminalPrReason(next);
@@ -573,32 +610,43 @@ export async function runAutopilot(
 			blockedReasons.push(reviewMutationBlocker);
 			break;
 		}
-		const flakeKey = (name: string) => `${name}@${state?.headSha ?? ""}`;
 		const flakeChecks = parsed.checks.flatMap((classification) => {
 			if (classification.cls !== "flake" || !state) return [];
 			const check = checkForTriageKey(state, classification.key);
 			return check ? [check] : [];
 		});
-		const newFlakes = flakeChecks.filter((check) => !persisted.flakeRetried.includes(flakeKey(check.name)));
-		if (newFlakes.length > 0 && state) {
+		const flakeGroups = groupFlakeRuns(flakeChecks, state.headSha);
+		const newFlakes = pendingFlakeRunGroups(flakeGroups, persisted.flakeRunRetries);
+		if (newFlakes.length > 0) {
+			if (reviewMutationBlocker) {
+				blockedReasons.push(reviewMutationBlocker);
+				break;
+			}
 			let reran = false;
-			for (const check of newFlakes) {
+			for (const group of newFlakes) {
 				if (signal.aborted) return finish("aborted");
-				if (!check.runId) continue;
-				const rerun = await rerunFailedRun(exec, cwd, check.runId);
-				persisted = { ...persisted, flakeRetried: [...persisted.flakeRetried, flakeKey(check.name)] };
+				const rerun = await rerunFailedRun(exec, cwd, group.runId);
+				persisted = {
+					...persisted,
+					flakeRunRetries: appendFlakeRunRetry(persisted.flakeRunRetries, group),
+				};
+				const jobs = group.jobNames.join(", ");
+				await ops.savePersistedState(persisted);
 				if (rerun.code !== 0) {
-					notify(`Could not rerun ${check.name}: ${rerun.stderr.trim()}`, "warning");
+					const diagnostic = commandDiagnostic(rerun);
+					notify(
+						`Could not rerun Actions run ${group.runId} for ${jobs}: ${diagnostic}. The attempt was recorded and will not be repeated on this head.`,
+						"warning",
+					);
 				} else {
-					notify(`Cause: flake on ${check.name}. Reran failed jobs once on SHA ${state.headSha.slice(0, 8)}.`, "info");
+					notify(
+						`Cause: flake in Actions run ${group.runId} (${jobs}). Reran failed jobs once on SHA ${state.headSha.slice(0, 8)}.`,
+						"info",
+					);
 					reran = true;
 				}
-				if (signal.aborted) {
-					if (!reviewMutationBlocker) await ops.savePersistedState(persisted);
-					return finish("aborted");
-				}
+				if (signal.aborted) return finish("aborted");
 			}
-			if (!reviewMutationBlocker) await ops.savePersistedState(persisted);
 			if (reran) {
 				cycle++;
 				continue;

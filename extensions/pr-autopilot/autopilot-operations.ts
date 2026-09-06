@@ -27,6 +27,7 @@ import { commandDiagnostic } from "../shared/git-exec.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { runAgent } from "./agent-runner.ts";
+import { deduplicateFlakeRunRetries } from "./ci-retries.ts";
 import {
 	getCheckRuns,
 	getIssueComments,
@@ -60,6 +61,7 @@ import {
 	type AutopilotThinkingLevel,
 	type ExecFn,
 	type FailureClass,
+	type FlakeRunRetry,
 	type HandledReviewRecord,
 	LIMITS,
 	type LoadedAutopilotState,
@@ -80,7 +82,7 @@ export function persistPath(repoKey: string, prNumber: number): string {
 
 function emptyPersistedState(repoKey: string, prNumber: number): AutopilotPersistedState {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		repoKey,
 		prNumber,
 		headSha: "",
@@ -88,6 +90,7 @@ function emptyPersistedState(repoKey: string, prNumber: number): AutopilotPersis
 		pendingReviewReplies: [],
 		legacyPendingReplyIds: [],
 		flakeRetried: [],
+		flakeRunRetries: [],
 	};
 }
 
@@ -126,9 +129,25 @@ function parsePendingReply(raw: BoundaryValue): PendingReviewReply | undefined {
 	return { id: record.id, version: record.version };
 }
 
-function parseV2State(obj: JsonObject, repoKey: string, prNumber: number): LoadedAutopilotState {
+function parseFlakeRunRetry(raw: BoundaryValue): FlakeRunRetry | undefined {
+	if (!isObject(raw) || raw === null || Array.isArray(raw)) return undefined;
+	const record =
+		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
+	if (!isString(record.runId) || record.runId.length === 0) return undefined;
+	if (!isString(record.headSha) || record.headSha.length === 0) return undefined;
+	return { runId: record.runId, headSha: record.headSha };
+}
+
+type VersionedReviewState = Pick<
+	AutopilotPersistedState,
+	"headSha" | "handled" | "pendingReviewReplies" | "legacyPendingReplyIds" | "flakeRetried"
+>;
+
+type ParsedVersionedReviewState = { ok: true; state: VersionedReviewState } | { ok: false; reason: string };
+
+function parseVersionedReviewState(obj: JsonObject, repoKey: string, prNumber: number): ParsedVersionedReviewState {
 	if (obj.repoKey !== repoKey || obj.prNumber !== prNumber || !isString(obj.headSha)) {
-		return blockedState(repoKey, prNumber, "schema 2 identity or head fields are malformed.");
+		return { ok: false, reason: "identity or head fields are malformed." };
 	}
 	if (
 		!Array.isArray(obj.handled) ||
@@ -136,26 +155,23 @@ function parseV2State(obj: JsonObject, repoKey: string, prNumber: number): Loade
 		!isStringArray(obj.legacyPendingReplyIds) ||
 		!isStringArray(obj.flakeRetried)
 	) {
-		return blockedState(repoKey, prNumber, "schema 2 arrays are malformed.");
+		return { ok: false, reason: "arrays are malformed." };
 	}
 	const handled = obj.handled.map(parseHandledRecord);
 	const pending = obj.pendingReviewReplies.map(parsePendingReply);
 	if (handled.some((record) => record === undefined) || pending.some((record) => record === undefined)) {
-		return blockedState(repoKey, prNumber, "schema 2 review records are malformed.");
+		return { ok: false, reason: "review records are malformed." };
 	}
 	if (
 		handled.length > LIMITS.reviewHandlingRecords ||
 		pending.length > LIMITS.reviewHandlingRecords ||
 		obj.legacyPendingReplyIds.length > LIMITS.reviewHandlingRecords
 	) {
-		return blockedState(repoKey, prNumber, "schema 2 review records exceed their bounds.");
+		return { ok: false, reason: "review records exceed their bounds." };
 	}
 	return {
-		kind: "ready",
+		ok: true,
 		state: {
-			schemaVersion: 2,
-			repoKey,
-			prNumber,
 			headSha: obj.headSha,
 			handled: handled.flatMap((record) => (record ? [record] : [])),
 			pendingReviewReplies: pending.flatMap((record) => (record ? [record] : [])),
@@ -165,9 +181,46 @@ function parseV2State(obj: JsonObject, repoKey: string, prNumber: number): Loade
 	};
 }
 
+function parseV2State(obj: JsonObject, repoKey: string, prNumber: number): LoadedAutopilotState {
+	const parsed = parseVersionedReviewState(obj, repoKey, prNumber);
+	if (!parsed.ok) return blockedState(repoKey, prNumber, `schema 2 ${parsed.reason}`);
+	return {
+		kind: "ready",
+		state: {
+			...emptyPersistedState(repoKey, prNumber),
+			...parsed.state,
+		},
+		migrationNote:
+			"Migrated schema 2 state: the first complete checks snapshot will convert legacy check-name evidence and conservatively consume every matching Actions run on the same head.",
+	};
+}
+
+function parseV3State(obj: JsonObject, repoKey: string, prNumber: number): LoadedAutopilotState {
+	const parsed = parseVersionedReviewState(obj, repoKey, prNumber);
+	if (!parsed.ok) return blockedState(repoKey, prNumber, `schema 3 ${parsed.reason}`);
+	if (!Array.isArray(obj.flakeRunRetries)) {
+		return blockedState(repoKey, prNumber, "schema 3 run retry records are malformed.");
+	}
+	const parsedRetries: FlakeRunRetry[] = [];
+	for (const raw of obj.flakeRunRetries) {
+		const retry = parseFlakeRunRetry(raw);
+		if (!retry) return blockedState(repoKey, prNumber, "schema 3 run retry records are malformed.");
+		parsedRetries.push(retry);
+	}
+	const flakeRunRetries = deduplicateFlakeRunRetries(parsedRetries);
+	return {
+		kind: "ready",
+		state: {
+			...emptyPersistedState(repoKey, prNumber),
+			...parsed.state,
+			flakeRunRetries,
+		},
+	};
+}
+
 function parseLegacyState(obj: JsonObject, repoKey: string, prNumber: number): LoadedAutopilotState {
 	if (obj.repoKey !== repoKey || obj.prNumber !== prNumber) {
-		return blockedState(repoKey, prNumber, "legacy state identity does not match its repository and PR.");
+		return blockedState(repoKey, prNumber, "schema 1 state identity does not match its repository and PR.");
 	}
 	if (
 		!isString(obj.headSha) ||
@@ -175,10 +228,10 @@ function parseLegacyState(obj: JsonObject, repoKey: string, prNumber: number): L
 		!isStringArray(obj.repliedThreadIds) ||
 		!isStringArray(obj.flakeRetried)
 	) {
-		return blockedState(repoKey, prNumber, "legacy state is malformed.");
+		return blockedState(repoKey, prNumber, "schema 1 state is malformed.");
 	}
 	if (obj.repliedThreadIds.length > LIMITS.reviewHandlingRecords) {
-		return blockedState(repoKey, prNumber, "legacy pending replies exceed their bound.");
+		return blockedState(repoKey, prNumber, "schema 1 pending replies exceed their bound.");
 	}
 	return {
 		kind: "ready",
@@ -189,7 +242,7 @@ function parseLegacyState(obj: JsonObject, repoKey: string, prNumber: number): L
 			flakeRetried: [...new Set(obj.flakeRetried)],
 		},
 		migrationNote:
-			"Migrated legacy review state: prior handled IDs will be triaged once more; unversioned pending replies need inspection before resolution.",
+			"Migrated schema 1 state: prior handled IDs will be triaged once more; unversioned pending replies need inspection before resolution; the first complete checks snapshot will convert legacy check-name evidence and conservatively consume every matching Actions run on the same head.",
 	};
 }
 
@@ -199,14 +252,13 @@ function parsePersistedState(raw: BoundaryValue, repoKey: string, prNumber: numb
 	}
 	const obj =
 		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ raw as JsonObject;
-	if (obj.schemaVersion === undefined) return parseLegacyState(obj, repoKey, prNumber);
+	if (obj.schemaVersion === undefined || obj.schemaVersion === 1) return parseLegacyState(obj, repoKey, prNumber);
 	if (!isNumber(obj.schemaVersion) || !Number.isInteger(obj.schemaVersion)) {
 		return blockedState(repoKey, prNumber, "schemaVersion is malformed.");
 	}
-	if (obj.schemaVersion !== 2) {
-		return blockedState(repoKey, prNumber, `unsupported schemaVersion ${obj.schemaVersion}.`);
-	}
-	return parseV2State(obj, repoKey, prNumber);
+	if (obj.schemaVersion === 2) return parseV2State(obj, repoKey, prNumber);
+	if (obj.schemaVersion === 3) return parseV3State(obj, repoKey, prNumber);
+	return blockedState(repoKey, prNumber, `unsupported schemaVersion ${obj.schemaVersion}.`);
 }
 
 type StateDirCheck = "missing" | "directory" | "unsafe";

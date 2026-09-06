@@ -7,13 +7,12 @@ import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { applyThreadReplies, parseTriage } from "./autopilot-operations.ts";
 import { runAutopilot } from "./driver.ts";
 import { versionReviewItem } from "./review-handling.ts";
-import { BRANCH, config, createHarness, deferred, SHA, triage } from "./test-harness.ts";
+import { BRANCH, config, createHarness, deferred, type Harness, SHA, triage } from "./test-harness.ts";
 import type { AutopilotMode, ExecFn, ExecFnResult, PRState, ReviewThread } from "./types.ts";
 
 type DriverMode = Exclude<AutopilotMode, "cleanup">;
 
-async function run(mode: DriverMode, scenario: Parameters<typeof createHarness>[0] = {}) {
-	const harness = await createHarness(scenario);
+async function runWithHarness(mode: DriverMode, harness: Harness) {
 	const result = await runAutopilot(
 		mode,
 		{
@@ -32,6 +31,12 @@ async function run(mode: DriverMode, scenario: Parameters<typeof createHarness>[
 		harness.ops,
 	);
 	assert.deepEqual(harness.unexpected, []);
+	return result;
+}
+
+async function run(mode: DriverMode, scenario: Parameters<typeof createHarness>[0] = {}) {
+	const harness = await createHarness(scenario);
+	const result = await runWithHarness(mode, harness);
 	return { harness, result };
 }
 
@@ -356,6 +361,39 @@ test("check mode observes Actions failures without fetching failed logs", async 
 	assert.deepEqual(failedLogCalls(harness.calls), []);
 });
 
+test("check mode persists legacy retry matches from its first complete snapshot", async (t) => {
+	const { harness, result } = await run("check", {
+		checks: [
+			{
+				name: "build",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/123",
+			},
+		],
+		persisted: {
+			schemaVersion: 3,
+			repoKey: "repo",
+			prNumber: 42,
+			headSha: SHA,
+			handled: [],
+			pendingReviewReplies: [],
+			legacyPendingReplyIds: [],
+			flakeRetried: [`build@${SHA}`],
+			flakeRunRetries: [],
+		},
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "incomplete");
+	assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.flakeRunRetries, [
+		{ runId: "123", headSha: SHA },
+	]);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		[],
+	);
+});
+
 test("check mode does not treat top-level discussion as unresolved review feedback", async (t) => {
 	const { harness, result } = await run("check", {
 		issueComment: { id: 9, body: "Thanks for the update" },
@@ -567,7 +605,7 @@ test("a pending reply keeps an otherwise ignored thread visible", async (t) => {
 	const { harness, result } = await run("drive", {
 		thread: { id: "thread-1", body },
 		persisted: {
-			schemaVersion: 2,
+			schemaVersion: 3,
 			repoKey: "repo",
 			prNumber: 42,
 			headSha: "",
@@ -575,6 +613,7 @@ test("a pending reply keeps an otherwise ignored thread visible", async (t) => {
 			pendingReviewReplies: [{ id: "thread-1", version: "a".repeat(64) }],
 			legacyPendingReplyIds: [],
 			flakeRetried: [],
+			flakeRunRetries: [],
 		},
 		triage: triage({ threads: [{ key: "thread-1", decision: "ask", action: "inspect pending reply" }] }),
 	});
@@ -589,7 +628,7 @@ test("blocked loaded state allows inspection but prevents review mutations and p
 		loaded: {
 			kind: "blocked",
 			state: {
-				schemaVersion: 2,
+				schemaVersion: 3,
 				repoKey: "repo",
 				prNumber: 42,
 				headSha: "",
@@ -597,6 +636,7 @@ test("blocked loaded state allows inspection but prevents review mutations and p
 				pendingReviewReplies: [],
 				legacyPendingReplyIds: [],
 				flakeRetried: [],
+				flakeRunRetries: [],
 			},
 			reviewMutationBlocker: "PR autopilot state needs inspection: unsupported schemaVersion 99.",
 		},
@@ -630,7 +670,7 @@ test("a live legacy pending reply blocks before triage or remote mutation", asyn
 	const { harness, result } = await run("drive", {
 		thread: { id: "thread-1", body: "Please explain this design" },
 		persisted: {
-			schemaVersion: 2,
+			schemaVersion: 3,
 			repoKey: "repo",
 			prNumber: 42,
 			headSha: "",
@@ -638,6 +678,7 @@ test("a live legacy pending reply blocks before triage or remote mutation", asyn
 			pendingReviewReplies: [],
 			legacyPendingReplyIds: ["thread-1"],
 			flakeRetried: [],
+			flakeRunRetries: [],
 		},
 	});
 	t.after(() => harness.cleanup());
@@ -653,7 +694,7 @@ test("a live legacy pending reply blocks before triage or remote mutation", asyn
 test("a complete observation removes an absent legacy pending reply", async (t) => {
 	const { harness, result } = await run("drive", {
 		persisted: {
-			schemaVersion: 2,
+			schemaVersion: 3,
 			repoKey: "repo",
 			prNumber: 42,
 			headSha: "",
@@ -661,6 +702,7 @@ test("a complete observation removes an absent legacy pending reply", async (t) 
 			pendingReviewReplies: [],
 			legacyPendingReplyIds: ["thread-1"],
 			flakeRetried: [],
+			flakeRunRetries: [],
 		},
 	});
 	t.after(() => harness.cleanup());
@@ -750,6 +792,356 @@ test("flake reruns use the trusted key without changing the remote check name", 
 	});
 	t.after(() => harness.cleanup());
 	assert.ok(harness.calls.some((call) => call === "gh run rerun 12345 --failed"));
+});
+
+test("two flaky jobs in one Actions run dispatch one rerun", async (t) => {
+	const harness = await createHarness({
+		checks: [
+			{
+				name: "build",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/12345/jobs/1",
+			},
+			{
+				name: "unit",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/12345/jobs/2",
+			},
+		],
+		triage: triage({
+			checks: [
+				{ key: "check-1", cls: "flake", action: "rerun once" },
+				{ key: "check-2", cls: "flake", action: "rerun once" },
+			],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	const notices: string[] = [];
+	harness.handlers.notify = (message) => notices.push(message);
+	await runWithHarness("drive", harness);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 12345 --failed"],
+	);
+	assert.match(notices.join("\n"), /Actions run 12345 \(build, unit\)/);
+});
+
+test("a persisted run retry does not suppress the same job name in another run", async (t) => {
+	const scenario = {
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+		],
+		triage: triage({ checks: [{ key: "check-1", cls: "flake", action: "rerun once" }] }),
+	};
+	const harness = await createHarness(scenario);
+	t.after(() => harness.cleanup());
+
+	await runWithHarness("drive", harness);
+	scenario.checks = [
+		{
+			name: "test",
+			state: "FAILURE",
+			bucket: "fail",
+			link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+		},
+	];
+	await runWithHarness("drive", harness);
+
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 111 --failed", "gh run rerun 222 --failed"],
+	);
+});
+
+test("duplicate triage rows, missing run ids, and non-flakes do not consume extra run retries", async (t) => {
+	const harness = await createHarness({
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+			{ name: "external", state: "FAILURE", bucket: "fail" },
+			{
+				name: "infra",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+			},
+		],
+		triage: triage({
+			checks: [
+				{ key: "check-1", cls: "flake", action: "rerun once" },
+				{ key: "check-1", cls: "flake", action: "duplicate row" },
+				{ key: "check-2", cls: "flake", action: "no Actions run" },
+				{ key: "check-3", cls: "infra", action: "report" },
+			],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	await runWithHarness("drive", harness);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 111 --failed"],
+	);
+	assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.flakeRunRetries, [
+		{ runId: "111", headSha: SHA },
+	]);
+});
+
+test("a complete snapshot maps ambiguous legacy retry evidence to every matching run", async (t) => {
+	const harness = await createHarness({
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+			},
+		],
+		persisted: {
+			schemaVersion: 3,
+			repoKey: "repo",
+			prNumber: 42,
+			headSha: SHA,
+			handled: [],
+			pendingReviewReplies: [],
+			legacyPendingReplyIds: [],
+			flakeRetried: [`test@${SHA}`, "unmatched@another-head"],
+			flakeRunRetries: [],
+		},
+		triage: triage({
+			checks: [
+				{ key: "check-1", cls: "flake", action: "rerun once" },
+				{ key: "check-2", cls: "flake", action: "rerun once" },
+			],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	await runWithHarness("drive", harness);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		[],
+	);
+	const persisted = (await harness.ops.loadPersistedState("repo", 42)).state;
+	assert.deepEqual(persisted.flakeRetried, ["unmatched@another-head"]);
+	assert.deepEqual(persisted.flakeRunRetries, [
+		{ runId: "111", headSha: SHA },
+		{ runId: "222", headSha: SHA },
+	]);
+});
+
+test("a newly observed same-name run remains eligible after one-time legacy migration", async (t) => {
+	const scenario = {
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+		],
+		persisted: {
+			schemaVersion: 3,
+			repoKey: "repo",
+			prNumber: 42,
+			headSha: SHA,
+			handled: [],
+			pendingReviewReplies: [],
+			legacyPendingReplyIds: [],
+			flakeRetried: [`test@${SHA}`],
+			flakeRunRetries: [],
+		},
+		triage: triage({ checks: [{ key: "check-1", cls: "flake", action: "rerun once" }] }),
+	} satisfies Parameters<typeof createHarness>[0];
+	const harness = await createHarness(scenario);
+	t.after(() => harness.cleanup());
+	await runWithHarness("drive", harness);
+	scenario.checks = [
+		{
+			name: "test",
+			state: "FAILURE",
+			bucket: "fail",
+			link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+		},
+	];
+	await runWithHarness("drive", harness);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 222 --failed"],
+	);
+	assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.flakeRetried, []);
+});
+
+for (const failedRun of ["111", "222"]) {
+	test(`a failed ${failedRun === "111" ? "first" : "second"} rerun is saved before the next request`, async (t) => {
+		const harness = await createHarness({
+			checks: [
+				{
+					name: "test",
+					state: "FAILURE",
+					bucket: "fail",
+					link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+				},
+				{
+					name: "lint",
+					state: "FAILURE",
+					bucket: "fail",
+					link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+				},
+			],
+			triage: triage({
+				checks: [
+					{ key: "check-1", cls: "flake", action: "rerun once" },
+					{ key: "check-2", cls: "flake", action: "rerun once" },
+				],
+			}),
+		});
+		t.after(() => harness.cleanup());
+		const events: string[] = [];
+		const exec = harness.exec;
+		harness.exec = async (command, args, options) => {
+			if (command === "gh" && args[0] === "run" && args[1] === "rerun") events.push(`rerun:${args[2]}`);
+			const result = await exec(command, args, options);
+			if (command === "gh" && args[0] === "run" && args[1] === "rerun" && args[2] === failedRun) {
+				return { code: 1, stdout: "", stderr: "rerun response uncertain" };
+			}
+			return result;
+		};
+		const save = harness.ops.savePersistedState;
+		harness.ops.savePersistedState = async (state) => {
+			const last = state.flakeRunRetries[state.flakeRunRetries.length - 1];
+			events.push(`save:${last?.runId ?? "none"}`);
+			await save(state);
+		};
+		await runWithHarness("drive", harness);
+		assert.deepEqual(events.slice(0, 4), ["rerun:111", "save:111", "rerun:222", "save:222"]);
+		assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.flakeRunRetries, [
+			{ runId: "111", headSha: SHA },
+			{ runId: "222", headSha: SHA },
+		]);
+	});
+}
+
+test("an all-failed rerun batch consumes both attempts without spinning", async (t) => {
+	const harness = await createHarness({
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+			{
+				name: "lint",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+			},
+		],
+		triage: triage({
+			checks: [
+				{ key: "check-1", cls: "flake", action: "rerun once" },
+				{ key: "check-2", cls: "flake", action: "rerun once" },
+			],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	const exec = harness.exec;
+	harness.exec = async (command, args, options) => {
+		const result = await exec(command, args, options);
+		if (command === "gh" && args[0] === "run" && args[1] === "rerun") {
+			return { code: 1, stdout: "", stderr: "rerun rejected" };
+		}
+		return result;
+	};
+	const result = await runWithHarness("drive", harness);
+	assert.equal(result.cyclesCompleted, 0);
+	assert.equal(harness.roles.filter((role) => role === "triager").length, 1);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 111 --failed", "gh run rerun 222 --failed"],
+	);
+});
+
+test("a persistence failure stops before the next remote rerun", async (t) => {
+	const harness = await createHarness({
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+			{
+				name: "lint",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/222/jobs/2",
+			},
+		],
+		triage: triage({
+			checks: [
+				{ key: "check-1", cls: "flake", action: "rerun once" },
+				{ key: "check-2", cls: "flake", action: "rerun once" },
+			],
+		}),
+	});
+	t.after(() => harness.cleanup());
+	harness.ops.savePersistedState = async () => {
+		throw new Error("state disk full");
+	};
+	await assert.rejects(runWithHarness("drive", harness), /state disk full/);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 111 --failed"],
+	);
+});
+
+test("run retry budgets are separate by head and survive returning to an old head", async (t) => {
+	const movedHead = "abcdef0123456789abcdef0123456789abcdef01";
+	const scenario = {
+		prObservations: [{ headSha: SHA }],
+		checks: [
+			{
+				name: "test",
+				state: "FAILURE",
+				bucket: "fail",
+				link: "https://github.com/example/repo/actions/runs/111/jobs/1",
+			},
+		],
+		triage: triage({ checks: [{ key: "check-1", cls: "flake", action: "rerun once" }] }),
+	};
+	const harness = await createHarness(scenario);
+	t.after(() => harness.cleanup());
+	await runWithHarness("drive", harness);
+	await runWithHarness("drive", harness);
+	scenario.prObservations = [{ headSha: movedHead }];
+	await runWithHarness("drive", harness);
+	scenario.prObservations = [{ headSha: SHA }];
+	await runWithHarness("drive", harness);
+	assert.deepEqual(
+		harness.calls.filter((call) => call.startsWith("gh run rerun")),
+		["gh run rerun 111 --failed", "gh run rerun 111 --failed"],
+	);
+	assert.deepEqual((await harness.ops.loadPersistedState("repo", 42)).state.flakeRunRetries, [
+		{ runId: "111", headSha: SHA },
+		{ runId: "111", headSha: movedHead },
+	]);
 });
 
 test("pending checks use the watch path without triage", async (t) => {

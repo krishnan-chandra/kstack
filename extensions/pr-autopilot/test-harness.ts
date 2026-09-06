@@ -212,7 +212,7 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 			loaded ?? {
 				kind: "ready",
 				state: persisted ?? {
-					schemaVersion: 2,
+					schemaVersion: 3,
 					repoKey,
 					prNumber,
 					headSha: "",
@@ -220,6 +220,7 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 					pendingReviewReplies: [],
 					legacyPendingReplyIds: [],
 					flakeRetried: [],
+					flakeRunRetries: [],
 				},
 			},
 		savePersistedState: async (state) => {
