@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { appendFileSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	truncateSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { finalizeArchived, importSessionPending, openArchiveDb } from "../session-archive/archive-store.ts";
@@ -17,6 +28,7 @@ import {
 	findHandoffSource,
 	type HandoffHistoryFs,
 	type HandoffSource,
+	preflightHandoffHistory,
 	readHandoffHistory,
 	searchHandoffHistory,
 } from "./history-reader.ts";
@@ -102,6 +114,102 @@ describe("findHandoffSource", () => {
 			]),
 			undefined,
 		);
+	});
+});
+
+describe("preflightHandoffHistory", () => {
+	it("accepts a readable session under Pi's active-session root", () => {
+		const { source, env } = fixture();
+		assert.deepEqual(preflightHandoffHistory(source, env), { kind: "ready" });
+	});
+
+	it("rereads current bytes when cached file metadata is unchanged", () => {
+		const { content, source, env } = fixture();
+		const cachedStat = statSync(source.sessionFile);
+		const fsImpl: HandoffHistoryFs = {
+			statSync: () => cachedStat,
+			readFileSync,
+		};
+		readHandoffHistory(source, {}, env, fsImpl);
+		const replacement = content.replace(TEST_SESSION_ID, "11111111-2222-3333-4444-555555555555");
+		assert.equal(Buffer.byteLength(replacement), Buffer.byteLength(content));
+		writeFileSync(source.sessionFile, replacement);
+
+		const result = preflightHandoffHistory(source, env, fsImpl);
+
+		assert.equal(result.kind, "rejected");
+		if (result.kind === "rejected") assert.match(result.reason, /session ID mismatch/i);
+	});
+
+	it("rejects a valid custom session outside Pi's active-session root", () => {
+		const { tree, source, env } = fixture();
+		const customFile = join(tree.root, "custom.jsonl");
+		writeFileSync(customFile, sessionJsonl([], { id: source.sessionId }));
+
+		const result = preflightHandoffHistory({ ...source, sessionFile: customFile }, env);
+
+		assert.equal(result.kind, "rejected");
+		if (result.kind === "rejected") assert.match(result.reason, /outside Pi's active session directory/i);
+	});
+
+	it("rejects symlinks and directories", () => {
+		const { tree, source, env } = fixture();
+		const symlink = join(tree.sessionDir, "linked.jsonl");
+		const directory = join(tree.sessionDir, "directory.jsonl");
+		symlinkSync(source.sessionFile, symlink);
+		mkdirSync(directory);
+
+		for (const sessionFile of [symlink, directory]) {
+			const result = preflightHandoffHistory({ ...source, sessionFile }, env);
+			assert.equal(result.kind, "rejected");
+			if (result.kind === "rejected") assert.match(result.reason, /regular non-symlink file/i);
+		}
+	});
+
+	it("rejects a missing active source even when the exact session is archived", () => {
+		const { tree, content, source, env } = fixture();
+		archiveAndRemoveActive(tree, content, source);
+
+		const result = preflightHandoffHistory(source, env);
+
+		assert.deepEqual(result, {
+			kind: "rejected",
+			reason: "The source session no longer exists at its recorded active path.",
+		});
+	});
+
+	it("rejects malformed JSONL and a mismatched header id", () => {
+		for (const content of ["not-json\n", sessionJsonl([], { id: "11111111-2222-3333-4444-555555555555" })]) {
+			const { source, env } = fixture();
+			writeFileSync(source.sessionFile, content);
+
+			const result = preflightHandoffHistory(source, env);
+
+			assert.equal(result.kind, "rejected");
+			if (result.kind === "rejected") assert.match(result.reason, /valid JSON|session ID mismatch/i);
+			clearHandoffParseCache();
+		}
+	});
+
+	it("rejects an oversized active source before reading it", () => {
+		const { source, env } = fixture();
+		truncateSync(source.sessionFile, 64 * 1024 * 1024 + 1);
+
+		const result = preflightHandoffHistory(source, env);
+
+		assert.equal(result.kind, "rejected");
+		if (result.kind === "rejected") assert.match(result.reason, /active-reader limit/i);
+	});
+
+	it("bounds rejection reasons", () => {
+		const { source, env } = fixture();
+		const result = preflightHandoffHistory({ ...source, sessionId: "x".repeat(10_000) }, env);
+
+		assert.equal(result.kind, "rejected");
+		if (result.kind === "rejected") {
+			assert.ok(Buffer.byteLength(result.reason) <= 1024);
+			assert.ok(result.reason.endsWith("..."));
+		}
 	});
 });
 

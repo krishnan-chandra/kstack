@@ -14,7 +14,6 @@ import { type BoundaryValue, isString } from "../shared/validation.ts";
  * defaults.
  */
 
-import { existsSync } from "node:fs";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
 import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
@@ -22,7 +21,12 @@ import { loadKstackRoot } from "../shared/kstack-config.ts";
 import { collectCatalogueNameAliases, collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
-import { findHandoffSource, type HandoffSource } from "./history-reader.ts";
+import {
+	findHandoffSource,
+	type HandoffHistoryPreflight,
+	type HandoffSource,
+	preflightHandoffHistory,
+} from "./history-reader.ts";
 import {
 	formatModelEffort,
 	formatModelRef,
@@ -43,11 +47,11 @@ interface HandoffSessionResult {
 export function createHandoffHandler(
 	api: HandoffApi,
 	deps: {
-		sourceExists?: (path: string) => boolean;
+		preflightHistory?: (source: HandoffSource) => HandoffHistoryPreflight;
 		getReplacementApi?: (sessionId: string) => ReplacementSelectionApi | undefined;
 	} = {},
 ) {
-	const sourceExists = deps.sourceExists ?? existsSync;
+	const preflightHistory = deps.preflightHistory ?? preflightHandoffHistory;
 	const getReplacementApi = deps.getReplacementApi ?? getReplacementSelectionApi;
 	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 		if (ctx.mode !== "tui") {
@@ -111,20 +115,23 @@ export function createHandoffHandler(
 			ctx.ui.notify("handoff requires a persisted session and is unavailable with --no-session", "error");
 			return;
 		}
-		if (!sourceExists(oldFile)) {
-			ctx.ui.notify(`The source session no longer exists at ${oldFile}; cannot create a durable handoff.`, "error");
-			return;
-		}
-
 		// Capture only plain strings before replacement. The old command context
 		// becomes stale after newSession succeeds.
 		const oldId = ctx.sessionManager.getSessionId();
 		const cwd = ctx.cwd;
+		const source: HandoffSource = { version: 1, sessionFile: oldFile, sessionId: oldId, cwd };
+		if (!parsed.archive) {
+			const preflight = preflightHistory(source);
+			if (preflight.kind === "rejected") {
+				ctx.ui.notify(`Cannot create a durable handoff: ${preflight.reason}`, "error");
+				return;
+			}
+		}
+
 		const baseHistoryRef = formatHistoryReference(oldFile, oldId, cwd);
 		const historyRef = parsed.archive
 			? `${baseHistoryRef}\nStorage: archived before this handoff; use the archive fallback by exact session ID.`
 			: baseHistoryRef;
-		const source: HandoffSource = { version: 1, sessionFile: oldFile, sessionId: oldId, cwd };
 		const draft = buildReferenceHandoffPrompt(goal, historyRef);
 
 		const edited = await ctx.ui.editor("Edit handoff prompt", draft);
@@ -278,6 +285,12 @@ export function createHandoffHandler(
 			});
 			result = { cancelled: archiveResult.status === "cancelled" };
 		} else {
+			const preflight = preflightHistory(source);
+			if (preflight.kind === "rejected") {
+				ctx.ui.setEditorText(edited);
+				ctx.ui.notify(`Cannot create a durable handoff: ${preflight.reason}`, "error");
+				return;
+			}
 			result = await ctx.newSession(sessionOptions);
 		}
 

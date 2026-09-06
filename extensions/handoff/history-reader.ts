@@ -15,6 +15,7 @@ import { isRecord } from "../shared/narrow.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
+const MAX_PREFLIGHT_REASON_BYTES = 1024;
 const MAX_OUTPUT_BYTES = 50 * 1024;
 const BODY_CHUNK_BYTES = MAX_OUTPUT_BYTES - 8192;
 
@@ -24,6 +25,8 @@ export interface HandoffSource {
 	sessionId: string;
 	cwd: string;
 }
+
+export type HandoffHistoryPreflight = { kind: "ready" } | { kind: "rejected"; reason: string };
 
 interface HandoffEntryLike {
 	type?: BoundaryValue;
@@ -127,7 +130,7 @@ interface ParsedCacheEntry {
 }
 
 export interface HandoffHistoryFs {
-	statSync: typeof statSync;
+	statSync(path: string): Stats;
 	readFileSync: typeof readFileSync;
 }
 
@@ -207,6 +210,30 @@ function readActiveSession(
 		parsed: active,
 	};
 	return active;
+}
+
+function boundPreflightReason(reason: string): string {
+	const normalized = reason.replace(/\s+/gu, " ").trim() || "Active session history is unreadable.";
+	const chunks = splitUtf8Chunks(normalized, MAX_PREFLIGHT_REASON_BYTES - 3);
+	return chunks.length === 1 ? chunks[0] : `${chunks[0]}...`;
+}
+
+/** Validate only the current active file; unlike history reads, never fall back to an archive. */
+export function preflightHandoffHistory(
+	source: HandoffSource,
+	env: NodeJS.ProcessEnv = process.env,
+	fsImpl: HandoffHistoryFs = defaultFs,
+): HandoffHistoryPreflight {
+	parseCache = undefined;
+	try {
+		if (!readActiveSession(source, env, fsImpl)) {
+			return { kind: "rejected", reason: "The source session no longer exists at its recorded active path." };
+		}
+		return { kind: "ready" };
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : "Active session history is unreadable.";
+		return { kind: "rejected", reason: boundPreflightReason(reason) };
+	}
 }
 
 function formatEntry(entry: {
