@@ -21,9 +21,9 @@
         "thinking": "high"
       },
       {
-        "label": "deepseek",
-        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
-        "thinking": "medium"
+        "label": "minimax",
+        "model": "openrouter/minimax/minimax-m3",
+        "thinking": "high"
       },
       {
         "label": "luna",
