@@ -8,10 +8,19 @@ import { requestGitHubStackLanding } from "./landing.ts";
 const one = "b".repeat(40);
 const two = "c".repeat(40);
 const three = "e".repeat(40);
+const merged = "d".repeat(40);
 const entries = [
 	{ prNumber: 1, bookmark: "kstack/one", base: "main", status: "open" as const },
 	{ prNumber: 2, bookmark: "kstack/two", base: "kstack/one", status: "open" as const },
 ];
+
+function worktreeRecord(path: string, branch: string, head: string): string {
+	return `worktree ${path}\0HEAD ${head}\0branch refs/heads/${branch}\0\0`;
+}
+
+function localRefInventory(items: ReadonlyArray<readonly [string, string]>): string {
+	return `${items.map(([branch, sha]) => `refs/heads/${branch}\t${sha}`).join("\n")}\n`;
+}
 
 function pr(number: number, headRef: string, headCommitId: string, baseRef: string): OpenPullRequest {
 	return {
@@ -66,11 +75,98 @@ function exec(
 			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
 			"git rev-parse --verify refs/heads/kstack/one^{commit}": localBranches ? { stdout: `${one}\n` } : { code: 1 },
 			"git rev-parse --verify refs/heads/kstack/two^{commit}": localBranches ? { stdout: `${two}\n` } : { code: 1 },
+			"git for-each-ref --format=%(refname)%09%(objectname) refs/heads": {
+				stdout: localRefInventory([
+					["kstack/one", one],
+					["kstack/two", two],
+				]),
+			},
+			"git worktree list --porcelain -z": { stdout: worktreeRecord("/repo", "kstack/two", two) },
+			[`git merge-base --is-ancestor ${one} ${two}`]: {},
+			[`git rev-list --reverse ${one}..${two}`]: { stdout: `${two}\n` },
+			[`git rev-list --min-parents=2 ${one}..${two}`]: {},
+			[`git merge-base --is-ancestor ${merged} ${two}`]: {},
+			[`git rev-list --reverse ${merged}..${two}`]: { stdout: `${two}\n` },
 		} satisfies Record<string, { code?: number; stdout?: string; stderr?: string }>;
 		const responses = new Map<string, { code?: number; stdout?: string; stderr?: string }>(Object.entries(values));
 		const value = overrides[key] ?? responses.get(key) ?? {};
 		return { code: value.code ?? 0, stdout: value.stdout ?? "", stderr: value.stderr ?? "" };
 	};
+}
+
+async function runInvalidPostRebaseScenario(kind: "added-ref" | "moved-ref" | "stale-ancestry" | "late-inventory") {
+	const mergeCommit = "d".repeat(40);
+	let rebased = false;
+	let refInventoryCalls = 0;
+	const calls: string[] = [];
+	const baseExec = exec(true, {
+		"git fetch origin": {},
+		"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+		"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${mergeCommit}\n` },
+		[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
+	});
+	const scenarioExec: ExecFn = async (command, args, options) => {
+		const key = `${command} ${args.join(" ")}`;
+		calls.push(key);
+		if (key === `git rebase --onto refs/remotes/origin/main ${one} kstack/two --update-refs`) {
+			rebased = true;
+			return { code: 0, stdout: "", stderr: "" };
+		}
+		if (key === "git for-each-ref --format=%(refname)%09%(objectname) refs/heads") {
+			refInventoryCalls++;
+			if (kind === "late-inventory" && refInventoryCalls === 3) {
+				return { code: 1, stdout: "", stderr: "inventory unavailable" };
+			}
+			const refs: Array<readonly [string, string]> = [
+				["kstack/one", one],
+				["kstack/two", two],
+				["outside", rebased && kind === "moved-ref" ? three : one],
+			];
+			if (rebased && kind === "added-ref") refs.push(["new-alias", one]);
+			return { code: 0, stdout: localRefInventory(refs), stderr: "" };
+		}
+		if (rebased && kind === "stale-ancestry" && key === `git merge-base --is-ancestor ${mergeCommit} ${two}`) {
+			return { code: 1, stdout: "", stderr: "" };
+		}
+		return baseExec(command, args, options);
+	};
+	let baseUpdates = 0;
+	let navigationWrites = 0;
+	let remoteDeletes = 0;
+	const base = gateway();
+	const result = await requestGitHubStackLanding(
+		{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+		{
+			exec: scenarioExec,
+			gateway: {
+				...base,
+				getPrStatus: async (_repo, prNumber) => (prNumber === 1 ? "merged" : "open"),
+				getMergeCommit: async () => ({
+					merged: true,
+					mergeCommitOid: mergeCommit,
+					headCommitId: one,
+					headRef: "kstack/one",
+				}),
+				updatePrBase: async () => {
+					baseUpdates++;
+				},
+				createOrUpdateComment: async () => {
+					navigationWrites++;
+					return { id: 1 };
+				},
+				deleteRemoteBranch: async () => {
+					remoteDeletes++;
+					return "deleted";
+				},
+			},
+			confirm: async () => true,
+			selectMethod: async () => "squash",
+			landFrontier: async () => ({ handled: false }),
+			acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+			realpath: (path) => path,
+		},
+	);
+	return { result, calls, baseUpdates, navigationWrites, remoteDeletes };
 }
 
 describe("GitHub stack landing", () => {
@@ -189,6 +285,294 @@ describe("GitHub stack landing", () => {
 		);
 	});
 
+	it("blocks a local alias inside the rewrite scope before landing the frontier", async () => {
+		let landCalls = 0;
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: exec(true, {
+					"git for-each-ref --format=%(refname)%09%(objectname) refs/heads": {
+						stdout: `refs/heads/kstack/one\t${one}\nrefs/heads/kstack/two\t${two}\nrefs/heads/local-alias\t${two}\n`,
+					},
+				}),
+				gateway: gateway(),
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "blocked");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "blocked" ? result.outcome.blockers[0].message : "",
+			/local-alias.*rewrite range/,
+		);
+	});
+
+	it("blocks the top checked out in another worktree before landing the frontier", async () => {
+		let landCalls = 0;
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: exec(true, {
+					"git worktree list --porcelain -z": {
+						stdout: worktreeRecord("/other worktree", "kstack/two", two),
+					},
+				}),
+				gateway: gateway(),
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "blocked");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "blocked" ? result.outcome.blockers[0].message : "",
+			/another worktree/,
+		);
+	});
+
+	it("blocks an intermediate branch checked out in another worktree before landing", async () => {
+		const stackEntries = [
+			entries[0],
+			entries[1],
+			{ prNumber: 3, bookmark: "kstack/three", base: "kstack/two", status: "open" as const },
+		];
+		const prs = [
+			pr(1, "kstack/one", one, "main"),
+			pr(2, "kstack/two", two, "kstack/one"),
+			pr(3, "kstack/three", three, "kstack/two"),
+		];
+		let landCalls = 0;
+		const base = gateway();
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: exec(true, {
+					"git rev-parse --verify refs/heads/kstack/three^{commit}": { stdout: `${three}\n` },
+					"git for-each-ref --format=%(refname)%09%(objectname) refs/heads": {
+						stdout: localRefInventory([
+							["kstack/one", one],
+							["kstack/two", two],
+							["kstack/three", three],
+						]),
+					},
+					"git worktree list --porcelain -z": {
+						stdout:
+							worktreeRecord("/middle worktree", "kstack/two", two) + worktreeRecord("/repo", "kstack/three", three),
+					},
+					[`git merge-base --is-ancestor ${one} ${three}`]: {},
+					[`git rev-list --reverse ${one}..${three}`]: { stdout: `${two}\n${three}\n` },
+					[`git rev-list --min-parents=2 ${one}..${three}`]: {},
+				}),
+				gateway: {
+					...base,
+					listOpenPrs: async () => prs,
+					listPrsForHead: async (_repo, head) => prs.filter((item) => item.headRef === head),
+					getPrComments: async () => [{ id: 1, user: "me", body: buildNavigationComment(stackEntries, "main") }],
+				},
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "blocked");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "blocked" ? result.outcome.blockers[0].message : "",
+			/kstack\/two.*checked out.*middle worktree/,
+		);
+	});
+
+	it("rechecks the confirmed scope under the publication lock", async () => {
+		let confirmed = false;
+		let landCalls = 0;
+		const baseExec = exec();
+		const changingExec: ExecFn = (command, args, options) => {
+			const key = `${command} ${args.join(" ")}`;
+			if (confirmed && key === "git for-each-ref --format=%(refname)%09%(objectname) refs/heads") {
+				return Promise.resolve({
+					code: 0,
+					stdout: localRefInventory([
+						["kstack/one", one],
+						["kstack/two", two],
+						["new-alias", two],
+					]),
+					stderr: "",
+				});
+			}
+			return baseExec(command, args, options);
+		};
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: changingExec,
+				gateway: gateway(),
+				confirm: async () => {
+					confirmed = true;
+					return true;
+				},
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "blocked");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "blocked" ? result.outcome.blockers[0].message : "",
+			/new-alias.*rewrite range/,
+		);
+	});
+
+	it("blocks pinned branch drift introduced during confirmation", async () => {
+		let confirmed = false;
+		let landCalls = 0;
+		const baseExec = exec();
+		const driftingExec: ExecFn = (command, args, options) => {
+			const key = `${command} ${args.join(" ")}`;
+			if (confirmed && key === "git rev-parse --verify refs/heads/kstack/two^{commit}") {
+				return Promise.resolve({ code: 0, stdout: `${three}\n`, stderr: "" });
+			}
+			return baseExec(command, args, options);
+		};
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: driftingExec,
+				gateway: gateway(),
+				confirm: async () => {
+					confirmed = true;
+					return true;
+				},
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "blocked");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "blocked" ? result.outcome.blockers[0].message : "",
+			/does not match PR #2 head/,
+		);
+	});
+
+	it("rechecks scope before each later frontier merge", async () => {
+		const mergeCommit = "d".repeat(40);
+		const stackEntries = [
+			entries[0],
+			entries[1],
+			{ prNumber: 3, bookmark: "kstack/three", base: "kstack/two", status: "open" as const },
+		];
+		const prs = [
+			pr(1, "kstack/one", one, "main"),
+			pr(2, "kstack/two", two, "kstack/one"),
+			pr(3, "kstack/three", three, "kstack/two"),
+		];
+		let firstPushCompleted = false;
+		let landCalls = 0;
+		const baseExec = exec(true, {
+			"git fetch origin": {},
+			"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+			"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${mergeCommit}\n` },
+			[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
+		});
+		const stackExec: ExecFn = async (command, args, options) => {
+			const key = `${command} ${args.join(" ")}`;
+			if (key === "git rev-parse --verify refs/heads/kstack/three^{commit}") {
+				return { code: 0, stdout: `${three}\n`, stderr: "" };
+			}
+			if (key === "git for-each-ref --format=%(refname)%09%(objectname) refs/heads") {
+				const refs: Array<readonly [string, string]> = [
+					["kstack/one", one],
+					["kstack/two", two],
+					["kstack/three", three],
+				];
+				if (firstPushCompleted) refs.push(["later-alias", three]);
+				return { code: 0, stdout: localRefInventory(refs), stderr: "" };
+			}
+			if (key === "git worktree list --porcelain -z") {
+				return { code: 0, stdout: worktreeRecord("/repo", "kstack/three", three), stderr: "" };
+			}
+			if (key === `git rev-list --reverse ${one}..${three}`) {
+				return { code: 0, stdout: `${two}\n${three}\n`, stderr: "" };
+			}
+			if (key === `git rev-list --reverse ${two}..${three}`) {
+				return { code: 0, stdout: `${three}\n`, stderr: "" };
+			}
+			if (key === `git rev-list --reverse ${mergeCommit}..${three}`) {
+				return { code: 0, stdout: `${two}\n${three}\n`, stderr: "" };
+			}
+			if (key.startsWith("git push --atomic ")) firstPushCompleted = true;
+			return baseExec(command, args, options);
+		};
+		const base = gateway();
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "check", method: "squash" },
+			{
+				exec: stackExec,
+				gateway: {
+					...base,
+					listOpenPrs: async () => prs,
+					listPrsForHead: async (_repo, head) => prs.filter((item) => item.headRef === head),
+					getPrStatus: async (_repo, prNumber) => (prNumber === 1 ? "merged" : "open"),
+					getPrComments: async () => [{ id: 1, user: "me", body: buildNavigationComment(stackEntries, "main") }],
+					getMergeCommit: async () => ({
+						merged: true,
+						mergeCommitOid: mergeCommit,
+						headCommitId: one,
+						headRef: "kstack/one",
+					}),
+					getRemoteBranchSha: async (_repo, branch) => {
+						if (branch === "kstack/two") return two;
+						if (branch === "kstack/three") return three;
+						return branch === "kstack/one" ? one : undefined;
+					},
+				},
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(firstPushCompleted, true);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "partial");
+		assert.match(
+			result.status === "stack" && result.outcome.status === "partial" ? result.outcome.error : "",
+			/later-alias.*rewrite range/,
+		);
+	});
+
 	it("atomically republishes every remainder branch with exact leases", async () => {
 		const mergeCommit = "d".repeat(40);
 		const rebasedTwo = "f".repeat(40);
@@ -223,6 +607,30 @@ describe("GitHub stack landing", () => {
 			}
 			if (key === "git rev-parse --verify refs/heads/kstack/three^{commit}") {
 				return { code: 0, stdout: `${rebased ? rebasedThree : three}\n`, stderr: "" };
+			}
+			if (key === "git for-each-ref --format=%(refname)%09%(objectname) refs/heads") {
+				return {
+					code: 0,
+					stdout: localRefInventory([
+						["kstack/one", one],
+						["kstack/two", rebased ? rebasedTwo : two],
+						["kstack/three", rebased ? rebasedThree : three],
+					]),
+					stderr: "",
+				};
+			}
+			if (key === "git worktree list --porcelain -z") {
+				return {
+					code: 0,
+					stdout: worktreeRecord("/repo", "kstack/three", rebased ? rebasedThree : three),
+					stderr: "",
+				};
+			}
+			if (key === `git rev-list --reverse ${one}..${three}`) {
+				return { code: 0, stdout: `${two}\n${three}\n`, stderr: "" };
+			}
+			if (key === `git rev-list --reverse ${mergeCommit}..${rebasedThree}`) {
+				return { code: 0, stdout: `${rebasedTwo}\n${rebasedThree}\n`, stderr: "" };
 			}
 			return baseExec(command, args, options);
 		};
@@ -260,27 +668,240 @@ describe("GitHub stack landing", () => {
 		const pushes = calls.filter((call) => call.startsWith("git push "));
 		assert.equal(pushes.length, 1);
 		assert.match(pushes[0], /--atomic/);
-		assert.match(pushes[0], /kstack\/two:refs\/heads\/kstack\/two/);
-		assert.match(pushes[0], /kstack\/three:refs\/heads\/kstack\/three/);
+		assert.match(pushes[0], new RegExp(`${rebasedTwo}:refs/heads/kstack/two`));
+		assert.match(pushes[0], new RegExp(`${rebasedThree}:refs/heads/kstack/three`));
 	});
 
-	it("records recovery handles before a conflicted advance", async () => {
-		const mergeCommit = "d".repeat(40);
+	it("skips rewrite-scope checks for the final frontier and preserves cleanup", async () => {
+		const firstMerge = "d".repeat(40);
+		const secondMerge = "a".repeat(40);
+		let fetches = 0;
+		let refInventories = 0;
+		let deleted = 0;
+		let delegated = 0;
+		const calls: string[] = [];
+		const baseExec = exec(true, {
+			"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+		});
+		const finalExec: ExecFn = async (command, args, options) => {
+			const key = `${command} ${args.join(" ")}`;
+			calls.push(key);
+			if (key === "git fetch origin") {
+				fetches++;
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (key === "git rev-parse --verify refs/remotes/origin/main^{commit}") {
+				return { code: 0, stdout: `${fetches > 1 ? secondMerge : firstMerge}\n`, stderr: "" };
+			}
+			if (key === "git for-each-ref --format=%(refname)%09%(objectname) refs/heads") {
+				refInventories++;
+			}
+			return baseExec(command, args, options);
+		};
 		const base = gateway();
 		const result = await requestGitHubStackLanding(
 			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "check", method: "squash" },
 			{
-				exec: exec(true, {
-					"git fetch origin": {},
-					"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
-					"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${mergeCommit}\n` },
-					[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
-					[`git rebase --onto refs/remotes/origin/main ${one} kstack/two --update-refs`]: {
-						code: 1,
-						stderr: "conflict",
+				exec: finalExec,
+				gateway: {
+					...base,
+					getPrStatus: async () => "merged",
+					getMergeCommit: async (_repo, prNumber) => ({
+						merged: true,
+						mergeCommitOid: prNumber === 1 ? firstMerge : secondMerge,
+						headCommitId: prNumber === 1 ? one : two,
+						headRef: prNumber === 1 ? "kstack/one" : "kstack/two",
+					}),
+					getRemoteBranchSha: async (_repo, branch) => {
+						if (branch === "kstack/one") return one;
+						if (branch === "kstack/two") return two;
+						return undefined;
 					},
-					"git rebase --abort": {},
-				}),
+					deleteRemoteBranch: async () => {
+						deleted++;
+						return "deleted";
+					},
+				},
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					delegated++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "completed");
+		assert.equal(delegated, 0);
+		assert.equal(fetches, 2);
+		assert.equal(refInventories, 4);
+		assert.equal(calls.filter((call) => call.startsWith("git rebase --onto ")).length, 1);
+		assert.ok(calls.includes("git switch main"));
+		assert.equal(deleted, 2);
+	});
+
+	it("reports a post-merge scope inspection failure before rebase or publication", async () => {
+		const scenario = await runInvalidPostRebaseScenario("late-inventory");
+		assert.equal(scenario.result.status === "stack" ? scenario.result.outcome.status : "", "partial");
+		assert.equal(
+			scenario.calls.some((call) => call.startsWith("git rebase ")),
+			false,
+		);
+		assert.equal(
+			scenario.calls.some((call) => call.startsWith("git push ")),
+			false,
+		);
+		assert.equal(
+			scenario.calls.some((call) => call.startsWith("git branch -D ")),
+			false,
+		);
+		assert.equal(scenario.baseUpdates, 0);
+		assert.equal(scenario.navigationWrites, 0);
+		assert.equal(scenario.remoteDeletes, 0);
+		assert.deepEqual(
+			scenario.result.status === "stack" && scenario.result.outcome.status === "partial"
+				? scenario.result.outcome.recoveryOperationIds
+				: [],
+			[`kstack/two@${two}`],
+		);
+		assert.equal(
+			scenario.result.status === "stack" && scenario.result.outcome.status === "partial"
+				? scenario.result.outcome.frontiers[0]?.state
+				: undefined,
+			"already-merged",
+		);
+		assert.match(
+			scenario.result.status === "stack" && scenario.result.outcome.status === "partial"
+				? scenario.result.outcome.error
+				: "",
+			/inventory unavailable/,
+		);
+	});
+
+	it("stops before publication when post-rebase refs or ancestry are invalid", async () => {
+		for (const kind of ["added-ref", "moved-ref", "stale-ancestry"] as const) {
+			const scenario = await runInvalidPostRebaseScenario(kind);
+			assert.equal(scenario.result.status === "stack" ? scenario.result.outcome.status : "", "partial");
+			assert.equal(
+				scenario.calls.some((call) => call.startsWith("git push ")),
+				false,
+			);
+			assert.equal(
+				scenario.calls.some((call) => call.startsWith("git branch -D ")),
+				false,
+			);
+			assert.equal(scenario.baseUpdates, 0);
+			assert.equal(scenario.navigationWrites, 0);
+			assert.equal(scenario.remoteDeletes, 0);
+			assert.deepEqual(
+				scenario.result.status === "stack" && scenario.result.outcome.status === "partial"
+					? scenario.result.outcome.recoveryOperationIds
+					: [],
+				[`kstack/two@${two}`],
+			);
+			assert.ok(
+				scenario.result.status === "stack" &&
+					scenario.result.outcome.status === "partial" &&
+					scenario.result.outcome.completedMutations.includes("Rebased stack remainder through kstack/two"),
+			);
+		}
+	});
+
+	it("preserves partial progress across conclusive and indeterminate publication checks", async () => {
+		const mergeCommit = "d".repeat(40);
+		for (const failure of ["push", "remote-inspection"] as const) {
+			const calls: string[] = [];
+			const pushCommand = `git push --atomic --force-with-lease=refs/heads/kstack/two:${two} origin ${two}:refs/heads/kstack/two`;
+			const baseExec = exec(true, {
+				"git fetch origin": {},
+				"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+				"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${mergeCommit}\n` },
+				[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
+				[pushCommand]: { code: 1, stderr: "remote rejected" },
+			});
+			const recordingExec: ExecFn = (command, args, options) => {
+				calls.push(`${command} ${args.join(" ")}`);
+				return baseExec(command, args, options);
+			};
+			let baseUpdates = 0;
+			let navigationWrites = 0;
+			let remoteDeletes = 0;
+			const base = gateway();
+			const result = await requestGitHubStackLanding(
+				{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+				{
+					exec: recordingExec,
+					gateway: {
+						...base,
+						getPrStatus: async (_repo, prNumber) => (prNumber === 1 ? "merged" : "open"),
+						getMergeCommit: async () => ({
+							merged: true,
+							mergeCommitOid: mergeCommit,
+							headCommitId: one,
+							headRef: "kstack/one",
+						}),
+						getRemoteBranchSha: async (_repo, branch) => {
+							if (failure === "remote-inspection") {
+								throw new GitHubError("remote acceptance unknown", "indeterminate");
+							}
+							return branch === "kstack/two" ? two : undefined;
+						},
+						updatePrBase: async () => {
+							baseUpdates++;
+						},
+						createOrUpdateComment: async () => {
+							navigationWrites++;
+							return { id: 1 };
+						},
+						deleteRemoteBranch: async () => {
+							remoteDeletes++;
+							return "deleted";
+						},
+					},
+					confirm: async () => true,
+					selectMethod: async () => "squash",
+					landFrontier: async () => ({ handled: false }),
+					acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+					realpath: (path) => path,
+				},
+			);
+			assert.equal(result.status === "stack" ? result.outcome.status : "", "partial");
+			assert.equal(calls.includes(pushCommand), failure === "push");
+			assert.equal(baseUpdates, 0);
+			assert.equal(navigationWrites, 0);
+			assert.equal(remoteDeletes, 0);
+			assert.ok(
+				result.status === "stack" &&
+					result.outcome.status === "partial" &&
+					result.outcome.completedMutations.includes("Rebased stack remainder through kstack/two"),
+			);
+		}
+	});
+
+	it("records recovery handles when rebase and abort fail", async () => {
+		const mergeCommit = "d".repeat(40);
+		const base = gateway();
+		const calls: string[] = [];
+		const baseExec = exec(true, {
+			"git fetch origin": {},
+			"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+			"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${mergeCommit}\n` },
+			[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
+			[`git rebase --onto refs/remotes/origin/main ${one} kstack/two --update-refs`]: {
+				code: 1,
+				stderr: "conflict",
+			},
+			"git rebase --abort": { code: 1, stderr: "abort failed" },
+		});
+		const recordingExec: ExecFn = (command, args, options) => {
+			calls.push(`${command} ${args.join(" ")}`);
+			return baseExec(command, args, options);
+		};
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "check", method: "squash" },
+			{
+				exec: recordingExec,
 				gateway: {
 					...base,
 					getPrStatus: async (_repo, prNumber) => (prNumber === 1 ? "merged" : "open"),
@@ -302,6 +923,19 @@ describe("GitHub stack landing", () => {
 		assert.deepEqual(
 			result.status === "stack" && result.outcome.status === "partial" ? result.outcome.recoveryOperationIds : [],
 			[`kstack/two@${two}`],
+		);
+		assert.ok(calls.includes("git rebase --abort"));
+		assert.equal(
+			calls.some((call) => call.startsWith("git push ")),
+			false,
+		);
+		assert.equal(
+			calls.some((call) => call.startsWith("git branch -D ")),
+			false,
+		);
+		assert.match(
+			result.status === "stack" && result.outcome.status === "partial" ? result.outcome.error : "",
+			/abort also failed: abort failed/,
 		);
 	});
 
@@ -391,7 +1025,11 @@ describe("GitHub stack landing", () => {
 			[`git merge-base --is-ancestor ${mergeCommit} ${mergeCommit}`]: {},
 		});
 		const recordingExec: ExecFn = async (command, args, options) => {
-			calls.push(`${command} ${args.join(" ")}`);
+			const key = `${command} ${args.join(" ")}`;
+			calls.push(key);
+			if (key === `git rev-list --reverse ${revisedPin}..${two}`) {
+				return { code: 0, stdout: `${two}\n`, stderr: "" };
+			}
 			return baseExec(command, args, options);
 		};
 		const base = gateway();

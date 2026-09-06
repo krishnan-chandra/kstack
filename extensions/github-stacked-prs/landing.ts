@@ -19,6 +19,13 @@ import {
 } from "../shared/stack/outcome.ts";
 import { createNavigationCommentStore, type NavigationEntry } from "../shared/stack/topology.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
+import {
+	inspectRebaseScope,
+	matchesConfirmedRebaseScope,
+	type RebaseScopeBranch,
+	type RebaseScopeSnapshot,
+	verifyRebasedScope,
+} from "./rebase-scope.ts";
 import { requireGit238, resolveGitRemote, resolveGitTrunk } from "./repository.ts";
 
 interface LocalStackEntry {
@@ -92,6 +99,13 @@ export async function requestGitHubStackLanding(
 		deps,
 	);
 	if (!prepared.ok) return stackBlocked(prepared.error);
+	const confirmedScope = await inspectLandingRebaseScope({
+		current: prepared.entries[0],
+		remainder: prepared.entries.slice(1),
+		cwd: input.cwd,
+		deps,
+	});
+	if (!confirmedScope.ok) return stackBlocked(confirmedScope.error);
 	const method = await resolveMethod(input.method, remote.remote.repository, input.cwd, deps);
 	if (!method.ok) return stackBlocked(method.error);
 	const preview = renderPreview(prepared.entries, membership.selectedIndex, method.method, input.readiness);
@@ -107,6 +121,7 @@ export async function requestGitHubStackLanding(
 		entries: prepared.entries,
 		method: method.method,
 		readiness: input.readiness,
+		confirmedScope: confirmedScope.scope,
 		deps,
 	});
 	return { status: "stack", outcome };
@@ -307,6 +322,28 @@ async function verifyMergedFrontier(input: {
 	}
 }
 
+async function inspectLandingRebaseScope(input: {
+	current: LocalStackEntry;
+	remainder: readonly LocalStackEntry[];
+	frontierSha?: string;
+	cwd: string;
+	deps: GitHubLandingDeps;
+}): Promise<{ ok: true; scope: RebaseScopeSnapshot | undefined } | { ok: false; error: string }> {
+	if (input.remainder.length === 0) return { ok: true, scope: undefined };
+	const remainder: RebaseScopeBranch[] = [];
+	for (const item of input.remainder) {
+		if (!item.localSha) return { ok: false, error: `Local branch ${item.entry.bookmark} is required for rebase.` };
+		remainder.push({ branch: item.entry.bookmark, sha: item.localSha });
+	}
+	const inspected = await inspectRebaseScope({
+		cwd: input.cwd,
+		frontierSha: input.frontierSha ?? input.current.pr.headCommitId,
+		remainder,
+		deps: { exec: input.deps.exec, signal: input.deps.signal, realpath: input.deps.realpath },
+	});
+	return inspected.ok ? { ok: true, scope: inspected.value } : inspected;
+}
+
 interface AdvanceProgress {
 	completedMutations: string[];
 	warnings: string[];
@@ -366,6 +403,20 @@ async function advanceRemainder(input: {
 	if (input.remainder.length === 0) {
 		return { ok: true, trunkBranch: trunk.trunk.branch, ...progress };
 	}
+	const rebaseScope = await inspectLandingRebaseScope({
+		current: input.current,
+		remainder: input.remainder,
+		frontierSha: input.expectedHeadSha,
+		cwd: input.cwd,
+		deps: input.deps,
+	});
+	if (!rebaseScope.ok || !rebaseScope.scope) {
+		return {
+			ok: false,
+			error: `Merged PR #${input.current.entry.prNumber}, but the local rebase scope is no longer supported: ${rebaseScope.ok ? "the remainder is unexpectedly empty" : rebaseScope.error}`,
+			...progress,
+		};
+	}
 	const top = input.remainder.at(-1);
 	if (!top) return { ok: false, error: "The landing remainder is unexpectedly empty.", ...progress };
 	const rebased = await runCommand(
@@ -377,18 +428,31 @@ async function advanceRemainder(input: {
 		60_000,
 	);
 	if (rebased.code !== 0) {
-		await runCommand(input.deps.exec, "git", ["rebase", "--abort"], input.cwd);
+		const aborted = await runCommand(input.deps.exec, "git", ["rebase", "--abort"], input.cwd);
+		const abortError = aborted.code === 0 ? "" : `. Rebase abort also failed: ${commandDiagnostic(aborted)}`;
 		return {
 			ok: false,
-			error: `Merged PR #${input.current.entry.prNumber}, but local rebase conflicted: ${commandDiagnostic(rebased)}`,
+			error: `Merged PR #${input.current.entry.prNumber}, but local rebase conflicted: ${commandDiagnostic(rebased)}${abortError}`,
 			...progress,
 		};
 	}
-	const refreshed = await readRebasedHeads(input.remainder, input.cwd, input.deps);
-	if (!refreshed.ok) return { ok: false, error: refreshed.error, ...progress };
+	progress.completedMutations.push(`Rebased stack remainder through ${top.entry.bookmark}`);
+	const refreshed = await verifyRebasedScope({
+		cwd: input.cwd,
+		refreshedTrunkSha: trunk.trunk.sha,
+		before: rebaseScope.scope,
+		deps: { exec: input.deps.exec, signal: input.deps.signal, realpath: input.deps.realpath },
+	});
+	if (!refreshed.ok) {
+		return {
+			ok: false,
+			error: `Merged PR #${input.current.entry.prNumber}, but rebased ref verification failed: ${refreshed.error}`,
+			...progress,
+		};
+	}
 	const pushed = await pushRemainderAtomically({
 		remainder: input.remainder,
-		newHeads: refreshed.heads,
+		newHeads: refreshed.value,
 		cwd: input.cwd,
 		remote: input.remote,
 		repository: input.repository,
@@ -396,7 +460,7 @@ async function advanceRemainder(input: {
 	});
 	if (!pushed.ok) return { ok: false, error: pushed.error, ...progress };
 	for (const item of input.remainder) {
-		const newSha = refreshed.heads.get(item.entry.bookmark);
+		const newSha = refreshed.value.get(item.entry.bookmark);
 		if (!newSha) return { ok: false, error: `Missing rebased head for ${item.entry.bookmark}.`, ...progress };
 		item.localSha = newSha;
 		item.pr = { ...item.pr, headCommitId: newSha };
@@ -427,29 +491,6 @@ async function advanceRemainder(input: {
 	progress.warnings.push(...comments.errors);
 	if (comments.indeterminate) progress.warnings.push(comments.indeterminate.error);
 	return { ok: true, trunkBranch: trunk.trunk.branch, ...progress };
-}
-
-async function readRebasedHeads(
-	remainder: readonly LocalStackEntry[],
-	cwd: string,
-	deps: GitHubLandingDeps,
-): Promise<{ ok: true; heads: Map<string, string> } | { ok: false; error: string }> {
-	const heads = new Map<string, string>();
-	for (const item of remainder) {
-		const refreshed = await runCommand(
-			deps.exec,
-			"git",
-			["rev-parse", "--verify", `refs/heads/${item.entry.bookmark}^{commit}`],
-			cwd,
-			deps.signal,
-		);
-		const sha = refreshed.stdout.trim();
-		if (refreshed.code !== 0 || !STACK_SHA_RE.test(sha) || !item.localSha) {
-			return { ok: false, error: `Could not verify rebased branch ${item.entry.bookmark}.` };
-		}
-		heads.set(item.entry.bookmark, sha);
-	}
-	return { ok: true, heads };
 }
 
 async function pushRemainderAtomically(input: {
@@ -483,10 +524,9 @@ async function pushRemainderAtomically(input: {
 	);
 	const refspecs: string[] = [];
 	for (const item of input.remainder) {
-		if (!input.newHeads.has(item.entry.bookmark)) {
-			return { ok: false, error: `Missing rebased head for ${item.entry.bookmark}.` };
-		}
-		refspecs.push(`${item.entry.bookmark}:refs/heads/${item.entry.bookmark}`);
+		const newHead = input.newHeads.get(item.entry.bookmark);
+		if (!newHead) return { ok: false, error: `Missing rebased head for ${item.entry.bookmark}.` };
+		refspecs.push(`${newHead}:refs/heads/${item.entry.bookmark}`);
 	}
 	const pushed = await runCommand(
 		input.deps.exec,
@@ -598,6 +638,7 @@ async function runLandingLoop(input: {
 	entries: readonly LocalStackEntry[];
 	method: MergeMethod;
 	readiness: "check" | "watch";
+	confirmedScope: RebaseScopeSnapshot | undefined;
 	deps: GitHubLandingDeps;
 }): Promise<StackLandOutcome> {
 	const lock = await acquireRepositoryPublicationLock(input.deps.exec, input.cwd, {
@@ -610,44 +651,11 @@ async function runLandingLoop(input: {
 			? { status: "busy", message: "Another stack publication or landing is active for this repository." }
 			: { status: "failed", error: lock.error, ...emptyStackLandProgress() };
 	}
-	const fresh = await inspectLocalStack(
-		input.entries.map((item) => item.entry),
-		input.selectedIndex,
-		input.repository,
-		input.cwd,
-		input.deps,
-	);
-	if (!fresh.ok) {
-		lock.lock.release();
-		return { status: "blocked", blockers: [{ code: "github-land", message: fresh.error }] };
-	}
-	const changed = fresh.entries.some((item, index) => {
-		const prior = input.entries[index];
-		return (
-			!prior ||
-			item.status !== prior.status ||
-			item.localSha !== prior.localSha ||
-			item.pr.headCommitId !== prior.pr.headCommitId
-		);
-	});
-	if (changed) {
-		lock.lock.release();
-		return {
-			status: "blocked",
-			blockers: [
-				{
-					code: "github-land",
-					message: "The local or remote stack changed after confirmation; retry from a fresh plan.",
-				},
-			],
-		};
-	}
-	const entries = fresh.entries;
 	const frontiers: StackLandFrontier[] = [];
 	const completedMutations: string[] = [];
 	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
-	let remainingRefs = entries.map((item) => item.entry.bookmark);
+	let remainingRefs = input.entries.map((item) => item.entry.bookmark);
 	const progress = () => ({
 		frontiers: [...frontiers],
 		remainingRefs: [...remainingRefs],
@@ -656,6 +664,56 @@ async function runLandingLoop(input: {
 		recoveryOperationIds: [...recoveryOperationIds],
 	});
 	try {
+		const fresh = await inspectLocalStack(
+			input.entries.map((item) => item.entry),
+			input.selectedIndex,
+			input.repository,
+			input.cwd,
+			input.deps,
+		);
+		if (!fresh.ok) return { status: "blocked", blockers: [{ code: "github-land", message: fresh.error }] };
+		const changed = fresh.entries.some((item, index) => {
+			const prior = input.entries[index];
+			return (
+				!prior ||
+				item.status !== prior.status ||
+				item.localSha !== prior.localSha ||
+				item.pr.headCommitId !== prior.pr.headCommitId
+			);
+		});
+		if (changed) {
+			return {
+				status: "blocked",
+				blockers: [
+					{
+						code: "github-land",
+						message: "The local or remote stack changed after confirmation; retry from a fresh plan.",
+					},
+				],
+			};
+		}
+		const lockedScope = await inspectLandingRebaseScope({
+			current: fresh.entries[0],
+			remainder: fresh.entries.slice(1),
+			cwd: input.cwd,
+			deps: input.deps,
+		});
+		if (!lockedScope.ok) {
+			return { status: "blocked", blockers: [{ code: "github-land", message: lockedScope.error }] };
+		}
+		if (
+			(input.confirmedScope === undefined) !== (lockedScope.scope === undefined) ||
+			(input.confirmedScope &&
+				lockedScope.scope &&
+				!matchesConfirmedRebaseScope(input.confirmedScope, lockedScope.scope))
+		) {
+			return {
+				status: "blocked",
+				blockers: [{ code: "github-land", message: "The local rebase scope changed after confirmation; retry." }],
+			};
+		}
+		const entries = fresh.entries;
+		remainingRefs = entries.map((item) => item.entry.bookmark);
 		for (let index = 0; index <= input.selectedIndex; index++) {
 			const current = entries[index];
 			if (input.deps.signal?.aborted) {
@@ -664,6 +722,19 @@ async function runLandingLoop(input: {
 					: { status: "partial", error: "Landing was cancelled after earlier mutations completed.", ...progress() };
 			}
 			const expectedHeadSha = current.pr.headCommitId;
+			if (index > 0) {
+				const freshScope = await inspectLandingRebaseScope({
+					current,
+					remainder: entries.slice(index + 1),
+					cwd: input.cwd,
+					deps: input.deps,
+				});
+				if (!freshScope.ok) {
+					return frontiers.length === 0 && completedMutations.length === 0
+						? { status: "blocked", blockers: [{ code: "github-land", message: freshScope.error }] }
+						: { status: "partial", error: freshScope.error, ...progress() };
+				}
+			}
 			let frontier: StackLandFrontier = {
 				ref: current.entry.bookmark,
 				prNumber: current.entry.prNumber,
