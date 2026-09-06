@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createVcsTestEnv } from "../../../extensions/shared/vcs-test-env.ts";
 import { encodeInspectionOutput, OUTPUT_CAP, parseWorktreePorcelainZ } from "./inspect_worktrees.ts";
 
 const INSPECTOR = fileURLToPath(new URL("./inspect_worktrees.ts", import.meta.url));
@@ -16,9 +17,10 @@ interface CliResult {
 	stderr: string;
 }
 
-function runNode(script: string, args: string[]): Promise<CliResult> {
+function runNode(script: string, args: string[], env?: NodeJS.ProcessEnv): Promise<CliResult> {
 	return new Promise((resolve) => {
 		const child = spawn("node", [script, ...args], {
+			env,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -38,9 +40,9 @@ function runNode(script: string, args: string[]): Promise<CliResult> {
 	});
 }
 
-function git(cwd: string, args: string[]): Promise<CliResult> {
+function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<CliResult> {
 	return new Promise((resolve, reject) => {
-		const child = spawn("git", args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn("git", args, { cwd, env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
 		child.stdout.setEncoding("utf8");
@@ -58,16 +60,16 @@ function git(cwd: string, args: string[]): Promise<CliResult> {
 	});
 }
 
-async function initRepo(root: string, branch = "main"): Promise<string> {
+async function initRepo(root: string, branch = "main", env?: NodeJS.ProcessEnv): Promise<string> {
 	const repo = join(root, "repo");
 	mkdirSync(repo);
-	assert.equal((await git(repo, ["init", "-q"])).code, 0);
-	assert.equal((await git(repo, ["config", "user.name", "Test"])).code, 0);
-	assert.equal((await git(repo, ["config", "user.email", "test@example.com"])).code, 0);
+	assert.equal((await git(repo, ["init", "-q"], env)).code, 0);
+	assert.equal((await git(repo, ["config", "user.name", "Test"], env)).code, 0);
+	assert.equal((await git(repo, ["config", "user.email", "test@example.com"], env)).code, 0);
 	writeFileSync(join(repo, "file.txt"), "base\n");
-	assert.equal((await git(repo, ["add", "file.txt"])).code, 0);
-	assert.equal((await git(repo, ["commit", "-qm", "init"])).code, 0);
-	assert.equal((await git(repo, ["branch", "-M", branch])).code, 0);
+	assert.equal((await git(repo, ["add", "file.txt"], env)).code, 0);
+	assert.equal((await git(repo, ["commit", "-qm", "init"], env)).code, 0);
+	assert.equal((await git(repo, ["branch", "-M", branch], env)).code, 0);
 	return repo;
 }
 
@@ -95,41 +97,51 @@ describe("inspect_worktrees CLI", () => {
 
 	it("marks a symlink as an orphan without following it", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
-		const managed = join(root, "managed");
-		const namespace = join(managed, "repo-12345678");
-		const outside = join(root, "outside");
-		mkdirSync(namespace, { recursive: true });
-		mkdirSync(outside);
-		symlinkSync(outside, join(namespace, "escape"));
-		const result = await runNode(INSPECTOR, ["--root", managed]);
-		assert.equal(result.code, 0, result.stderr);
-		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
-		const payload = JSON.parse(result.stdout) as {
-			worktrees: unknown[];
-			orphans: Array<{ reason: string }>;
-		};
-		assert.deepEqual(payload.worktrees, []);
-		assert.match(payload.orphans[0]?.reason ?? "", /symlink/);
+		const vcsEnv = createVcsTestEnv(root);
+		try {
+			const managed = join(root, "managed");
+			const namespace = join(managed, "repo-12345678");
+			const outside = join(root, "outside");
+			mkdirSync(namespace, { recursive: true });
+			mkdirSync(outside);
+			symlinkSync(outside, join(namespace, "escape"));
+			const result = await runNode(INSPECTOR, ["--root", managed], vcsEnv);
+			assert.equal(result.code, 0, result.stderr);
+			// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
+			const payload = JSON.parse(result.stdout) as {
+				worktrees: unknown[];
+				orphans: Array<{ reason: string }>;
+			};
+			assert.deepEqual(payload.worktrees, []);
+			assert.match(payload.orphans[0]?.reason ?? "", /symlink/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("truncates listing at --max", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
-		const managed = join(root, "managed");
-		const namespace = join(managed, "repo-12345678");
-		mkdirSync(join(namespace, "one"), { recursive: true });
-		mkdirSync(join(namespace, "two"));
-		const result = await runNode(INSPECTOR, ["--root", managed, "--max", "1"]);
-		assert.equal(result.code, 0, result.stderr);
-		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
-		const payload = JSON.parse(result.stdout) as {
-			candidate_count: number;
-			truncated: boolean;
-			orphans: unknown[];
-			worktrees: unknown[];
-		};
-		assert.equal(payload.candidate_count, 2);
-		assert.equal(payload.truncated, true);
-		assert.equal(payload.orphans.length + payload.worktrees.length, 1);
+		const vcsEnv = createVcsTestEnv(root);
+		try {
+			const managed = join(root, "managed");
+			const namespace = join(managed, "repo-12345678");
+			mkdirSync(join(namespace, "one"), { recursive: true });
+			mkdirSync(join(namespace, "two"));
+			const result = await runNode(INSPECTOR, ["--root", managed, "--max", "1"], vcsEnv);
+			assert.equal(result.code, 0, result.stderr);
+			// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
+			const payload = JSON.parse(result.stdout) as {
+				candidate_count: number;
+				truncated: boolean;
+				orphans: unknown[];
+				worktrees: unknown[];
+			};
+			assert.equal(payload.candidate_count, 2);
+			assert.equal(payload.truncated, true);
+			assert.equal(payload.orphans.length + payload.worktrees.length, 1);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("caps oversized output", () => {
@@ -156,52 +168,68 @@ describe("inspect_worktrees CLI", () => {
 
 	it("inspects a dirty managed worktree", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
-		const repo = await initRepo(root);
-		const managed = join(root, "managed");
-		const planned = await runNode(PLANNER, ["--repo", repo, "--root", managed, "--task", "change"]);
-		assert.equal(planned.code, 0, planned.stderr);
-		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
-		const plan = JSON.parse(planned.stdout) as { branch: string; path: string; base_sha: string };
-		assert.equal(plan.branch, "kstack/change");
-		mkdirSync(dirname(plan.path), { recursive: true });
-		assert.equal((await git(repo, ["worktree", "add", "-q", "-b", "kstack/change", plan.path, "HEAD"])).code, 0);
-		writeFileSync(join(plan.path, "new.txt"), "untracked\n");
-		const result = await runNode(INSPECTOR, ["--root", managed]);
-		assert.equal(result.code, 0, result.stderr);
-		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
-		const payload = JSON.parse(result.stdout) as {
-			orphans: unknown[];
-			worktrees: Array<{
-				branch: string;
-				dirty: boolean;
-				untracked_entries: number;
-			}>;
-		};
-		assert.deepEqual(payload.orphans, []);
-		assert.equal(payload.worktrees.length, 1);
-		assert.equal(payload.worktrees[0]?.branch, "kstack/change");
-		assert.equal(payload.worktrees[0]?.dirty, true);
-		assert.equal(payload.worktrees[0]?.untracked_entries, 1);
+		const vcsEnv = createVcsTestEnv(root);
+		try {
+			const repo = await initRepo(root, "main", vcsEnv);
+			const managed = join(root, "managed");
+			const planned = await runNode(PLANNER, ["--repo", repo, "--root", managed, "--task", "change"], vcsEnv);
+			assert.equal(planned.code, 0, planned.stderr);
+			// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
+			const plan = JSON.parse(planned.stdout) as { branch: string; path: string; base_sha: string };
+			assert.equal(plan.branch, "kstack/change");
+			mkdirSync(dirname(plan.path), { recursive: true });
+			assert.equal(
+				(await git(repo, ["worktree", "add", "-q", "-b", "kstack/change", plan.path, "HEAD"], vcsEnv)).code,
+				0,
+			);
+			writeFileSync(join(plan.path, "new.txt"), "untracked\n");
+			const result = await runNode(INSPECTOR, ["--root", managed], vcsEnv);
+			assert.equal(result.code, 0, result.stderr);
+			// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
+			const payload = JSON.parse(result.stdout) as {
+				orphans: unknown[];
+				worktrees: Array<{
+					branch: string;
+					dirty: boolean;
+					untracked_entries: number;
+				}>;
+			};
+			assert.deepEqual(payload.orphans, []);
+			assert.equal(payload.worktrees.length, 1);
+			assert.equal(payload.worktrees[0]?.branch, "kstack/change");
+			assert.equal(payload.worktrees[0]?.dirty, true);
+			assert.equal(payload.worktrees[0]?.untracked_entries, 1);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("uses resolveIsolationBase when a worktree has no remote", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
-		const repo = await initRepo(root, "topic");
-		const managed = join(root, "managed");
-		const planned = await runNode(PLANNER, ["--repo", repo, "--root", managed, "--task", "change"]);
-		assert.equal(planned.code, 0, planned.stderr);
-		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
-		const plan = JSON.parse(planned.stdout) as { path: string; base_ref: string };
-		assert.equal(plan.base_ref, "HEAD");
-		mkdirSync(dirname(plan.path), { recursive: true });
-		assert.equal((await git(repo, ["worktree", "add", "-q", "-b", "kstack/change", plan.path, "HEAD"])).code, 0);
-		const result = await runNode(INSPECTOR, ["--root", managed]);
-		assert.equal(result.code, 0, result.stderr);
-		// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
-		const payload = JSON.parse(result.stdout) as {
-			worktrees: Array<{ base_ref: string; base_sha: string }>;
-		};
-		assert.equal(payload.worktrees[0]?.base_ref, "HEAD");
-		assert.equal(payload.worktrees[0]?.base_sha.length, 40);
+		const vcsEnv = createVcsTestEnv(root);
+		try {
+			const repo = await initRepo(root, "topic", vcsEnv);
+			const managed = join(root, "managed");
+			const planned = await runNode(PLANNER, ["--repo", repo, "--root", managed, "--task", "change"], vcsEnv);
+			assert.equal(planned.code, 0, planned.stderr);
+			// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
+			const plan = JSON.parse(planned.stdout) as { path: string; base_ref: string };
+			assert.equal(plan.base_ref, "HEAD");
+			mkdirSync(dirname(plan.path), { recursive: true });
+			assert.equal(
+				(await git(repo, ["worktree", "add", "-q", "-b", "kstack/change", plan.path, "HEAD"], vcsEnv)).code,
+				0,
+			);
+			const result = await runNode(INSPECTOR, ["--root", managed], vcsEnv);
+			assert.equal(result.code, 0, result.stderr);
+			// SAFETY: The test controls the CLI JSON and asserts the declared output contract immediately below.
+			const payload = JSON.parse(result.stdout) as {
+				worktrees: Array<{ base_ref: string; base_sha: string }>;
+			};
+			assert.equal(payload.worktrees[0]?.base_ref, "HEAD");
+			assert.equal(payload.worktrees[0]?.base_sha.length, 40);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

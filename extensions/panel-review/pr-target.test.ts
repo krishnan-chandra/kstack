@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
+import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import { materializePrSnapshot, resolvePrTarget } from "./pr-target.ts";
 
 const HEAD_SHA = "1111111111111111111111111111111111111111";
@@ -52,22 +53,25 @@ function treeRecord(mode: string, objectType: string, size: number | "-", path: 
 	return `${mode} ${objectType} ${size}\t${path}\0`;
 }
 
-function realExec(command: string, args: string[], options: { cwd: string; timeout?: number }): Promise<ExecFnResult> {
-	const completed = spawnSync(command, args, {
-		cwd: options.cwd,
-		encoding: "utf8",
-		timeout: options.timeout,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	return Promise.resolve({
-		code: completed.status ?? 1,
-		stdout: completed.stdout,
-		stderr: completed.stderr || completed.error?.message || "",
-	});
+function createRealExec(env?: NodeJS.ProcessEnv): ExecFn {
+	return (command, args, options) => {
+		const completed = spawnSync(command, args, {
+			cwd: options.cwd,
+			encoding: "utf8",
+			env,
+			timeout: options.timeout,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		return Promise.resolve({
+			code: completed.status ?? 1,
+			stdout: completed.stdout,
+			stderr: completed.stderr || completed.error?.message || "",
+		});
+	};
 }
 
-async function runOk(cwd: string, command: string, args: string[]): Promise<string> {
-	const completed = await realExec(command, args, { cwd, timeout: 10_000 });
+async function runOk(cwd: string, command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+	const completed = await createRealExec(env)(command, args, { cwd, timeout: 10_000 });
 	assert.equal(completed.code, 0, completed.stderr);
 	return completed.stdout.trim();
 }
@@ -140,46 +144,48 @@ describe("resolvePrTarget", () => {
 
 	it("fetches a checked-out base without moving local refs", async () => {
 		const root = mkdtempSync(join(tmpdir(), "panel-pr-fetch-"));
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
 		const remote = join(root, "remote.git");
 		const seed = join(root, "seed");
 		const checkout = join(root, "checkout");
 		try {
 			mkdirSync(seed);
-			await runOk(root, "git", ["init", "--bare", "-q", remote]);
-			await runOk(seed, "git", ["init", "-q"]);
-			await runOk(seed, "git", ["config", "user.email", "test@example.com"]);
-			await runOk(seed, "git", ["config", "user.name", "Test"]);
+			await run(root, "git", ["init", "--bare", "-q", remote]);
+			await run(seed, "git", ["init", "-q"]);
+			await run(seed, "git", ["config", "user.email", "test@example.com"]);
+			await run(seed, "git", ["config", "user.name", "Test"]);
 			writeFileSync(join(seed, "base.txt"), "one\n");
-			await runOk(seed, "git", ["add", "base.txt"]);
-			await runOk(seed, "git", ["commit", "-qm", "base one"]);
-			await runOk(seed, "git", ["branch", "-M", "main"]);
-			await runOk(seed, "git", ["remote", "add", "origin", remote]);
-			await runOk(seed, "git", ["push", "-q", "-u", "origin", "main"]);
-			await runOk(root, "git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
-			await runOk(root, "git", ["clone", "-q", remote, checkout]);
-			const localMain = await runOk(checkout, "git", ["rev-parse", "main"]);
+			await run(seed, "git", ["add", "base.txt"]);
+			await run(seed, "git", ["commit", "-qm", "base one"]);
+			await run(seed, "git", ["branch", "-M", "main"]);
+			await run(seed, "git", ["remote", "add", "origin", remote]);
+			await run(seed, "git", ["push", "-q", "-u", "origin", "main"]);
+			await run(root, "git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
+			await run(root, "git", ["clone", "-q", remote, checkout]);
+			const localMain = await run(checkout, "git", ["rev-parse", "main"]);
 
 			writeFileSync(join(seed, "base.txt"), "two\n");
-			await runOk(seed, "git", ["commit", "-qam", "base two"]);
-			const baseSha = await runOk(seed, "git", ["rev-parse", "HEAD"]);
-			await runOk(seed, "git", ["push", "-q", "origin", "main"]);
-			await runOk(seed, "git", ["switch", "-qc", "feature"]);
+			await run(seed, "git", ["commit", "-qam", "base two"]);
+			const baseSha = await run(seed, "git", ["rev-parse", "HEAD"]);
+			await run(seed, "git", ["push", "-q", "origin", "main"]);
+			await run(seed, "git", ["switch", "-qc", "feature"]);
 			writeFileSync(join(seed, "feature.txt"), "feature\n");
-			await runOk(seed, "git", ["add", "feature.txt"]);
-			await runOk(seed, "git", ["commit", "-qm", "feature"]);
-			const headSha = await runOk(seed, "git", ["rev-parse", "HEAD"]);
-			await runOk(seed, "git", ["push", "-q", "origin", "HEAD:refs/pull/42/head"]);
+			await run(seed, "git", ["add", "feature.txt"]);
+			await run(seed, "git", ["commit", "-qm", "feature"]);
+			const headSha = await run(seed, "git", ["rev-parse", "HEAD"]);
+			await run(seed, "git", ["push", "-q", "origin", "HEAD:refs/pull/42/head"]);
 
-			const refsBefore = await runOk(checkout, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]);
+			const refsBefore = await run(checkout, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]);
 			const exec: ExecFn = (command, args, options) =>
 				command === "gh"
 					? Promise.resolve(result(0, mockGhResponse({ headRefOid: headSha, baseRefOid: baseSha })))
-					: realExec(command, args, options);
+					: createRealExec(vcsEnv)(command, args, options);
 			const target = await resolvePrTarget(exec, checkout, 42);
 
 			assert.equal(target.headSha, headSha);
-			assert.equal(await runOk(checkout, "git", ["rev-parse", "main"]), localMain);
-			assert.equal(await runOk(checkout, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]), refsBefore);
+			assert.equal(await run(checkout, "git", ["rev-parse", "main"]), localMain);
+			assert.equal(await run(checkout, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]), refsBefore);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -198,44 +204,55 @@ describe("resolvePrTarget", () => {
 
 describe("materializePrSnapshot", () => {
 	it("extracts the pinned commit without changing refs, worktrees, or dirty source files", async () => {
-		const repo = mkdtempSync(join(tmpdir(), "panel-pr-source-"));
-		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-snapshots-"));
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-source-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
 		let snapshotRoot: string | undefined;
 		try {
-			await runOk(repo, "git", ["init", "-q"]);
-			await runOk(repo, "git", ["config", "user.email", "test@example.com"]);
-			await runOk(repo, "git", ["config", "user.name", "Test"]);
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			await run(repo, "git", ["config", "user.email", "test@example.com"]);
+			await run(repo, "git", ["config", "user.name", "Test"]);
 			writeFileSync(join(repo, "tracked.txt"), "committed\n");
-			await runOk(repo, "git", ["add", "tracked.txt"]);
-			await runOk(repo, "git", ["commit", "-qm", "initial"]);
-			const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
+			await run(repo, "git", ["add", "tracked.txt"]);
+			await run(repo, "git", ["commit", "-qm", "initial"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
 			mkdirSync(join(repo, ".jj"));
 			writeFileSync(join(repo, "tracked.txt"), "dirty\n");
-			const refsBefore = await runOk(repo, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]);
-			const worktreesBefore = await runOk(repo, "git", ["worktree", "list", "--porcelain"]);
+			const refsBefore = await run(repo, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]);
+			const worktreesBefore = await run(repo, "git", ["worktree", "list", "--porcelain"]);
 
-			const snapshot = await materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots });
+			const snapshot = await materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, { tmpDir: snapshots });
 			snapshotRoot = snapshot.root;
 			assert.equal(readFileSync(join(snapshot.directory, "tracked.txt"), "utf8"), "committed\n");
 			assert.equal(readFileSync(join(repo, "tracked.txt"), "utf8"), "dirty\n");
 			assert.equal(existsSync(join(snapshot.directory, ".git")), false);
-			assert.equal(await runOk(repo, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]), refsBefore);
-			assert.equal(await runOk(repo, "git", ["worktree", "list", "--porcelain"]), worktreesBefore);
+			assert.equal(existsSync(join(snapshot.directory, ".gitconfig")), false);
+			assert.equal(existsSync(join(snapshot.directory, ".jjconfig.toml")), false);
+			assert.equal(await run(repo, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]), refsBefore);
+			assert.equal(await run(repo, "git", ["worktree", "list", "--porcelain"]), worktreesBefore);
 		} finally {
 			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
-			rmSync(repo, { recursive: true, force: true });
-			rmSync(snapshots, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
 	it("materializes repository-contained symlinks", async () => {
-		const repo = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-source-"));
-		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-snapshots-"));
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
 		let snapshotRoot: string | undefined;
 		try {
-			await runOk(repo, "git", ["init", "-q"]);
-			await runOk(repo, "git", ["config", "user.email", "test@example.com"]);
-			await runOk(repo, "git", ["config", "user.name", "Test"]);
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			await run(repo, "git", ["config", "user.email", "test@example.com"]);
+			await run(repo, "git", ["config", "user.name", "Test"]);
 			mkdirSync(join(repo, "nested"));
 			mkdirSync(join(repo, "resources"));
 			writeFileSync(join(repo, "AGENTS.md"), "instructions\n");
@@ -249,11 +266,11 @@ describe("materializePrSnapshot", () => {
 			symlinkSync("resources", join(repo, "current"));
 			symlinkSync("../current/inner", join(repo, "resources", "alias"));
 			symlinkSync("current/alias/../udd.json", join(repo, "diamond.json"));
-			await runOk(repo, "git", ["add", "."]);
-			await runOk(repo, "git", ["commit", "-qm", "add contained symlinks"]);
-			const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
+			await run(repo, "git", ["add", "."]);
+			await run(repo, "git", ["commit", "-qm", "add contained symlinks"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
 
-			const snapshot = await materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots });
+			const snapshot = await materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, { tmpDir: snapshots });
 			snapshotRoot = snapshot.root;
 			assert.equal(readlinkSync(join(snapshot.directory, "CLAUDE.md")), "AGENTS.md");
 			assert.equal(readFileSync(join(snapshot.directory, "CLAUDE.md"), "utf8"), "instructions\n");
@@ -262,10 +279,11 @@ describe("materializePrSnapshot", () => {
 			assert.equal(readlinkSync(join(snapshot.directory, "nested", "udd.json")), "../resources/udd.json");
 			assert.equal(readFileSync(join(snapshot.directory, "nested", "udd.json"), "utf8"), "{}\n");
 			assert.equal(readFileSync(join(snapshot.directory, "diamond.json"), "utf8"), "{}\n");
+			assert.equal(existsSync(join(snapshot.directory, ".gitconfig")), false);
+			assert.equal(existsSync(join(snapshot.directory, ".jjconfig.toml")), false);
 		} finally {
 			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
-			rmSync(repo, { recursive: true, force: true });
-			rmSync(snapshots, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
@@ -276,34 +294,46 @@ describe("materializePrSnapshot", () => {
 			["dist/generated.json", /symlink "review-target" does not resolve to a snapshot file/],
 		];
 		for (const [linkTarget, expected] of cases) {
-			const repo = mkdtempSync(join(tmpdir(), "panel-pr-symlink-source-"));
-			const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-symlink-snapshots-"));
+			const root = mkdtempSync(join(tmpdir(), "panel-pr-symlink-"));
+			const repo = join(root, "repo");
+			const snapshots = join(root, "snapshots");
+			const vcsEnv = createVcsTestEnv(root);
+			const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
 			try {
-				await runOk(repo, "git", ["init", "-q"]);
-				await runOk(repo, "git", ["config", "user.email", "test@example.com"]);
-				await runOk(repo, "git", ["config", "user.name", "Test"]);
+				mkdirSync(repo);
+				mkdirSync(snapshots);
+				await run(repo, "git", ["init", "-q"]);
+				await run(repo, "git", ["config", "user.email", "test@example.com"]);
+				await run(repo, "git", ["config", "user.name", "Test"]);
 				symlinkSync(linkTarget, join(repo, "review-target"));
-				await runOk(repo, "git", ["add", "review-target"]);
-				await runOk(repo, "git", ["commit", "-qm", "add symlink"]);
-				const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
+				await run(repo, "git", ["add", "review-target"]);
+				await run(repo, "git", ["commit", "-qm", "add symlink"]);
+				const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
 
-				await assert.rejects(materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots }), expected);
+				await assert.rejects(
+					materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, { tmpDir: snapshots }),
+					expected,
+				);
 				assert.deepEqual(readdirSync(snapshots), []);
 			} finally {
-				rmSync(repo, { recursive: true, force: true });
-				rmSync(snapshots, { recursive: true, force: true });
+				rmSync(root, { recursive: true, force: true });
 			}
 		}
 	});
 
 	it("rejects escaping symlink chains and cycles and removes the snapshot", async () => {
 		for (const fixture of ["escape-chain", "cycle"] as const) {
-			const repo = mkdtempSync(join(tmpdir(), `panel-pr-${fixture}-source-`));
-			const snapshots = mkdtempSync(join(tmpdir(), `panel-pr-${fixture}-snapshots-`));
+			const root = mkdtempSync(join(tmpdir(), `panel-pr-${fixture}-`));
+			const repo = join(root, "repo");
+			const snapshots = join(root, "snapshots");
+			const vcsEnv = createVcsTestEnv(root);
+			const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
 			try {
-				await runOk(repo, "git", ["init", "-q"]);
-				await runOk(repo, "git", ["config", "user.email", "test@example.com"]);
-				await runOk(repo, "git", ["config", "user.name", "Test"]);
+				mkdirSync(repo);
+				mkdirSync(snapshots);
+				await run(repo, "git", ["init", "-q"]);
+				await run(repo, "git", ["config", "user.email", "test@example.com"]);
+				await run(repo, "git", ["config", "user.name", "Test"]);
 				if (fixture === "escape-chain") {
 					mkdirSync(join(repo, "nested"));
 					symlinkSync("..", join(repo, "nested", "dirlink"));
@@ -312,18 +342,17 @@ describe("materializePrSnapshot", () => {
 					symlinkSync("second", join(repo, "first"));
 					symlinkSync("first", join(repo, "second"));
 				}
-				await runOk(repo, "git", ["add", "."]);
-				await runOk(repo, "git", ["commit", "-qm", `add ${fixture}`]);
-				const headSha = await runOk(repo, "git", ["rev-parse", "HEAD"]);
+				await run(repo, "git", ["add", "."]);
+				await run(repo, "git", ["commit", "-qm", `add ${fixture}`]);
+				const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
 
 				await assert.rejects(
-					materializePrSnapshot(realExec, repo, headSha, { tmpDir: snapshots }),
+					materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, { tmpDir: snapshots }),
 					fixture === "cycle" ? /contains a cycle/ : /escapes the snapshot root/,
 				);
 				assert.deepEqual(readdirSync(snapshots), []);
 			} finally {
-				rmSync(repo, { recursive: true, force: true });
-				rmSync(snapshots, { recursive: true, force: true });
+				rmSync(root, { recursive: true, force: true });
 			}
 		}
 	});
