@@ -14,7 +14,7 @@ function registry(
 }
 
 describe("isChildModelAvailable", () => {
-	it("accepts authenticated catalogue/models.json providers that survive --no-extensions", () => {
+	it("accepts authenticated catalogue/models.json providers", () => {
 		assert.equal(isChildModelAvailable(registry(), "a", "m"), true);
 	});
 

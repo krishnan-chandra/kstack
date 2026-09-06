@@ -24,7 +24,7 @@ test("reflect is model-invocable and its local references resolve", async () => 
 test("headless reviewer fallback has an enforced read-only boundary", async () => {
 	const skill = await read("SKILL.md");
 
-	assert.match(skill, /--no-session --no-extensions --no-skills --no-context-files/);
+	assert.match(skill, /--no-session --no-extensions -e \.\.\/\.\.\/kstack\.ts --no-skills --no-context-files/);
 	assert.match(skill, /--tools read,grep,find,ls/);
 	assert.match(skill, /Do not rely on a reviewer prompt to prevent writes/);
 });

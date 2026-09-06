@@ -92,17 +92,18 @@ ignores the outcome.
    ```
    pi --mode json -p --session-dir ~/.pi/kstack/subagents \
      --session-id <uuid> --name panel-review/<label> \
-     --no-extensions --no-skills --no-prompt-templates \
-     --extension <bundled-session-archive/index.ts> \
+     --no-extensions -e <kstack>/kstack.ts --no-skills --no-prompt-templates \
      --tools bash,read,grep,find,ls,search_session_archive,read_session_archive \
      --model <provider/model[:thinking]> \
      --append-system-prompt <reviewer-prompt> \
      "Run a complete independent thermo-nuclear review of the entire bundle at <path>. Apply every relevant rubric dimension and the full Approval Bar."
    ```
 
-   No `write`/`edit` and no repository-controlled extensions or skills. The
-   trusted bundled session-archive extension is loaded explicitly so reviewers
-   can search and page finalized archived sessions. Reviewers may use `bash` for
+   No `write`/`edit` and no repository-controlled skills or prompt templates.
+   Extension discovery is off; only Kstack's own entry is loaded, so the
+   session-archive tools listed in `--tools` and request shaping such as
+   `openrouter-floor` apply while the user's other extensions never start.
+   Extension tools outside that list stay disabled. Reviewers may use `bash` for
    investigation, tests, typechecks, and builds, but their contract forbids
    commands that mutate source, Git state, dependencies, configuration, or
    session data. This is not an OS sandbox: shell access runs with the user's
@@ -223,8 +224,8 @@ the `"panel-review"` section:
   model registry. An exact configured model ID that is missing from the local
   catalog is still accepted when its built-in provider is authenticated; this
   supports provider catalogs such as OpenRouter that can update ahead of Pi.
-  Extension-registered providers are not accepted because isolated children run
-  with `--no-extensions`. `thinking` must be one of `off`, `minimal`, `low`,
+  Extension-registered providers are not accepted because the parent cannot
+  verify how they compose in a child process. `thinking` must be one of `off`, `minimal`, `low`,
   `medium`, `high`, `xhigh`, `max`.
 - `timeoutMinutes` (default 10) is the per-child idle limit: any child output
   resets the timer, so a slow provider keeps running while it produces output

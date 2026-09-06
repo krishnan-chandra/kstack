@@ -149,9 +149,10 @@ All fields are optional. Without configuration:
 - Task limit: 32 KiB.
 - Classifier timeout: 90 seconds (configurable).
 - Rationale limit: 500 characters.
-- The classifier child uses `--no-tools --no-extensions --no-skills
-  --no-prompt-templates --no-context-files` — it cannot touch the repository
-  or any resources.
+- The classifier child uses `--no-extensions -e <kstack>/kstack.ts --no-tools
+  --no-skills --no-prompt-templates --no-context-files` — it cannot touch the
+  repository or any resources. Only Kstack loads, so provider request shaping
+  (`openrouter-floor`) applies, and `--no-tools` disables every tool.
 
 ## Cancellation
 

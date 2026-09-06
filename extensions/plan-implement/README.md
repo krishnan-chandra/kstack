@@ -93,7 +93,9 @@ Bug fixes require a before-and-after reproduction, refactors pin behavior,
 performance work compares matching measurements, features prove observable
 behavior, and prototypes stay isolated and produce a decision.
 
-Children persist native sessions under `~/.pi/kstack/subagents/` and use `--no-extensions --no-prompt-templates`. The
+Children persist native sessions under `~/.pi/kstack/subagents/` and use
+`--no-extensions -e <kstack>/kstack.ts --no-prompt-templates`: only Kstack loads, so `openrouter-floor` shapes
+their provider requests without starting the user's other extensions. The
 review-fixer and publisher phases reuse the implementer model and tools; the
 publisher's skills (`write-pr`, `find-reviewers`, and in stack mode the
 re-added skill set) reach the child through normal skill discovery or explicit
@@ -243,8 +245,8 @@ Model configuration is the `"plan-implement"` section of
 ```
 
 Planner and implementer models must be distinct and authenticated. Models from
-providers registered by parent extensions are rejected because `--no-extensions`
-children cannot reproduce those definitions, routes, or credentials. Planner
+providers registered by parent extensions are rejected because the parent cannot
+verify that a child reproduces those definitions, routes, or credentials. Planner
 thinking is restricted to `high`, `xhigh`, or `max`; when omitted it defaults
 to `high`. `timeoutMinutes` is an integer from 1 through 60 and applies to each
 child.

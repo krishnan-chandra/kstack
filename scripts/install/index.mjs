@@ -21,6 +21,16 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const DEFAULTS_DIR = join(REPO_ROOT, "config", "pi-defaults");
 const MANAGED_SKILLS_FILE = ".kstack-managed.json";
+/**
+ * Custom models earlier Kstack releases installed and no longer track. The
+ * openrouter-floor extension now applies `:floor` to every OpenRouter request, so
+ * these duplicates only clutter the model picker.
+ */
+/** Keys Pi accepts on a provider entry that has no `models`; an entry with none of them is invalid. */
+const PROVIDER_STANDALONE_KEYS = ["baseUrl", "headers", "compat", "modelOverrides", "apiKey", "oauth", "authHeader"];
+const RETIRED_MODEL_IDS = {
+	openrouter: ["openai/gpt-5.6-sol:floor", "openai/gpt-5.6-sol-pro:floor", "google/gemini-3.8-flash:floor"],
+};
 
 function isJsonObject(value) {
 	return Object.prototype.toString.call(value) === "[object Object]";
@@ -67,6 +77,17 @@ function writeJsonAtomic(path, value) {
 
 function mergeModels(current, defaults) {
 	const providers = { ...current.providers };
+	for (const [providerId, retiredIds] of Object.entries(RETIRED_MODEL_IDS)) {
+		const provider = providers[providerId];
+		if (!Array.isArray(provider?.models)) continue;
+		const retired = new Set(retiredIds);
+		const models = provider.models.filter((model) => !retired.has(model?.id));
+		if (models.length === provider.models.length) continue;
+		const { models: _retired, ...rest } = provider;
+		if (models.length > 0) providers[providerId] = { ...rest, models };
+		else if (PROVIDER_STANDALONE_KEYS.some((key) => key in rest)) providers[providerId] = rest;
+		else delete providers[providerId];
+	}
 	for (const [providerId, defaultProvider] of Object.entries(defaults.providers ?? {})) {
 		const currentProvider = providers[providerId] ?? {};
 		const models = new Map((currentProvider.models ?? []).map((model) => [model.id, model]));

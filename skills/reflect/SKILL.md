@@ -38,15 +38,15 @@ Before delegation, extract a compact session map:
 
 ## 2. Review through independent lenses
 
-Run the three lenses in parallel. Use isolated subagents only when they can be given an enforced read-only tool allowlist. Otherwise start independent headless Pi processes with no extensions, skills, context files, or session persistence, and an explicit read-only allowlist:
+Run the three lenses in parallel. Use isolated subagents only when they can be given an enforced read-only tool allowlist. Otherwise start independent headless Pi processes with no skills, context files, or session persistence, and an explicit read-only allowlist (only Kstack's `../../kstack.ts` entry is loaded so provider request shaping applies; `--tools` keeps its tools off):
 
 ```bash
-pi -p --no-session --no-extensions --no-skills --no-context-files \
+pi -p --no-session --no-extensions -e ../../kstack.ts --no-skills --no-context-files \
   --tools read,grep,find,ls --model <provider/model[:thinking]> \
   "<review brief with the exact transcript path or digest>" &
 ```
 
-Start all three commands, then `wait`. Do not rely on a reviewer prompt to prevent writes: the allowlist is the boundary. The fallback cannot use MCP tools because extensions are disabled. If an MCP lookup is essential, the parent performs the scoped read-only lookup and includes the result in the reviewer brief.
+Start all three commands, then `wait`. Do not rely on a reviewer prompt to prevent writes: the allowlist is the boundary. The fallback cannot use MCP tools because the allowlist excludes them. If an MCP lookup is essential, the parent performs the scoped read-only lookup and includes the result in the reviewer brief.
 
 Give each reviewer the session source or digest, the session map, and the matching template below. Instruct reviewers to return up to five findings, cite evidence, and make no writes or external mutations. A reviewer that finds nothing durable returns `No durable findings.`
 

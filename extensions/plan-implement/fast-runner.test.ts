@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, it } from "node:test";
 import type { ChildUsage, runChildAgent } from "../shared/child-agent-runner.ts";
+import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import { buildFastImplementerGuidance, runFastWorktree } from "./fast-runner.ts";
 import { LIMITS, type RoleSpec } from "./types.ts";
@@ -272,6 +273,7 @@ describe("completed child and verification", () => {
 		assert.equal(childOptions.signal, signal);
 		assert.ok(!childOptions.args.includes("--no-session"));
 		assert.ok(childOptions.args.includes("--no-extensions"));
+		assert.ok(childOptions.args.includes(KSTACK_ENTRY));
 		assert.ok(childOptions.args.includes("--no-prompt-templates"));
 		assert.ok(!childOptions.args.includes("--no-skills"));
 		assert.ok(!childOptions.args.includes("--no-context-files"));

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
+import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import type { BoundaryValue, JsonObject } from "../shared/validation.ts";
 import { buildClassifierChildArgs, runClassifier, type SpawnedProcess } from "./classifier-runner.ts";
 import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
@@ -112,6 +113,7 @@ describe("buildClassifierChildArgs", () => {
 	it("disables all discovery and tools", () => {
 		const args = buildClassifierChildArgs("provider/model");
 		assert.ok(args.includes("--no-extensions"));
+		assert.ok(args.includes(KSTACK_ENTRY));
 		assert.ok(args.includes("--no-skills"));
 		assert.ok(args.includes("--no-prompt-templates"));
 		assert.ok(args.includes("--no-context-files"));

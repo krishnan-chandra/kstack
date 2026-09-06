@@ -43,7 +43,7 @@ test("applyPiDefaults merges managed preferences without removing existing confi
 	});
 });
 
-test("applyPiDefaults merges floor models without removing user models or providers", () => {
+test("applyPiDefaults retires Kstack's old :floor models while keeping user models and providers", () => {
 	const agentDir = tempAgentDir();
 	writeFileSync(
 		join(agentDir, "models.json"),
@@ -55,6 +55,7 @@ test("applyPiDefaults merges floor models without removing user models or provid
 						models: [
 							{ id: "custom/model", name: "Custom model" },
 							{ id: "openai/gpt-5.6-sol:floor", name: "Stale floor model" },
+							{ id: "google/gemini-3.8-flash:floor", name: "Stale floor model" },
 						],
 					},
 					local: { baseUrl: "http://localhost:8080/v1", models: [] },
@@ -67,15 +68,51 @@ test("applyPiDefaults merges floor models without removing user models or provid
 
 	applyPiDefaults({ agentDir, defaultsDir });
 
-	const models = readJson(join(agentDir, "models.json"));
-	assert.deepEqual(models.providers.openrouter.headers, { "X-Title": "Personal Pi" });
-	assert.equal(models.providers.openrouter.models[0].id, "custom/model");
-	assert.equal(models.providers.openrouter.models[1].name, "OpenAI: GPT-5.6 Sol (Floor)");
-	assert.deepEqual(
-		models.providers.openrouter.models.slice(1).map((model) => model.id),
-		["openai/gpt-5.6-sol:floor", "openai/gpt-5.6-sol-pro:floor", "google/gemini-3.8-flash:floor"],
-	);
-	assert.deepEqual(models.providers.local, { baseUrl: "http://localhost:8080/v1", models: [] });
+	assert.deepEqual(readJson(join(agentDir, "models.json")), {
+		providers: {
+			openrouter: { headers: { "X-Title": "Personal Pi" }, models: [{ id: "custom/model", name: "Custom model" }] },
+			local: { baseUrl: "http://localhost:8080/v1", models: [] },
+		},
+	});
+});
+
+test("applyPiDefaults keeps a provider without models only when Pi still accepts it", () => {
+	const floorModels = [
+		{ id: "openai/gpt-5.6-sol:floor" },
+		{ id: "openai/gpt-5.6-sol-pro:floor" },
+		{ id: "google/gemini-3.8-flash:floor" },
+	];
+	const cases = [
+		{
+			name: "baseUrl survives",
+			provider: { baseUrl: "https://openrouter.ai/api/v1", api: "openai-completions", models: floorModels },
+			expected: { baseUrl: "https://openrouter.ai/api/v1", api: "openai-completions" },
+		},
+		{ name: "api alone is dropped", provider: { api: "openai-completions", models: floorModels }, expected: undefined },
+		{ name: "models alone is dropped", provider: { models: floorModels }, expected: undefined },
+	];
+
+	for (const testCase of cases) {
+		const agentDir = tempAgentDir();
+		writeFileSync(
+			join(agentDir, "models.json"),
+			`${JSON.stringify({ providers: { openrouter: testCase.provider } }, null, 2)}\n`,
+		);
+
+		applyPiDefaults({ agentDir, defaultsDir });
+
+		assert.deepEqual(readJson(join(agentDir, "models.json")).providers.openrouter, testCase.expected, testCase.name);
+	}
+});
+
+test("applyPiDefaults leaves an unrelated models.json untouched", () => {
+	const agentDir = tempAgentDir();
+	const unrelated = { providers: { local: { baseUrl: "http://localhost:8080/v1", models: [] } } };
+	writeFileSync(join(agentDir, "models.json"), `${JSON.stringify(unrelated, null, 2)}\n`);
+
+	applyPiDefaults({ agentDir, defaultsDir });
+
+	assert.deepEqual(readJson(join(agentDir, "models.json")), unrelated);
 });
 
 test("install registers the package and global skills before merging Pi defaults", () => {

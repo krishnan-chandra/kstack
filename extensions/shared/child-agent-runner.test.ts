@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import {
 	type ChildEvent,
 	childIsolationArgs,
+	KSTACK_ENTRY,
 	runChildAgent,
 	type SpawnedProcess,
 	type SubagentSessionStore,
@@ -125,9 +126,15 @@ describe("childIsolationArgs", () => {
 			"json",
 			"-p",
 			"--no-extensions",
+			"-e",
+			KSTACK_ENTRY,
 			"--no-skills",
 			"--no-prompt-templates",
 		]);
+	});
+
+	it("points the explicit entry at the repository's kstack.ts", () => {
+		assert.equal(KSTACK_ENTRY, resolve("kstack.ts"));
 	});
 
 	it("keeps skills when noSkills is false", () => {
@@ -136,6 +143,8 @@ describe("childIsolationArgs", () => {
 			"json",
 			"-p",
 			"--no-extensions",
+			"-e",
+			KSTACK_ENTRY,
 			"--no-prompt-templates",
 		]);
 	});
@@ -146,6 +155,8 @@ describe("childIsolationArgs", () => {
 			"json",
 			"-p",
 			"--no-extensions",
+			"-e",
+			KSTACK_ENTRY,
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-context-files",
@@ -158,6 +169,8 @@ describe("childIsolationArgs", () => {
 			"json",
 			"-p",
 			"--no-extensions",
+			"-e",
+			KSTACK_ENTRY,
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-context-files",
@@ -172,6 +185,8 @@ describe("childIsolationArgs", () => {
 			"json",
 			"-p",
 			"--no-extensions",
+			"-e",
+			KSTACK_ENTRY,
 			"--no-prompt-templates",
 			"--no-context-files",
 		]);

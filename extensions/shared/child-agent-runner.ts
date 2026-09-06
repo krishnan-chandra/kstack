@@ -7,7 +7,8 @@ import { isObject, isString, type JsonObject } from "./validation.ts";
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parsePositiveInteger } from "./config-validate.ts";
 import { JsonLineParser } from "./pi-json-lines.ts";
 import {
@@ -102,9 +103,19 @@ interface ChildIsolationOptions {
 	noToolsNoApprove?: boolean;
 }
 
-/** Canonical isolation prefix for isolated Pi child processes. */
+/** The Kstack aggregate entry, loaded explicitly into children instead of full extension discovery. */
+export const KSTACK_ENTRY = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "kstack.ts");
+
+/**
+ * Canonical isolation prefix for isolated Pi child processes.
+ *
+ * Extension discovery is off so a child does not boot the user's other
+ * extensions (for example MCP adapters it cannot use). Kstack itself is loaded
+ * explicitly so request shaping such as openrouter-floor applies to child
+ * provider calls; each caller's `--tools` list still bounds tool exposure.
+ */
 export function childIsolationArgs(options: ChildIsolationOptions = {}): string[] {
-	const args = ["--mode", "json", "-p", "--no-extensions"];
+	const args = ["--mode", "json", "-p", "--no-extensions", "-e", KSTACK_ENTRY];
 	if (options.noSkills !== false) args.push("--no-skills");
 	args.push("--no-prompt-templates");
 	if (options.noContextFiles) args.push("--no-context-files");

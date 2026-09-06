@@ -39,7 +39,7 @@ For a narrow question, launch one investigator:
 
 ```bash
 MODEL="$(node ../investigation-model.mjs)"
-pi -p --no-session --no-extensions --no-skills --no-context-files --model "$MODEL" "
+pi -p --no-session --no-extensions -e ../../kstack.ts --no-skills --no-context-files --model "$MODEL" "
 Read only. Explain how <target> works in <repository>. Trace the concrete path from
 <entry point> through state and decision points to the observable effect. Read source,
 not just names. Return: overview, flow, key symbols with path:line, ownership, and
