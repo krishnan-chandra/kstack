@@ -4,17 +4,16 @@ import {
 	type ChildRunnerDeps,
 	childIsolationArgs,
 	runChildAgent,
-	type SpawnedProcess,
 	type SpawnImpl,
 } from "../shared/child-agent-runner.ts";
 import { LIMITS, type ReviewerResult, type ReviewerSpec } from "./types.ts";
 
-export type { ChildEvent, SpawnedProcess, SpawnImpl };
+export type { ChildEvent, SpawnImpl };
 
 /** Children load Kstack through the explicit entry in childIsolationArgs, which provides the session-archive tools. */
 const REVIEW_TOOLS = "bash,read,grep,find,ls,search_session_archive,read_session_archive";
 
-export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
+interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
 	timeoutMs?: number;
 }
 export function buildChildArgs(opts: {

@@ -22,8 +22,7 @@ interface LandDeps {
 	configuredMethodFor?: (nameWithOwner: string) => MergeMethod | undefined;
 }
 
-/* exported: shared readiness guidance for Graphite stack landing */
-export function readinessBlockers(
+function readinessBlockers(
 	input: { readiness: LandOptions["readiness"]; prNumber: number },
 	autopilot: AutopilotResult,
 ): string[] {

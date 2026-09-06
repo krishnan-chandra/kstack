@@ -54,19 +54,6 @@ function jsonValueEnd(text: string, start: number): number | undefined {
 	return undefined;
 }
 
-export function detectTopBookmark(commits: readonly Pick<StackCommit, "bookmarks">[]): string | undefined {
-	if (commits.length === 0) return undefined;
-	for (let i = commits.length - 1; i >= 0; i--) {
-		for (const bookmark of commits[i].bookmarks) {
-			if (!TRUNK_BOOKMARK_NAMES.has(bookmark)) return bookmark;
-		}
-	}
-	for (let i = commits.length - 1; i >= 0; i--) {
-		if (commits[i].bookmarks.length > 0) return commits[i].bookmarks[0];
-	}
-	return undefined;
-}
-
 export function inferUniqueTop(commits: readonly StackCommit[]): { top: string } | { blocker: StackBlocker } {
 	const candidates = uniqueTopCandidates(commits);
 	if (candidates.length === 1) {

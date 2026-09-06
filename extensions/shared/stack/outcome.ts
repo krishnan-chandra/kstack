@@ -2,7 +2,7 @@
 
 import type { MergeMethod } from "../github.ts";
 
-export interface StackBlocker {
+interface StackBlocker {
 	/** Provider-defined. Render across the seam; do not switch on it. */
 	code: string;
 	message: string;

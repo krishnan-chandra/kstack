@@ -1,6 +1,6 @@
 /** Thin Pi adapter for stacked-PR inspection, planning, and bounded mutation. */
 
-import { Type, type Usage } from "@earendil-works/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getRepoMethod, loadLandConfig, requestStackFrontierLand } from "../land/api.ts";
 import { issueAutopilotConfirmation, requestPrAutopilot } from "../pr-autopilot/api.ts";
@@ -31,12 +31,11 @@ import {
 	type StackUi,
 	syncStack,
 } from "./orchestrator.ts";
-import { generateDeterministicPrMetadata, type PrMetadataGenerator } from "./pr-metadata.ts";
 import { preflightJjStack } from "./preflight.ts";
 import { createProcessRunner } from "./process.ts";
 import { boundText, renderInspect, renderLandOutcome, renderOutcome, renderPlan } from "./render.ts";
 import { combinePublicationSignals } from "./signals.ts";
-import { DEFAULT_MAX_STACK, MIN_MAX_STACK, type StackPublicationRequestInput } from "./types.ts";
+import { DEFAULT_MAX_STACK, MIN_MAX_STACK } from "./types.ts";
 
 const JJ_CAPABILITIES: StackProviderCapabilities = {
 	schemaVersion: 1,
@@ -95,21 +94,11 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		};
 	}
 
-	function metadataGenerator(ctx: ExtensionContext) {
+	function publicationDeps(ctx: ExtensionContext, signal: AbortSignal): OrchestratorDeps {
 		return {
-			generate: async (request: Parameters<PrMetadataGenerator>[0]) => {
-				ctx.ui.setStatus("jj-stack", `writing PR metadata: ${request.bookmark}`);
-				return generateDeterministicPrMetadata(run, request);
-			},
-			usage: () => undefined,
-		};
-	}
-
-	function publicationDeps(ctx: ExtensionContext, signal: AbortSignal) {
-		const metadata = metadataGenerator(ctx);
-		return {
-			deps: { run, ui: uiFrom(ctx), signal, generatePrMetadata: metadata.generate },
-			usage: metadata.usage,
+			run,
+			ui: uiFrom(ctx),
+			signal,
 		};
 	}
 
@@ -118,13 +107,9 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		if (configLoad.status === "invalid") {
 			ctx.ui.notify(`Invalid ${configLoad.path}: ${configLoad.error}`, "error");
 		}
-		const metadata = metadataGenerator(ctx);
 		const autopilotConfirmation = issueAutopilotConfirmation();
 		return {
-			run,
-			ui: uiFrom(ctx),
-			signal,
-			generatePrMetadata: metadata.generate,
+			...publicationDeps(ctx, signal),
 			configuredMethodFor: (nameWithOwner) =>
 				configLoad.status === "loaded" ? getRepoMethod(configLoad.config, nameWithOwner) : undefined,
 			preparePr: ({ repository, prNumber, readiness }) =>
@@ -181,7 +166,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 							remote: input.remote,
 							signal: input.signal,
 						},
-						publicationDeps(ctx, combined).deps,
+						publicationDeps(ctx, combined),
 					);
 				},
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
@@ -306,7 +291,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 								maxStack: command.maxStack,
 								ready: command.ready,
 							},
-							publicationDeps(ctx, signal).deps,
+							publicationDeps(ctx, signal),
 						);
 					}
 					const deps = { run, ui: uiFrom(ctx), signal };
@@ -464,12 +449,10 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			let nestedUsage: Usage | undefined;
 			const outcome = await withRun(
 				ctx,
-				async (runSignal) => {
-					const metadata = publicationDeps(ctx, combinePublicationSignals(runSignal, signal));
-					const published = await publishStackFromTool(
+				(runSignal) =>
+					publishStackFromTool(
 						{
 							cwd: ctx.cwd,
 							top: params.top,
@@ -478,17 +461,13 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 							maxStack: params.maxStack,
 							ready: params.ready === true,
 						},
-						metadata.deps,
-					);
-					nestedUsage = metadata.usage();
-					return published;
-				},
+						publicationDeps(ctx, combinePublicationSignals(runSignal, signal)),
+					),
 				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
 			);
 			return {
 				content: [{ type: "text" as const, text: boundText(renderOutcome(outcome)) }],
 				details: outcome,
-				usage: nestedUsage,
 			};
 		},
 	});
@@ -544,5 +523,3 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		},
 	});
 }
-
-export type { StackPublicationRequestInput };

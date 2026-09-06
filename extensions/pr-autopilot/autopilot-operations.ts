@@ -412,12 +412,6 @@ export function summarizeTriage(triage: string): string {
 	return `${parsed.checks.length} checks, ${parsed.threads.length} threads analyzed. ${parsed.summary || ""}`;
 }
 
-export function classifyBlockers(parsed: ParsedTriage) {
-	const hasUnfixableCI = parsed.checks.some((c) => c.cls === "infra" || c.cls === "unknown" || c.cls === "stale-base");
-	const hasAskThreads = parsed.threads.some((t) => t.decision === "ask");
-	return { hasUnfixableCI, hasAskThreads };
-}
-
 export async function applyThreadReplies(
 	exec: ExecFn,
 	cwd: string,

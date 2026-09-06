@@ -74,14 +74,6 @@ export class NativeStackError extends Error {
 	}
 }
 
-export function resolveNativeStackGateway(
-	run: ProcessRunner,
-	configured: NativeStackGateway | false | undefined,
-): NativeStackGateway | undefined {
-	if (configured === false) return undefined;
-	return configured ?? createNativeStackGateway(run);
-}
-
 export function createNativeStackGateway(run: ProcessRunner): NativeStackGateway {
 	async function inspect(input: {
 		cwd: string;

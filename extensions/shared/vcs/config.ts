@@ -2,10 +2,8 @@ import { loadKstackSection } from "../kstack-config.ts";
 import { asRecord } from "../narrow.ts";
 import type { JsonObject } from "../validation.ts";
 
-/* exported: shared VCS backend contract */
 export type VcsBackendId = "git" | "jj" | "graphite";
 
-/* exported: shared VCS backend contract */
 export type VcsBackendConfig =
 	| { backend: "git"; gitStackProvider: "github" | "none"; warnings: string[] }
 	| { backend: "jj"; warnings: string[] }

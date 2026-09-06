@@ -9,10 +9,43 @@ import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import { execFromRunner } from "./github-gateway.ts";
 import { createJjAdapter } from "./jj.ts";
 import { planStack } from "./orchestrator.ts";
+import { generateDeterministicPrMetadata } from "./pr-metadata.ts";
 import { preflightJjStack } from "./preflight.ts";
 import { createProcessRunner, type ProcessRunner } from "./process.ts";
 
 const hasJj = spawnSync("jj", ["--version"], { stdio: "ignore" }).status === 0;
+
+test("metadata handles large patches and rejects cancelling changes through real jj", { skip: !hasJj }, async () => {
+	const root = mkdtempSync(join(tmpdir(), "jj-metadata-evidence-"));
+	const env = createVcsTestEnv(root);
+	const processRunner = createProcessRunner();
+	const run: ProcessRunner = (argv, options) => processRunner(argv, { ...options, env });
+	async function jj(...args: string[]): Promise<void> {
+		const result = await run(["jj", ...args], { cwd: root });
+		assert.equal(result.kind, "ok", JSON.stringify(result));
+	}
+	try {
+		await jj("git", "init", "--no-colocate", ".");
+		writeFileSync(join(root, "large.txt"), "base\n");
+		await jj("describe", "-m", "Base");
+		await jj("bookmark", "create", "main");
+		await jj("new", "main");
+		writeFileSync(join(root, "large.txt"), "x".repeat(3 * 1024 * 1024));
+		await jj("describe", "-m", "Add large fixture\n\nPreserve full description words.");
+		await jj("bookmark", "create", "feature");
+		const request = { cwd: root, bookmark: "feature", baseRevset: "main", subject: "Add large fixture" };
+		const metadata = await generateDeterministicPrMetadata(run, request);
+		assert.match(metadata.body, /Preserve full description words/);
+		assert.match(metadata.body, /large.txt/);
+		await jj("new", "feature");
+		writeFileSync(join(root, "large.txt"), "base\n");
+		await jj("describe", "-m", "Revert fixture");
+		await jj("bookmark", "move", "feature", "--to", "@");
+		await assert.rejects(generateDeterministicPrMetadata(run, request), /empty diff/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 for (const colocated of [true, false]) {
 	test(`stack planning in ${colocated ? "colocated" : "non-colocated"} and secondary jj workspaces`, {
@@ -84,7 +117,6 @@ for (const colocated of [true, false]) {
 					{ cwd, top: bookmark, remote: "origin" },
 					{
 						run: planningRun,
-						nativeStack: false,
 						ui: {
 							hasUI: false,
 							confirm: async () => false,

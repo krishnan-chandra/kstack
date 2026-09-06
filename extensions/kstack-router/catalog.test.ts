@@ -3,10 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkDependencies, getAllRoutes, getRouteMetadata, validateCatalog } from "./catalog.ts";
-import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START } from "./types.ts";
+import { checkDependencies, getAllRoutes, validateCatalog } from "./catalog.ts";
+import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START, type RouteId } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+
+function routeRequires(id: RouteId): readonly string[] {
+	return getAllRoutes().find((route) => route.id === id)?.requires ?? [];
+}
 
 describe("kstack-router catalog", () => {
 	it("validates without errors", () => {
@@ -33,52 +37,49 @@ describe("kstack-router catalog", () => {
 	});
 
 	it("returns metadata for each route", () => {
-		const routes = getAllRoutes();
-		for (const r of routes) {
-			const meta = getRouteMetadata(r.id);
-			assert.ok(meta, `Route ${r.id} should have metadata`);
-			assert.ok(meta.label, `Route ${r.id} should have a label`);
-			assert.ok(meta.description, `Route ${r.id} should have a description`);
+		for (const r of getAllRoutes()) {
+			assert.ok(r.label, `Route ${r.id} should have a label`);
+			assert.ok(r.description, `Route ${r.id} should have a description`);
 		}
 	});
 
 	it("change requires plan-implement and panel-review", () => {
-		const deps = getRouteMetadata("change")?.requires ?? [];
+		const deps = routeRequires("change");
 		assert.ok(deps.includes("plan-implement"));
 		assert.ok(deps.includes("panel-review"));
 	});
 
 	it("review requires panel-review", () => {
-		const deps = getRouteMetadata("review")?.requires ?? [];
+		const deps = routeRequires("review");
 		assert.ok(deps.includes("panel-review"));
 	});
 
 	it("pr-autopilot requires the pr-autopilot extension", () => {
-		const deps = getRouteMetadata("pr-autopilot")?.requires ?? [];
+		const deps = routeRequires("pr-autopilot");
 		assert.deepEqual(deps, ["pr-autopilot"]);
 		assert.ok(checkDependencies("pr-autopilot", [], []).some((m) => m.includes("pr-autopilot")));
 		assert.deepEqual(checkDependencies("pr-autopilot", ["pr-autopilot"], []), []);
 	});
 
 	it("land requires the land extension", () => {
-		const deps = getRouteMetadata("land")?.requires ?? [];
+		const deps = routeRequires("land");
 		assert.deepEqual(deps, ["land"]);
 		assert.ok(checkDependencies("land", [], []).some((m) => m.includes("land")));
 		assert.deepEqual(checkDependencies("land", ["land"], []), []);
 	});
 
 	it("arena requires skill:arena", () => {
-		const deps = getRouteMetadata("arena")?.requires ?? [];
+		const deps = routeRequires("arena");
 		assert.ok(deps.includes("skill:arena"));
 	});
 
 	it("swarm requires skill:swarm", () => {
-		const deps = getRouteMetadata("swarm")?.requires ?? [];
+		const deps = routeRequires("swarm");
 		assert.ok(deps.includes("skill:swarm"));
 	});
 
 	it("skill-authoring requires skill:create-skill", () => {
-		const deps = getRouteMetadata("skill-authoring")?.requires ?? [];
+		const deps = routeRequires("skill-authoring");
 		assert.ok(deps.includes("skill:create-skill"));
 	});
 
@@ -105,15 +106,6 @@ describe("kstack-router catalog", () => {
 	it("checkDependencies returns empty for routes without dependencies", () => {
 		const missing = checkDependencies("investigate", [], []);
 		assert.deepEqual(missing, []);
-	});
-
-	it("returns undefined for unknown routes", () => {
-		assert.equal(
-			getRouteMetadata(
-				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "unknown" as never,
-			),
-			undefined,
-		);
 	});
 
 	it("every playbookFile referenced by the catalog exists", () => {

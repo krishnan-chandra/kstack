@@ -106,7 +106,7 @@ function deps(overrides: Partial<ResolvedOrchestratorDeps> = {}): ResolvedOrches
 		ui: ui({ hasUI: false }),
 		jj: fakeJj(),
 		github: fakeGithub(),
-		nativeStack: false,
+		nativeStack: gateway(),
 		preparePr: async ({ prNumber, expectedHeadSha }: { prNumber: number; expectedHeadSha: string }) => ({
 			handled: true as const,
 			outcome: ready(prNumber, expectedHeadSha),
@@ -164,6 +164,30 @@ describe("native landing failures", () => {
 		);
 		assert.equal(result.status, "queued");
 		assert.ok(!jj.calls.some((call) => call.startsWith("abandon:")));
+	});
+
+	it("preserves queued history when a native watch is cancelled after submission", async () => {
+		const controller = new AbortController();
+		const jj = fakeJj();
+		let submissions = 0;
+		const result = await runNativeLand(
+			{ ...options, readiness: "watch" },
+			deps({ jj, signal: controller.signal, sleep: async () => controller.abort() }),
+			"squash",
+			model,
+			slices,
+			nativeStack,
+			repository,
+			gateway({
+				mergeThrough: async () => {
+					submissions++;
+					return { status: "enqueued", stack: nativeStack };
+				},
+			}),
+		);
+		assert.equal(result.status, "queued");
+		assert.equal(submissions, 1);
+		assert.deepEqual(jj.calls, []);
 	});
 
 	it("stops a queued watch when native membership changes", async () => {

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
+import type { ExecFnResult } from "../shared/git-exec.ts";
 import { runLand as executeLand } from "./orchestrator.ts";
-import type { ExecFn, ExecResult, LandOptions, MergeMethod } from "./types.ts";
+import type { ExecFn, LandOptions, MergeMethod } from "./types.ts";
 
 function runLand(options: LandOptions, runDeps: Parameters<typeof executeLand>[1]) {
 	return executeLand({ kind: "interactive", options }, runDeps);
@@ -125,7 +126,7 @@ test("lets autopilot transition an initially draft PR to ready", async () => {
 test("watch mode adopts the freshly verified autopilot head", async () => {
 	const calls: string[][] = [];
 	let views = 0;
-	const exec: ExecFn = async (_command, args): Promise<ExecResult> => {
+	const exec: ExecFn = async (_command, args): Promise<ExecFnResult> => {
 		calls.push(args);
 		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
 		if (args[0] === "pr" && args[1] === "view") {

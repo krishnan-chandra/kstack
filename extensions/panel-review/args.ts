@@ -19,7 +19,7 @@
 
 import type { PanelArgs } from "./types.ts";
 
-export type ArgsParse = { ok: true; args: PanelArgs } | { ok: false; error: string };
+type ArgsParse = { ok: true; args: PanelArgs } | { ok: false; error: string };
 
 const PANEL_REVIEW_ARGUMENT_FLAGS = ["--base", "--base=", "--pr", "--pr=", "--repo", "--repo="] as const;
 

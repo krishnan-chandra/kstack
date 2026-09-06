@@ -32,7 +32,7 @@ import type { AutopilotModelSpec, ResolvedAutopilotConfig } from "./types.ts";
 
 export { modelCliId } from "../shared/model-spec.ts";
 
-export type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
+type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
 
 /**
  * Built-in model set, used when no pr-autopilot config section exists.

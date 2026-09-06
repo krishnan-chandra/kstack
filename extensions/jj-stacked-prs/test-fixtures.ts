@@ -1,7 +1,9 @@
 import type { LandResult } from "../land/types.ts";
+import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { GitHubGateway } from "../shared/github.ts";
 import type { LockAttempt } from "../shared/publication-lock.ts";
 import type { JjAdapter } from "./jj.ts";
+import type { NativeStackGateway } from "./native-stack.ts";
 import type { OpenPullRequest, RemoteInfo, StackCommit } from "./types.ts";
 
 export function commit(changeId: string, bookmark: string, parent = "trunk"): StackCommit {
@@ -110,6 +112,29 @@ export function fakeGithub(overrides: Partial<GitHubGateway> = {}): GitHubGatewa
 	};
 }
 
+export function fakeNativeStack(overrides: Partial<NativeStackGateway> = {}): NativeStackGateway {
+	return {
+		preflight: async () => ({ status: "available", version: "0.1.0" }),
+		baseUsesMergeQueue: async () => false,
+		inspectForPullRequest: async () => undefined,
+		link: async ({ base, prNumbers }) => ({
+			stackNumber: 17,
+			baseRef: base,
+			open: true,
+			pullRequests: prNumbers.map((number, index) => ({
+				number,
+				state: "open",
+				draft: true,
+				head: { ref: `feat${index + 1}`, sha: `${String.fromCharCode(97 + index).repeat(3)}-commit` },
+			})),
+		}),
+		mergeThrough: async () => {
+			throw new Error("Unexpected native merge submission");
+		},
+		...overrides,
+	};
+}
+
 export function ui(overrides: { confirm?: boolean; hasUI?: boolean; select?: string } = {}) {
 	return {
 		hasUI: overrides.hasUI ?? true,
@@ -155,6 +180,31 @@ export function permissiveLock(): (repositoryPath: string) => LockAttempt {
 			},
 		},
 	});
+}
+
+export function readyPr(prNumber: number, headSha: string, headRef: string): AutopilotResult {
+	return {
+		status: "merge-ready",
+		mergeReady: true,
+		cyclesCompleted: 1,
+		blockedReasons: [],
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+		prState: {
+			number: prNumber,
+			title: headRef,
+			state: "open",
+			isDraft: false,
+			headSha,
+			verifiedHeadSha: headSha,
+			baseRef: prNumber === 11 ? "main" : "feat1",
+			headRef,
+			mergeable: "mergeable",
+			mergeStateStatus: "CLEAN",
+			checks: [],
+			threads: [],
+			hasUnresolvedThreads: false,
+		},
+	};
 }
 
 export function landed(prNumber: number, sha: string): LandResult {

@@ -6,9 +6,8 @@ import { type BoundaryValue, isObject, isString } from "../shared/validation.ts"
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotMode, AutopilotResult } from "./types.ts";
 
-export { isAutopilotConfirmation, issueAutopilotConfirmation } from "./confirmation.ts";
+export { issueAutopilotConfirmation } from "./confirmation.ts";
 export { isCodeReady } from "./pr-state.ts";
-export type { AutopilotConfirmation } from "./types.ts";
 
 export const PRAUTOPILOT_REQUEST_EVENT = "kstack:pr-autopilot:request";
 const MODES: ReadonlySet<string> = new Set(["check", "threads", "drive", "watch", "cleanup"]);

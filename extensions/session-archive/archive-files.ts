@@ -286,10 +286,6 @@ export function fileExists(path: string): boolean {
 	return existsSync(path);
 }
 
-export function fileSize(path: string): number {
-	return statSync(path).size;
-}
-
 export function fileStat(path: string) {
 	const stat = statSync(path);
 	return { size: stat.size, mtimeMs: stat.mtimeMs };

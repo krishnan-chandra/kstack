@@ -1,6 +1,6 @@
 import type { BoundaryValue } from "../shared/validation.ts";
 
-/** Stack landing loop: preflight, land, advance, verify, republish. */
+/** Native stack landing and verified single-PR settlement. */
 
 import { applyDelegatedFrontierSettlement } from "../land/api.ts";
 import { type GitHubGateway, isMergeMethod } from "../shared/github.ts";
@@ -16,20 +16,8 @@ import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
 import { createJjAdapter } from "./jj.ts";
 import { runNativeLand } from "./native-land.ts";
-import {
-	type NativeStack,
-	NativeStackError,
-	type NativeStackGateway,
-	resolveNativeStackGateway,
-	samePrNumbers,
-} from "./native-stack.ts";
-import {
-	applyAdvance,
-	inspectStack,
-	type OrchestratorDeps,
-	publishStackFromTool,
-	type ResolvedOrchestratorDeps,
-} from "./orchestrator.ts";
+import { createNativeStackGateway, type NativeStack, NativeStackError, samePrNumbers } from "./native-stack.ts";
+import { applyAdvance, inspectStack, type OrchestratorDeps, type ResolvedOrchestratorDeps } from "./orchestrator.ts";
 import { renderStackLandingPlan } from "./render.ts";
 import type { InspectModel, StackBlocker, StackMergeMethod, StackReadinessMode } from "./types.ts";
 import { identifyWorkingCopyToSettle, settleWorkingCopyOnTrunk } from "./working-copy-settlement.ts";
@@ -101,17 +89,15 @@ export async function landStackThroughPullRequest(
 	const candidate = candidates[0];
 	let metadataConfirmsPrefix = false;
 	if (!model || model.slices.length <= 1) {
-		const native = resolveNativeStackGateway(resolvedDeps.run, resolvedDeps.nativeStack);
+		const native = resolvedDeps.nativeStack;
 		let nativeMembership: NativeStack | undefined;
 		try {
-			nativeMembership = native
-				? await native.inspectForPullRequest({
-						cwd: options.cwd,
-						repo: candidate.repository,
-						prNumber: options.prNumber,
-						signal: deps.signal,
-					})
-				: undefined;
+			nativeMembership = await native.inspectForPullRequest({
+				cwd: options.cwd,
+				repo: candidate.repository,
+				prNumber: options.prNumber,
+				signal: deps.signal,
+			});
 		} catch (error) {
 			return { status: "stack", outcome: classifyNativePreparationError(error) };
 		}
@@ -205,7 +191,7 @@ function resolveLandingDeps(deps: OrchestratorDeps): ResolvedOrchestratorDeps {
 		...deps,
 		jj: deps.jj ?? createJjAdapter(deps.run),
 		github: deps.github ?? createJjGitHubGateway(deps.run),
-		nativeStack: resolveNativeStackGateway(deps.run, deps.nativeStack) ?? false,
+		nativeStack: deps.nativeStack ?? createNativeStackGateway(deps.run),
 	};
 }
 
@@ -235,7 +221,7 @@ async function landStackWithAuthorization(
 			slices: prepared.mapped,
 			method: prepared.method,
 			readiness: options.readiness,
-			nativeStackNumber: prepared.nativeStack?.stackNumber,
+			nativeStackNumber: prepared.kind === "native" ? prepared.nativeStack.stackNumber : undefined,
 			queuePolicy: prepared.queuePolicy,
 		});
 		if (!confirmation.ok) {
@@ -246,7 +232,7 @@ async function landStackWithAuthorization(
 		if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
 		if (!confirmed) return { status: "declined" };
 	}
-	if (prepared.nativeStack && prepared.nativeGateway) {
+	if (prepared.kind === "native") {
 		const injectedAcquireLock = deps.acquirePublicationLock;
 		const acquireLock = injectedAcquireLock
 			? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
@@ -283,14 +269,14 @@ async function landStackWithAuthorization(
 				prepared.mapped,
 				prepared.nativeStack,
 				prepared.repository,
-				prepared.nativeGateway,
+				deps.nativeStack,
 			);
 		} finally {
 			const released = lockAttempt.lock.release();
 			if (!released.ok) deps.ui.notify(`Native landing lock cleanup failed: ${released.error}`, "warning");
 		}
 	}
-	return runLandLoop(options, deps, prepared.method, prepared);
+	return runSingleLand(options, deps, prepared);
 }
 
 async function remapLand(
@@ -312,16 +298,14 @@ async function prepareLand(
 	deps: ResolvedOrchestratorDeps,
 	initialModel?: InspectModel,
 ): Promise<
-	| {
+	| ({
 			status: "ok";
 			mapped: MappedLandSlice[];
 			method: StackMergeMethod;
 			model: InspectModel;
 			repository: { owner: string; repo: string };
-			nativeStack?: NativeStack;
-			nativeGateway?: NativeStackGateway;
 			queuePolicy: boolean;
-	  }
+	  } & ({ kind: "single" } | { kind: "native"; nativeStack: NativeStack }))
 	| { status: "blocked"; blockers: StackBlocker[] }
 > {
 	const remapped = await remapLand(options, deps, initialModel);
@@ -334,9 +318,10 @@ async function prepareLand(
 	);
 	if (method.status !== "ok") return method;
 	const native = deps.nativeStack;
-	if (!native || remapped.mapped.length < 2) {
+	if (remapped.mapped.length === 1) {
 		return {
 			status: "ok",
+			kind: "single",
 			mapped: remapped.mapped,
 			method: method.method,
 			model: remapped.model,
@@ -395,12 +380,12 @@ async function prepareLand(
 	}
 	return {
 		status: "ok",
+		kind: "native",
 		mapped: remapped.mapped,
 		method: method.method,
 		model: remapped.model,
 		repository: remapped.repository,
 		nativeStack,
-		nativeGateway: native,
 		queuePolicy,
 	};
 }
@@ -617,22 +602,20 @@ async function resolveLandMethod(
 	};
 }
 
-async function runLandLoop(
+async function runSingleLand(
 	options: LandStackOptions,
-	deps: OrchestratorDeps,
-	method: StackMergeMethod,
-	initialPrepared: Extract<Awaited<ReturnType<typeof remapLand>>, { status: "ok" }>,
+	deps: ResolvedOrchestratorDeps,
+	prepared: Extract<Awaited<ReturnType<typeof prepareLand>>, { status: "ok"; kind: "single" }>,
 ): Promise<StackLandOutcome> {
-	const jj = deps.jj ?? createJjAdapter(deps.run);
-	const github = deps.github ?? createJjGitHubGateway(deps.run);
-	const landFrontier = deps.landFrontier;
+	const { jj, github, landFrontier } = deps;
+	const { method } = prepared;
 	const frontiers: StackLandFrontier[] = [];
 	const completedMutations: string[] = [];
 	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
-	let remainingRefs: string[] = [];
-	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, initialPrepared.model, warnings);
-	let preparedFirstIteration = true;
+	const current = prepared.mapped[0];
+	let remainingRefs = [current.bookmark];
+	const settlement = await identifyWorkingCopyToSettle(options, deps, jj, prepared.model, warnings);
 
 	const progress = () => ({
 		frontiers: [...frontiers],
@@ -642,218 +625,151 @@ async function runLandLoop(
 		recoveryOperationIds: [...recoveryOperationIds],
 	});
 
-	for (;;) {
-		if (deps.signal?.aborted) {
-			return frontiers.length === 0 && completedMutations.length === 0
-				? { status: "cancelled", ...progress() }
-				: { status: "partial", error: "Landing was cancelled after earlier mutations completed.", ...progress() };
-		}
-		const prepared = preparedFirstIteration ? initialPrepared : await remapLand(options, deps);
-		preparedFirstIteration = false;
-		if (prepared.status !== "ok") {
-			return frontiers.length === 0
-				? prepared
-				: { status: "partial", error: prepared.blockers.map((blocker) => blocker.message).join(" "), ...progress() };
-		}
-		remainingRefs = prepared.mapped.map((slice) => slice.bookmark);
-		const current = prepared.mapped[0];
-		let frontier: StackLandFrontier = {
-			ref: current.bookmark,
-			prNumber: current.prNumber,
-			url: current.url,
-			expectedHeadSha: current.headCommitId,
-			method,
-			state: "not-attempted",
-		};
-		deps.ui.setStatus(`jj-stack: landing #${current.prNumber}`);
+	if (deps.signal?.aborted) return { status: "cancelled", ...progress() };
+	let frontier: StackLandFrontier = {
+		ref: current.bookmark,
+		prNumber: current.prNumber,
+		url: current.url,
+		expectedHeadSha: current.headCommitId,
+		method,
+		state: "not-attempted",
+	};
+	deps.ui.setStatus(`jj-stack: landing #${current.prNumber}`);
 
-		if (current.alreadyMerged) {
-			frontier.state = "already-merged";
-			completedMutations.push(`PR #${current.prNumber} already merged; advancing`);
-		} else {
-			const landed = landFrontier
-				? await landFrontier({
-						repository: `${prepared.repository.owner}/${prepared.repository.repo}`,
-						prNumber: current.prNumber,
-						expectedHeadSha: current.headCommitId,
-						readiness: options.readiness,
-						method,
-					})
-				: { handled: false as const };
-			const settlement = applyDelegatedFrontierSettlement({
-				response: landed,
-				frontier,
-				progress: { frontiers, remainingRefs, completedMutations, warnings, recoveryOperationIds },
-			});
-			if (settlement.kind === "halted") return settlement.outcome;
-			frontier = settlement.frontier;
-			completedMutations.push(...settlement.newCompletedMutations);
-		}
-
-		const remote = await jj.getRemote(options.cwd, options.remote, deps.signal);
-		if (!remote.github) {
-			frontiers.push(frontier);
-			return { status: "partial", error: `Remote ${options.remote} is not a GitHub repository.`, ...progress() };
-		}
-		let mergeCommitOid: string;
-		try {
-			const merge = await github.getMergeCommit(remote.github, current.prNumber, options.cwd, deps.signal);
-			if (!merge.merged || !merge.mergeCommitOid) {
-				frontiers.push({ ...frontier, state: frontier.state === "landed" ? "queued" : frontier.state });
-				return {
-					status: "partial",
-					error: `PR #${current.prNumber} is not verified merged with a merge commit on GitHub.`,
-					...progress(),
-				};
-			}
-			if (merge.headCommitId !== frontier.expectedHeadSha || merge.headRef !== current.bookmark) {
-				frontiers.push(frontier);
-				return {
-					status: "partial",
-					error: `PR #${current.prNumber} merged head ${merge.headCommitId} (${merge.headRef}) does not match pinned head ${frontier.expectedHeadSha} (${current.bookmark}).`,
-					...progress(),
-				};
-			}
-			mergeCommitOid = merge.mergeCommitOid;
-		} catch (error) {
-			frontiers.push({ ...frontier, state: frontier.state === "landed" ? "queued" : frontier.state });
-			return isIndeterminate(error)
-				? {
-						status: "indeterminate",
-						inFlight: `merge-verification: ${errorMessage(error)}`,
-						recovery: "Inspect the frontier PR and remote stack state before retrying.",
-						...progress(),
-					}
-				: { status: "partial", error: errorMessage(error), ...progress() };
-		}
-
-		const operationId = await jj.currentOperationId(options.cwd, deps.signal);
-		const advanced = await applyAdvance({ ...options, merged: current.bookmark }, deps, {
-			jj,
-			operationId,
-			trunkCommitId: prepared.model.trunk.commitId,
-			trunkRevset: options.trunk ?? "trunk()",
+	if (current.alreadyMerged) {
+		frontier.state = "already-merged";
+		completedMutations.push(`PR #${current.prNumber} already merged; advancing`);
+	} else {
+		const landed = landFrontier
+			? await landFrontier({
+					repository: `${prepared.repository.owner}/${prepared.repository.repo}`,
+					prNumber: current.prNumber,
+					expectedHeadSha: current.headCommitId,
+					readiness: options.readiness,
+					method,
+				})
+			: { handled: false as const };
+		const settlement = applyDelegatedFrontierSettlement({
+			response: landed,
+			frontier,
+			progress: { frontiers, remainingRefs, completedMutations, warnings, recoveryOperationIds },
 		});
-		recoveryOperationIds.push(operationId);
-		if (advanced.status !== "completed") {
-			frontiers.push(frontier);
-			if (advanced.status === "indeterminate") {
-				return {
-					status: "indeterminate",
-					inFlight: advanced.inFlight,
-					recovery: `jj op restore ${operationId}`,
-					...progress(),
-				};
-			}
-			const error =
-				advanced.status === "partial" || advanced.status === "failed"
-					? advanced.error
-					: `Advance returned ${advanced.status}.`;
-			return { status: "partial", error, ...progress() };
-		}
-
-		let refreshedTrunkCommitId: string | undefined;
-		try {
-			const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
-			const onTrunk = await jj.isAncestor(options.cwd, mergeCommitOid, trunk, deps.signal);
-			if (!onTrunk) {
-				frontiers.push(frontier);
-				remainingRefs = remainingRefs.slice(1);
-				return {
-					status: "partial",
-					error: `Merge commit ${mergeCommitOid} for PR #${current.prNumber} is not an ancestor of the refreshed trunk.`,
-					...progress(),
-				};
-			}
-			refreshedTrunkCommitId = trunk;
-		} catch (error) {
-			frontiers.push(frontier);
-			if (isIndeterminate(error)) {
-				return {
-					status: "indeterminate",
-					inFlight: `trunk-verify: ${errorMessage(error)}`,
-					recovery: `jj op restore ${operationId}`,
-					...progress(),
-				};
-			}
-			return { status: "partial", error: errorMessage(error), ...progress() };
-		}
-
-		const remainder = remainingRefs.slice(1);
-		if (remainder.length > 0) {
-			deps.ui.setStatus("jj-stack: republishing remainder");
-			const published = await publishStackFromTool(
-				{
-					cwd: options.cwd,
-					top: options.top,
-					remote: options.remote,
-					trunk: options.trunk,
-					maxStack: options.maxStack,
-				},
-				deps,
-			);
-			if (published.status !== "completed") {
-				frontiers.push(frontier);
-				remainingRefs = remainder;
-				if (published.status === "indeterminate") {
-					return {
-						status: "indeterminate",
-						inFlight: published.inFlight.error,
-						recovery: published.recovery,
-						...progress(),
-					};
-				}
-				if (published.status === "partial") {
-					return { status: "partial", error: published.failedAction.error, ...progress() };
-				}
-				if (published.status === "failed") {
-					return { status: "partial", error: published.error, ...progress() };
-				}
-				return { status: "partial", error: `Republish returned ${published.status}.`, ...progress() };
-			}
-			completedMutations.push(
-				...published.completedActions.map((action) => {
-					if (action.kind === "push-bookmark") return `Pushed ${action.ref}`;
-					if (action.kind === "repair-pr-base") return `Repaired PR #${action.prNumber} base → ${action.targetBase}`;
-					if (action.kind === "mark-pr-ready") return `Marked PR #${action.prNumber} ready`;
-					return `Publication ${action.kind}`;
-				}),
-			);
-		}
-
-		try {
-			const remoteSha = await github.getRemoteBranchSha(remote.github, current.bookmark, options.cwd, deps.signal);
-			if (remoteSha === undefined) {
-				completedMutations.push(`Remote branch ${current.bookmark} already deleted`);
-			} else if (remoteSha !== frontier.expectedHeadSha) {
-				warnings.push(
-					`Skipped deleting ${current.bookmark}: remote SHA ${remoteSha} does not match landed head ${frontier.expectedHeadSha}`,
-				);
-			} else {
-				const deleted = await github.deleteRemoteBranch(remote.github, current.bookmark, options.cwd, deps.signal);
-				completedMutations.push(
-					deleted === "deleted"
-						? `Deleted remote branch ${current.bookmark}`
-						: `Remote branch ${current.bookmark} already deleted`,
-				);
-			}
-		} catch (error) {
-			warnings.push(`Failed to delete remote branch ${current.bookmark}: ${errorMessage(error)}`);
-		}
-
-		frontiers.push(frontier);
-		remainingRefs = remainder;
-		if (remainder.length === 0) {
-			await settleWorkingCopyOnTrunk(
-				options,
-				deps,
-				jj,
-				settlement,
-				refreshedTrunkCommitId,
-				completedMutations,
-				warnings,
-			);
-			return { status: "completed", ...progress() };
-		}
+		if (settlement.kind === "halted") return settlement.outcome;
+		frontier = settlement.frontier;
+		completedMutations.push(...settlement.newCompletedMutations);
 	}
+
+	const remote = await jj.getRemote(options.cwd, options.remote, deps.signal);
+	if (!remote.github) {
+		frontiers.push(frontier);
+		return { status: "partial", error: `Remote ${options.remote} is not a GitHub repository.`, ...progress() };
+	}
+	let mergeCommitOid: string;
+	try {
+		const merge = await github.getMergeCommit(remote.github, current.prNumber, options.cwd, deps.signal);
+		if (!merge.merged || !merge.mergeCommitOid) {
+			frontiers.push({ ...frontier, state: frontier.state === "landed" ? "queued" : frontier.state });
+			return {
+				status: "partial",
+				error: `PR #${current.prNumber} is not verified merged with a merge commit on GitHub.`,
+				...progress(),
+			};
+		}
+		if (merge.headCommitId !== frontier.expectedHeadSha || merge.headRef !== current.bookmark) {
+			frontiers.push(frontier);
+			return {
+				status: "partial",
+				error: `PR #${current.prNumber} merged head ${merge.headCommitId} (${merge.headRef}) does not match pinned head ${frontier.expectedHeadSha} (${current.bookmark}).`,
+				...progress(),
+			};
+		}
+		mergeCommitOid = merge.mergeCommitOid;
+	} catch (error) {
+		frontiers.push({ ...frontier, state: frontier.state === "landed" ? "queued" : frontier.state });
+		return isIndeterminate(error)
+			? {
+					status: "indeterminate",
+					inFlight: `merge-verification: ${errorMessage(error)}`,
+					recovery: "Inspect the frontier PR and remote stack state before retrying.",
+					...progress(),
+				}
+			: { status: "partial", error: errorMessage(error), ...progress() };
+	}
+
+	const operationId = await jj.currentOperationId(options.cwd, deps.signal);
+	const advanced = await applyAdvance({ ...options, merged: current.bookmark }, deps, {
+		jj,
+		operationId,
+		trunkCommitId: prepared.model.trunk.commitId,
+		trunkRevset: options.trunk ?? "trunk()",
+	});
+	recoveryOperationIds.push(operationId);
+	if (advanced.status !== "completed") {
+		frontiers.push(frontier);
+		if (advanced.status === "indeterminate") {
+			return {
+				status: "indeterminate",
+				inFlight: advanced.inFlight,
+				recovery: `jj op restore ${operationId}`,
+				...progress(),
+			};
+		}
+		const error =
+			advanced.status === "partial" || advanced.status === "failed"
+				? advanced.error
+				: `Advance returned ${advanced.status}.`;
+		return { status: "partial", error, ...progress() };
+	}
+
+	let refreshedTrunkCommitId: string | undefined;
+	try {
+		const trunk = await jj.resolveRevset(options.cwd, options.trunk ?? "trunk()", deps.signal);
+		const onTrunk = await jj.isAncestor(options.cwd, mergeCommitOid, trunk, deps.signal);
+		if (!onTrunk) {
+			frontiers.push(frontier);
+			remainingRefs = [];
+			return {
+				status: "partial",
+				error: `Merge commit ${mergeCommitOid} for PR #${current.prNumber} is not an ancestor of the refreshed trunk.`,
+				...progress(),
+			};
+		}
+		refreshedTrunkCommitId = trunk;
+	} catch (error) {
+		frontiers.push(frontier);
+		if (isIndeterminate(error)) {
+			return {
+				status: "indeterminate",
+				inFlight: `trunk-verify: ${errorMessage(error)}`,
+				recovery: `jj op restore ${operationId}`,
+				...progress(),
+			};
+		}
+		return { status: "partial", error: errorMessage(error), ...progress() };
+	}
+
+	try {
+		const remoteSha = await github.getRemoteBranchSha(remote.github, current.bookmark, options.cwd, deps.signal);
+		if (remoteSha === undefined) {
+			completedMutations.push(`Remote branch ${current.bookmark} already deleted`);
+		} else if (remoteSha !== frontier.expectedHeadSha) {
+			warnings.push(
+				`Skipped deleting ${current.bookmark}: remote SHA ${remoteSha} does not match landed head ${frontier.expectedHeadSha}`,
+			);
+		} else {
+			const deleted = await github.deleteRemoteBranch(remote.github, current.bookmark, options.cwd, deps.signal);
+			completedMutations.push(
+				deleted === "deleted"
+					? `Deleted remote branch ${current.bookmark}`
+					: `Remote branch ${current.bookmark} already deleted`,
+			);
+		}
+	} catch (error) {
+		warnings.push(`Failed to delete remote branch ${current.bookmark}: ${errorMessage(error)}`);
+	}
+
+	frontiers.push(frontier);
+	remainingRefs = [];
+	await settleWorkingCopyOnTrunk(options, deps, jj, settlement, refreshedTrunkCommitId, completedMutations, warnings);
+	return { status: "completed", ...progress() };
 }

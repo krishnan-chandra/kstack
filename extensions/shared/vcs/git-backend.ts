@@ -69,7 +69,6 @@ function isContained(root: string, path: string): boolean {
 	return suffix !== "" && !suffix.startsWith("..") && !isAbsolute(suffix);
 }
 
-/* exported: shared Git and Graphite managed-worktree cleanup preflight */
 export async function removeManagedGitWorktree(input: {
 	cwd: string;
 	ref: string;

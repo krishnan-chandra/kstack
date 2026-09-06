@@ -1,10 +1,10 @@
 /** Public domain types and result unions for stacked-PR inspection and publication. */
 
 import type { GitHubRepository, MergeMethod, OpenPullRequest } from "../shared/github.ts";
-import type { NavigationEntry, NavigationStatus } from "../shared/stack/topology.ts";
+import type { NavigationEntry } from "../shared/stack/topology.ts";
 
 export { KSTACK_COMMENT_MARKER } from "../shared/stack/topology.ts";
-export type { GitHubRepository, NavigationEntry, NavigationStatus, OpenPullRequest };
+export type { GitHubRepository, NavigationEntry, OpenPullRequest };
 
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_MAX_STACK = 50;
@@ -169,12 +169,4 @@ export interface StackPublicationRequestInput {
 	topBookmark?: string;
 	remote?: string;
 	signal?: AbortSignal;
-}
-
-export interface StackLandingRequestInput {
-	repositoryPath: string;
-	prNumber: number;
-	headBookmark: string;
-	readiness: StackReadinessMode;
-	method?: StackMergeMethod;
 }

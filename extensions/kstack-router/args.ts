@@ -14,7 +14,7 @@ import {
 	type RouterArgs,
 } from "./types.ts";
 
-export type ArgsParse = { ok: true; args: RouterArgs } | { ok: false; error: string };
+type ArgsParse = { ok: true; args: RouterArgs } | { ok: false; error: string };
 
 function isAutopilotMode(value: string): value is AutopilotModeFlag {
 	return value === "check" || value === "threads" || value === "drive" || value === "watch" || value === "cleanup";

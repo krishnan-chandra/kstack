@@ -12,7 +12,6 @@ import {
 	FtsQueryError,
 	finalizeArchived,
 	finishRestore,
-	getArchiveStats,
 	getSessionRow,
 	importSessionPending,
 	listArchivedSessionSummaries,
@@ -312,7 +311,7 @@ describe("archive-store", () => {
 			importSessionPending(db, importFromContent(content));
 			importSessionPending(db, importFromContent(content));
 			assert.equal(countEntries(db, TEST_SESSION_ID), 12);
-			assert.equal(getArchiveStats(db).sessionsPending, 1);
+			assert.equal(listSessionRows(db, { state: "pending" }).length, 1);
 		} finally {
 			db.close();
 		}
@@ -434,9 +433,7 @@ describe("archive-store", () => {
 			});
 			importSessionPending(db, importFromContent(otherContent, { archivePath: "/archive/other/session.jsonl" }));
 			markError(db, "aaaaaaaa-1111-4222-8333-444444444444", "test error");
-			const stats = getArchiveStats(db);
-			assert.equal(stats.sessionsPending, 1);
-			assert.equal(stats.sessionsError, 1);
+			assert.equal(listSessionRows(db, { state: "pending" }).length, 1);
 			assert.equal(listSessionRows(db, { state: "error" }).length, 1);
 		} finally {
 			db.close();
@@ -476,7 +473,7 @@ describe("archive-store", () => {
 		await Promise.all([spawnWorker(), spawnWorker()]);
 		const db = openArchiveDb(tree.dbPath);
 		try {
-			assert.equal(getArchiveStats(db).sessionsArchived, 1);
+			assert.equal(listSessionRows(db, { state: "archived" }).length, 1);
 			assert.equal(countEntries(db, TEST_SESSION_ID), 12);
 			assert.equal(getSessionRow(db, TEST_SESSION_ID)?.state, "archived");
 		} finally {
@@ -528,7 +525,7 @@ describe("archive-store", () => {
 		importSessionPending(db, importFromContent(richSessionJsonl()));
 		db.close();
 		const db2 = openArchiveDb(nested);
-		assert.equal(getArchiveStats(db2).sessionsPending, 1);
+		assert.equal(listSessionRows(db2, { state: "pending" }).length, 1);
 		db2.close();
 	});
 });

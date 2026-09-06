@@ -82,7 +82,13 @@ workspace, use `/jj-stack land` or `jj_stack_land` for the scoped stack path.
   matches the local bottom bookmark, and GitHub reports that PR as `MERGED`.
   It abandons `<trunk>..<merged>` before fetch, then rebases any remainder. It
   does not republish; run `/jj-stack publish` separately.
+- Lands a single PR through the Land extension, verifies its pinned merged head,
+  and advances the local jj range. Remote-branch deletion requires both refreshed
+  trunk ancestry and a matching remote head. An already-merged PR skips merge
+  submission and resumes local settlement.
 - Lands a two-or-more-PR stack through GitHub's asynchronous native stack merge.
+  Missing native capability or membership blocks landing; there is no fallback
+  to sequential PR merges or remainder republication.
   Kstack pins the complete generation, marks drafts ready, invokes PR Autopilot
   for exact-head readiness, revalidates every native member, and calls
   `gh stack merge` once for the top PR. Partial-prefix native landing is refused.
@@ -142,7 +148,7 @@ vocabulary in [`extensions/shared/stack/`](../shared/stack/README.md)
 | Command timeout | 20s jj, 30s gh |
 | Abort grace | 5s SIGTERM then SIGKILL |
 | Tool content | 50 KiB / 2,000 lines |
-| Metadata input per slice | 2 MiB diff / 32 KiB log |
+| Metadata input per slice | 32 KiB descriptions / 16 KiB changed paths; no full patch |
 | Repository PR template | 24 KiB, exactly one default |
 | Generated PR body | 30 KiB |
 | Navigation comment | 100 entries / 60 KiB |
@@ -161,7 +167,7 @@ Extensions run with the user's OS permissions. This is not a sandbox. Commands
 operate on `ctx.cwd` only. `repositoryPath` exists for trusted in-process
 callers such as `plan-implement`.
 
-Diffs and commit descriptions are untrusted metadata input. Generated metadata
+Changed paths and commit descriptions are untrusted metadata input. Generated metadata
 must pass title, size, placeholder, and repository-template checks before GitHub
 receives it. Publication stops without remote mutation when template discovery,
 evidence collection, metadata generation, or conformance validation fails.

@@ -2,7 +2,7 @@
 
 import type { AutopilotMode } from "./types.ts";
 
-export type ArgsParse = { ok: true; args: ParsedArgs } | { ok: false; error: string };
+type ArgsParse = { ok: true; args: ParsedArgs } | { ok: false; error: string };
 
 interface ParsedArgs {
 	mode: AutopilotMode;

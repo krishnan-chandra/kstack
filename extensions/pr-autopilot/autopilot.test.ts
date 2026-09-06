@@ -9,7 +9,6 @@ import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { JjBackend } from "../shared/vcs/jj-backend.ts";
 import {
 	applyTriageGuardrails,
-	classifyBlockers,
 	fetchPRState,
 	loadPersistedState,
 	parseTriage,
@@ -737,7 +736,7 @@ describe("pr-autopilot state machine", () => {
 		});
 	});
 
-	describe("parseTriage and classifyBlockers", () => {
+	describe("parseTriage", () => {
 		const sampleTriage = {
 			checks: [
 				{ key: "check-1", cls: "code", action: "Fix lint error in src/index.ts" },
@@ -786,26 +785,6 @@ describe("pr-autopilot state machine", () => {
 			if ("error" in result) throw new Error(result.error);
 			assert.deepEqual(result.checks, []);
 			assert.deepEqual(result.threads, []);
-		});
-
-		it("classifies blockers: infra CI and ask threads", () => {
-			const parsed = parseTriage(JSON.stringify(sampleTriage));
-			if ("error" in parsed) throw new Error(parsed.error);
-			const classification = classifyBlockers(parsed);
-			assert.equal(classification.hasUnfixableCI, true);
-			assert.equal(classification.hasAskThreads, true);
-		});
-
-		it("classifies no ask threads when all are fix", () => {
-			const parsed = parseTriage(
-				JSON.stringify({
-					...sampleTriage,
-					threads: [{ key: "thread-1", decision: "fix", cls: "code", action: "Fix", reply: "done" }],
-				}),
-			);
-			if ("error" in parsed) throw new Error(parsed.error);
-			assert.equal(classifyBlockers(parsed).hasAskThreads, false);
-			assert.equal(classifyBlockers(parsed).hasUnfixableCI, true);
 		});
 
 		it("parses informational review items as ignore decisions", () => {

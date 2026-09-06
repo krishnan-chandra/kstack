@@ -34,11 +34,4 @@ export interface LandResult {
 	recoveryOperationIds?: readonly string[];
 	blockers: string[];
 }
-export type { ExecFn, ExecFnResult as ExecResult } from "../shared/git-exec.ts";
-export const LIMITS = {
-	queryMs: 15_000,
-	mergeMs: 60_000,
-	pollMs: 10_000,
-	landingMs: 30 * 60_000,
-	diagnosticsBytes: 8 * 1024,
-} as const;
+export type { ExecFn } from "../shared/git-exec.ts";

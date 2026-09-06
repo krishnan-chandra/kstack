@@ -33,7 +33,7 @@ export interface ResolvedRoles extends PlanImplementConfig {
 	source: "config" | "default";
 }
 
-export interface UsageSummary {
+interface UsageSummary {
 	input: number;
 	output: number;
 	cacheRead: number;

@@ -6,13 +6,12 @@ import {
 	childIsolationArgs,
 	runChildAgent,
 	type SpawnedProcess,
-	type SpawnImpl,
-	truncateHeadUtf8,
 } from "../shared/child-agent-runner.ts";
 import { type AgentRole, type AgentRunResult, type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
-export type { SpawnedProcess, SpawnImpl };
-export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs" | "maxRuntimeMs"> {
+export type { SpawnedProcess };
+
+interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs" | "maxRuntimeMs"> {
 	timeoutMs?: number;
 }
 
@@ -97,10 +96,6 @@ function expandRepeatedFlag(flag: string, values: readonly string[] | undefined)
 		if (value) args.push(flag, value);
 	}
 	return args;
-}
-
-export function truncateUtf8(text: string, maxBytes: number, label = "Output"): string {
-	return truncateHeadUtf8(text, maxBytes, label);
 }
 
 export interface RunAgentOptions extends BuildChildArgsOptions {

@@ -11,7 +11,7 @@ import {
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
 import { DEFAULTS, type RouterConfig } from "./types.ts";
 
-export type ConfigLoad = SharedConfigLoad<RouterConfig>;
+type ConfigLoad = SharedConfigLoad<RouterConfig>;
 
 export function validateRouterConfig(
 	raw: BoundaryValue,
@@ -64,7 +64,7 @@ export interface ClassifierModelResolution {
 	warning?: string;
 }
 
-export interface ResolveDeps {
+interface ResolveDeps {
 	available: (provider: string, modelId: string) => boolean;
 	activeModelId?: string;
 }

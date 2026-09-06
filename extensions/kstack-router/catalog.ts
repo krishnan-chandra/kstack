@@ -109,10 +109,6 @@ export function validateCatalog(): string[] {
 	return errors;
 }
 
-export function getRouteMetadata(id: RouteId): RouteMetadata | undefined {
-	return CATALOG[id];
-}
-
 export function getRouteLabel(id: RouteId): string {
 	return CATALOG[id]?.label ?? id;
 }

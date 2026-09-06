@@ -19,17 +19,15 @@ import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter } from "./jj.ts";
 import {
+	createNativeStackGateway,
 	type NativeStack,
 	NativeStackError,
 	type NativeStackGateway,
-	resolveNativeStackGateway,
 } from "./native-stack.ts";
-import { type PrDocument, renderPrDocument } from "./pr-document.ts";
-import type { PrMetadata, PrMetadataGenerator } from "./pr-metadata.ts";
+import { generateDeterministicPrMetadata, type PrMetadata, type PrMetadataGenerator } from "./pr-metadata.ts";
 import {
 	discoverRepositoryPrTemplate,
 	type RepositoryPrTemplate,
-	renderRepositoryPrTemplate,
 	validatePrMetadataAgainstTemplate,
 } from "./pr-template.ts";
 import type { ProcessRunner } from "./process.ts";
@@ -66,8 +64,7 @@ export interface StackUi {
 export interface OrchestratorDeps {
 	jj?: JjAdapter;
 	github?: GitHubGateway;
-	/** Inject a gateway, or explicitly disable native behavior for legacy adapter tests. Omission enables native stacks. */
-	nativeStack?: NativeStackGateway | false;
+	nativeStack?: NativeStackGateway;
 	run: ProcessRunner;
 	ui: StackUi;
 	signal?: AbortSignal;
@@ -97,7 +94,7 @@ export interface OrchestratorDeps {
 export type ResolvedOrchestratorDeps = Omit<OrchestratorDeps, "jj" | "github" | "nativeStack"> & {
 	jj: JjAdapter;
 	github: GitHubGateway;
-	nativeStack: NativeStackGateway | false;
+	nativeStack: NativeStackGateway;
 };
 
 interface InspectOptions {
@@ -521,17 +518,17 @@ async function applyPublication(
 			const results = await Promise.all(
 				slicesNeedingMetadata.map(async (slice) => {
 					try {
-						const metadata = deps.generatePrMetadata
-							? await deps.generatePrMetadata({
-									cwd: options.cwd,
-									bookmark: slice.bookmark,
-									baseRevset: slice.baseBookmark ? bookmarkRevset(slice.baseBookmark) : (options.trunk ?? "trunk()"),
-									subject: slice.subject,
-									changeIds: slice.changeIds,
-									repositoryTemplate,
-									signal: generationSignal,
-								})
-							: provisionalPrMetadata(slice.subject, slice.bookmark, repositoryTemplate);
+						deps.ui.setStatus(`jj-stack: writing PR metadata: ${slice.bookmark}`);
+						const generate =
+							deps.generatePrMetadata ?? ((request) => generateDeterministicPrMetadata(deps.run, request));
+						const metadata = await generate({
+							cwd: options.cwd,
+							bookmark: slice.bookmark,
+							baseRevset: slice.baseBookmark ? bookmarkRevset(slice.baseBookmark) : (options.trunk ?? "trunk()"),
+							subject: slice.subject,
+							repositoryTemplate,
+							signal: generationSignal,
+						});
 						if (repositoryTemplate) validatePrMetadataAgainstTemplate(metadata, repositoryTemplate);
 						return [slice.bookmark, metadata] as const;
 					} catch (error) {
@@ -666,8 +663,8 @@ async function applyPublication(
 	}
 
 	let nativeStackNumber: number | undefined;
-	const nativeGateway = resolveNativeStackGateway(deps.run, deps.nativeStack);
-	if (published.length >= 2 && nativeGateway) {
+	const nativeGateway = deps.nativeStack ?? createNativeStackGateway(deps.run);
+	if (published.length >= 2) {
 		const prNumbers = published.map((slice) => slice.prNumber);
 		if (prNumbers.some((number) => number === undefined)) {
 			return {
@@ -826,9 +823,9 @@ async function snapshotPublication(
 			],
 		};
 	}
-	const native = resolveNativeStackGateway(deps.run, deps.nativeStack);
+	const native = deps.nativeStack ?? createNativeStackGateway(deps.run);
 	const nativePreflight =
-		derived.slices.length >= 2 && native
+		derived.slices.length >= 2
 			? native.preflight({ cwd: options.cwd, repo: remote.github, signal: deps.signal })
 			: Promise.resolve(undefined);
 	const [defaultBranch, openPrs, localBookmarks, remoteBookmarks, capability] = await Promise.all([
@@ -839,7 +836,7 @@ async function snapshotPublication(
 		nativePreflight,
 	]);
 	let nativeMembership: NativeMembership = { kind: "none" };
-	if (derived.slices.length >= 2 && native && capability) {
+	if (capability) {
 		if (capability.status === "unavailable") {
 			return {
 				blockers: [
@@ -992,24 +989,6 @@ function toFailedAction(
 	bookmark: string,
 ): FailedPublicationAction {
 	return { kind, ref: bookmark, error: errorMessage(error) };
-}
-
-function provisionalPrMetadata(
-	subject: string,
-	bookmark: string,
-	repositoryTemplate?: RepositoryPrTemplate,
-): PrMetadata {
-	const document: PrDocument = {
-		title: subject || bookmark,
-		summaryBullets: [subject || bookmark],
-		reviewSteps: [
-			{
-				label: "Slice behavior",
-				description: `Review the exact changes published by \`${bookmark}\`.`,
-			},
-		],
-	};
-	return repositoryTemplate ? renderRepositoryPrTemplate(document, repositoryTemplate) : renderPrDocument(document);
 }
 
 function mutationFailure(

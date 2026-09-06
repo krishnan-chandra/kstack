@@ -5,7 +5,6 @@ import { type BoundaryValue, isBoolean, isString } from "../shared/validation.ts
 
 export const MAX_OPEN_PRS = 50;
 
-/* exported: Graphite open-PR query contract */
 export interface GraphiteOpenPullRequest {
 	number: number;
 	url: string;
@@ -15,8 +14,7 @@ export interface GraphiteOpenPullRequest {
 	draft: boolean;
 }
 
-/* exported: Graphite open-PR query contract */
-export type OpenPullRequestFilter = ["--head" | "--base", string];
+type OpenPullRequestFilter = ["--head" | "--base", string];
 
 type OpenPullRequestQueryResult = { ok: true; pullRequests: GraphiteOpenPullRequest[] } | { ok: false; error: string };
 
