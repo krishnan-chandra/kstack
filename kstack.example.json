@@ -21,8 +21,8 @@
         "thinking": "high"
       },
       {
-        "label": "minimax",
-        "model": "openrouter/minimax/minimax-m3",
+        "label": "laguna",
+        "model": "openrouter/poolside/laguna-s-2.1",
         "thinking": "high"
       },
       {
