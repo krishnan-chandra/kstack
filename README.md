@@ -116,8 +116,9 @@ The backends are exclusive for each run. Git mode requires Git 2.38 or newer and
 current-checkout or managed-worktree single delivery and GitHub-native stacks. Graphite
 mode requires gt 1.8.5+, Git 2.38+, and initialized Graphite metadata, and uses
 native `gt` mutation in current or managed-worktree single delivery. jj mode
-requires jj 0.44 or newer, a configured jj user name and email, and a colocated
-jj/Git workspace. It supports current-workspace single delivery and stacked
+requires jj 0.44 or newer, a configured jj user name and email, and a Git-backed
+jj workspace. Colocated, non-colocated, and secondary jj workspaces pass preflight;
+jj stack operations do not require a workspace-local `.git` marker. It supports current-workspace single delivery and stacked
 PRs, but not Git worktree isolation. K-Stack refuses a mismatched workspace
 before launching a model or mutating repository state.
 
@@ -134,7 +135,7 @@ Existing installations that omit `vcs` continue to use Git and now use the
 GitHub stack provider by default. Set `vcs.stackProvider` to `"none"` to keep
 single-PR-only Git behavior. To adopt jj or Graphite, run `/skill:setup-kstack`,
 select the backend, review the preview, and approve the update to the user-level
-`kstack.json`. Ensure the repository is colocated and configure
+`kstack.json`. Ensure the jj repository is Git-backed and configure
 `jj config set --user user.name` and `user.email` first. The installer and
 package updates never create, overwrite, or migrate `kstack.json`; they preserve
 the user's backend choice.

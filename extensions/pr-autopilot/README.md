@@ -207,5 +207,9 @@ collects a missing mode or PR through deterministic prompts; it does not merge.
 
 When Land selects an upper PR in a local jj stack, `jj-stacked-prs` invokes PR
 Autopilot for each frontier in bottom-up order. Autopilot still handles one
-frontier at a time and returns exact-head readiness evidence. The stack workflow,
-not Autopilot, performs each merge and continues through the selected PR.
+frontier at a time and returns exact-head readiness evidence. The stack caller
+passes an optional `repository` (`owner/name`) through `requestPrAutopilot`.
+When supplied, parent-side GitHub queries and mutations use that repository
+instead of cwd discovery, including in secondary jj workspaces. Standalone
+calls without it retain GitHub CLI discovery. The stack workflow, not
+Autopilot, performs each merge and continues through the selected PR.

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	claimPrAutopilotRequest,
+	isPrAutopilotRequest,
 	PRAUTOPILOT_REQUEST_EVENT,
 	type PrAutopilotRequest,
 	requestPrAutopilot,
@@ -54,6 +55,40 @@ test("claimed request with an explicit PR forwards mode, PR, cwd, and context", 
 	);
 	assert.deepEqual(result, { handled: true, outcome });
 	assert.deepEqual(seen, [{ mode: "drive", prNumber: 42, cwd: "/repo", ctx }]);
+});
+
+test("forwards and validates an explicit repository independently of cwd", async () => {
+	const { pi } = fakeBus();
+	let received: string | undefined;
+	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) =>
+		claimPrAutopilotRequest(value, async (_mode, _pr, _ctx, cwd, _confirmation, _signal, repository) => {
+			assert.equal(cwd, "/secondary");
+			received = repository;
+			return outcome;
+		}),
+	);
+	const result = await requestPrAutopilot(
+		/* SAFETY: This fixture only uses the request-channel event bus. */ pi as never,
+		"check",
+		42,
+		/* SAFETY: The request only carries this context through the event bus. */ ctx as never,
+		"/secondary",
+		undefined,
+		undefined,
+		"acme/widgets",
+	);
+	assert.deepEqual(result, { handled: true, outcome });
+	assert.equal(received, "acme/widgets");
+	for (const repository of ["a/b/c", "--repo", null]) {
+		assert.equal(
+			isPrAutopilotRequest({
+				schemaVersion: 1,
+				claimed: false,
+				payload: { mode: "check", prNumber: 42, ctx, cwd: "/secondary", repository },
+			}),
+			false,
+		);
+	}
 });
 
 test("claimed request with no PR forwards undefined and succeeds", async () => {

@@ -4,6 +4,7 @@ import { issueAutopilotConfirmation, requestPrAutopilot } from "../pr-autopilot/
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { findOpenPullRequestByHead, getPullRequest, isMergeMethod } from "../shared/github.ts";
+import { scopeGitHubExec } from "../shared/github-repository.ts";
 import { requestStackLanding } from "../shared/stack/channel.ts";
 import { stackProviderFor } from "../shared/stack/provider.ts";
 import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
@@ -85,6 +86,8 @@ export default function landExtension(pi: ExtensionAPI): void {
 		const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
 		const autopilotConfirmation = request.kind === "stack-frontier" ? issueAutopilotConfirmation() : undefined;
 		const landConfig = request.kind === "interactive" ? landConfigFor(ctx) : undefined;
+		const repository = request.kind === "stack-frontier" ? request.repository : undefined;
+		const exec = makeExec(pi);
 		ctx.ui.setStatus("land", "land: resolving target");
 		try {
 			return await runLand(
@@ -92,10 +95,11 @@ export default function landExtension(pi: ExtensionAPI): void {
 					? { kind: "stack-frontier", options: request.options, expectedHeadSha: request.expectedHeadSha }
 					: { kind: "interactive", options: request.options },
 				{
-					exec: makeExec(pi),
+					exec: repository === undefined ? exec : scopeGitHubExec(exec, repository),
 					cwd,
 					signal,
-					runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd, autopilotConfirmation, signal),
+					runAutopilot: (mode, pr) =>
+						requestPrAutopilot(pi, mode, pr, ctx, cwd, autopilotConfirmation, signal, repository),
 					selectMethod: async (allowed) =>
 						selectedMethod(await ctx.ui.select("Select an allowed merge method", allowed)),
 					confirmMerge: (body) => ctx.ui.confirm("Confirm exact PR merge/enqueue?", body),

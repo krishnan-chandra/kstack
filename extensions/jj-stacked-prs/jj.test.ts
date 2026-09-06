@@ -3,6 +3,56 @@ import { describe, it } from "node:test";
 import { createJjAdapter, parseBookmarkLines, parseStackCommits } from "./jj.ts";
 
 describe("jj adapters", () => {
+	it("resolves remote names and URLs with jj, without ambient Git discovery", async () => {
+		const signal = new AbortController().signal;
+		const calls: string[][] = [];
+		const adapter = createJjAdapter(async (argv, options) => {
+			calls.push([...argv]);
+			assert.deepEqual(argv, ["jj", "git", "remote", "list", "--no-pager", "--color=never"]);
+			assert.equal(options.cwd, "/secondary");
+			assert.equal(options.signal, signal);
+			return {
+				kind: "ok",
+				code: 0,
+				stderr: "",
+				stdout:
+					"origin git@github.com:acme/widgets.git\nupstream https://token@github.com:443/other/repo.git\nlocal /path with spaces/repo\n",
+			};
+		});
+		const remotes = await adapter.listRemotes("/secondary", signal);
+		assert.deepEqual(remotes[0], {
+			name: "origin",
+			url: "git@github.com:acme/widgets.git",
+			redactedUrl: "git@github.com:acme/widgets.git",
+			github: { owner: "acme", repo: "widgets" },
+		});
+		assert.equal(remotes[1].redactedUrl, "https://***@github.com:443/other/repo.git");
+		assert.equal(remotes[2].url, "/path with spaces/repo");
+		assert.equal(remotes[2].github, undefined);
+		assert.deepEqual(await adapter.getRemote("/secondary", "origin", signal), remotes[0]);
+		await assert.rejects(adapter.getRemote("/secondary", "missing", signal), /Available: origin, upstream, local/);
+		assert.equal(calls.length, 3);
+	});
+
+	it("rejects malformed or duplicate remote rows without exposing URLs", async () => {
+		for (const stdout of ["origin\n", "origin \n", "origin secret\norigin secret\n"]) {
+			const adapter = createJjAdapter(async () => ({ kind: "ok", code: 0, stdout, stderr: "" }));
+			await assert.rejects(adapter.listRemotes("."), (error: Error) => {
+				assert.match(error.message, /remote/i);
+				assert.doesNotMatch(error.message, /secret/);
+				return true;
+			});
+		}
+	});
+
+	it("handles an empty remote list and failed remote probes", async () => {
+		const empty = createJjAdapter(async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }));
+		assert.deepEqual(await empty.listRemotes("."), []);
+		await assert.rejects(empty.getRemote(".", "origin"), /Available: \(none\)/);
+		const failed = createJjAdapter(async () => ({ kind: "timeout", message: "timed out", stdout: "", stderr: "" }));
+		await assert.rejects(failed.listRemotes("."), /inconclusive|conclusive/);
+	});
+
 	it("parses local bookmark rows and rejects malformed or duplicate output", () => {
 		assert.deepEqual(parseBookmarkLines("feat1\tabc\nfeat2\tdef\n"), [
 			{ name: "feat1", commitId: "abc" },

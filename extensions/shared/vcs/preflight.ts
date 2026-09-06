@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import type { VcsResult } from "./backend.ts";
@@ -11,7 +11,6 @@ const MIN_GIT: readonly [number, number, number] = [2, 38, 0];
 
 interface PreflightDeps {
 	exists?: (path: string) => boolean;
-	realpath?: (path: string) => string;
 }
 
 /** Enforce that mutation uses the configured backend before any model runs. */
@@ -22,7 +21,7 @@ export async function preflightVcs(
 	deps: PreflightDeps = {},
 ): Promise<VcsResult<{ workspaceRoot: string }>> {
 	if (backend === "git") return preflightGit(cwd, exec, deps);
-	if (backend === "jj") return preflightJj(cwd, exec, deps);
+	if (backend === "jj") return preflightJj(cwd, exec);
 	return preflightGraphite(cwd, exec, deps);
 }
 
@@ -123,11 +122,7 @@ async function preflightGit(
 	return { ok: true, workspaceRoot };
 }
 
-async function preflightJj(
-	cwd: string,
-	exec: ExecFn,
-	deps: PreflightDeps,
-): Promise<VcsResult<{ workspaceRoot: string }>> {
+async function preflightJj(cwd: string, exec: ExecFn): Promise<VcsResult<{ workspaceRoot: string }>> {
 	let version: ExecFnResult;
 	try {
 		version = await exec("jj", ["--version"], { cwd, timeout: 8_000 });
@@ -155,18 +150,11 @@ async function preflightJj(
 		if (workspace.code !== 0 || !workspaceRoot) {
 			return { ok: false, error: `${cwd} is not a Jujutsu workspace (jj workspace root failed).` };
 		}
-		const git = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 8_000 });
-		const gitRoot = git.stdout.trim();
-		if (git.code !== 0 || !gitRoot) {
+		const git = await exec("jj", ["git", "root"], { cwd: workspaceRoot, timeout: 8_000 });
+		if (git.code !== 0 || !git.stdout.trim()) {
 			return {
 				ok: false,
-				error: "The jj backend requires a colocated Git worktree; this directory is not inside one.",
-			};
-		}
-		if (!sameRealPath(workspaceRoot, gitRoot, deps.realpath)) {
-			return {
-				ok: false,
-				error: `The jj workspace root (${workspaceRoot}) and Git worktree (${gitRoot}) differ. K-Stack requires a colocated jj/Git workspace.`,
+				error: `The jj backend requires a Git-backed repository (jj git root failed): ${diagnostic(git)}. Use a workspace created with jj git init or jj git clone.`,
 			};
 		}
 
@@ -197,15 +185,6 @@ export function parseJjVersion(text: string): [number, number] | null {
 		}
 	}
 	return null;
-}
-
-function sameRealPath(a: string, b: string, realpath?: (path: string) => string): boolean {
-	const resolvePath: (path: string) => string = realpath ?? realpathSync;
-	try {
-		return resolvePath(a) === resolvePath(b);
-	} catch {
-		return a === b;
-	}
 }
 
 function diagnostic(result: ExecFnResult): string {

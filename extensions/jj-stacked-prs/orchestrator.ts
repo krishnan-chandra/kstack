@@ -74,11 +74,13 @@ export interface OrchestratorDeps {
 	realpath?: (path: string) => string;
 	/** Delegated exact-head request into Land's single-PR implementation. */
 	preparePr?: (input: {
+		repository: string;
 		prNumber: number;
 		expectedHeadSha: string;
 		readiness: StackReadinessMode;
 	}) => Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
 	landFrontier?: (input: {
+		repository: string;
 		prNumber: number;
 		expectedHeadSha: string;
 		readiness: StackReadinessMode;
@@ -238,6 +240,7 @@ async function publishStackWithAuthorization(
 		? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
 		: undefined;
 	const lockAttempt = await acquireRepositoryPublicationLock(execFromRunner(deps.run), options.cwd, {
+		backend: "jj",
 		acquireLock,
 		realpath: deps.realpath,
 		signal: deps.signal,

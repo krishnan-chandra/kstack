@@ -1,5 +1,6 @@
 /** Typed in-process contract for invoking PR autopilot from another extension. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isRepositoryName } from "../shared/github-repository.ts";
 import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
 import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
@@ -17,6 +18,8 @@ interface PrAutopilotPayload {
 	prNumber?: number;
 	ctx: ExtensionContext;
 	cwd: string;
+	/** Selected GitHub owner/name from a stack caller; independent of cwd discovery. */
+	repository?: string;
 	/** Minted capability from a trusted caller that already holds user consent; skips run prompts. */
 	confirmation?: AutopilotConfirmation;
 	/** Optional abort signal from the calling lifecycle — composed into the run signal. */
@@ -54,6 +57,7 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		"cwd" in value &&
 		isString(value.cwd) &&
 		value.cwd.length > 0 &&
+		(!("repository" in value) || value.repository === undefined || isRepositoryName(value.repository)) &&
 		(!("signal" in value) || isOptionalAbortSignal(value.signal)),
 });
 
@@ -71,10 +75,19 @@ export function claimPrAutopilotRequest(
 		cwd: string,
 		confirmation: AutopilotConfirmation | undefined,
 		signal: AbortSignal | undefined,
+		repository: string | undefined,
 	) => Promise<AutopilotResult>,
 ): boolean {
 	return channel.claim(value, (payload) =>
-		run(payload.mode, payload.prNumber, payload.ctx, payload.cwd, payload.confirmation, payload.signal),
+		run(
+			payload.mode,
+			payload.prNumber,
+			payload.ctx,
+			payload.cwd,
+			payload.confirmation,
+			payload.signal,
+			payload.repository,
+		),
 	);
 }
 
@@ -86,6 +99,7 @@ export function requestPrAutopilot(
 	cwd: string,
 	confirmation?: AutopilotConfirmation,
 	signal?: AbortSignal,
+	repository?: string,
 ): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }> {
 	if (prNumber !== undefined && !isPositivePr(prNumber)) return Promise.resolve({ handled: false });
 	return channel.request(pi, {
@@ -93,6 +107,7 @@ export function requestPrAutopilot(
 		prNumber,
 		ctx,
 		cwd,
+		...(repository === undefined ? undefined : { repository }),
 		...(confirmation === undefined ? undefined : { confirmation }),
 		...(signal === undefined ? undefined : { signal }),
 	});

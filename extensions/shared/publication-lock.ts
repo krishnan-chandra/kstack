@@ -34,6 +34,7 @@ interface LockDeps {
 }
 
 interface RepositoryPublicationLockDeps {
+	backend?: "git" | "jj";
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
 	signal?: AbortSignal;
@@ -239,11 +240,21 @@ export async function acquireRepositoryPublicationLock(
 ): Promise<RepositoryPublicationLockAttempt> {
 	let common: ExecFnResult;
 	try {
-		common = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
-			cwd,
-			timeout: 8_000,
-			signal: deps.signal,
-		});
+		const options = { cwd, timeout: 8_000, signal: deps.signal };
+		const args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+		if (deps.backend === "jj") {
+			const root = await exec("jj", ["git", "root"], options);
+			const gitDir = root.stdout.trim();
+			if (root.code !== 0 || !gitDir) {
+				return {
+					ok: false,
+					kind: "failed",
+					error: `Could not resolve the repository publication identity with jj git root: ${root.stderr.trim() || "no Git directory returned"}`,
+				};
+			}
+			args.unshift(`--git-dir=${gitDir}`);
+		}
+		common = await exec("git", args, options);
 	} catch (error) {
 		return {
 			ok: false,

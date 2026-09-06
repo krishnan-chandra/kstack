@@ -6,10 +6,12 @@ do not read `kstack.json` themselves.
 
 ## Command boundary
 
-Read-only Git plumbing remains valid for all three backends. In jj mode this
-requires a colocated workspace. Callers may use commands such as `git diff`,
-`git log`, and `git rev-parse` when those commands do not change the working
-copy, index, or refs.
+Read-only Git plumbing is permitted, but jj workspaces need not be Git CLI
+worktrees. Prefer jj commands for workspace state and remote discovery. When
+Git object access is needed, resolve `jj git root` and pass its result with
+`git --git-dir=<path>`. Git's index and working tree are not the secondary
+jj workspace. GitHub callers must use explicit repository coordinates or PR
+URLs rather than assume that `gh` can discover the repository from cwd.
 
 Every parent-side repository write must use the configured backend. The shared
 `VcsBackend` contract covers branches and bookmarks, commits, path restoration,
@@ -21,8 +23,10 @@ backends in the same workspace.
 `preflightVcs` enforces the selected backend before a workflow mutates the
 repository. Git mode refuses a workspace whose root contains `.jj`. The jj
 implementation requires jj 0.44 or newer, a configured `user.name` and
-`user.email`, and a colocated Git and jj workspace so that GitHub and read-only
-Git inspection continue to address the same repository.
+`user.email`, and a Git-backed repository verified by `jj workspace root` and
+`jj git root`. Colocated, non-colocated, and secondary jj workspaces are
+accepted. The workspace root does not have to contain `.git` or match the
+backing Git directory.
 
 ## Workstream semantics
 
@@ -40,7 +44,9 @@ an empty working-copy change. Git worktree isolation is unavailable in jj mode.
 
 Graphite publication and landing resolve `git rev-parse --git-common-dir` and
 lock its canonical path. All linked worktrees for one repository therefore
-share a single mutation lock.
+share a single mutation lock. jj stack publication and native landing first
+resolve `jj git root`, then query the common Git directory with an explicit
+`--git-dir`. Primary and secondary jj workspaces therefore share that lock too.
 
 Path-scoped commit and restore operations, fetch, push, and base merges have
 backend-native implementations. PR Autopilot fetches the remote PR head without

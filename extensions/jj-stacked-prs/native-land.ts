@@ -74,6 +74,7 @@ export async function runNativeLand(
 			if (slice.alreadyMerged) continue;
 			deps.ui.setStatus(`jj-stack: preparing #${slice.prNumber}`);
 			let response = await deps.preparePr({
+				repository: `${repository.owner}/${repository.repo}`,
 				prNumber: slice.prNumber,
 				expectedHeadSha: slice.headCommitId,
 				readiness: options.readiness,
@@ -96,6 +97,7 @@ export async function runNativeLand(
 				await github.markPrReady(repository, slice.prNumber, options.cwd, deps.signal);
 				completedMutations.push(`Marked PR #${slice.prNumber} ready`);
 				response = await deps.preparePr({
+					repository: `${repository.owner}/${repository.repo}`,
 					prNumber: slice.prNumber,
 					expectedHeadSha: slice.headCommitId,
 					readiness: options.readiness,
