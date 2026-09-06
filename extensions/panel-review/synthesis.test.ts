@@ -18,6 +18,7 @@ const scope: ScopeBundle = {
 	binaryCount: 0,
 	truncated: false,
 	contextFilesTouched: false,
+	changedPaths: ["tracked.ts"],
 	generatedAt: "2026-01-01T00:00:00Z",
 };
 

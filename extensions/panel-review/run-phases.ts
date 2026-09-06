@@ -81,6 +81,7 @@ export interface ReviewPipelineEffects {
 	createDashboard(reviewers: ReviewerSpec[]): PipelineDashboard | undefined;
 	runSignal: AbortSignal | undefined;
 	beginSynthesisPhase(): AbortSignal | undefined;
+	checkContextProvenance?(): boolean;
 	waitForIdle(): Promise<void>;
 	sendVerdict(verdict: string, details: VerdictDetails): void;
 }
@@ -132,6 +133,7 @@ export async function runReviewPipeline(
 	ops: ReviewPipelineOps = defaultPipelineOps,
 ): Promise<PanelReviewOutcome> {
 	const { scope, intent, options, resolution } = input;
+	let contextFilesDisabled = scope.contextFilesTouched;
 	let promptDir: string | undefined;
 	let ticker: ReturnType<typeof setInterval> | undefined;
 	const dashboard = fx.createDashboard(resolution.reviewers);
@@ -174,7 +176,7 @@ export async function runReviewPipeline(
 					promptFile: reviewerPromptFile,
 					task: `Run a complete independent thermo-nuclear review of the entire bundle at ${scope.path}. Apply every relevant rubric dimension and the full Approval Bar.`,
 					cwd: scope.reviewRoot,
-					noContextFiles: scope.contextFilesTouched,
+					noContextFiles: contextFilesDisabled,
 					signal: fx.runSignal,
 					deps: childDeps,
 					onProgress: ({ label, turns, activity, preview }) => {
@@ -230,6 +232,7 @@ export async function runReviewPipeline(
 		}
 		const synthesisSignal = fx.beginSynthesisPhase();
 		if (!synthesisSignal) return { status: "aborted" };
+		contextFilesDisabled = contextFilesDisabled || (fx.checkContextProvenance?.() ?? false);
 		const synthesis = resolution.synthesis;
 		fx.setCompactStatus(`panel-review: synthesizing verdict with ${synthesis.cliId}…`);
 		dashboard?.addLead("lead", "lead", synthesis.cliId);
@@ -258,7 +261,7 @@ export async function runReviewPipeline(
 			promptFile: synthesisPromptFile,
 			task: `Synthesize the panel review in ${synthesisInputFile}. The review root is ${scope.reviewRoot}.`,
 			cwd: scope.reviewRoot,
-			noContextFiles: scope.contextFilesTouched,
+			noContextFiles: contextFilesDisabled,
 			signal: synthesisSignal,
 			deps: childDeps,
 			onProgress: ({ turns, activity, preview }) => {
@@ -307,7 +310,7 @@ export async function runReviewPipeline(
 			synthesisModel: synthesis.cliId,
 			truncated: scope.truncated || truncated,
 			synthesized,
-			contextFilesDisabled: scope.contextFilesTouched,
+			contextFilesDisabled,
 			childSessions: [
 				...panel.results.map((result) => verdictSession(result.label, "reviewer", result.session)),
 				verdictSession("lead", "lead", synthesisResult.session),

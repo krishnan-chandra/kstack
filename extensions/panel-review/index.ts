@@ -7,12 +7,14 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { getAgentPaneHost } from "../shared/agent-pane.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
+import { getAgentDir } from "../shared/kstack-config.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
 import { createGitStoreExec, resolveJjReviewTarget } from "./jj-target.ts";
 import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
+import { contextFilesTouchChangedContent } from "./review-context.ts";
 import { defaultGitExec, requireWorkTree, type ScopeBundle } from "./review-scope.ts";
 import {
 	buildIntentPrefill,
@@ -178,6 +180,18 @@ export default function (pi: ExtensionAPI): void {
 				}
 				if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 			}
+			const agentDir = getAgentDir();
+			const collectedScope = scope;
+			const checkContextProvenance = () =>
+				contextFilesTouchChangedContent({
+					reviewRoot: collectedScope.reviewRoot,
+					changedPaths: collectedScope.changedPaths,
+					agentDir,
+				});
+			scope = {
+				...collectedScope,
+				contextFilesTouched: collectedScope.contextFilesTouched || checkContextProvenance(),
+			};
 			return await runReviewPipeline(
 				{ scope, intent, options, resolution },
 				{
@@ -187,6 +201,7 @@ export default function (pi: ExtensionAPI): void {
 					createDashboard: (reviewers) => createDashboard(ctx, reviewers),
 					runSignal,
 					beginSynthesisPhase: () => lifecycle.beginNextPhase(activeRunToken),
+					checkContextProvenance,
 					waitForIdle: () => ctx.waitForIdle(),
 					sendVerdict: (verdict, details) =>
 						pi.sendMessage({ customType: "panel-review", content: verdict, display: true, details }),

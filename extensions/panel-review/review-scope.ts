@@ -120,8 +120,8 @@ export function parsePorcelainZ(raw: string): StatusEntry[] {
 	return entries;
 }
 
-/** Context files Pi injects into child system prompts (see pi usage docs). */
-const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
+/** Context files Pi injects into child system prompts (characterized in review-context.test.ts). */
+const CONTEXT_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
 
 /** True when a repo-relative path names a context file Pi would load. */
 export function touchesContextFile(path: string): boolean {
@@ -257,6 +257,18 @@ export function collectScope(
 	const diffArgs = ["diff", "--find-renames", "--find-copies", diffRange];
 	const diff = exec(diffArgs, cwd);
 	const nameStatus = tryGit(exec, ["diff", "--name-status", "--find-renames", diffRange], cwd) ?? "";
+	const changedNameStatus = exec(["diff", "--name-status", "-z", "--find-renames", "--find-copies", diffRange], cwd);
+	const changedFields = changedNameStatus.split("\0");
+	const committedPaths: string[] = [];
+	for (let index = 0; index < changedFields.length; ) {
+		const status = changedFields[index++];
+		if (!status) continue;
+		const pathCount = status.startsWith("R") || status.startsWith("C") ? 2 : 1;
+		for (let pathIndex = 0; pathIndex < pathCount; pathIndex++) {
+			const path = changedFields[index++];
+			if (path) committedPaths.push(path);
+		}
+	}
 	// -uall expands untracked directories into individual files; without it a
 	// new directory collapses to one "?? dir/" entry and its contents — often
 	// the substance of the change — would never be reviewed.
@@ -376,11 +388,11 @@ export function collectScope(
 	// Context files are normally injected into reviewer children; when the
 	// changeset itself modifies one, injection becomes a prompt-injection
 	// channel and children must run with --no-context-files instead.
-	const contextFilesTouched =
-		nameStatus.split("\n").some((line) => line.split("\t").slice(1).some(touchesContextFile)) ||
-		statusEntries.some(
-			(e) => touchesContextFile(e.path) || (e.origPath !== undefined && touchesContextFile(e.origPath)),
-		);
+	const workingPaths = statusEntries.flatMap((entry) =>
+		entry.origPath === undefined ? [entry.path] : [entry.origPath, entry.path],
+	);
+	const changedPaths = [...new Set([...committedPaths, ...workingPaths])];
+	const contextFilesTouched = changedPaths.some(touchesContextFile);
 	return {
 		path: bundlePath,
 		dir,
@@ -396,6 +408,7 @@ export function collectScope(
 		binaryCount,
 		truncated,
 		contextFilesTouched,
+		changedPaths,
 		generatedAt,
 	};
 }

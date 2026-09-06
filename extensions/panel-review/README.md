@@ -103,12 +103,15 @@ ignores the outcome.
    `thermo-nuclear.md` lens. Every child must complete the whole review against
    the entire changeset instead of handling one panel slice. Children stay
    `--no-skills`; the extension loads the canonical lens directly, so
-   repository-controlled skills cannot
-   influence reviewer instructions. Project context files (`AGENTS.md`,
-   `CLAUDE.md`) are injected as usual — except when the changeset itself
-   modifies one, in which case children run with `--no-context-files` so the
-   content under review cannot become reviewer instructions (disclosed in the
-   verdict details).
+   repository-controlled skills cannot influence reviewer instructions.
+   Pi context files (`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`,
+   `CLAUDE.md`, and `CLAUDE.MD`) are injected as usual when their provenance is
+   unchanged. Children run with `--no-context-files` when the changeset modifies
+   one of those names, a loaded context file resolves through a changed symlink
+   or into changed repository content, or provenance cannot be resolved safely.
+   This check uses the snapshot review root for PR and jj targets and is repeated
+   before synthesis. Ordinary unchanged guidance, including safe internal
+   symlinks, remains enabled. Suppression is disclosed in the verdict details.
    While a run is in flight in TUI mode, a live dashboard sits above the
    editor: one compact card per child with its label/model, state (queued,
    running, completed, failed, aborted), turn count, current tool or thinking

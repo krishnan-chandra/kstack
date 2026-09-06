@@ -166,6 +166,7 @@ describe("collectScope", () => {
 			if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
 			if (key.startsWith("rev-parse HEAD")) return "headsha\n";
 			if (key.startsWith("diff --find-renames --find-copies")) return diff;
+			if (key.startsWith("diff --name-status -z")) return diff.trim() ? "M\0tracked.ts\0" : "";
 			if (key.startsWith("diff --name-status")) return diff.trim() ? "M\ttracked.ts\n" : "";
 			if (key.startsWith("status --porcelain")) return "M  tracked.ts\0?? untracked.ts\0?? blob.bin\0";
 			if (key.startsWith("log --format=%s")) return "subject one\nsubject two\n";
@@ -205,6 +206,7 @@ describe("collectScope", () => {
 				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
 				if (key.startsWith("rev-parse HEAD")) return "headsha\n";
 				if (key.startsWith("diff --find-renames --find-copies")) return "diff --git a/AGENTS.md b/AGENTS.md\n+x\n";
+				if (key.startsWith("diff --name-status -z")) return "M\0AGENTS.md\0";
 				if (key.startsWith("diff --name-status")) return "M\tAGENTS.md\n";
 				if (key.startsWith("status --porcelain")) return "M  AGENTS.md\0?? docs/CLAUDE.md\0";
 				if (key.startsWith("log --format=%s")) return "subject\n";
@@ -312,6 +314,8 @@ describe("collectScope", () => {
 				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
 				if (key.startsWith(`diff --find-renames --find-copies mbsha..${targetSha}`))
 					return "diff --git a/tracked.ts b/tracked.ts\n+line\n";
+				if (key.startsWith(`diff --name-status -z --find-renames --find-copies mbsha..${targetSha}`))
+					return "M\0tracked.ts\0";
 				if (key.startsWith(`diff --name-status --find-renames mbsha..${targetSha}`)) return "M\ttracked.ts\n";
 				if (key.startsWith(`log --format=%s mbsha..${targetSha}`)) return "commit 1\n";
 				throw new Error(`unexpected: ${key}`);
@@ -333,6 +337,30 @@ describe("collectScope", () => {
 			assert.match(content, new RegExp(`HEAD: ${targetSha}`));
 			assert.match(content, /commit 1/);
 			assert.ok(!content.includes("Untracked Files"));
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("retains NUL-delimited unusual names and both rename endpoints", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		try {
+			const exec: GitExec = (args) => {
+				const key = args.join(" ");
+				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+				if (key.startsWith("rev-parse HEAD")) return "headsha\n";
+				if (key.startsWith("diff --find-renames --find-copies")) return "diff\n";
+				if (key.startsWith("diff --name-status -z")) return "R100\0old\tname.ts\0new\nname.ts\0";
+				if (key.startsWith("diff --name-status")) return "R100\told name.ts\tnew name.ts\n";
+				if (key.startsWith("status --porcelain")) return "";
+				if (key.startsWith("log --format=%s")) return "";
+				throw new Error(`unexpected: ${key}`);
+			};
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", { exec });
+			bundleDir = scope.dir;
+			assert.deepEqual(scope.changedPaths, ["old\tname.ts", "new\nname.ts"]);
 		} finally {
 			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			cleanup();
