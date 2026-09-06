@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExecFn } from "./git-exec.ts";
 import {
+	createGitHubGateway,
 	findOpenPullRequestByHead,
 	getPullRequest,
 	getPullRequestReviewTarget,
@@ -194,4 +195,131 @@ test("merge invocation pins the exact head and never bypasses protection", async
 	await mergePullRequest(exec, "/repo", 3, "squash", SHA);
 	assert.deepEqual(seen, ["pr", "merge", "3", "--squash", "--match-head-commit", SHA]);
 	assert.equal(seen.includes("--admin"), false);
+});
+
+test("head gateway sends the exact owner and ref as a paginated server filter", async () => {
+	const head = "feature/slash;$HOME&literal";
+	const signal = new AbortController().signal;
+	const exec: ExecFn = async (command, args, options) => {
+		assert.equal(command, "gh");
+		assert.deepEqual(args, [
+			"api",
+			"--method",
+			"GET",
+			"/repos/Acme/Widgets/pulls",
+			"--field",
+			"state=all",
+			"--field",
+			"per_page=100",
+			"--raw-field",
+			`head=Acme:${head}`,
+			"--paginate",
+			"--jq",
+			".[] | {number, headRefName: .head.ref, headCommitId: .head.sha, baseRefName: .base.ref, title, isDraft: .draft, url: .html_url, headRepository: {nameWithOwner: .head.repo.full_name}, headRepositoryOwner: {login: .head.repo.owner.login}}",
+		]);
+		assert.equal(options.cwd, "/repo path");
+		assert.equal(options.timeout, 30_000);
+		assert.equal(options.signal, signal);
+		return {
+			code: 0,
+			stdout: [
+				JSON.stringify([
+					{
+						number: 41,
+						headRefName: head,
+						headCommitId: "first",
+						baseRefName: "main",
+						title: "First match",
+						isDraft: false,
+						url: "https://github.com/acme/widgets/pull/41",
+						headRepository: { nameWithOwner: "ACME/WIDGETS" },
+						headRepositoryOwner: { login: "ACME" },
+					},
+					{
+						number: 42,
+						headRefName: `${head}-other`,
+						headCommitId: "wrong-ref",
+						baseRefName: "main",
+						headRepository: { nameWithOwner: "Acme/Widgets" },
+						headRepositoryOwner: { login: "Acme" },
+					},
+				]),
+				"[]",
+				JSON.stringify([
+					{
+						number: 43,
+						headRefName: head,
+						headCommitId: "foreign-fork",
+						baseRefName: "main",
+						headRepository: { nameWithOwner: "other/widgets" },
+						headRepositoryOwner: { login: "other" },
+					},
+					{
+						number: 44,
+						headRefName: head,
+						headCommitId: "historical-match",
+						baseRefName: "previous",
+						title: "Historical match",
+						isDraft: true,
+						url: "https://github.com/acme/widgets/pull/44",
+						headRepository: { nameWithOwner: "acme/widgets" },
+						headRepositoryOwner: { login: "acme" },
+					},
+				]),
+			].join("\n"),
+			stderr: "",
+		};
+	};
+
+	const prs = await createGitHubGateway(exec).listPrsForHead(
+		{ owner: "Acme", repo: "Widgets" },
+		head,
+		"/repo path",
+		signal,
+	);
+
+	assert.deepEqual(
+		prs.map((pr) => ({ number: pr.number, headRef: pr.headRef, headOwner: pr.headOwner })),
+		[
+			{ number: 41, headRef: head, headOwner: "ACME" },
+			{ number: 44, headRef: head, headOwner: "acme" },
+		],
+	);
+});
+
+test("gateway leaves open PR requests unfiltered and accepts empty results", async () => {
+	let args: string[] = [];
+	const exec: ExecFn = async (_command, receivedArgs) => {
+		args = receivedArgs;
+		return { code: 0, stdout: "\n", stderr: "" };
+	};
+
+	assert.deepEqual(await createGitHubGateway(exec).listOpenPrs({ owner: "acme", repo: "widgets" }, "/repo"), []);
+	assert.deepEqual(args, [
+		"api",
+		"--method",
+		"GET",
+		"/repos/acme/widgets/pulls",
+		"--field",
+		"state=open",
+		"--field",
+		"per_page=100",
+		"--paginate",
+		"--jq",
+		".[] | {number, headRefName: .head.ref, headCommitId: .head.sha, baseRefName: .base.ref, title, isDraft: .draft, url: .html_url, headRepository: {nameWithOwner: .head.repo.full_name}, headRepositoryOwner: {login: .head.repo.owner.login}}",
+	]);
+});
+
+test("head gateway preserves malformed-output and API failure behavior", async () => {
+	const malformed: ExecFn = async () => ({ code: 0, stdout: "{", stderr: "" });
+	await assert.rejects(
+		createGitHubGateway(malformed).listPrsForHead({ owner: "acme", repo: "widgets" }, "feature", "/repo"),
+		/Could not parse GitHub JSON sequence/,
+	);
+
+	const failed: ExecFn = async () => ({ code: 1, stdout: "", stderr: "permission denied" });
+	await assert.rejects(
+		createGitHubGateway(failed).listPrsForHead({ owner: "acme", repo: "widgets" }, "feature", "/repo"),
+		/gh api failed: permission denied/,
+	);
 });

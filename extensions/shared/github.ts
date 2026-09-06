@@ -450,7 +450,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			return listPulls(run, repo, cwd, "open", signal);
 		},
 		async listPrsForHead(repo, head, cwd, signal) {
-			const prs = await listPulls(run, repo, cwd, "all", signal);
+			const prs = await listPulls(run, repo, cwd, "all", signal, head);
 			return prs.filter((pr) => pr.headRef === head);
 		},
 		async getAuthenticatedUser(cwd, signal) {
@@ -745,7 +745,9 @@ async function listPulls(
 	cwd: string,
 	state: "open" | "all",
 	signal?: AbortSignal,
+	headRef?: string,
 ): Promise<OpenPullRequest[]> {
+	const headArgs = headRef === undefined ? [] : ["--raw-field", `head=${repo.owner}:${headRef}`];
 	const result = await runGh(
 		run,
 		[
@@ -757,6 +759,7 @@ async function listPulls(
 			`state=${state}`,
 			"--field",
 			"per_page=100",
+			...headArgs,
 			"--paginate",
 			"--jq",
 			".[] | {number, headRefName: .head.ref, headCommitId: .head.sha, baseRefName: .base.ref, title, isDraft: .draft, url: .html_url, headRepository: {nameWithOwner: .head.repo.full_name}, headRepositoryOwner: {login: .head.repo.owner.login}}",
