@@ -168,13 +168,40 @@ Both children see the triager task or fixer task file (mode 0600, in a private
 temp directory) rather than serialized structured data on the command line.
 
 If a GitHub reply or resolution fails, the autopilot stops that run without
-posting further comments. Handled thread ids and flake reruns persist under the agent directory's
+posting later comments. It records completed handling by review source, item ID,
+evidence version, and decision. The version covers the full comment bodies and
+metadata before prompt clipping. An unchanged ignored item stays suppressed, but
+edited feedback returns to triage. Reopened threads that were fixed or dismissed
+also return to triage, even when their evidence has not changed.
+
+Before resolving a review thread, the autopilot reads the complete thread again.
+It does not post a duplicate reply when a matching version already has a pending
+reply. If the feedback changed after the reply, the autopilot keeps the pending
+record, leaves the thread unresolved, and requires fresh triage. A failed final
+read has the same fail-closed behavior.
+
+Versioned review state and flake reruns persist under the agent directory's
 `pr-autopilot/` subdirectory (`$PI_CODING_AGENT_DIR/pr-autopilot/`, default
-`~/.pi/agent/pr-autopilot/`) so a later `/pr-autopilot --mode drive` or `watch`
-does not re-handle the same item. The directory is created mode `0700`; saves
-refuse to follow a symlink in the state directory or at the state path. State
-from the previous `/tmp` location is deliberately not migrated — the first run
-after upgrading starts with an empty handled-item filter.
+`~/.pi/agent/pr-autopilot/`). State schema 2 retains at most 1,000 completed
+handling records and 1,000 pending replies. Completed records are pruned oldest
+first; pending replies are never evicted. Legacy handled IDs are discarded as
+suppressions and receive one fresh triage. Legacy replies remain as unversioned
+pending records until a complete read proves that the thread is resolved or
+absent. A live legacy pending reply requires manual inspection before another
+reply or resolution. Invalid and future state schemas block automated review
+mutations instead of being overwritten.
+
+Review inspection reads at most 20 outer pages of 50 threads, 500 comments per
+thread, and 5,000 comments per fetch. The first thread request reads 20 comments;
+later requests page that thread by node ID. Missing or repeated cursors, partial
+GraphQL errors, malformed required fields, cancellation, and exhausted limits
+make the inspection incomplete. They never produce an empty, merge-ready review
+state.
+
+The state directory is created mode `0700`, and files are replaced atomically at
+mode `0600`. Reads and writes refuse to traverse a symlinked state directory;
+reads also refuse a state-file symlink. State from the previous `/tmp` location
+is deliberately not migrated.
 
 ## Safety
 
@@ -197,18 +224,19 @@ Autopilot child roles persist native Pi sessions under `~/.pi/kstack/subagents/`
 ## Aborting
 
 Press <kbd>Ctrl+Shift+B</kbd> during an autopilot run to stop it. Cancellation is
-observed at action boundaries: after it is observed, Autopilot starts no new
-fixer, VCS operation, GitHub mutation, reply resolution, rerun, or cleanup
-removal.
+observed at action boundaries and between review pagination requests. After it
+is observed, Autopilot starts no new fixer, VCS operation, GitHub mutation,
+reply resolution, rerun, or cleanup removal.
 
 An already-dispatched repository or GitHub mutation is allowed to settle so
 repository cleanup and remote diagnostics remain trustworthy. For example, an
 in-flight push or worktree removal finishes and reports its actual result. If
-cancellation arrives after fixes were recorded or a base update completed but before
-publication started, Autopilot reports that local recorded work remains
+cancellation arrives after fixes were recorded or a base update completed but
+before publication started, Autopilot reports that local recorded work remains
 unpublished in both the command notifications and the returned result. It does
 not replay or automatically restore that work. Cancellation retains completed
-reply bookkeeping and any failure reported by an in-flight reply or push.
+handling and a reply that was posted before its resolution boundary, along with
+any failure reported by an in-flight reply or push.
 
 ## Integration
 

@@ -7,19 +7,13 @@ import { type BoundaryValue, isBoolean, isNumber, isString } from "../shared/val
  */
 
 import { isRecord } from "../shared/narrow.ts";
-import { KSTACK_COMMENT_MARKER } from "../shared/stack/topology.ts";
-import type { CheckRun, MergeStateStatus, ReviewThread } from "./types.ts";
+import { AUTOPILOT_REPLY_MARKER, isOwnedReviewComment, versionReviewItem } from "./review-handling.ts";
+import type { CheckRun, MergeStateStatus, ReviewCommentEvidence, ReviewThread } from "./types.ts";
 import { LIMITS } from "./types.ts";
-
-const AUTOPILOT_REPLY_MARKER = "<!-- pr-autopilot -->";
 
 function autopilotReplyBody(body: string): string {
 	if (body.includes(AUTOPILOT_REPLY_MARKER)) return body;
 	return `${AUTOPILOT_REPLY_MARKER}\n${body}`;
-}
-
-function isAutomationComment(body: string): boolean {
-	return body.includes(AUTOPILOT_REPLY_MARKER) || body.includes(KSTACK_COMMENT_MARKER);
 }
 
 function asString(value: BoundaryValue): string | undefined {
@@ -32,6 +26,10 @@ function asNumber(value: BoundaryValue): number | undefined {
 
 function asBoolean(value: BoundaryValue): boolean | undefined {
 	return isBoolean(value) ? value : undefined;
+}
+
+function isTimestamp(value: string | undefined): value is string {
+	return value !== undefined && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
 }
 
 function splitRepo(repo: string): { owner: string; name: string } | undefined {
@@ -122,20 +120,20 @@ function parseGHPr(raw: BoundaryValue): GHPrJson | undefined {
 	};
 }
 
-interface GraphqlComment {
-	databaseId?: number;
-	body: string;
-	path?: string;
-	line?: number;
+interface GraphqlComment extends ReviewCommentEvidence {
+	databaseId: number;
 	url?: string;
-	authorLogin: string;
 }
 
-interface GraphqlThread {
-	id: string;
-	isResolved: boolean;
+interface GraphqlCommentPage {
 	comments: GraphqlComment[];
+	hasNextPage: boolean;
+	endCursor?: string;
 }
+
+export type GraphqlThread =
+	| { id: string; isResolved: true }
+	| { id: string; isResolved: false; commentPage: GraphqlCommentPage };
 
 export interface GraphqlPage {
 	threads: GraphqlThread[];
@@ -143,67 +141,139 @@ export interface GraphqlPage {
 	endCursor?: string;
 }
 
-function parseGraphqlComment(raw: BoundaryValue): GraphqlComment | undefined {
-	if (!isRecord(raw)) return undefined;
-	const body = isString(raw.body) ? raw.body : "";
-	const author = isRecord(raw.author) ? asString(raw.author.login) : undefined;
+export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function parsePageInfo(raw: BoundaryValue, label: string): ParseResult<{ hasNextPage: boolean; endCursor?: string }> {
+	if (!isRecord(raw) || !isBoolean(raw.hasNextPage)) return { ok: false, error: `${label} pageInfo is malformed.` };
+	const endCursor = asString(raw.endCursor);
+	if (raw.hasNextPage && !endCursor) return { ok: false, error: `${label} has another page but no end cursor.` };
+	return { ok: true, value: { hasNextPage: raw.hasNextPage, endCursor } };
+}
+
+function parseGraphqlComment(raw: BoundaryValue, label: string): ParseResult<GraphqlComment> {
+	if (!isRecord(raw)) return { ok: false, error: `${label} is not an object.` };
+	const id = asString(raw.id);
 	const databaseId = asNumber(raw.databaseId);
+	const updatedAt = asString(raw.updatedAt);
+	if (!id) return { ok: false, error: `${label} has no stable id.` };
+	if (databaseId === undefined || !Number.isSafeInteger(databaseId) || databaseId < 1) {
+		return { ok: false, error: `${label} has an invalid databaseId.` };
+	}
+	if (!isString(raw.body)) return { ok: false, error: `${label} has no body.` };
+	if (!isTimestamp(updatedAt)) {
+		return { ok: false, error: `${label} has an invalid updatedAt timestamp.` };
+	}
+	let author: string | null = null;
+	if (raw.author !== null && raw.author !== undefined) {
+		if (!isRecord(raw.author)) return { ok: false, error: `${label} has a malformed author.` };
+		author = asString(raw.author.login) ?? null;
+		if (author === null) return { ok: false, error: `${label} has a malformed author login.` };
+	}
+	const line = raw.line === null || raw.line === undefined ? undefined : asNumber(raw.line);
+	if (line !== undefined && (!Number.isInteger(line) || line < 1)) {
+		return { ok: false, error: `${label} has an invalid line.` };
+	}
+	const path = raw.path === null || raw.path === undefined ? undefined : asString(raw.path);
+	if (raw.path !== null && raw.path !== undefined && path === undefined) {
+		return { ok: false, error: `${label} has an invalid path.` };
+	}
 	return {
-		databaseId: databaseId !== undefined && Number.isInteger(databaseId) ? databaseId : undefined,
-		body,
-		path: asString(raw.path),
-		line: asNumber(raw.line),
-		url: asString(raw.url),
-		authorLogin: author ?? "unknown",
+		ok: true,
+		value: {
+			id,
+			databaseId,
+			body: raw.body,
+			updatedAt,
+			author,
+			path,
+			line,
+			url: asString(raw.url),
+		},
 	};
 }
 
-/** Parse one page of the reviewThreads GraphQL response. */
-export function parseReviewThreadsPage(raw: BoundaryValue): GraphqlPage {
-	if (!isRecord(raw)) return { threads: [], hasNextPage: false };
-	const data = isRecord(raw.data) ? raw.data : raw;
-	const repository = isRecord(data.repository) ? data.repository : undefined;
+function parseCommentConnection(raw: BoundaryValue, label: string): ParseResult<GraphqlCommentPage> {
+	if (!isRecord(raw) || !Array.isArray(raw.nodes)) {
+		return { ok: false, error: `${label} comment connection is malformed.` };
+	}
+	const pageInfo = parsePageInfo(raw.pageInfo, `${label} comments`);
+	if (!pageInfo.ok) return pageInfo;
+	const comments: GraphqlComment[] = [];
+	for (const [index, node] of raw.nodes.entries()) {
+		const comment = parseGraphqlComment(node, `${label} comment ${index + 1}`);
+		if (!comment.ok) return comment;
+		comments.push(comment.value);
+	}
+	return { ok: true, value: { comments, ...pageInfo.value } };
+}
+
+function parseGraphqlThread(raw: BoundaryValue, label: string): ParseResult<GraphqlThread> {
+	if (!isRecord(raw)) return { ok: false, error: `${label} is not an object.` };
+	const id = asString(raw.id);
+	const isResolved = asBoolean(raw.isResolved);
+	if (!id) return { ok: false, error: `${label} has no id.` };
+	if (isResolved === undefined) return { ok: false, error: `${label} has no resolution state.` };
+	if (isResolved) return { ok: true, value: { id, isResolved } };
+	const commentPage = parseCommentConnection(raw.comments, label);
+	if (!commentPage.ok) return commentPage;
+	return { ok: true, value: { id, isResolved, commentPage: commentPage.value } };
+}
+
+function parseGraphqlData(raw: BoundaryValue): ParseResult<Record<string, BoundaryValue>> {
+	if (!isRecord(raw)) return { ok: false, error: "GraphQL response is not an object." };
+	if (raw.errors !== undefined && (!Array.isArray(raw.errors) || raw.errors.length > 0)) {
+		return { ok: false, error: "GraphQL response contains partial errors." };
+	}
+	if (!isRecord(raw.data)) return { ok: false, error: "GraphQL response has no data object." };
+	return { ok: true, value: raw.data };
+}
+
+/** Parse one page of the outer reviewThreads connection. */
+export function parseReviewThreadsPage(raw: BoundaryValue): ParseResult<GraphqlPage> {
+	const parsedData = parseGraphqlData(raw);
+	if (!parsedData.ok) return parsedData;
+	const repository = isRecord(parsedData.value.repository) ? parsedData.value.repository : undefined;
 	const pullRequest = repository && isRecord(repository.pullRequest) ? repository.pullRequest : undefined;
 	const reviewThreads = pullRequest && isRecord(pullRequest.reviewThreads) ? pullRequest.reviewThreads : undefined;
-	if (!reviewThreads) return { threads: [], hasNextPage: false };
-	const pageInfo = isRecord(reviewThreads.pageInfo) ? reviewThreads.pageInfo : undefined;
-	const nodes = Array.isArray(reviewThreads.nodes) ? reviewThreads.nodes : [];
-	const threads: GraphqlThread[] = [];
-	for (const node of nodes) {
-		if (!isRecord(node)) continue;
-		const id = asString(node.id);
-		if (!id) continue;
-		const commentsRaw = isRecord(node.comments) && Array.isArray(node.comments.nodes) ? node.comments.nodes : [];
-		const comments = commentsRaw.flatMap((c) => {
-			const parsed = parseGraphqlComment(c);
-			return parsed ? [parsed] : [];
-		});
-		threads.push({
-			id,
-			isResolved: asBoolean(node.isResolved) === true,
-			comments,
-		});
+	if (!reviewThreads || !Array.isArray(reviewThreads.nodes)) {
+		return { ok: false, error: "GraphQL reviewThreads connection is malformed." };
 	}
-	return {
-		threads,
-		hasNextPage: asBoolean(pageInfo?.hasNextPage) === true,
-		endCursor: asString(pageInfo?.endCursor),
-	};
+	const pageInfo = parsePageInfo(reviewThreads.pageInfo, "Review threads");
+	if (!pageInfo.ok) return pageInfo;
+	const threads: GraphqlThread[] = [];
+	for (const [index, node] of reviewThreads.nodes.entries()) {
+		const thread = parseGraphqlThread(node, `Review thread ${index + 1}`);
+		if (!thread.ok) return thread;
+		threads.push(thread.value);
+	}
+	return { ok: true, value: { threads, ...pageInfo.value } };
+}
+
+/** Parse one node lookup used for comment pagination and pre-resolution inspection. */
+export function parseReviewThreadPage(raw: BoundaryValue): ParseResult<GraphqlThread | undefined> {
+	const parsedData = parseGraphqlData(raw);
+	if (!parsedData.ok) return parsedData;
+	if (parsedData.value.node === null) return { ok: true, value: undefined };
+	const thread = parseGraphqlThread(parsedData.value.node, "Review thread");
+	return thread.ok ? { ok: true, value: thread.value } : thread;
 }
 
 export function graphqlThreadToReviewThread(thread: GraphqlThread): ReviewThread | undefined {
-	if (thread.isResolved || thread.comments.length === 0) return undefined;
-	const first = thread.comments[0];
-	const last = thread.comments[thread.comments.length - 1];
+	if (thread.isResolved) return undefined;
+	const represented = thread.commentPage.comments.filter((comment) => !isOwnedReviewComment(comment.body));
+	if (represented.length === 0) return undefined;
+	const first = represented[0];
+	const last = represented[represented.length - 1];
 	return {
 		id: thread.id,
-		commenter: last.authorLogin || first.authorLogin,
-		body: last.body || first.body,
-		path: first.path ?? last.path,
-		line: first.line ?? last.line,
+		commenter: last.author ?? "unknown",
+		body: last.body,
+		path: last.path ?? first.path,
+		line: last.line ?? first.line,
 		url: last.url ?? first.url,
-		replyToId: last.databaseId ?? first.databaseId,
+		replyToId: last.databaseId,
 		source: "review-thread",
+		version: versionReviewItem("review-thread", thread.id, represented),
 	};
 }
 
@@ -211,44 +281,72 @@ interface RawIssueComment {
 	id: number;
 	commenter: string;
 	body: string;
+	updatedAt: string;
 	url?: string;
 }
 
-export function parseIssueComments(stdout: string): RawIssueComment[] {
+export function parseIssueComments(stdout: string): ParseResult<RawIssueComment[]> {
 	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(stdout);
 	} catch {
-		return [];
+		return { ok: false, error: "Issue comments are not valid JSON." };
 	}
-	if (!Array.isArray(parsed)) return [];
-	const items: BoundaryValue[] = parsed.every(Array.isArray) ? parsed.flat() : parsed;
+	if (!Array.isArray(parsed)) return { ok: false, error: "Issue comments response is not an array." };
+	const pages: BoundaryValue[][] = parsed.every(Array.isArray) ? parsed : [parsed];
 	const comments: RawIssueComment[] = [];
-	for (const item of items) {
-		if (!isRecord(item)) continue;
-		const id = asNumber(item.id);
-		if (id === undefined || !Number.isInteger(id) || id < 1) continue;
-		const user = isRecord(item.user) ? asString(item.user.login) : asString(item.commenter);
-		const body = isString(item.body) ? item.body : "";
-		if (isAutomationComment(body)) continue;
-		comments.push({
-			id,
-			commenter: user ?? "unknown",
-			body,
-			url: asString(item.html_url) ?? asString(item.url),
-		});
+	let index = 0;
+	for (const page of pages) {
+		for (const item of page) {
+			index++;
+			if (!isRecord(item)) return { ok: false, error: `Issue comment ${index} is not an object.` };
+			const id = asNumber(item.id);
+			if (id === undefined || !Number.isSafeInteger(id) || id < 1) {
+				return { ok: false, error: `Issue comment ${index} has an invalid id.` };
+			}
+			if (!isString(item.body)) return { ok: false, error: `Issue comment ${id} has no body.` };
+			const updatedAt = asString(item.updated_at) ?? asString(item.updatedAt);
+			if (!isTimestamp(updatedAt)) {
+				return { ok: false, error: `Issue comment ${id} has an invalid updated_at timestamp.` };
+			}
+			let commenter = "unknown";
+			if (item.user !== null && item.user !== undefined) {
+				if (!isRecord(item.user)) return { ok: false, error: `Issue comment ${id} has a malformed user.` };
+				commenter = asString(item.user.login) ?? "unknown";
+			} else {
+				commenter = asString(item.commenter) ?? "unknown";
+			}
+			if (isOwnedReviewComment(item.body)) continue;
+			comments.push({
+				id,
+				commenter,
+				body: item.body,
+				updatedAt,
+				url: asString(item.html_url) ?? asString(item.url),
+			});
+			if (comments.length > LIMITS.issueComments) comments.shift();
+		}
 	}
-	return comments.slice(-LIMITS.issueComments);
+	return { ok: true, value: comments };
 }
 
 export function issueCommentToThread(comment: RawIssueComment): ReviewThread {
+	const id = `issue-comment-${comment.id}`;
 	return {
-		id: `issue-comment-${comment.id}`,
+		id,
 		commenter: comment.commenter,
 		body: comment.body,
 		url: comment.url,
 		replyToId: comment.id,
 		source: "issue-comment",
+		version: versionReviewItem("issue-comment", id, [
+			{
+				id: String(comment.id),
+				body: comment.body,
+				updatedAt: comment.updatedAt,
+				author: comment.commenter,
+			},
+		]),
 	};
 }
 

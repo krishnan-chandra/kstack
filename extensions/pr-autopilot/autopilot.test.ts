@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -29,7 +29,7 @@ import {
 	isMergeReady,
 	pickModel,
 } from "./pr-state.ts";
-import { type CheckRun, type ExecFn, LIMITS, type ReviewThread } from "./types.ts";
+import { type AutopilotPersistedState, type CheckRun, type ExecFn, LIMITS, type ReviewThread } from "./types.ts";
 
 function makePr(overrides: Partial<GHPrJson> = {}): GHPrJson {
 	return {
@@ -56,7 +56,16 @@ function failedActionsCheck(name: string, runId: string): CheckRun {
 }
 
 function makeThread(id: string, body = "Looks good to me"): ReviewThread {
-	return { id, commenter: "reviewer", body, path: "src/index.ts", line: 10, source: "review-thread", replyToId: 1 };
+	return {
+		id,
+		commenter: "reviewer",
+		body,
+		path: "src/index.ts",
+		line: 10,
+		source: "review-thread",
+		replyToId: 1,
+		version: `${id}:${body}`,
+	};
 }
 
 /**
@@ -215,7 +224,13 @@ describe("pr-autopilot state machine", () => {
 				makePr(),
 				[
 					makeThread("review-thread-1"),
-					{ id: "issue-comment-1", commenter: "reviewer", body: "FYI", source: "issue-comment" },
+					{
+						id: "issue-comment-1",
+						commenter: "reviewer",
+						body: "FYI",
+						source: "issue-comment",
+						version: "issue-comment-1:FYI",
+					},
 				],
 				[],
 				null,
@@ -521,7 +536,14 @@ describe("pr-autopilot state machine", () => {
 				return { code: 1, stdout: "", stderr: `unexpected command: ${call}` };
 			};
 
-			const result = await fetchPRState(exec, "/repo", 42, null, [], "owner/repo");
+			const result = await fetchPRState(
+				exec,
+				"/repo",
+				42,
+				null,
+				{ handled: [], pendingReviewReplies: [], legacyPendingReplyIds: [] },
+				"owner/repo",
+			);
 
 			if (isString(result)) throw new Error(result);
 			assert.equal(result.checks[0]?.runId, "123");
@@ -540,7 +562,11 @@ describe("pr-autopilot state machine", () => {
 				}
 				return { code: 1, stdout: "", stderr: "network unavailable" };
 			};
-			const result = await fetchPRState(exec, "/repo", 42, null, []);
+			const result = await fetchPRState(exec, "/repo", 42, null, {
+				handled: [],
+				pendingReviewReplies: [],
+				legacyPendingReplyIds: [],
+			});
 			assert.match(String(result), /Could not fetch/);
 		});
 	});
@@ -569,32 +595,48 @@ describe("pr-autopilot state machine", () => {
 			}
 		}
 
+		function blockedDiagnostic(loaded: Awaited<ReturnType<typeof loadPersistedState>>): string {
+			assert.equal(loaded.kind, "blocked");
+			return loaded.kind === "blocked" ? loaded.reviewMutationBlocker : "";
+		}
+
+		function persistedState(repoKey: string, prNumber = 5): AutopilotPersistedState {
+			return {
+				schemaVersion: 2,
+				repoKey,
+				prNumber,
+				headSha: "abc",
+				handled: [
+					{
+						id: "thread-1",
+						source: "review-thread",
+						version: "a".repeat(64),
+						decision: "fix",
+					},
+				],
+				pendingReviewReplies: [{ id: "thread-2", version: "b".repeat(64) }],
+				legacyPendingReplyIds: [],
+				flakeRetried: ["check@sha"],
+			};
+		}
+
 		it("uses distinct paths for the same PR in different repositories", () => {
 			assert.notEqual(persistPath("repo-a", 5), persistPath("repo-b", 5));
 		});
 
-		it("round-trips handled thread ids with its repository key", async () => {
+		it("round-trips schema 2 with private permissions", async () => {
 			await withAgentDir(async () => {
 				const repoKey = `test-${process.pid}-${Date.now()}`;
 				const path = persistPath(repoKey, 5);
-				await savePersistedState({
-					repoKey,
-					prNumber: 5,
-					headSha: "abc",
-					handledThreadIds: ["thread-1"],
-					repliedThreadIds: [],
-					flakeRetried: [],
-				});
+				const expected = persistedState(repoKey);
+				await savePersistedState(expected);
 				const loaded = await loadPersistedState(repoKey, 5);
-				assert.deepEqual(loaded.handledThreadIds, ["thread-1"]);
-				assert.equal(loaded.repoKey, repoKey);
+				assert.deepEqual(loaded, { kind: "ready", state: expected });
 				assert.deepEqual(
 					(await readdir(dirname(path))).filter((file) => file.endsWith(".tmp")),
 					[],
 				);
-				if (process.platform !== "win32") {
-					assert.equal((await stat(path)).mode & 0o777, 0o600);
-				}
+				if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
 			});
 		});
 
@@ -602,16 +644,9 @@ describe("pr-autopilot state machine", () => {
 			await withAgentDir(async () => {
 				const repoKey = `atomic-${process.pid}-${Date.now()}`;
 				const path = persistPath(repoKey, 5);
-				const previous = {
-					repoKey,
-					prNumber: 5,
-					headSha: "first",
-					handledThreadIds: ["thread-1"],
-					repliedThreadIds: [],
-					flakeRetried: [],
-				};
+				const previous = persistedState(repoKey);
 				await savePersistedState(previous);
-				const replacement = { ...previous, headSha: "second", handledThreadIds: ["thread-2"] };
+				const replacement = { ...previous, headSha: "second", handled: [] };
 				const replacementWithProbe = {
 					...replacement,
 					toJSON() {
@@ -619,86 +654,105 @@ describe("pr-autopilot state machine", () => {
 						return replacement;
 					},
 				};
-
 				await savePersistedState(replacementWithProbe);
-
-				assert.deepEqual(await loadPersistedState(repoKey, 5), replacement);
+				assert.deepEqual(await loadPersistedState(repoKey, 5), { kind: "ready", state: replacement });
 			});
 		});
 
-		it("completely replaces existing persisted state with private permissions", async () => {
+		it("migrates legacy handling without suppressing it and preserves uncertain replies", async () => {
 			await withAgentDir(async () => {
-				const repoKey = `replace-${process.pid}-${Date.now()}`;
-				const path = persistPath(repoKey, 5);
-				await savePersistedState({
-					repoKey,
-					prNumber: 5,
-					headSha: "first",
-					handledThreadIds: ["thread-1", "thread-2"],
-					repliedThreadIds: ["thread-1"],
-					flakeRetried: ["check-1"],
-				});
-				if (process.platform !== "win32") await chmod(path, 0o666);
-				const replacement = {
-					repoKey,
-					prNumber: 5,
-					headSha: "second",
-					handledThreadIds: [],
-					repliedThreadIds: [],
-					flakeRetried: [],
-				};
-				await savePersistedState(replacement);
-				assert.deepEqual(await loadPersistedState(repoKey, 5), replacement);
-				if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
-			});
-		});
-
-		it("refuses to read persisted state through a symlink", async () => {
-			await withAgentDir(async (agentDir) => {
-				const repoKey = "symlink-read";
+				const repoKey = "legacy";
 				const path = persistPath(repoKey, 7);
 				await mkdir(dirname(path), { recursive: true });
-				const target = join(agentDir, "target.json");
 				await writeFile(
-					target,
+					path,
 					JSON.stringify({
 						repoKey,
 						prNumber: 7,
-						headSha: "hijacked",
-						handledThreadIds: ["evil"],
-						repliedThreadIds: [],
-						flakeRetried: [],
+						headSha: "old",
+						handledThreadIds: ["handled-before"],
+						repliedThreadIds: ["pending-before"],
+						flakeRetried: ["check@sha"],
 					}),
 				);
-				await symlink(target, path);
-				const loaded = await loadPersistedState(repoKey, 7);
-				assert.equal(loaded.repoKey, repoKey);
-				assert.deepEqual(loaded.handledThreadIds, []);
+				const migrated = await loadPersistedState(repoKey, 7);
+				assert.equal(migrated.kind, "ready");
+				assert.deepEqual(migrated.state.handled, []);
+				assert.deepEqual(migrated.state.legacyPendingReplyIds, ["pending-before"]);
+				if (migrated.kind === "ready") assert.match(migrated.migrationNote ?? "", /triaged once more/);
+				await savePersistedState(migrated.state);
+				assert.equal((await loadPersistedState(repoKey, 7)).kind, "ready");
 			});
 		});
 
-		it("replaces a state symlink without writing through it", async () => {
+		it("blocks legacy state whose repository or PR identity does not match its path", async () => {
+			await withAgentDir(async () => {
+				const repoKey = "expected-repo";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				for (const identity of [
+					{ repoKey: "another-repo", prNumber: 7 },
+					{ repoKey, prNumber: 8 },
+				]) {
+					await writeFile(
+						path,
+						JSON.stringify({
+							...identity,
+							headSha: "old",
+							handledThreadIds: ["handled-before"],
+							repliedThreadIds: ["pending-before"],
+							flakeRetried: [],
+						}),
+					);
+					const loaded = await loadPersistedState(repoKey, 7);
+					assert.equal(loaded.kind, "blocked");
+					assert.match(blockedDiagnostic(loaded), /identity/);
+				}
+			});
+		});
+
+		it("blocks malformed and future schemas with bounded diagnostics", async () => {
+			await withAgentDir(async () => {
+				const repoKey = "invalid";
+				const path = persistPath(repoKey, 7);
+				await mkdir(dirname(path), { recursive: true });
+				for (const raw of [
+					"not json",
+					JSON.stringify({ schemaVersion: 99 }),
+					JSON.stringify({
+						schemaVersion: 2,
+						repoKey,
+						prNumber: 7,
+						headSha: "abc",
+						handled: [{ id: "thread-1", source: "review-thread", version: "not-a-hash", decision: "fix" }],
+						pendingReviewReplies: [],
+						legacyPendingReplyIds: [],
+						flakeRetried: [],
+					}),
+				]) {
+					await writeFile(path, raw);
+					const loaded = await loadPersistedState(repoKey, 7);
+					const diagnostic = blockedDiagnostic(loaded);
+					assert.match(diagnostic, /needs inspection/);
+					assert.ok(diagnostic.length < 300);
+				}
+			});
+		});
+
+		it("refuses symlink reads and replaces a state symlink without writing through it", async () => {
 			await withAgentDir(async (agentDir) => {
-				const repoKey = "symlink-write";
+				const repoKey = "symlink";
 				const path = persistPath(repoKey, 7);
 				await mkdir(dirname(path), { recursive: true });
 				const target = join(agentDir, "target.json");
 				await writeFile(target, "unchanged");
 				await symlink(target, path);
-				const replacement = {
-					repoKey,
-					prNumber: 7,
-					headSha: "new",
-					handledThreadIds: ["t"],
-					repliedThreadIds: [],
-					flakeRetried: [],
-				};
-
+				assert.match(blockedDiagnostic(await loadPersistedState(repoKey, 7)), /needs inspection/);
+				const replacement = persistedState(repoKey, 7);
 				await savePersistedState(replacement);
-
 				assert.equal(await readFile(target, "utf8"), "unchanged");
 				assert.equal((await lstat(path)).isSymbolicLink(), false);
-				assert.deepEqual(await loadPersistedState(repoKey, 7), replacement);
+				assert.deepEqual(await loadPersistedState(repoKey, 7), { kind: "ready", state: replacement });
 			});
 		});
 
@@ -709,29 +763,9 @@ describe("pr-autopilot state machine", () => {
 				await mkdir(target, { recursive: true });
 				await symlink(target, dir, "dir");
 				const repoKey = "symlinked-dir";
-				const loaded = await loadPersistedState(repoKey, 7);
-				assert.deepEqual(loaded.handledThreadIds, []);
-				await savePersistedState({
-					repoKey,
-					prNumber: 7,
-					headSha: "new",
-					handledThreadIds: ["t"],
-					repliedThreadIds: [],
-					flakeRetried: [],
-				});
+				assert.match(blockedDiagnostic(await loadPersistedState(repoKey, 7)), /needs inspection/);
+				await savePersistedState(persistedState(repoKey, 7));
 				assert.deepEqual(await readdir(target), []);
-			});
-		});
-
-		it("returns empty state for malformed JSON", async () => {
-			await withAgentDir(async () => {
-				const repoKey = "malformed";
-				const path = persistPath(repoKey, 7);
-				await mkdir(dirname(path), { recursive: true });
-				await writeFile(path, "not json");
-				const loaded = await loadPersistedState(repoKey, 7);
-				assert.deepEqual(loaded.handledThreadIds, []);
-				assert.equal(loaded.repoKey, repoKey);
 			});
 		});
 	});

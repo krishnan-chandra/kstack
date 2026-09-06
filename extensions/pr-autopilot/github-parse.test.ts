@@ -5,6 +5,7 @@ import {
 	extractRunId,
 	graphqlThreadToReviewThread,
 	issueCommentToThread,
+	type ParseResult,
 	parseIssueComments,
 	parseMergeStateStatus,
 	parsePrChecksJson,
@@ -12,11 +13,46 @@ import {
 	pickLowestPrNumber,
 } from "./github-parse.ts";
 
+const UPDATED_AT = "2026-09-06T00:00:00Z";
+
+function unwrap<T>(result: ParseResult<T>): T {
+	if (!result.ok) throw new Error(result.error);
+	return result.value;
+}
+
+function comment(
+	id: number,
+	body: string,
+	overrides: { updatedAt?: string; author?: string; path?: string; line?: number } = {},
+) {
+	return {
+		id: `PRRC_${id}`,
+		databaseId: id,
+		body,
+		updatedAt: overrides.updatedAt ?? UPDATED_AT,
+		path: overrides.path ?? "a.ts",
+		line: overrides.line ?? 4,
+		url: `https://example.test/${id}`,
+		author: { login: overrides.author ?? "reviewer" },
+	};
+}
+
+function threadsEnvelope(nodes: unknown[]) {
+	return {
+		data: {
+			repository: {
+				pullRequest: {
+					reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+				},
+			},
+		},
+	};
+}
+
 describe("github parsers", () => {
 	describe("pickLowestPrNumber", () => {
 		it("sorts by number ascending, not list order", () => {
-			const stdout = JSON.stringify([{ number: 12 }, { number: 3 }, { number: 7 }]);
-			assert.equal(pickLowestPrNumber(stdout), 3);
+			assert.equal(pickLowestPrNumber(JSON.stringify([{ number: 12 }, { number: 3 }, { number: 7 }])), 3);
 		});
 
 		it("returns undefined for empty or invalid payloads", () => {
@@ -67,101 +103,170 @@ describe("github parsers", () => {
 	});
 
 	describe("parseReviewThreadsPage", () => {
-		it("keeps only unresolved threads and uses the latest comment body", () => {
-			const page = parseReviewThreadsPage({
-				data: {
-					repository: {
-						pullRequest: {
-							reviewThreads: {
+		it("uses the latest non-owned comment and keeps all non-owned evidence in its version", () => {
+			const page = unwrap(
+				parseReviewThreadsPage(
+					threadsEnvelope([
+						{
+							id: "PRRT_open",
+							isResolved: false,
+							comments: {
 								pageInfo: { hasNextPage: false, endCursor: null },
 								nodes: [
-									{
-										id: "PRRT_open",
-										isResolved: false,
-										comments: {
-											nodes: [
-												{ databaseId: 1, body: "first", path: "a.ts", line: 4, author: { login: "ann" } },
-												{ databaseId: 2, body: "please rename", path: "a.ts", line: 4, author: { login: "bob" } },
-											],
-										},
-									},
-									{
-										id: "PRRT_done",
-										isResolved: true,
-										comments: { nodes: [{ databaseId: 3, body: "old", author: { login: "ann" } }] },
-									},
+									comment(1, "first", { author: "ann" }),
+									comment(2, "<!-- pr-autopilot -->\nAddressed.", { author: "kstack" }),
+									comment(3, "please rename", { author: "bob" }),
 								],
 							},
 						},
-					},
-				},
-			});
-			assert.equal(page.threads.length, 2);
+						{ id: "PRRT_done", isResolved: true, comments: { nodes: [] } },
+					]),
+				),
+			);
 			const open = graphqlThreadToReviewThread(page.threads[0]);
 			const done = graphqlThreadToReviewThread(page.threads[1]);
 			assert.ok(open);
 			assert.equal(open.body, "please rename");
-			assert.equal(open.replyToId, 2);
-			assert.equal(open.path, "a.ts");
+			assert.equal(open.replyToId, 3);
+			assert.equal(open.commenter, "bob");
+			assert.match(open.version, /^[0-9a-f]{64}$/);
 			assert.equal(done, undefined);
+		});
+
+		it("changes the version when an earlier represented comment is edited", () => {
+			const makeVersion = (body: string) => {
+				const page = unwrap(
+					parseReviewThreadsPage(
+						threadsEnvelope([
+							{
+								id: "PRRT_1",
+								isResolved: false,
+								comments: {
+									pageInfo: { hasNextPage: false, endCursor: null },
+									nodes: [comment(1, body), comment(2, "latest")],
+								},
+							},
+						]),
+					),
+				);
+				return graphqlThreadToReviewThread(page.threads[0])?.version;
+			};
+			assert.notEqual(makeVersion("original"), makeVersion("edited"));
+		});
+
+		it("rejects partial errors and malformed required comment fields", () => {
+			const partial = parseReviewThreadsPage({ ...threadsEnvelope([]), errors: [{ message: "partial" }] });
+			assert.equal(partial.ok, false);
+			const missingTimestamp = parseReviewThreadsPage(
+				threadsEnvelope([
+					{
+						id: "PRRT_1",
+						isResolved: false,
+						comments: {
+							pageInfo: { hasNextPage: false, endCursor: null },
+							nodes: [{ ...comment(1, "body"), updatedAt: undefined }],
+						},
+					},
+				]),
+			);
+			assert.equal(missingTimestamp.ok, false);
+			const missingId = parseReviewThreadsPage(
+				threadsEnvelope([
+					{
+						id: "PRRT_1",
+						isResolved: false,
+						comments: {
+							pageInfo: { hasNextPage: false, endCursor: null },
+							nodes: [{ ...comment(1, "body"), id: undefined }],
+						},
+					},
+				]),
+			);
+			assert.equal(missingId.ok, false);
 		});
 	});
 
 	describe("parseIssueComments", () => {
-		it("maps REST issue comments", () => {
-			const comments = parseIssueComments(
-				JSON.stringify([
-					{ id: 9, user: { login: "bugbot" }, body: "npe", html_url: "https://example/9" },
-					{ id: 10, user: { login: "me" }, body: "<!-- pr-autopilot -->\nAddressed." },
-				]),
+		it("maps REST issue comments with full-body freshness", () => {
+			const comments = unwrap(
+				parseIssueComments(
+					JSON.stringify([
+						{ id: 9, user: { login: "bugbot" }, body: "npe", updated_at: UPDATED_AT, html_url: "https://example/9" },
+						{ id: 10, user: { login: "me" }, body: "<!-- pr-autopilot -->\nAddressed.", updated_at: UPDATED_AT },
+					]),
+				),
 			);
 			assert.equal(comments.length, 1);
 			const thread = issueCommentToThread(comments[0]);
 			assert.equal(thread.id, "issue-comment-9");
 			assert.equal(thread.source, "issue-comment");
 			assert.equal(thread.commenter, "bugbot");
+			assert.match(thread.version, /^[0-9a-f]{64}$/);
 		});
 
-		it("filters kstack stack-navigation comments", () => {
-			const comments = parseIssueComments(
-				JSON.stringify([
-					{
-						id: 11,
-						user: { login: "publisher" },
-						body: "<!-- kstack-stack-nav -->\n<!-- kstack-stack-schema-v1 -->\n\n## Stack navigation (kstack)",
-					},
-					{ id: 12, user: { login: "reviewer" }, body: "Please explain this behavior." },
-				]),
+		it("filters Kstack navigation comments but keeps legitimate bot feedback", () => {
+			const comments = unwrap(
+				parseIssueComments(
+					JSON.stringify([
+						{
+							id: 11,
+							user: { login: "publisher" },
+							body: "<!-- kstack-stack-nav -->\nNavigation",
+							updated_at: UPDATED_AT,
+						},
+						{ id: 12, user: { login: "dependabot" }, body: "Please update this API.", updated_at: UPDATED_AT },
+					]),
+				),
 			);
 			assert.deepEqual(
-				comments.map((comment) => comment.id),
+				comments.map((item) => item.id),
 				[12],
 			);
 		});
 
 		it("accepts slurped pagination and keeps page order", () => {
-			const comments = parseIssueComments(
-				JSON.stringify([
-					[{ id: 1, user: { login: "first" }, body: "first page" }],
-					[{ id: 2, user: { login: "second" }, body: "second page" }],
-				]),
+			const comments = unwrap(
+				parseIssueComments(
+					JSON.stringify([
+						[{ id: 1, user: { login: "first" }, body: "first page", updated_at: UPDATED_AT }],
+						[{ id: 2, user: { login: "second" }, body: "second page", updated_at: UPDATED_AT }],
+					]),
+				),
 			);
 			assert.deepEqual(
-				comments.map((comment) => comment.id),
+				comments.map((item) => item.id),
 				[1, 2],
 			);
 		});
 
-		it("filters autopilot replies before retaining the newest bounded set", () => {
+		it("filters owned replies before retaining the newest bounded set", () => {
 			const rows = Array.from({ length: 105 }, (_, index) => ({
 				id: index + 1,
 				user: { login: "reviewer" },
 				body: index === 104 ? "<!-- pr-autopilot -->\nhandled" : `comment ${index + 1}`,
+				updated_at: UPDATED_AT,
 			}));
-			const comments = parseIssueComments(JSON.stringify(rows));
+			const comments = unwrap(parseIssueComments(JSON.stringify(rows)));
 			assert.equal(comments.length, 100);
 			assert.equal(comments[0].id, 5);
 			assert.equal(comments.at(-1)?.id, 104);
+		});
+
+		it("reports the correct position for an invalid issue-comment id", () => {
+			const parsed = parseIssueComments(
+				JSON.stringify([
+					{ id: 1, user: { login: "reviewer" }, body: "first", updated_at: UPDATED_AT },
+					{ id: "invalid", user: { login: "reviewer" }, body: "second", updated_at: UPDATED_AT },
+				]),
+			);
+			assert.deepEqual(parsed, { ok: false, error: "Issue comment 2 has an invalid id." });
+		});
+
+		it("rejects missing timestamps", () => {
+			assert.equal(
+				parseIssueComments(JSON.stringify([{ id: 1, user: { login: "reviewer" }, body: "body" }])).ok,
+				false,
+			);
 		});
 	});
 

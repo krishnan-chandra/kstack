@@ -54,6 +54,7 @@ function hostileState(): PRState {
 			path: `src/${INJECTION}.ts`,
 			line: 3,
 			source: "review-thread",
+			version: "review-version-1",
 		},
 	];
 	return {

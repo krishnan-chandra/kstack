@@ -61,7 +61,17 @@ export interface CheckRun {
 }
 
 /** Where a review item came from. */
-type ThreadSource = "review-thread" | "issue-comment";
+export type ThreadSource = "review-thread" | "issue-comment";
+
+/** Full, untruncated evidence used to version one represented review comment. */
+export interface ReviewCommentEvidence {
+	id: string;
+	body: string;
+	updatedAt: string;
+	author: string | null;
+	path?: string;
+	line?: number;
+}
 
 /**
  * An unresolved review thread or an issue comment that still needs a decision.
@@ -78,10 +88,27 @@ export interface ReviewThread {
 	/** databaseId of the last comment, for `in_reply_to` replies. */
 	replyToId?: number;
 	source: ThreadSource;
+	/** SHA-256 freshness token derived from complete, untruncated review evidence. */
+	version: string;
 }
 
 /** Triager decision for one review item. */
 export type ThreadDecision = "fix" | "dismiss" | "ask" | "ignore";
+
+/** Decisions that complete handling and may be persisted. */
+type HandledReviewDecision = Exclude<ThreadDecision, "ask">;
+
+export interface HandledReviewRecord {
+	id: string;
+	source: ThreadSource;
+	version: string;
+	decision: HandledReviewDecision;
+}
+
+export interface PendingReviewReply {
+	id: string;
+	version: string;
+}
 
 /**
  * A check-run classification produced by the model triager: tells the
@@ -137,16 +164,29 @@ export interface AutopilotResult {
 
 /** Persisted across ticks so a later drive/watch resume does not re-handle work. */
 export interface AutopilotPersistedState {
+	schemaVersion: 2;
 	repoKey: string;
 	prNumber: number;
 	headSha: string;
-	/** Review items whose reply and, when applicable, resolution both succeeded. */
-	handledThreadIds: string[];
-	/** Review threads already replied to but not yet resolved. */
-	repliedThreadIds: string[];
+	/** Completed review handling, ordered oldest to newest. */
+	handled: HandledReviewRecord[];
+	/** Replies posted for an exact evidence version whose thread resolution is still pending. */
+	pendingReviewReplies: PendingReviewReply[];
+	/** Migrated v1 reply IDs whose evidence version cannot be proven. */
+	legacyPendingReplyIds: string[];
 	/** Check name + SHA pairs already given one flake rerun. */
 	flakeRetried: string[];
 }
+
+/** Load diagnostics stay out of the versioned on-disk schema. */
+export type LoadedAutopilotState =
+	| { kind: "ready"; state: AutopilotPersistedState; migrationNote?: string }
+	| {
+			kind: "blocked";
+			state: AutopilotPersistedState;
+			/** Invalid or unreadable state blocks reply and resolution mutations until a user reconciles the file. */
+			reviewMutationBlocker: string;
+	  };
 
 export type { ExecFn, ExecFnResult };
 
@@ -177,6 +217,14 @@ export const LIMITS = {
 	threadBodyChars: 400,
 	/** Most recent non-autopilot issue comments retained after pagination. */
 	issueComments: 100,
+	/** Outer review-thread connection pages. */
+	reviewThreadPages: 20,
+	/** Complete represented comments allowed for one review thread. */
+	reviewCommentsPerThread: 500,
+	/** Complete represented comments allowed across one review-thread fetch. */
+	reviewCommentsPerFetch: 5000,
+	/** Completed and pending review-handling record bounds. */
+	reviewHandlingRecords: 1000,
 	/** Drive mode: max fix/push cycles (watches do not count). */
 	maxDriveCycles: 3,
 	/** Watch mode: max fix/push cycles while waiting on GitHub. */

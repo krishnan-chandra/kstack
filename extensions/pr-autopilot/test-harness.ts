@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BoundaryValue } from "../shared/validation.ts";
 import type { DriverOps, runAutopilot } from "./driver.ts";
-import type { AutopilotPersistedState, ExecFn, ExecFnResult, ResolvedAutopilotConfig } from "./types.ts";
+import type {
+	AutopilotPersistedState,
+	ExecFn,
+	ExecFnResult,
+	LoadedAutopilotState,
+	ResolvedAutopilotConfig,
+} from "./types.ts";
 
 export const SHA = "0123456789abcdef0123456789abcdef01234567";
 export const MERGED_SHA = "89abcdef0123456789abcdef0123456789abcdef";
@@ -41,6 +47,8 @@ interface Scenario {
 	fixer?: string;
 	confirm?: boolean;
 	fixerChanges?: boolean;
+	persisted?: AutopilotPersistedState;
+	loaded?: LoadedAutopilotState;
 }
 
 export interface Harness {
@@ -49,6 +57,7 @@ export interface Harness {
 	roles: string[];
 	models: string[];
 	unexpected: string[];
+	savedStates: AutopilotPersistedState[];
 	exec: ExecFn;
 	ops: DriverOps;
 	handlers: Parameters<typeof runAutopilot>[2];
@@ -61,6 +70,7 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 	const roles: string[] = [];
 	const models: string[] = [];
 	const unexpected: string[] = [];
+	const savedStates: AutopilotPersistedState[] = [];
 	let statusReads = 0;
 	let mergedBase = false;
 	const ok = (stdout = ""): ExecFnResult => ({ code: 0, stdout, stderr: "" });
@@ -85,25 +95,50 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		}
 		if (command === "gh" && args[0] === "repo" && args[1] === "view") return ok("owner/repo\n");
 		if (command === "gh" && args[0] === "api" && args[1] === "graphql") {
-			const nodes = scenario.thread
-				? [
-						{
-							id: scenario.thread.id,
-							isResolved: false,
-							comments: {
-								nodes: [
-									{
-										databaseId: 7,
-										body: scenario.thread.body,
-										path: "src/a.ts",
-										line: 1,
-										author: { login: "reviewer" },
-									},
-								],
-							},
+			if (args.some((arg) => arg.includes("resolveReviewThread"))) return ok("{}");
+			const comment = scenario.thread
+				? {
+						id: "PRRC_7",
+						databaseId: 7,
+						body: scenario.thread.body,
+						updatedAt: "2026-09-06T00:00:00Z",
+						path: "src/a.ts",
+						line: 1,
+						author: { login: "reviewer" },
+					}
+				: undefined;
+			if (args.some((arg) => arg.includes("node(id: $id)"))) {
+				return ok(
+					JSON.stringify({
+						data: {
+							node:
+								scenario.thread && comment
+									? {
+											id: scenario.thread.id,
+											isResolved: false,
+											comments: {
+												pageInfo: { hasNextPage: false, endCursor: null },
+												nodes: [comment],
+											},
+										}
+									: null,
 						},
-					]
-				: [];
+					}),
+				);
+			}
+			const nodes =
+				scenario.thread && comment
+					? [
+							{
+								id: scenario.thread.id,
+								isResolved: false,
+								comments: {
+									pageInfo: { hasNextPage: false, endCursor: null },
+									nodes: [comment],
+								},
+							},
+						]
+					: [];
 			return ok(
 				JSON.stringify({
 					data: {
@@ -118,7 +153,12 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 			return ok(
 				scenario.issueComment
 					? JSON.stringify([
-							{ id: scenario.issueComment.id, user: { login: "reviewer" }, body: scenario.issueComment.body },
+							{
+								id: scenario.issueComment.id,
+								user: { login: "reviewer" },
+								body: scenario.issueComment.body,
+								updated_at: "2026-09-06T00:00:00Z",
+							},
 						])
 					: "[]",
 			);
@@ -145,19 +185,27 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		unexpected.push(key);
 		return { code: 1, stdout: "", stderr: `unexpected command: ${key}` };
 	};
-	let persisted: AutopilotPersistedState | undefined;
+	let persisted = scenario.persisted ? structuredClone(scenario.persisted) : undefined;
+	let loaded = scenario.loaded ? structuredClone(scenario.loaded) : undefined;
 	const ops: DriverOps = {
 		loadPersistedState: async (repoKey, prNumber) =>
-			persisted ?? {
-				repoKey,
-				prNumber,
-				headSha: "",
-				handledThreadIds: [],
-				repliedThreadIds: [],
-				flakeRetried: [],
+			loaded ?? {
+				kind: "ready",
+				state: persisted ?? {
+					schemaVersion: 2,
+					repoKey,
+					prNumber,
+					headSha: "",
+					handled: [],
+					pendingReviewReplies: [],
+					legacyPendingReplyIds: [],
+					flakeRetried: [],
+				},
 			},
 		savePersistedState: async (state) => {
 			persisted = structuredClone(state);
+			loaded = undefined;
+			savedStates.push(structuredClone(state));
 		},
 		runChildRole: async (role, opts) => {
 			roles.push(role);
@@ -175,6 +223,7 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		roles,
 		models,
 		unexpected,
+		savedStates,
 		exec,
 		ops,
 		handlers: {
