@@ -25,7 +25,9 @@ Resolve this skill's directory and run the read-only helper before proposing cre
 node <skill-dir>/scripts/inspect_worktrees.ts
 ```
 
-Use `--root <path>` only when the user explicitly chose another managed root. The helper emits bounded JSON with `managed_root`, `worktrees`, `orphans`, and `truncated`. Each worktree reports its owning common Git directory, branch, HEAD, dirty/untracked state, lock/prunable state, inferred base, and whether HEAD is reachable from that base. Inspect and plan share `resolveIsolationBase`, including the `HEAD` fallback.
+Use `--root <path>` only when the user explicitly chose another managed root. The helper emits bounded JSON with `managed_root`, `worktrees`, `orphans`, and `truncated`. The `worktrees` array contains only successfully inspected candidates. The `orphans` array contains unclassified candidates, including reasons that start with `inspection failed:`. A diagnostic row never proves that its path is clean, unlocked, prunable, or safe to delete. Resolve the failure and inspect again before proposing a mutation. When `truncated` is `true`, the candidate limit also makes the inventory incomplete.
+
+Each worktree reports its owning common Git directory, branch, HEAD, dirty/untracked state, lock/prunable state, inferred base, and whether HEAD is reachable from that base. Inspect and plan share `resolveIsolationBase`, including the `HEAD` fallback.
 
 For one repository, also inspect Git's authoritative records without parsing human-oriented output:
 
@@ -126,7 +128,7 @@ For each candidate:
 
 Do not use `rm -rf` for a live worktree. Do not use `git worktree remove --force` or `git branch -D` unless the user explicitly approves discarding the exact state you reported.
 
-An **orphan** is a directory under the managed root that no longer resolves to an owning Git repository. Report it separately. Ordinary worktree cleanup must not delete it. If the user asks to delete an orphan, inspect its contents and require explicit filesystem-deletion approval.
+An **orphan** can be a directory that no longer resolves to an owning Git repository or any candidate whose inspection failed. Report it separately as unclassified. Ordinary worktree cleanup must not delete it. If the user asks to delete an orphan, inspect its contents, resolve any inspection failure, and require explicit filesystem-deletion approval.
 
 ## Response format
 

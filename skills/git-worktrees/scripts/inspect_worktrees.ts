@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ExecFn } from "../../../extensions/shared/git-exec.ts";
+import type { ExecFn, ExecFnResult } from "../../../extensions/shared/git-exec.ts";
 import { type BoundaryValue, isObject, isString } from "../../../extensions/shared/validation.ts";
 import { resolveIsolationBase } from "../../../extensions/shared/vcs/worktree-plan.ts";
 import { createSkillExec } from "./git-exec.ts";
@@ -14,6 +14,8 @@ export const OUTPUT_CAP = 256 * 1024;
 const DEFAULT_ROOT = join(homedir(), ".pi", "kstack", "worktrees");
 const DEFAULT_MAX = 200;
 const DEFAULT_TIMEOUT_SECONDS = 10;
+const INSPECTION_REASON_CAP = 512;
+const OBJECT_ID_RE = /^[0-9a-f]{40,64}$/;
 
 type PorcelainValue = string | true;
 type PorcelainRecord = Record<string, PorcelainValue>;
@@ -21,10 +23,10 @@ type PorcelainRecord = Record<string, PorcelainValue>;
 interface InspectedWorktree {
 	repository_id: string;
 	path: string;
-	common_git_dir: string | null;
+	common_git_dir: string;
 	branch: string | null;
 	detached: boolean;
-	head: string | null;
+	head: string;
 	dirty: boolean;
 	status_entries: number;
 	untracked_entries: number;
@@ -188,63 +190,144 @@ function staysInsideRoot(path: string, root: string): boolean {
 	return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
-async function inspectCandidate(exec: ExecFn, path: string, timeoutMs: number): Promise<InspectedWorktree | undefined> {
+function errorMessage(error: BoundaryValue): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function limitInspectionReason(reason: string): string {
+	const suffix = "...";
+	const encoded = Buffer.from(reason.replaceAll("\0", "\\0"), "utf8");
+	if (encoded.byteLength <= INSPECTION_REASON_CAP) return encoded.toString("utf8");
+	let prefix = encoded.subarray(0, INSPECTION_REASON_CAP - Buffer.byteLength(suffix)).toString("utf8");
+	if (prefix.endsWith("�")) prefix = prefix.slice(0, -1);
+	return `${prefix}${suffix}`;
+}
+
+function inspectionFailureReason(error: BoundaryValue): string {
+	return limitInspectionReason(`inspection failed: ${errorMessage(error)}`);
+}
+
+function commandFailure(command: string, result: ExecFnResult): Error {
+	const diagnostic = result.stderr.trim() || result.stdout.trim();
+	const detail = diagnostic ? `: ${diagnostic}` : "";
+	return new Error(`${command} exited ${result.code}${detail}`);
+}
+
+function requireCommandSuccess(command: string, result: ExecFnResult): void {
+	if (result.code !== 0) throw commandFailure(command, result);
+}
+
+function requireCommandOutput(command: string, result: ExecFnResult): string {
+	requireCommandSuccess(command, result);
+	const value = result.stdout.trim();
+	if (!value) throw new Error(`${command} returned no usable output`);
+	return value;
+}
+
+function canonicalizeFact(command: string, path: string): string {
+	try {
+		return realpathSync(path);
+	} catch (error) {
+		throw new Error(`${command} returned an unusable path ${JSON.stringify(path)}: ${errorMessage(error)}`);
+	}
+}
+
+async function inspectCandidate(exec: ExecFn, path: string, timeoutMs: number): Promise<InspectedWorktree> {
+	const canonical = realpathSync(path);
+	const topCommand = "git rev-parse --show-toplevel";
 	const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: path, timeout: timeoutMs });
-	if (top.code !== 0) return undefined;
+	const canonicalTop = canonicalizeFact(topCommand, requireCommandOutput(topCommand, top));
+	if (canonicalTop !== canonical) {
+		throw new Error(
+			`${topCommand} returned a toplevel that does not match the candidate: ${JSON.stringify(canonicalTop)}`,
+		);
+	}
+
+	const commonCommand = "git rev-parse --path-format=absolute --git-common-dir";
 	const common = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
 		cwd: path,
 		timeout: timeoutMs,
 	});
-	const branch = await exec("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
+	const commonPath = requireCommandOutput(commonCommand, common);
+	if (!isAbsolute(commonPath)) throw new Error(`${commonCommand} returned a non-absolute path`);
+	const commonGitDir = canonicalizeFact(commonCommand, commonPath);
+	if (!isDirectory(commonGitDir)) throw new Error(`${commonCommand} did not identify a directory`);
+
+	const branchCommand = "git symbolic-ref --quiet --short HEAD";
+	const branchResult = await exec("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
 		cwd: path,
 		timeout: timeoutMs,
 	});
-	const head = await exec("git", ["rev-parse", "--verify", "HEAD"], { cwd: path, timeout: timeoutMs });
+	let branch: string | null;
+	if (branchResult.code === 0) {
+		branch = requireCommandOutput(branchCommand, branchResult);
+	} else if (branchResult.code === 1) {
+		branch = null;
+	} else {
+		throw commandFailure(branchCommand, branchResult);
+	}
+
+	const headCommand = "git rev-parse --verify HEAD";
+	const headResult = await exec("git", ["rev-parse", "--verify", "HEAD"], { cwd: path, timeout: timeoutMs });
+	const head = requireCommandOutput(headCommand, headResult);
+	if (!OBJECT_ID_RE.test(head)) throw new Error(`${headCommand} returned an invalid object ID`);
+
+	const statusCommand = "git status --porcelain=v1 -z --untracked-files=all";
 	const status = await exec("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
 		cwd: path,
 		timeout: timeoutMs,
 	});
+	requireCommandSuccess(statusCommand, status);
+	const entries = status.stdout.split("\0").filter(Boolean);
+	const untracked = entries.filter((entry) => entry.startsWith("??")).length;
+
+	const listingCommand = "git worktree list --porcelain -z";
 	const listing = await exec("git", ["worktree", "list", "--porcelain", "-z"], {
 		cwd: path,
 		timeout: timeoutMs,
 	});
-	const canonical = realpathSync(path);
-	const authoritative =
-		parseWorktreePorcelainZ(Buffer.from(listing.stdout)).find((record) => {
-			const worktree = record.worktree;
-			if (!isString(worktree) || !worktree) return false;
-			try {
-				return realpathSync(worktree) === canonical;
-			} catch {
-				return false;
-			}
-		}) ?? {};
-	const entries = status.stdout.split("\0").filter(Boolean);
-	const untracked = entries.filter((entry) => entry.startsWith("??")).length;
+	requireCommandSuccess(listingCommand, listing);
+	const authoritativeMatches = parseWorktreePorcelainZ(Buffer.from(listing.stdout)).filter((record) => {
+		const worktree = record.worktree;
+		if (!isString(worktree) || !worktree) return false;
+		try {
+			return realpathSync(worktree) === canonical;
+		} catch {
+			return false;
+		}
+	});
+	if (authoritativeMatches.length === 0) {
+		throw new Error(`${listingCommand} is missing an authoritative match for the candidate`);
+	}
+	if (authoritativeMatches.length > 1) {
+		throw new Error(`${listingCommand} returned an ambiguous authoritative match for the candidate`);
+	}
+	const authoritative = authoritativeMatches[0];
+	if (!authoritative) throw new Error(`${listingCommand} did not return an authoritative record`);
+
 	const base = await resolveIsolationBase(exec, path);
 	let reachable: boolean | null = null;
 	if (base) {
+		const mergeBaseCommand = `git merge-base --is-ancestor HEAD ${base.ref}`;
 		const merged = await exec("git", ["merge-base", "--is-ancestor", "HEAD", base.ref], {
 			cwd: path,
 			timeout: timeoutMs,
 		});
-		reachable = merged.code === 0;
-	}
-	let commonGitDir: string | null = null;
-	if (common.code === 0 && common.stdout.trim()) {
-		try {
-			commonGitDir = realpathSync(common.stdout.trim());
-		} catch {
-			commonGitDir = null;
+		if (merged.code === 0) {
+			reachable = true;
+		} else if (merged.code === 1) {
+			reachable = false;
+		} else {
+			throw commandFailure(mergeBaseCommand, merged);
 		}
 	}
 	return {
 		repository_id: path.split(/[/\\]/).at(-2) ?? "",
 		path: canonical,
 		common_git_dir: commonGitDir,
-		branch: branch.code === 0 ? branch.stdout.trim() || null : null,
-		detached: branch.code !== 0,
-		head: head.code === 0 ? head.stdout.trim() || null : null,
+		branch,
+		detached: branch === null,
+		head,
 		dirty: entries.length > 0,
 		status_entries: entries.length,
 		untracked_entries: untracked,
@@ -271,8 +354,13 @@ async function main(argv: string[]): Promise<number> {
 	const exec = createSkillExec();
 	const timeoutMs = parsed.timeoutSeconds * 1000;
 	for (const candidate of candidates.slice(0, parsed.maximum)) {
-		if (lstatSync(candidate).isSymbolicLink()) {
-			orphans.push({ path: candidate, reason: "symlink entries are not treated as managed worktrees" });
+		try {
+			if (lstatSync(candidate).isSymbolicLink()) {
+				orphans.push({ path: candidate, reason: "symlink entries are not treated as managed worktrees" });
+				continue;
+			}
+		} catch (error) {
+			orphans.push({ path: candidate, reason: inspectionFailureReason(error) });
 			continue;
 		}
 		try {
@@ -281,26 +369,13 @@ async function main(argv: string[]): Promise<number> {
 				continue;
 			}
 		} catch (error) {
-			orphans.push({
-				path: candidate,
-				reason: error instanceof Error ? error.message : String(error),
-			});
+			orphans.push({ path: candidate, reason: inspectionFailureReason(error) });
 			continue;
 		}
-		let item: InspectedWorktree | undefined;
 		try {
-			item = await inspectCandidate(exec, candidate, timeoutMs);
+			worktrees.push(await inspectCandidate(exec, candidate, timeoutMs));
 		} catch (error) {
-			orphans.push({
-				path: candidate,
-				reason: error instanceof Error ? error.message : String(error),
-			});
-			continue;
-		}
-		if (!item) {
-			orphans.push({ path: candidate, reason: "not a resolvable Git working tree" });
-		} else {
-			worktrees.push(item);
+			orphans.push({ path: candidate, reason: inspectionFailureReason(error) });
 		}
 	}
 	const encoded = encodeInspectionOutput({
@@ -323,7 +398,7 @@ function isMain(): boolean {
 if (isMain()) {
 	main(process.argv.slice(2))
 		.catch((cause: BoundaryValue) => {
-			printError(cause instanceof Error ? cause.message : String(cause));
+			printError(errorMessage(cause));
 			return 1;
 		})
 		.then((code) => {
