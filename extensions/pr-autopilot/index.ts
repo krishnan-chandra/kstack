@@ -37,9 +37,6 @@ import type { AutopilotMode, AutopilotResult } from "./types.ts";
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 
-/** Configured models the autopilot is allowed to use — the exclusive child agent set. */
-export { DEFAULT_AUTOPILOT_MODELS } from "./config.ts";
-
 interface PhaseDetails {
 	schemaVersion: 1;
 	mode: string;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findPrForBookmark, parseGithubUrl, parseOpenPrs, parsePrStatus, redactUrl } from "../shared/github.ts";
+import { parseGithubUrl, parseOpenPrs, parsePrStatus, redactUrl } from "../shared/github.ts";
 import {
 	buildNavigationComment,
 	findKstackComment,
@@ -9,7 +9,7 @@ import {
 	parseNavigationCommentEntries,
 	reconcileStackEntries,
 } from "../shared/stack/topology.ts";
-import { buildPublicationPlan, displayPlanId, planIdsMatch } from "./publication.ts";
+import { buildPublicationPlan } from "./publication.ts";
 import { KSTACK_COMMENT_MARKER, type NavigationEntry, type OpenPullRequest, type StackSlice } from "./types.ts";
 
 function slice(bookmark: string, base: string | null, changeIds: string[], subject: string): StackSlice {
@@ -87,33 +87,6 @@ describe("open PR matching", () => {
 			[1],
 		);
 	});
-
-	it("rejects an ambiguous bookmark match", () => {
-		const prs: OpenPullRequest[] = [
-			{
-				number: 1,
-				headRef: "feat1",
-				headCommitId: "aaa-commit",
-				baseRef: "main",
-				title: "one",
-				draft: true,
-				url: "u1",
-				headOwner: "o",
-			},
-			{
-				number: 2,
-				headRef: "feat1",
-				headCommitId: "bbb-commit",
-				baseRef: "release",
-				title: "two",
-				draft: true,
-				url: "u2",
-				headOwner: "o",
-			},
-		];
-		assert.equal(findPrForBookmark(prs, "feat1"), undefined);
-		assert.equal(findPrForBookmark(prs, "missing"), undefined);
-	});
 });
 
 describe("publication planning", () => {
@@ -165,8 +138,6 @@ describe("publication planning", () => {
 		assert.ok(first.blockers.some((blocker) => blocker.code === "ambiguous-local-bookmark"));
 		assert.equal(first.planId, second.planId);
 		assert.equal(first.planId.length, 64);
-		assert.equal(displayPlanId(first.planId).length, 16);
-		assert.equal(planIdsMatch(first.planId, second.planId), true);
 	});
 
 	it("blocks a conflicted remote bookmark and ambiguous open PRs", () => {
@@ -294,19 +265,6 @@ describe("publication planning", () => {
 			}),
 		);
 		assert.ok(unsafe.blockers.some((blocker) => blocker.message.includes("rewritten heads")));
-	});
-
-	it("does not change plan identity when rendering shortens ids", () => {
-		const longId = "abcdefghijklmnopqrstuvwxyz0123456789";
-		const plan = buildPublicationPlan(
-			snapshot({
-				slices: [slice("feat1", null, [longId], "feat: aaa")],
-				localBookmarks: [{ name: "feat1", commitId: `${longId}commit` }],
-			}),
-		);
-		assert.equal(plan.planId.includes(displayPlanId(plan.planId)), true);
-		assert.notEqual(plan.planId, displayPlanId(plan.planId));
-		assert.ok(plan.slices[0].changeIds[0].length > 16);
 	});
 });
 

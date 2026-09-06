@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import type { BoundaryValue, JsonObject } from "../shared/validation.ts";
-import { buildChildArgs, runAgent, type SpawnedProcess, truncateUtf8 } from "./agent-runner.ts";
+import { buildChildArgs, runAgent, type SpawnedProcess } from "./agent-runner.ts";
 
 const ID = "00000000-0000-4000-8000-000000000001";
 const sessionStore = {
@@ -461,12 +461,6 @@ describe("plan-implement child runner", () => {
 		const result = await promise;
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /larger than 16 bytes/);
-	});
-
-	it("bounds UTF-8 output with disclosure", () => {
-		const output = truncateUtf8("🙂".repeat(20), 17);
-		assert.match(output, /truncated at 17 bytes/);
-		assert.ok(!output.includes("\uFFFD"));
 	});
 
 	it("forwards progress preview and onEvent structured events", async () => {

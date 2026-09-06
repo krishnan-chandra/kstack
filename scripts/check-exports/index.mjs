@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -76,23 +76,53 @@ export function collectExports(source) {
 	return exports;
 }
 
-function isReferencedIn(source, name) {
-	return new RegExp(`\\b${name}\\b`).test(source);
+function collectReferences(source) {
+	const references = [];
+	const declarations =
+		/^\s*(?:import|export)\s+(?:type\s+)?(?:\w+\s*,\s*)?(\{[^}]+\}|\*(?:\s+as\s+\w+)?)\s+from\s+["'](\.[^"']+)["']/gm;
+	for (const match of source.matchAll(declarations)) {
+		const names = match[1].startsWith("*")
+			? ["*"]
+			: match[1]
+					.slice(1, -1)
+					.split(",")
+					.map(
+						(item) =>
+							item
+								.trim()
+								.replace(/^type\s+/, "")
+								.split(/\s+as\s+/)[0],
+					)
+					.filter(Boolean);
+		references.push({ specifier: match[2], names });
+	}
+	// Namespace and import() expressions conservatively consume the whole module.
+	// A following property may be a Promise method, not a qualified import type.
+	for (const match of source.matchAll(/\bimport\s*\(\s*["'](\.[^"']+)["']\s*\)/g)) {
+		references.push({ specifier: match[1], names: ["*"] });
+	}
+	return references;
 }
 
 export function findUnusedExports({ root = DEFAULT_ROOT } = {}) {
-	const files = collectTypeScriptFiles(root);
+	const sources = new Map(collectTypeScriptFiles(root).map((file) => [resolve(file), readFileSync(file, "utf8")]));
+	const references = new Map();
+	for (const [file, source] of sources) {
+		for (const reference of collectReferences(source)) {
+			const target = resolve(dirname(file), reference.specifier);
+			if (target === file) continue;
+			const names = references.get(target) ?? new Set();
+			for (const name of reference.names) names.add(name);
+			references.set(target, names);
+		}
+	}
 	const unused = [];
-	for (const file of files) {
+	for (const [file, source] of sources) {
 		if (isTestFile(file)) continue;
-		const source = readFileSync(file, "utf8");
+		const names = references.get(file);
 		for (const exported of collectExports(source)) {
 			if (exported.marked) continue;
-			const referenced = files.some((other) => {
-				if (other === file) return false;
-				return isReferencedIn(readFileSync(other, "utf8"), exported.name);
-			});
-			if (!referenced) {
+			if (!names?.has(exported.name) && !names?.has("*")) {
 				unused.push({
 					file: relative(root, file),
 					line: exported.line,

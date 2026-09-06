@@ -42,7 +42,7 @@ export interface StackPreflightPayload {
 	manifestPath?: string;
 }
 
-export interface StackPublicationRequestInput {
+interface StackPublicationRequestInput {
 	repositoryPath: string;
 	trunk?: string;
 	topRef?: string;
@@ -58,7 +58,7 @@ export interface StackPublicationPayload {
 	ctx: ExtensionCommandContext;
 }
 
-export interface StackLandingRequestInput {
+interface StackLandingRequestInput {
 	repositoryPath: string;
 	prNumber: number;
 	headRef: string;

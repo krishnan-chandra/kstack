@@ -2,50 +2,65 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildNavigationComment } from "../shared/stack/topology.ts";
 import { landStackThroughPullRequest } from "./land.ts";
-import { commit, fakeGithub, fakeJj, landed, openPrs, permissiveLock, ui } from "./test-fixtures.ts";
+import type { NativeStack } from "./native-stack.ts";
+import {
+	commit,
+	fakeGithub,
+	fakeJj,
+	fakeNativeStack,
+	landed,
+	openPrs,
+	permissiveLock,
+	readyPr,
+	ui,
+} from "./test-fixtures.ts";
+
+const nativeStack: NativeStack = {
+	stackNumber: 17,
+	baseRef: "main",
+	open: true,
+	pullRequests: openPrs().map((pr) => ({
+		number: pr.number,
+		state: "open",
+		draft: pr.draft,
+		head: { ref: pr.headRef, sha: pr.headCommitId },
+	})),
+};
 
 describe("stack-prefix landing", () => {
-	it("lands the complete prefix through a selected stacked PR", async () => {
-		const calls: number[] = [];
-		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];
-		const prs = openPrs();
-		const jj = fakeJj({
-			fetchStack: async () => stack,
-			listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
-			abandonRange: async (_cwd, _trunk, mergedBookmark) => {
-				stack = stack.filter((item) => !item.bookmarks.includes(mergedBookmark));
-			},
-		});
-		const github = fakeGithub({
-			listOpenPrs: async () => prs.filter((pr) => stack.some((item) => item.bookmarks.includes(pr.headRef))),
-			updatePrBase: async (input) => {
-				const pr = prs.find((item) => item.number === input.prNumber);
-				if (pr) pr.baseRef = input.base;
-			},
-		});
+	it("lands the complete prefix with one native merge through the selected PR", async () => {
+		const calls: string[] = [];
+		const jj = fakeJj();
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: false,
-				github,
+				nativeStack: fakeNativeStack({
+					inspectForPullRequest: async () => nativeStack,
+					mergeThrough: async ({ prNumber }) => {
+						calls.push(`merge:${prNumber}`);
+						return { status: "merged", stack: nativeStack };
+					},
+				}),
+				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
 				acquirePublicationLock: permissiveLock(),
-				landFrontier: async ({ repository, prNumber, expectedHeadSha }) => {
+				preparePr: async ({ repository, prNumber, expectedHeadSha }) => {
 					assert.equal(repository, "o/r");
 					assert.equal(expectedHeadSha, prNumber === 11 ? "aaa-commit" : "bbb-commit");
-					calls.push(prNumber);
-					return {
-						handled: true,
-						outcome: landed(prNumber, prNumber === 11 ? "aaa-commit" : "bbb-commit"),
-					};
+					calls.push(`prepare:${prNumber}`);
+					return { handled: true, outcome: readyPr(prNumber, expectedHeadSha, prNumber === 11 ? "feat1" : "feat2") };
+				},
+				landFrontier: async () => {
+					assert.fail("Native stacks must not delegate individual merges");
 				},
 			},
 		);
 		assert.equal(result.status, "stack");
 		if (result.status === "stack") assert.equal(result.outcome.status, "completed");
-		assert.deepEqual(calls, [11, 12]);
+		assert.deepEqual(calls, ["prepare:11", "prepare:12", "merge:12"]);
+		assert.deepEqual(jj.calls, ["abandon:trunk..feat2", "fetch"]);
 	});
 
 	it("blocks an unclaimed Land request before progress", async () => {
@@ -60,7 +75,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => stack,
 					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
 				}),
-				nativeStack: false,
+				nativeStack: fakeNativeStack(),
 				github: fakeGithub({ listOpenPrs: async () => [readyPr] }),
 				landFrontier: async () => ({ handled: false }),
 			},
@@ -73,45 +88,38 @@ describe("stack-prefix landing", () => {
 		}
 	});
 
-	it("preserves progress when a later Land request is unclaimed", async () => {
-		let stack = [commit("aaa", "feat1"), commit("bbb", "feat2")];
+	it("preserves draft-readiness progress when later native preparation is unclaimed", async () => {
 		let calls = 0;
-		const prs = openPrs();
+		const jj = fakeJj();
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
 				ui: ui(),
-				jj: fakeJj({
-					fetchStack: async () => stack,
-					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
-					abandonRange: async (_cwd, _trunk, mergedBookmark) => {
-						stack = stack.filter((item) => !item.bookmarks.includes(mergedBookmark));
-					},
-				}),
-				nativeStack: false,
-				github: fakeGithub({
-					listOpenPrs: async () => prs.filter((pr) => stack.some((item) => item.bookmarks.includes(pr.headRef))),
-					updatePrBase: async (input) => {
-						const pr = prs.find((item) => item.number === input.prNumber);
-						if (pr) pr.baseRef = input.base;
-					},
-				}),
+				jj,
+				nativeStack: fakeNativeStack({ inspectForPullRequest: async () => nativeStack }),
+				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
 				acquirePublicationLock: permissiveLock(),
-				landFrontier: async ({ prNumber }) => {
+				preparePr: async ({ prNumber, expectedHeadSha }) => {
 					calls++;
-					return calls === 1 ? { handled: true, outcome: landed(prNumber, "aaa-commit") } : { handled: false };
+					if (prNumber === 12) return { handled: false };
+					const outcome = readyPr(prNumber, expectedHeadSha, "feat1");
+					assert.ok(outcome.prState);
+					outcome.prState.isDraft = calls === 1;
+					return { handled: true, outcome };
 				},
 			},
 		);
 		assert.equal(result.status, "stack");
 		if (result.status === "stack" && result.outcome.status === "partial") {
-			assert.match(result.outcome.error, /land extension is unavailable/i);
-			assert.deepEqual(result.outcome.remainingRefs, ["feat2"]);
-			assert.ok(result.outcome.completedMutations.length > 0);
+			assert.match(result.outcome.error, /pr-autopilot extension became unavailable/i);
+			assert.deepEqual(result.outcome.remainingRefs, ["feat1", "feat2"]);
+			assert.deepEqual(result.outcome.completedMutations, ["Marked PR #11 ready"]);
 		} else {
 			assert.fail("expected partial progress");
 		}
+		assert.equal(calls, 3);
+		assert.deepEqual(jj.calls, []);
 	});
 
 	it("reports an unpublished slice as requiring publication", async () => {
@@ -125,7 +133,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => stack,
 					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
 				}),
-				nativeStack: false,
+				nativeStack: fakeNativeStack(),
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[1]],
 					listPrsForHead: async () => [],
@@ -157,7 +165,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => stack,
 					listLocalBookmarks: async () => stack.map((item) => ({ name: item.bookmarks[0], commitId: item.commitId })),
 				}),
-				nativeStack: false,
+				nativeStack: fakeNativeStack(),
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[1]],
 					listPrsForHead: async (_repo, head) => (head === "feat1" ? [historical, openPrs()[0]] : []),
@@ -192,7 +200,7 @@ describe("stack-prefix landing", () => {
 				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
 				ui: ui(),
 				jj,
-				nativeStack: false,
+				nativeStack: fakeNativeStack(),
 				github: fakeGithub({ listOpenPrs: async () => (stack.length > 0 ? [openPrs()[0]] : []) }),
 				landFrontier: async () => ({ handled: true, outcome: landed(11, "aaa-commit") }),
 			},
@@ -220,7 +228,7 @@ describe("stack-prefix landing", () => {
 					fetchStack: async () => [one],
 					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
 				}),
-				nativeStack: false,
+				nativeStack: fakeNativeStack(),
 				github: fakeGithub({
 					listOpenPrs: async () => [openPrs()[0]],
 					getPrComments: async () => [{ id: 1, body: navigation, user: "publisher" }],

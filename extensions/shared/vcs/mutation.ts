@@ -27,7 +27,7 @@ type BaseUpdateOutcome =
 	| { kind: "needs-human"; files: string[]; error: string }
 	| { kind: "failed"; error: string };
 
-export interface PrMutation {
+interface PrMutation {
 	openCheckout(cwd: string, target: MutationTarget): Promise<VcsResult<{ checkout: MutationCheckout }>>;
 	publishFix(
 		cwd: string,

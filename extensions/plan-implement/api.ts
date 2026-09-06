@@ -49,11 +49,6 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 		isChangeKind(value.changeKind),
 });
 
-/* exported: request-channel contract */
-export function isPlanImplementRequest(value: BoundaryValue): value is PlanImplementRequest {
-	return channel.isRequest(value);
-}
-
 export function claimPlanImplementRequest(
 	value: BoundaryValue,
 	run: (

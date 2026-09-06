@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import {
 	deriveSlices,
 	detectBlockers,
-	detectTopBookmark,
 	inferUniqueTop,
 	parseConcatenatedJson,
 	shortenId,
@@ -44,24 +43,6 @@ describe("parseConcatenatedJson", () => {
 			{ subject: "fix } brace" },
 			{ ok: true },
 		]);
-	});
-});
-
-describe("detectTopBookmark", () => {
-	it("returns undefined for an empty stack", () => {
-		assert.equal(detectTopBookmark([]), undefined);
-	});
-
-	it("skips trunk-named bookmarks", () => {
-		assert.equal(detectTopBookmark([{ bookmarks: ["main"] }, { bookmarks: ["feature"] }]), "feature");
-	});
-
-	it("falls back to a trunk-named bookmark when that is all that exists", () => {
-		assert.equal(detectTopBookmark([{ bookmarks: ["main"] }, { bookmarks: ["master"] }]), "master");
-	});
-
-	it("returns undefined when no bookmarks exist", () => {
-		assert.equal(detectTopBookmark([{ bookmarks: [] }, { bookmarks: [] }]), undefined);
 	});
 });
 

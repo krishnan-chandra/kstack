@@ -25,7 +25,7 @@ export interface PanelConfig {
 	synthesis: Pick<ModelSpec, "model" | "thinking">;
 }
 
-export interface UsageSummary {
+interface UsageSummary {
 	input: number;
 	output: number;
 	cacheRead: number;

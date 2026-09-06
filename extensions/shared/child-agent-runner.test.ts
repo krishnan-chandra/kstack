@@ -15,6 +15,12 @@ import {
 } from "./child-agent-runner.ts";
 import { isObject, type JsonObject } from "./validation.ts";
 
+it("bounds UTF-8 output with disclosure", () => {
+	const output = truncateHeadUtf8("🙂".repeat(20), 17);
+	assert.match(output, /truncated at 17 bytes/);
+	assert.ok(!output.includes("\uFFFD"));
+});
+
 const sessionStore: SubagentSessionStore = {
 	prepare: (_identity, cwd) => ({
 		ok: true,

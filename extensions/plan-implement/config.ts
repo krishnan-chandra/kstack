@@ -29,7 +29,7 @@ export const DEFAULT_IMPLEMENTERS: readonly RoleSpec[] = [
 	{ model: "openrouter/moonshotai/kimi-k3", thinking: "medium" },
 ];
 
-export type ConfigLoad = SharedConfigLoad<PlanImplementConfig>;
+type ConfigLoad = SharedConfigLoad<PlanImplementConfig>;
 
 function validateRole(
 	raw: BoundaryValue,
@@ -94,7 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad {
 	return loadValidatedSection("plan-implement", validateConfig, env);
 }
 
-export interface ResolveDeps {
+interface ResolveDeps {
 	available: (provider: string, modelId: string) => boolean;
 }
 

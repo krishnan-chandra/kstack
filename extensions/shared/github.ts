@@ -367,10 +367,6 @@ export function parseGithubUrl(url: string): GitHubRepository | undefined {
 export function redactUrl(url: string): string {
 	return url.replace(/(https?:\/\/)[^@]+@/g, "$1***@");
 }
-export function findPrForBookmark(prs: readonly OpenPullRequest[], bookmark: string): OpenPullRequest | undefined {
-	const matches = prs.filter((pr) => pr.headRef === bookmark);
-	return matches.length === 1 ? matches[0] : undefined;
-}
 
 interface MergedPrInfo {
 	merged: boolean;

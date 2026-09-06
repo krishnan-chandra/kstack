@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import {
 	type ChildSession,
 	childIsolationArgs,
-	getPiInvocation,
 	runChildAgent,
 	type SpawnedProcess,
 	type SpawnImpl,
@@ -14,8 +13,7 @@ import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { parseClassifierOutput } from "./classification.ts";
 import { type ClassifierEnvelope, DEFAULTS } from "./types.ts";
 
-export type { SpawnedProcess, SpawnImpl };
-export { getPiInvocation };
+export type { SpawnedProcess };
 
 const PROMPT_FILE = join(dirname(fileURLToPath(import.meta.url)), "prompts", "classifier.md");
 const STDOUT_LINE_CAP_BYTES = 1024 * 1024;

@@ -8,7 +8,7 @@ export interface ExecFnResult {
 }
 
 /** Options shared by Git workstream command runners. */
-export interface ExecFnOptions {
+interface ExecFnOptions {
 	cwd: string;
 	timeout?: number;
 	signal?: AbortSignal;

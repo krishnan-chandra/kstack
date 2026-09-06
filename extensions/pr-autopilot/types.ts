@@ -9,11 +9,9 @@
  * the model pool in kstack.json.
  */
 
-import type { ExecFn, ExecFnOptions, ExecFnResult } from "../shared/git-exec.ts";
+import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import type { ModelSpec } from "../shared/model-spec.ts";
-
-export type { AutopilotConfirmation } from "./confirmation.ts";
 
 /** Autopilot modes — the explicit user-facing entry points. */
 export type AutopilotMode = "check" | "threads" | "drive" | "watch" | "cleanup";
@@ -150,12 +148,7 @@ export interface AutopilotPersistedState {
 	flakeRetried: string[];
 }
 
-/** Lifecycle token to guard against overlapping autopilot runs. */
-export interface AutopilotToken {
-	readonly generation: number;
-}
-
-export type { ExecFn, ExecFnOptions, ExecFnResult };
+export type { ExecFn, ExecFnResult };
 
 /** Resource and concurrency limits enforced by the autopilot. */
 export const LIMITS = {

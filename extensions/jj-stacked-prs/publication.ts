@@ -210,14 +210,6 @@ function computePlanId(
 	return createHash("sha256").update(stableStringify(canonical)).digest("hex");
 }
 
-export function planIdsMatch(left: string, right: string): boolean {
-	return left === right;
-}
-
-export function displayPlanId(planId: string, chars = 16): string {
-	return planId.length <= chars ? planId : planId.slice(0, chars);
-}
-
 function stableStringify(value: BoundaryValue): string {
 	if (value === null || !isObject(value)) return JSON.stringify(value);
 	if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;

@@ -14,7 +14,7 @@ export interface SpawnedProcess {
 	killed?: boolean;
 }
 
-export type SpawnImpl = (
+type SpawnImpl = (
 	command: string,
 	args: string[],
 	options: { cwd: string; env?: NodeJS.ProcessEnv; shell: false; stdio: ["ignore", "pipe", "pipe"] },

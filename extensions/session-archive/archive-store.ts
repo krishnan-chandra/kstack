@@ -776,30 +776,3 @@ export function readEntries(db: DatabaseSync, sessionId: string, offset: number,
 		decodeArchiveEntryRow,
 	);
 }
-
-interface ArchiveStats {
-	sessionsArchived: number;
-	sessionsPending: number;
-	sessionsError: number;
-	entriesTotal: number;
-}
-
-export function getArchiveStats(db: DatabaseSync): ArchiveStats {
-	const byState = decodeRows(
-		db.prepare("SELECT state, COUNT(*) AS n FROM archive_sessions GROUP BY state").all(),
-		(value) => {
-			const table = "archive_sessions";
-			const row = asRecord(value);
-			if (!row) throw new Error(`${table} returned a non-object row.`);
-			return { state: decodeState(row, table), n: decodeFiniteNumber(row, table, "n") };
-		},
-	);
-	const entries = decodeCount(db.prepare("SELECT COUNT(*) AS n FROM archive_entries").get(), "archive_entries");
-	const count = (state: ArchiveSessionRow["state"]) => byState.find((row) => row.state === state)?.n ?? 0;
-	return {
-		sessionsArchived: count("archived"),
-		sessionsPending: count("pending"),
-		sessionsError: count("error"),
-		entriesTotal: entries,
-	};
-}

@@ -1,15 +1,8 @@
 /** Thin pr-autopilot adapter around the shared child-agent lifecycle. */
-import {
-	type ChildRunnerDeps,
-	childIsolationArgs,
-	runChildAgent,
-	type SpawnedProcess,
-	type SpawnImpl,
-} from "../shared/child-agent-runner.ts";
+import { type ChildRunnerDeps, childIsolationArgs, runChildAgent } from "../shared/child-agent-runner.ts";
 import { type AutopilotAgentRole, type AutopilotModelSpec, LIMITS, type UsageSummary } from "./types.ts";
 
-export type { SpawnedProcess, SpawnImpl };
-export interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
+interface RunnerDeps extends Omit<ChildRunnerDeps, "idleTimeoutMs"> {
 	timeoutMs?: number;
 }
 export function buildChildArgs(opts: {
@@ -35,11 +28,11 @@ interface AgentRunResultBase {
 	usage: UsageSummary;
 	session: import("../shared/child-agent-runner.ts").ChildSession;
 }
-export type AgentRunResult =
+type AgentRunResult =
 	| (AgentRunResultBase & { status: "completed"; output: string })
 	| (AgentRunResultBase & { status: "failed"; error: string })
 	| (AgentRunResultBase & { status: "aborted" });
-export interface RunAgentOptions {
+interface RunAgentOptions {
 	role: AutopilotAgentRole;
 	spec: AutopilotModelSpec;
 	promptFile: string;
