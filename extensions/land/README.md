@@ -22,7 +22,10 @@ If you omit `--pr`, Land resolves the one open PR whose head matches the current
 Git branch or jj bookmark, according to the shared `vcs.backend` setting. Land
 stops when Git is detached, when the current jj change has no unique bookmark,
 or when GitHub finds zero or multiple matching PRs. Pass `--pr` to select a PR
-without checking out its local head.
+without checking out its local head. Before either lookup, Land resolves the
+GitHub repository from the configured backend and scopes every PR command to
+that `owner/name`. In jj mode, it reads the GitHub `origin` with
+`jj git remote list`; the workspace does not need a `.git` marker.
 
 In Git mode, `vcs.stackProvider` defaults to `"github"`. Land queries the
 navigation comment through `github-stacked-prs`. A PR without a kstack comment
@@ -148,9 +151,9 @@ immediately before merge submission. It also passes the SHA to GitHub through
 
 A stack caller may also supply `repository` (`owner/name`). Land scopes its
 GitHub commands and the delegated Autopilot request to that repository. jj
-stack callers supply it so that secondary workspaces need no `.git` marker.
-Standalone `/land` requests retain GitHub CLI repository discovery; use
-`/jj-stack land` for the explicitly scoped path in those workspaces.
+stack callers supply it directly. Standalone `/land` requests resolve the same
+coordinates before implicit head lookup, selected-PR inspection, stack routing,
+or single-PR landing.
 
 The stack provider confirms the complete stack before it sends frontier
 requests. Land therefore skips only the per-PR merge prompt and mints readiness
@@ -163,8 +166,10 @@ to the attempted frontier and accumulated progress. Stack providers must use thi
 than branch directly on `LandResult.status` for delegated frontiers.
 
 Cancellation combines Land's run signal, the outer stack signal, and the live
-extension-context signal. If GitHub accepts a merge or queue request before
-cancellation, Land reports a partial result instead of a clean abort.
+extension-context signal. If that signal cancels repository resolution, Land
+reports an aborted result instead of a repository error. If GitHub accepts a
+merge or queue request before cancellation, Land reports a partial result
+instead of a clean abort.
 
 ## Limits
 

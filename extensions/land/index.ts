@@ -4,10 +4,10 @@ import { issueAutopilotConfirmation, requestPrAutopilot } from "../pr-autopilot/
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { findOpenPullRequestByHead, getPullRequest, isMergeMethod } from "../shared/github.ts";
-import { scopeGitHubExec } from "../shared/github-repository.ts";
+import { resolveGitHubRepository, scopeGitHubExec } from "../shared/github-repository.ts";
 import { requestStackLanding } from "../shared/stack/channel.ts";
 import { stackProviderFor } from "../shared/stack/provider.ts";
-import type { VcsBackend, VcsResult } from "../shared/vcs/backend.ts";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { loadVcsBackend, type VcsBackendConfig } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { claimLandRequest, LAND_REQUEST_EVENT, type LandRequestPayload } from "./api.ts";
@@ -16,7 +16,7 @@ import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
 import { LandLifecycle, StackLandingLifecycle } from "./lifecycle.ts";
 import { runLand } from "./orchestrator.ts";
 import { resolveImplicitPr } from "./pr-resolution.ts";
-import { blockedLandResult } from "./result.ts";
+import { abortedLandResult, blockedLandResult } from "./result.ts";
 import { routeLand } from "./routing.ts";
 import { abortableSleep } from "./sleep.ts";
 import { summarizeLandResult } from "./summary.ts";
@@ -25,6 +25,11 @@ import type { LandOptions, LandResult, MergeMethod } from "./types.ts";
 function selectedMethod(value: string | undefined): MergeMethod | undefined {
 	return isMergeMethod(value) ? value : undefined;
 }
+
+type ConfiguredBackendResult =
+	| { ok: true; backend: VcsBackend; config: VcsBackendConfig; repository: string }
+	| { ok: false; kind: "cancelled" }
+	| { ok: false; kind: "failed"; error: string };
 
 export default function landExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "land");
@@ -57,15 +62,15 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return box;
 	});
 
-	async function configuredBackend(
-		ctx: ExtensionContext,
-		cwd: string,
-	): Promise<VcsResult<{ backend: VcsBackend; config: VcsBackendConfig }>> {
+	async function configuredBackend(ctx: ExtensionContext, cwd: string): Promise<ConfiguredBackendResult> {
 		const config = loadVcsBackend();
 		for (const warning of config.warnings) ctx.ui.notify(warning, "warning");
-		const backend = createVcsBackend(config.backend, makeExec(pi));
+		const exec = makeExec(pi);
+		const backend = createVcsBackend(config.backend, exec);
 		const preflight = await backend.preflight(cwd);
-		return preflight.ok ? { ok: true, backend, config } : preflight;
+		if (!preflight.ok) return { ok: false, kind: "failed", error: preflight.error };
+		const repository = await resolveGitHubRepository(exec, cwd, config.backend, ctx.signal);
+		return repository.ok ? { ok: true, backend, config, repository: repository.repository } : repository;
 	}
 
 	function landConfigFor(ctx: ExtensionContext): LandConfig {
@@ -74,7 +79,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return loaded.status === "loaded" ? loaded.config : { repos: {} };
 	}
 
-	async function runSingle(request: LandRequestPayload): Promise<LandResult> {
+	async function runSingle(request: LandRequestPayload, interactiveRepository?: string): Promise<LandResult> {
 		const { ctx } = request;
 		const options = request.options;
 		const token = lifecycle.begin();
@@ -86,7 +91,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
 		const autopilotConfirmation = request.kind === "stack-frontier" ? issueAutopilotConfirmation() : undefined;
 		const landConfig = request.kind === "interactive" ? landConfigFor(ctx) : undefined;
-		const repository = request.kind === "stack-frontier" ? request.repository : undefined;
+		const repository = request.kind === "stack-frontier" ? request.repository : interactiveRepository;
 		const exec = makeExec(pi);
 		ctx.ui.setStatus("land", "land: resolving target");
 		try {
@@ -117,15 +122,15 @@ export default function landExtension(pi: ExtensionAPI): void {
 	async function executeInteractive(
 		options: LandOptions,
 		ctx: ExtensionContext,
-		prepared?: { backend: VcsBackend; config: VcsBackendConfig },
+		prepared?: { backend: VcsBackend; config: VcsBackendConfig; repository: string },
 	): Promise<LandResult> {
 		if (!ctx.hasUI) return blockedLandResult("Land requires interactive TUI/RPC mode.");
 		const cwd = options.cwd ?? ctx.cwd;
-		const resolved: VcsResult<{ backend: VcsBackend; config: VcsBackendConfig }> = prepared
-			? { ok: true, ...prepared }
-			: await configuredBackend(ctx, cwd);
-		if (!resolved.ok) return blockedLandResult(resolved.error);
-		const exec = makeExec(pi);
+		const resolved: ConfiguredBackendResult = prepared ? { ok: true, ...prepared } : await configuredBackend(ctx, cwd);
+		if (!resolved.ok) {
+			return resolved.kind === "cancelled" ? abortedLandResult() : blockedLandResult(resolved.error);
+		}
+		const exec = scopeGitHubExec(makeExec(pi), resolved.repository);
 		const provider = stackProviderFor(resolved.config);
 		return routeLand({
 			provider,
@@ -151,7 +156,8 @@ export default function landExtension(pi: ExtensionAPI): void {
 							signal: stackSignal,
 						},
 						capabilities: {
-							runAutopilot: (mode, pr) => requestPrAutopilot(pi, mode, pr, ctx, cwd, undefined, stackSignal),
+							runAutopilot: (mode, pr) =>
+								requestPrAutopilot(pi, mode, pr, ctx, cwd, undefined, stackSignal, resolved.repository),
 						},
 						ctx,
 					});
@@ -159,13 +165,13 @@ export default function landExtension(pi: ExtensionAPI): void {
 					stackLandingLifecycle.end(stackSignal);
 				}
 			},
-			runSingle: () => runSingle({ kind: "interactive", options, ctx }),
+			runSingle: () => runSingle({ kind: "interactive", options, ctx }, resolved.repository),
 		});
 	}
 
 	async function executeRequest(
 		request: LandRequestPayload,
-		prepared?: { backend: VcsBackend; config: VcsBackendConfig },
+		prepared?: { backend: VcsBackend; config: VcsBackendConfig; repository: string },
 	): Promise<LandResult> {
 		let result: LandResult;
 		if (!request.ctx.hasUI) {
@@ -197,14 +203,19 @@ export default function landExtension(pi: ExtensionAPI): void {
 			}
 			const resolved = await configuredBackend(ctx, ctx.cwd);
 			if (!resolved.ok) {
+				if (resolved.kind === "cancelled") {
+					ctx.ui.notify("Landing was cancelled.", "info");
+					return;
+				}
 				ctx.ui.notify(resolved.error, "error");
 				return;
 			}
 			const backend = resolved.backend;
+			const githubExec = scopeGitHubExec(makeExec(pi), resolved.repository);
 			const pr = await resolveImplicitPr({
 				explicitPr: parsed.args.pr,
 				currentRef: () => backend.currentRef(ctx.cwd),
-				findByHead: (ref) => findOpenPullRequestByHead(makeExec(pi), ctx.cwd, ref),
+				findByHead: (ref) => findOpenPullRequestByHead(githubExec, ctx.cwd, ref),
 			});
 			if (!pr.ok) {
 				ctx.ui.notify(pr.message, "error");
@@ -220,7 +231,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 					},
 					ctx,
 				},
-				{ backend, config: resolved.config },
+				{ backend, config: resolved.config, repository: resolved.repository },
 			);
 		},
 	});

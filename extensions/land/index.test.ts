@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -54,6 +54,124 @@ describe("land registration", () => {
 		for (const handler of lifecycleHandlers) handler();
 	});
 
+	it("scopes jj PR lookup and preserves repository-resolution cancellation", async () => {
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const root = mkdtempSync(join(tmpdir(), "kstack-land-jj-index-"));
+		const agentDir = join(root, "agent");
+		try {
+			mkdirSync(agentDir);
+			writeFileSync(join(agentDir, "kstack.json"), `${JSON.stringify({ vcs: { backend: "jj" } })}\n`);
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			const sha = "a".repeat(40);
+			const ghCalls: string[][] = [];
+			const controller = new AbortController();
+			const notifications: Array<{ message: string; level: string }> = [];
+			let cancelResolution = false;
+			let commandHandler: ((text: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+			const messages: Array<{ customType: string; content: string; details: { status: string } }> = [];
+			const pi = {
+				on: () => {},
+				registerShortcut: () => {},
+				registerMessageRenderer: () => {},
+				registerCommand: (_name: string, command: { handler: typeof commandHandler }) => {
+					commandHandler = command.handler;
+				},
+				sendMessage: (message: { customType: string; content: string; details: { status: string } }) =>
+					messages.push(message),
+				exec: async (program: string, args: string[]) => {
+					if (program === "jj") {
+						const command = args.join(" ");
+						if (command === "--version") return { code: 0, stdout: "jj 0.44.0\n", stderr: "" };
+						if (command === "workspace root") return { code: 0, stdout: `${root}\n`, stderr: "" };
+						if (command === "git root") return { code: 0, stdout: "/backing/repo/.git\n", stderr: "" };
+						if (command.startsWith("config get ")) return { code: 0, stdout: "configured\n", stderr: "" };
+						if (command === "git remote list --no-pager --color=never") {
+							if (cancelResolution) {
+								controller.abort();
+								return { code: 130, stdout: "", stderr: "aborted" };
+							}
+							return { code: 0, stdout: "origin git@github.com:acme/widgets.git\n", stderr: "" };
+						}
+						if (command.startsWith("--no-pager bookmark list -r @")) {
+							return { code: 0, stdout: "feature\n", stderr: "" };
+						}
+						return { code: 1, stdout: "", stderr: `unexpected jj command: ${command}` };
+					}
+					if (program !== "gh") return { code: 1, stdout: "", stderr: `unexpected command: ${program}` };
+					ghCalls.push([...args]);
+					if ((args[0] === "pr" || args[0] === "run") && !args.includes("--repo")) {
+						return { code: 1, stdout: "", stderr: "ambient Git discovery is unavailable" };
+					}
+					if (args[0] === "pr" && args[1] === "list") {
+						return {
+							code: 0,
+							stdout: JSON.stringify([{ number: 7, headRefName: "feature" }]),
+							stderr: "",
+						};
+					}
+					if (args[0] === "pr" && args[1] === "view") {
+						return {
+							code: 0,
+							stdout: JSON.stringify({
+								number: 7,
+								url: "https://github.com/acme/widgets/pull/7",
+								title: "Scoped jj land",
+								state: "OPEN",
+								isDraft: false,
+								headRefName: "feature",
+								baseRefName: "main",
+								headRefOid: sha,
+								mergeable: "MERGEABLE",
+								mergeStateStatus: "CLEAN",
+								mergedAt: null,
+								mergeCommit: null,
+							}),
+							stderr: "",
+						};
+					}
+					return { code: 1, stdout: "", stderr: `unexpected gh command: ${args.join(" ")}` };
+				},
+				events: { on: () => () => {}, emit: () => {} },
+			};
+			landExtension(
+				/* SAFETY: This fixture implements every Pi capability exercised by the command path. */ pi as never,
+			);
+			assert.ok(commandHandler);
+			const ctx = /* SAFETY: This fixture supplies every context member exercised by the command path. */ {
+				cwd: root,
+				hasUI: true,
+				signal: controller.signal,
+				waitForIdle: async () => {},
+				ui: {
+					notify: (message: string, level: string) => notifications.push({ message, level }),
+					setStatus: () => {},
+					select: async () => "squash",
+					confirm: async () => true,
+				},
+			} as never;
+
+			await commandHandler("", ctx);
+			await commandHandler("--pr 7", ctx);
+
+			assert.ok(ghCalls.some((args) => args[0] === "pr" && args[1] === "list"));
+			assert.ok(ghCalls.filter((args) => args[0] === "pr" && args[1] === "view").length >= 2);
+			for (const args of ghCalls) {
+				if (args[0] === "pr" || args[0] === "run") assert.deepEqual(args.slice(-2), ["--repo", "acme/widgets"]);
+			}
+			assert.equal(messages.length, 2);
+			assert.ok(messages.every((message) => /jj-stacked-prs extension is unavailable/i.test(message.content)));
+
+			cancelResolution = true;
+			await commandHandler("--pr 7", ctx);
+			assert.equal(messages.length, 2, "cancelled setup must not start a landing run");
+			assert.deepEqual(notifications.at(-1), { message: "Landing was cancelled.", level: "info" });
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("emits one result message for command and channel entry paths", async () => {
 		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		const agentDir = mkdtempSync(join(tmpdir(), "kstack-land-index-"));
@@ -77,12 +195,14 @@ describe("land registration", () => {
 					if (args[0] === "repo") {
 						return {
 							code: 0,
-							stdout: JSON.stringify({
-								nameWithOwner: "o/r",
-								defaultBranchRef: { name: "main" },
-								squashMergeAllowed: true,
-								rebaseMergeAllowed: false,
-							}),
+							stdout: args.includes("-q")
+								? "o/r\n"
+								: JSON.stringify({
+										nameWithOwner: "o/r",
+										defaultBranchRef: { name: "main" },
+										squashMergeAllowed: true,
+										rebaseMergeAllowed: false,
+									}),
 							stderr: "",
 						};
 					}

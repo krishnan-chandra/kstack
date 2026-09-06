@@ -22,6 +22,7 @@ function driveProbe(
 			exec: harness.exec,
 			backend,
 			cwd: harness.cwd,
+			repository: "owner/repo",
 			explicitPR: 42,
 			promptDir: harness.cwd,
 			triagerPromptFile: join(harness.cwd, "triager.md"),

@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { resolveGitHubRepository } from "../shared/github-repository.ts";
 import { acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import { execFromRunner } from "./github-gateway.ts";
@@ -97,9 +98,14 @@ for (const colocated of [true, false]) {
 				writeFileSync(join(cwd, "feature.txt"), `${bookmark}\n`);
 				await jj(cwd, "describe", "-m", "Add feature");
 				await jj(cwd, "bookmark", "create", bookmark);
-				const preflight = await preflightJjStack(cwd, execFromRunner(run));
+				const exec = execFromRunner(run);
+				const preflight = await preflightJjStack(cwd, exec);
 				assert.equal(preflight.ok, true, JSON.stringify(preflight));
 				if (preflight.ok) assert.equal(preflight.workspaceRoot, realpathSync(cwd));
+				assert.deepEqual(await resolveGitHubRepository(exec, cwd, "jj"), {
+					ok: true,
+					repository: "acme/widgets",
+				});
 				assert.deepEqual((await createJjAdapter(run).getRemote(cwd, "origin")).github, {
 					owner: "acme",
 					repo: "widgets",

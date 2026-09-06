@@ -19,7 +19,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Box, Text } from "@earendil-works/pi-tui";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import { scopeGitHubExec } from "../shared/github-repository.ts";
+import { resolveGitHubRepository, scopeGitHubExec } from "../shared/github-repository.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
@@ -163,7 +163,17 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		const vcsConfig = loadVcsBackend();
 		for (const warning of vcsConfig.warnings) notify(warning, "warning");
 		const rawExec = makeExec(pi);
-		const exec = repository === undefined ? rawExec : scopeGitHubExec(rawExec, repository);
+		let resolvedRepository = repository;
+		if (mode !== "cleanup" && resolvedRepository === undefined) {
+			const resolved = await resolveGitHubRepository(rawExec, cwd, vcsConfig.backend, callerSignal);
+			if (!resolved.ok) {
+				if (resolved.kind === "cancelled") return early("aborted", "repository resolution was cancelled");
+				notify(resolved.error, "error");
+				return early("blocked", resolved.error);
+			}
+			resolvedRepository = resolved.repository;
+		}
+		const exec = resolvedRepository === undefined ? rawExec : scopeGitHubExec(rawExec, resolvedRepository);
 		const backend = createVcsBackend(vcsConfig.backend, exec);
 		const policy = vcsPolicy(backend.id);
 
@@ -240,6 +250,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 					exec,
 					backend,
 					cwd,
+					repository: resolvedRepository,
 					explicitPR: prNumber,
 					promptDir: tempDir,
 					triagerPromptFile,

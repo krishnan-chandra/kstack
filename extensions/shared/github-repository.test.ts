@@ -1,7 +1,81 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getRepository, resolveRepoName } from "./github.ts";
-import { isRepositoryName, scopeGitHubExec } from "./github-repository.ts";
+import { isRepositoryName, resolveGitHubRepository, scopeGitHubExec } from "./github-repository.ts";
+
+test("resolves a non-colocated jj repository from its origin remote", async () => {
+	const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+	const signal = new AbortController().signal;
+	const result = await resolveGitHubRepository(
+		async (command, args, options) => {
+			calls.push({ command, args, cwd: options.cwd });
+			return {
+				code: 0,
+				stdout: "upstream https://github.com/acme/upstream.git\norigin git@github.com:acme/widgets.git\n",
+				stderr: "",
+			};
+		},
+		"/secondary",
+		"jj",
+		signal,
+	);
+
+	assert.deepEqual(result, { ok: true, repository: "acme/widgets" });
+	assert.deepEqual(calls, [
+		{
+			command: "jj",
+			args: ["git", "remote", "list", "--no-pager", "--color=never"],
+			cwd: "/secondary",
+		},
+	]);
+});
+
+test("preserves cancellation from jj and Git repository discovery", async () => {
+	for (const backend of ["jj", "git"] as const) {
+		for (const failure of ["reject", "nonzero"] as const) {
+			const controller = new AbortController();
+			const result = await resolveGitHubRepository(
+				async () => {
+					controller.abort();
+					if (failure === "reject") throw new Error("executor aborted");
+					return { code: 130, stdout: "", stderr: "aborted" };
+				},
+				"/workspace",
+				backend,
+				controller.signal,
+			);
+			assert.deepEqual(result, { ok: false, kind: "cancelled" }, `${backend} ${failure}`);
+		}
+	}
+});
+
+test("fails closed when a jj origin cannot identify one GitHub repository", async () => {
+	for (const [stdout, expected] of [
+		["upstream git@github.com:acme/widgets.git\n", /requires a GitHub remote named origin/],
+		["origin https://gitlab.com/acme/widgets.git\n", /origin remote is not a valid GitHub repository/],
+		["origin git@github.com:acme/one.git\norigin git@github.com:acme/two.git\n", /duplicate remote "origin"/],
+		["malformed\n", /malformed remote output/],
+	] as const) {
+		const result = await resolveGitHubRepository(async () => ({ code: 0, stdout, stderr: "" }), "/secondary", "jj");
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.equal(result.kind, "failed");
+		if (!result.ok && result.kind === "failed") assert.match(result.error, expected);
+	}
+});
+
+test("keeps ambient GitHub discovery for Git worktrees", async () => {
+	const result = await resolveGitHubRepository(
+		async (command, args, options) => {
+			assert.equal(command, "gh");
+			assert.deepEqual(args, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
+			assert.equal(options.cwd, "/git-worktree");
+			return { code: 0, stdout: "acme/widgets\n", stderr: "" };
+		},
+		"/git-worktree",
+		"git",
+	);
+	assert.deepEqual(result, { ok: true, repository: "acme/widgets" });
+});
 
 test("scopes delegated GitHub commands while preserving cwd, timeout, and cancellation", async () => {
 	const calls: Array<{ command: string; args: string[] }> = [];

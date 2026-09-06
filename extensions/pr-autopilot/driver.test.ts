@@ -21,6 +21,7 @@ async function run(mode: DriverMode, scenario: Parameters<typeof createHarness>[
 			exec: harness.exec,
 			backend: new GitBackend(harness.exec),
 			cwd: harness.cwd,
+			repository: "owner/repo",
 			explicitPR: 42,
 			promptDir: harness.cwd,
 			triagerPromptFile: join(harness.cwd, "triager.md"),
@@ -33,6 +34,30 @@ async function run(mode: DriverMode, scenario: Parameters<typeof createHarness>[
 	assert.deepEqual(harness.unexpected, []);
 	return { harness, result };
 }
+
+test("non-cleanup runs require resolved repository context", async (t) => {
+	const harness = await createHarness();
+	t.after(() => harness.cleanup());
+	const result = await runAutopilot(
+		"check",
+		{
+			config,
+			exec: harness.exec,
+			backend: new GitBackend(harness.exec),
+			cwd: harness.cwd,
+			explicitPR: 42,
+			promptDir: harness.cwd,
+			triagerPromptFile: join(harness.cwd, "triager.md"),
+			fixerPromptFile: join(harness.cwd, "fixer.md"),
+		},
+		harness.handlers,
+		new AbortController().signal,
+		harness.ops,
+	);
+	assert.equal(result.status, "blocked");
+	assert.deepEqual(result.blockedReasons, ["PR autopilot requires a resolved GitHub repository."]);
+	assert.deepEqual(harness.calls, []);
+});
 
 test("aborting during the first refresh starts no later actions", async (t) => {
 	const harness = await createHarness({ mergeStateStatus: "BEHIND" });
@@ -56,6 +81,7 @@ test("aborting during the first refresh starts no later actions", async (t) => {
 			exec,
 			backend: new GitBackend(exec),
 			cwd: harness.cwd,
+			repository: "owner/repo",
 			explicitPR: 42,
 			promptDir: harness.cwd,
 			triagerPromptFile: join(harness.cwd, "triager.md"),
@@ -112,6 +138,7 @@ test("a push confirmation resolving true after abort starts no publication", asy
 			exec: harness.exec,
 			backend: new GitBackend(harness.exec),
 			cwd: harness.cwd,
+			repository: "owner/repo",
 			explicitPR: 42,
 			promptDir: harness.cwd,
 			triagerPromptFile: join(harness.cwd, "triager.md"),
@@ -479,6 +506,7 @@ test("cancellation during failed-log hydration launches no model", async (t) => 
 			exec,
 			backend: new GitBackend(exec),
 			cwd: harness.cwd,
+			repository: "owner/repo",
 			explicitPR: 42,
 			promptDir: harness.cwd,
 			triagerPromptFile: join(harness.cwd, "triager.md"),
@@ -704,7 +732,7 @@ test("drive mode stops at its configured cycle bound and hydrates each cycle afr
 	assert.ok(result.blockedReasons.some((reason) => reason.includes("max cycles reached")));
 	assert.equal(harness.roles.filter((role) => role === "fixer").length, 3);
 	assert.equal(failedLogCalls(harness.calls).length, 3);
-	assert.equal(harness.calls.filter((call) => call.startsWith("gh repo view")).length, 1);
+	assert.equal(harness.calls.filter((call) => call.startsWith("gh repo view")).length, 0);
 });
 
 test("flake reruns use the trusted key without changing the remote check name", async (t) => {

@@ -10,8 +10,12 @@ Read-only Git plumbing is permitted, but jj workspaces need not be Git CLI
 worktrees. Prefer jj commands for workspace state and remote discovery. When
 Git object access is needed, resolve `jj git root` and pass its result with
 `git --git-dir=<path>`. Git's index and working tree are not the secondary
-jj workspace. GitHub callers must use explicit repository coordinates or PR
-URLs rather than assume that `gh` can discover the repository from cwd.
+jj workspace. Before a standalone GitHub workflow starts, the shared repository
+resolver selects explicit `owner/name` coordinates. Git and Graphite use GitHub
+CLI discovery from their Git worktree. jj reads the GitHub `origin` with
+`jj git remote list`. A missing, duplicate, malformed, or non-GitHub `origin`
+blocks the workflow. GitHub callers scope PR and run commands with those
+coordinates rather than assume that `gh` can discover the repository from cwd.
 
 Every parent-side repository write must use the configured backend. The shared
 `VcsBackend` contract covers branches and bookmarks, commits, path restoration,
