@@ -1,11 +1,19 @@
 /** Resolve a pinned GitHub PR target and materialize pinned commit snapshots. */
 
-import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequestReviewTarget, type PullRequestReviewTarget } from "../shared/github.ts";
 import { isPathInside } from "./review-scope.ts";
+import { materializeSnapshotFiles, planSnapshotFiles } from "./snapshot-files.ts";
+import {
+	openSnapshotObjectReader,
+	readSnapshotTree,
+	resolveSnapshotGitDir,
+	type SnapshotObjectReader,
+	type SnapshotProcessOptions,
+} from "./snapshot-objects.ts";
 import { LIMITS } from "./types.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -34,32 +42,12 @@ interface MaterializePrSnapshotOptions {
 	signal?: AbortSignal;
 	maxBlobBytes?: number;
 	maxTrackedEntries?: number;
-	maxArchiveBytes?: number;
+	maxTreeMetadataBytes?: number;
+	objectProcess?: SnapshotProcessOptions;
 }
 
 function diagnostic(result: ExecFnResult): string {
 	return (result.stderr || result.stdout).slice(0, DIAGNOSTIC_BYTES).trim();
-}
-
-function inspectTree(stdout: string) {
-	let blobBytes = 0;
-	let trackedEntries = 0;
-	const symlinkPaths: string[] = [];
-	for (const record of stdout.split("\0")) {
-		if (!record) continue;
-		const match = /^(\d{6}) ([a-z]+) (\d+|-)\t([\s\S]+)$/.exec(record);
-		if (!match) throw new Error("Git returned invalid PR tree metadata.");
-		const [, mode, objectType, rawSize, path] = match;
-		trackedEntries++;
-		if (mode === "120000") symlinkPaths.push(path);
-		if (objectType !== "blob") continue;
-		if (rawSize === "-") throw new Error("Git returned an invalid PR blob size.");
-		const size = Number(rawSize);
-		if (!Number.isSafeInteger(size) || size < 0) throw new Error("Git returned an invalid PR tree size.");
-		blobBytes += size;
-		if (!Number.isSafeInteger(blobBytes)) throw new Error("The PR tree is too large to measure safely.");
-	}
-	return { blobBytes, trackedEntries, symlinkPaths };
 }
 
 /**
@@ -84,10 +72,6 @@ async function assertSymlinksContained(directory: string, symlinkPaths: string[]
 			throw new Error(`Commit snapshot symlink ${JSON.stringify(path)} escapes the snapshot root.`);
 		}
 	}
-}
-
-function assertLimit(name: string, actual: number, maximum: number): void {
-	if (actual > maximum) throw new Error(`Commit snapshot ${name} (${actual}) exceeds the limit (${maximum}).`);
 }
 
 function git(
@@ -170,7 +154,7 @@ export async function resolvePrTarget(
 	};
 }
 
-/** Extract a pinned commit tree without creating a branch, worktree, or jj workspace. */
+/** Materialize a pinned commit tree without creating a branch, worktree, or jj workspace. */
 export async function materializePrSnapshot(
 	exec: ExecFn,
 	cwd: string,
@@ -179,44 +163,41 @@ export async function materializePrSnapshot(
 ): Promise<PrSnapshot> {
 	if (!SHA_RE.test(headSha)) throw new Error(`Invalid PR head SHA: ${headSha}`);
 
-	const tree = await git(
-		exec,
+	const gitDir = await resolveSnapshotGitDir(exec, cwd, options.signal);
+	const maxBlobBytes = options.maxBlobBytes ?? LIMITS.prSnapshotBytes;
+	const maxTrackedEntries = options.maxTrackedEntries ?? LIMITS.prSnapshotFiles;
+	const tree = await readSnapshotTree({
+		gitDir,
 		cwd,
-		["ls-tree", "-r", "-z", "--format=%(objectmode) %(objecttype) %(objectsize)%x09%(path)", headSha],
-		options.signal,
-	);
-	if (tree.code !== 0) throw new Error(`Could not inspect PR head ${headSha}: ${diagnostic(tree)}`);
-	const summary = inspectTree(tree.stdout);
-	assertLimit("tracked blob bytes", summary.blobBytes, options.maxBlobBytes ?? LIMITS.prSnapshotBytes);
-	// This counts every recursive tracked entry, including gitlinks, not only blobs.
-	assertLimit("tracked entries", summary.trackedEntries, options.maxTrackedEntries ?? LIMITS.prSnapshotFiles);
+		headSha,
+		signal: options.signal,
+		maxMetadataBytes: options.maxTreeMetadataBytes,
+		maxBlobBytes,
+		maxTrackedEntries,
+		process: options.objectProcess,
+	});
+	const filePlan = planSnapshotFiles(tree.entries);
 
 	const root = await mkdtemp(join(options.tmpDir ?? tmpdir(), "pi-panel-pr-"));
 	const directory = join(root, "snapshot");
-	const archivePath = join(root, "tree.tar");
-	await mkdir(directory, { mode: 0o700 });
+	let objects: SnapshotObjectReader | undefined;
 	try {
-		const archived = await git(
-			exec,
-			cwd,
-			["archive", "--format=tar", `--output=${archivePath}`, headSha],
-			options.signal,
-		);
-		if (archived.code !== 0) throw new Error(`Could not archive PR head ${headSha}: ${diagnostic(archived)}`);
-		const archiveBytes = (await stat(archivePath)).size;
-		const maxArchiveBytes = options.maxArchiveBytes ?? LIMITS.prSnapshotBytes;
-		assertLimit("archive bytes", archiveBytes, maxArchiveBytes);
-
-		const extracted = await exec("tar", ["-xf", archivePath, "-C", directory], {
-			cwd: directory,
-			timeout: GIT_TIMEOUT_MS,
-			signal: options.signal,
-		});
-		if (extracted.code !== 0) throw new Error(`Could not extract PR head ${headSha}: ${diagnostic(extracted)}`);
-		await rm(archivePath, { force: true });
-		await assertSymlinksContained(directory, summary.symlinkPaths);
+		await mkdir(directory, { mode: 0o700 });
+		await chmod(directory, 0o700);
+		if (tree.entries.some((entry) => entry.objectType === "blob")) {
+			objects = openSnapshotObjectReader({
+				gitDir,
+				cwd,
+				signal: options.signal,
+				process: options.objectProcess,
+			});
+		}
+		const materialized = await materializeSnapshotFiles({ directory, plan: filePlan, objects });
+		await objects?.finish();
+		await assertSymlinksContained(directory, materialized.symlinkPaths);
 		return { directory, root };
 	} catch (error) {
+		await objects?.abort();
 		await rm(root, { recursive: true, force: true });
 		throw error;
 	}

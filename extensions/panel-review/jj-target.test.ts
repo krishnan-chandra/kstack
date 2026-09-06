@@ -52,6 +52,7 @@ function locate(path: string, env: NodeJS.ProcessEnv): RepositorySource {
 
 async function reviewWorkingCopy(source: RepositorySource, env: NodeJS.ProcessEnv, explicitBase?: string) {
 	const commandExec: CommandExec = (cmd, args, cwd) => run(cwd, cmd, args, env);
+	const statusBefore = run(source.root, "jj", ["status", "--no-pager"], env);
 	const target = resolveJjReviewTarget(source, explicitBase, commandExec);
 	assert.equal(target.headSha, run(source.root, "jj", ["log", "--no-graph", "-r", "@", "-T", "commit_id"], env));
 	const scope = collectScope(source.root, target.base, "review", {
@@ -59,13 +60,18 @@ async function reviewWorkingCopy(source: RepositorySource, env: NodeJS.ProcessEn
 		headSha: target.headSha,
 		repositoryRoot: source.root,
 	});
-	const snapshot = await materializePrSnapshot(source.exec, source.root, target.headSha);
+	const snapshot = await materializePrSnapshot(source.exec, source.root, target.headSha, {
+		objectProcess: { env },
+	});
 	try {
-		return {
+		const result = {
 			target,
 			bundle: readFileSync(scope.path, "utf8"),
 			file: readFileSync(join(snapshot.directory, "file.txt"), "utf8"),
 		};
+		assert.equal(run(source.root, "jj", ["status", "--no-pager"], env), statusBefore);
+		assert.equal(run(source.root, "jj", ["log", "--no-graph", "-r", "@", "-T", "commit_id"], env), target.headSha);
+		return result;
 	} finally {
 		rmSync(snapshot.root, { recursive: true, force: true });
 		rmSync(scope.dir, { recursive: true, force: true });
