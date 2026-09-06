@@ -63,19 +63,21 @@ ignores the outcome.
      locally. The fetch writes objects but does not update local or
      remote-tracking refs. The diff covers only the committed range
      `merge-base(baseOid, headOid)..headOid`; it excludes untracked files and
-     working-tree changes. `git archive` extracts the pinned
-     head into a private temporary directory for reviewer file access. The run
-     does not create, move, or reset branches, Git worktrees, or jj workspaces.
-     After extraction and before any reviewer reads, panel-review resolves every
-     tracked symbolic link inside the snapshot. Links that resolve to a snapshot
-     file are preserved. Links that escape the snapshot root, form a cycle, or
-     do not resolve stop the review and remove the snapshot. The temporary
-     snapshot is also removed when the run ends.
+     working-tree changes. Panel-review enumerates the pinned tree and reads its
+     object IDs through one binary `git cat-file --batch` process. Regular files
+     keep their exact blob bytes and executable behavior. Export attributes,
+     filters, text conversion, and replacement objects do not alter the
+     snapshot. The run does not create, move, or reset branches, Git worktrees,
+     or jj workspaces. Before any reviewer reads the snapshot, panel-review
+     resolves every tracked symbolic link. Links that resolve to a snapshot file
+     are preserved. Links that escape the snapshot root, form a cycle, or do not
+     resolve stop the review and remove the snapshot. The temporary snapshot is
+     also removed when the run ends.
    - In standard Git mode, resolves the review base: explicit `--base`, else
      the branch upstream, else `origin/HEAD`, else `main`/`master`, else `HEAD`
      (working-tree only). The exact merge-base SHA is recorded so every reviewer
      sees an immutable baseline.
-   - jj and PR targets are extracted into private temporary source snapshots.
+   - jj and PR targets are materialized into private temporary source snapshots.
      Reviewers inspect the pinned commit rather than the live workspace. The run
      does not create, move, or reset Git worktrees, jj workspaces, branches, or
      bookmarks.
@@ -258,9 +260,10 @@ the `"panel-review"` section:
 | Total bundle | 2 MiB |
 | Per untracked text file | 256 KiB |
 | Untracked files included | 200 (overflow disclosed, not named) |
-| Pinned commit snapshot tracked blob content | 512 MiB |
+| Pinned commit snapshot tracked blob payload | 512 MiB |
 | Pinned commit snapshot tracked entries | 200,000 |
-| Pinned commit snapshot tar archive | 512 MiB |
+| Pinned commit snapshot tree metadata | 64 MiB |
+| Pinned commit symbolic-link target | 64 KiB |
 | Per reviewer report into synthesis | 256 KiB |
 | Aggregate synthesis input | 1 MiB |
 | Child stderr retention | 64 KiB |
@@ -270,11 +273,16 @@ the `"panel-review"` section:
 | Console transcript cap | 2 MiB / 5,000 entries per child (oldest evicted with notice) |
 | Console entry text cap | 256 KiB per entry (UTF-8 safe head/tail truncation) |
 
-PR and jj snapshot materialization stops before archiving when the pinned tree
-exceeds the tracked-byte or entry limit, and after extraction when a symbolic
-link escapes the snapshot root, contains a cycle, or does not resolve. The
-archive and extracted tree can briefly use up to about twice the archive limit
-in the system temp directory.
+PR and jj snapshot materialization stops before reading blobs when the pinned
+tree exceeds the metadata, tracked-payload, entry, or symbolic-link-target
+limit. It rejects paths
+that are not valid UTF-8, absolute or traversing paths, duplicate paths,
+file-directory collisions, unsupported Git modes, and host filename collisions.
+Gitlinks become empty directories. Symbolic links are created last and then
+rejected if they escape the snapshot root, contain a cycle, or do not resolve.
+Regular blob payloads stream directly into exclusive files beneath the private
+mode-`0700` root; the materializer does not build an archive or buffer the full
+tree payload.
 
 Oversized diffs produce a truncated patch with continuation instructions;
 reviewers can inspect named files with read-only tools. The tracked-changes
@@ -298,8 +306,10 @@ Review Limitations.
   create workspaces, or alter the working-copy commit.
 - PR mode fetches objects into the local object database. It leaves the current
   working tree, refs, branches, Git worktrees, and jj workspaces unchanged.
+- A pinned snapshot fails instead of omitting an unsupported path or overwriting
+  a host filename collision. Partial files and the private root are removed.
 - jj and PR snapshots are created for the run and removed after completion,
-  abort, or failure.
+  abort, timeout, or failure.
 
 ## Development
 
@@ -317,10 +327,11 @@ untracked, and binary changes, run
 progress, child argv (managed session flags, discovery flags, read-only tools),
 a single verdict message, no child session files, and an unchanged repository.
 For PR mode, also compare refs and
-`git worktree list --porcelain` before and after the run. Include contained,
-escaping, dangling, and cyclic symbolic links in the PR fixture. For jj mode, test both
-its primary workspace and a secondary `jj workspace add` workspace without a
-`.git` entry. Confirm that reviewers read the pinned `@` snapshot rather than
+`git worktree list --porcelain` before and after the run. Include export-ignore
+and export-subst attributes, binary and executable blobs, and contained,
+escaping, dangling, and cyclic symbolic links in the fixture. For jj mode, test
+both its primary workspace and a secondary `jj workspace add` workspace without
+a `.git` entry. Confirm that reviewers read the pinned `@` snapshot rather than
 later changes in the live workspace.
 
 `extensions/panel-review/prompts/thermo-nuclear.md` is the canonical lens.

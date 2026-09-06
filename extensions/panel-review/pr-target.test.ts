@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -8,6 +9,7 @@ import {
 	readFileSync,
 	readlinkSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -17,6 +19,7 @@ import { describe, it } from "node:test";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import { materializePrSnapshot, resolvePrTarget } from "./pr-target.ts";
+import type { SnapshotGitSpawn } from "./snapshot-objects.ts";
 
 const HEAD_SHA = "1111111111111111111111111111111111111111";
 const BASE_SHA = "2222222222222222222222222222222222222222";
@@ -49,10 +52,6 @@ function result(code: number, stdout = "", stderr = ""): ExecFnResult {
 	return { code, stdout, stderr };
 }
 
-function treeRecord(mode: string, objectType: string, size: number | "-", path: string): string {
-	return `${mode} ${objectType} ${size}\t${path}\0`;
-}
-
 function createRealExec(env?: NodeJS.ProcessEnv): ExecFn {
 	return (command, args, options) => {
 		const completed = spawnSync(command, args, {
@@ -74,6 +73,18 @@ async function runOk(cwd: string, command: string, args: string[], env?: NodeJS.
 	const completed = await createRealExec(env)(command, args, { cwd, timeout: 10_000 });
 	assert.equal(completed.code, 0, completed.stderr);
 	return completed.stdout.trim();
+}
+
+function runBuffer(cwd: string, command: string, args: string[], env?: NodeJS.ProcessEnv, input?: Buffer): Buffer {
+	const completed = spawnSync(command, args, {
+		cwd,
+		env,
+		input,
+		timeout: 10_000,
+		stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+	});
+	assert.equal(completed.status, 0, completed.stderr.toString("utf8") || completed.error?.message);
+	return completed.stdout;
 }
 
 describe("resolvePrTarget", () => {
@@ -240,6 +251,172 @@ describe("materializePrSnapshot", () => {
 		}
 	});
 
+	it("materializes exact pinned blob bytes despite export attributes", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-exact-blobs-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		const binaryPath = "nested/ignored.bin";
+		const substitutedPath = "substituted.txt";
+		const executablePath = "script.sh";
+		const whitespacePath = "white space\nname.txt";
+		let snapshotRoot: string | undefined;
+		try {
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			mkdirSync(join(repo, "nested"));
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, ".gitattributes"), `${substitutedPath} export-subst\n`);
+			writeFileSync(join(repo, "nested", ".gitattributes"), "ignored.bin export-ignore\n");
+			writeFileSync(join(repo, binaryPath), Buffer.from([0x00, 0xff, 0xfe, 0x41, 0x0a]));
+			writeFileSync(join(repo, substitutedPath), "$Format:%H$\n");
+			writeFileSync(join(repo, executablePath), "#!/bin/sh\nprintf exact\n");
+			chmodSync(join(repo, executablePath), 0o755);
+			writeFileSync(join(repo, whitespacePath), "spaced\n");
+			symlinkSync(executablePath, join(repo, "contained-link"));
+			await run(repo, "git", ["add", "."]);
+			await run(repo, "git", ["commit", "-qm", "exact blob fixture"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			const refsBefore = await run(repo, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]);
+			const indexBefore = runBuffer(repo, "git", ["ls-files", "--stage", "-z"], vcsEnv);
+			const statusBefore = runBuffer(repo, "git", ["status", "--porcelain=v1", "-z"], vcsEnv);
+			const attributesBefore = readFileSync(join(repo, ".gitattributes"));
+			const expected = new Map(
+				[binaryPath, substitutedPath, executablePath, whitespacePath].map((path) => [
+					path,
+					runBuffer(repo, "git", ["cat-file", "blob", `${headSha}:${path}`], vcsEnv),
+				]),
+			);
+			const processArgs: string[][] = [];
+			const spawnImpl: SnapshotGitSpawn = (command, args, options) => {
+				processArgs.push(args);
+				return spawn(command, args, options);
+			};
+
+			const snapshot = await materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+				tmpDir: snapshots,
+				objectProcess: { env: vcsEnv, spawn: spawnImpl },
+			});
+			snapshotRoot = snapshot.root;
+			for (const [path, bytes] of expected) {
+				assert.deepEqual(readFileSync(join(snapshot.directory, path)), bytes, path);
+			}
+			assert.notEqual(statSync(join(snapshot.directory, executablePath)).mode & 0o111, 0);
+			assert.equal(readlinkSync(join(snapshot.directory, "contained-link")), executablePath);
+			assert.equal(await run(repo, "git", ["for-each-ref", "--format=%(refname):%(objectname)"]), refsBefore);
+			assert.deepEqual(runBuffer(repo, "git", ["ls-files", "--stage", "-z"], vcsEnv), indexBefore);
+			assert.deepEqual(runBuffer(repo, "git", ["status", "--porcelain=v1", "-z"], vcsEnv), statusBefore);
+			assert.deepEqual(readFileSync(join(repo, ".gitattributes")), attributesBefore);
+			assert.equal(processArgs.filter((args) => args.includes("cat-file")).length, 1);
+		} finally {
+			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores replacement objects for tree metadata and blob reads", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-replace-object-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		let snapshotRoot: string | undefined;
+		try {
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, "file"), "pinned bytes\n");
+			await run(repo, "git", ["add", "file"]);
+			await run(repo, "git", ["commit", "-qm", "pinned"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			const originalId = await run(repo, "git", ["rev-parse", `${headSha}:file`]);
+			const replacementId = runBuffer(
+				repo,
+				"git",
+				["hash-object", "-w", "--stdin"],
+				vcsEnv,
+				Buffer.from("replacement bytes are longer\n"),
+			)
+				.toString("ascii")
+				.trim();
+			await run(repo, "git", ["replace", originalId, replacementId]);
+			const expected = runBuffer(repo, "git", ["--no-replace-objects", "cat-file", "blob", originalId], vcsEnv);
+
+			const snapshot = await materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+				tmpDir: snapshots,
+				objectProcess: { env: vcsEnv },
+			});
+			snapshotRoot = snapshot.root;
+			assert.deepEqual(readFileSync(join(snapshot.directory, "file")), expected);
+		} finally {
+			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("materializes an empty pinned tree without starting a batch reader", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-empty-tree-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		const processArgs: string[][] = [];
+		const spawnImpl: SnapshotGitSpawn = (command, args, options) => {
+			processArgs.push(args);
+			return spawn(command, args, options);
+		};
+		let snapshotRoot: string | undefined;
+		try {
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			await run(repo, "git", ["commit", "--allow-empty", "-qm", "empty tree"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			const snapshot = await materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+				tmpDir: snapshots,
+				objectProcess: { env: vcsEnv, spawn: spawnImpl },
+			});
+			snapshotRoot = snapshot.root;
+			assert.deepEqual(readdirSync(snapshot.directory), []);
+			assert.equal(processArgs.filter((args) => args.includes("cat-file")).length, 0);
+		} finally {
+			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an invalid UTF-8 tree path without creating a partial snapshot", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-invalid-name-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		try {
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			const blobId = runBuffer(repo, "git", ["hash-object", "-w", "--stdin"], vcsEnv, Buffer.from("x"))
+				.toString("ascii")
+				.trim();
+			const treeInput = Buffer.concat([Buffer.from(`100644 blob ${blobId}\t`, "ascii"), Buffer.from([0xff, 0x00])]);
+			const treeId = runBuffer(repo, "git", ["mktree", "-z"], vcsEnv, treeInput).toString("ascii").trim();
+			const commitId = runBuffer(repo, "git", ["commit-tree", treeId, "-m", "invalid name"], vcsEnv)
+				.toString("ascii")
+				.trim();
+			await assert.rejects(
+				materializePrSnapshot(createRealExec(vcsEnv), repo, commitId, {
+					tmpDir: snapshots,
+					objectProcess: { env: vcsEnv },
+				}),
+				/not valid UTF-8.*unsupported/,
+			);
+			assert.deepEqual(readdirSync(snapshots), []);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("materializes repository-contained symlinks", async () => {
 		const root = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-"));
 		const repo = join(root, "repo");
@@ -357,94 +534,180 @@ describe("materializePrSnapshot", () => {
 		}
 	});
 
-	it("rejects a tree that exceeds the tracked-byte or entry limit before archiving", async () => {
-		let archiveCalled = false;
-		const exec: ExecFn = async (_command, args) => {
-			if (args[0] === "ls-tree") {
-				return result(0, treeRecord("100644", "blob", 9, "first") + treeRecord("100644", "blob", 1, "second"));
-			}
-			archiveCalled = true;
-			return result(0);
+	it("rejects tracked-byte and entry limits before opening the batch reader", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-limits-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		let batchCalled = false;
+		const spawnImpl: SnapshotGitSpawn = (command, args, options) => {
+			if (args.includes("cat-file")) batchCalled = true;
+			return spawn(command, args, options);
 		};
-		await assert.rejects(
-			materializePrSnapshot(exec, "/repo", HEAD_SHA, { maxBlobBytes: 9, maxTrackedEntries: 1 }),
-			/tracked blob bytes \(10\) exceeds the limit \(9\)/,
-		);
-		assert.equal(archiveCalled, false);
+		try {
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, "first"), "123456789");
+			writeFileSync(join(repo, "second"), "x");
+			await run(repo, "git", ["add", "."]);
+			await run(repo, "git", ["commit", "-qm", "limits"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			const objectProcess = { env: vcsEnv, spawn: spawnImpl };
+
+			await assert.rejects(
+				materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+					tmpDir: snapshots,
+					maxBlobBytes: 9,
+					objectProcess,
+				}),
+				/tracked blob bytes \(10\) exceeds the limit \(9\)/,
+			);
+			await assert.rejects(
+				materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+					tmpDir: snapshots,
+					maxTrackedEntries: 1,
+					objectProcess,
+				}),
+				/tracked entries \(2\) exceeds the limit \(1\)/,
+			);
+			assert.equal(batchCalled, false);
+			assert.deepEqual(readdirSync(snapshots), []);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("counts gitlinks as tracked entries without requiring a blob size", async () => {
-		let archiveCalled = false;
-		const exec: ExecFn = async (_command, args) => {
-			if (args[0] === "ls-tree") {
-				return result(0, treeRecord("100644", "blob", 1, "file") + treeRecord("160000", "commit", "-", "submodule"));
-			}
-			archiveCalled = true;
-			return result(0);
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-gitlink-limit-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		let batchCalled = false;
+		const spawnImpl: SnapshotGitSpawn = (command, args, options) => {
+			if (args.includes("cat-file")) batchCalled = true;
+			return spawn(command, args, options);
 		};
-		await assert.rejects(
-			materializePrSnapshot(exec, "/repo", HEAD_SHA, { maxTrackedEntries: 1 }),
-			/tracked entries \(2\) exceeds the limit \(1\)/,
-		);
-		assert.equal(archiveCalled, false);
-	});
-
-	it("rejects and removes an oversized archive before extraction", async () => {
-		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-oversized-snapshot-"));
-		let tarCalled = false;
 		try {
-			const exec: ExecFn = async (command, args) => {
-				if (command === "git" && args[0] === "ls-tree") {
-					return result(0, treeRecord("100644", "blob", 9, "file"));
-				}
-				if (command === "git") {
-					const outputArg = args.find((arg) => arg.startsWith("--output="));
-					assert.ok(outputArg);
-					writeFileSync(outputArg.slice("--output=".length), "too large");
-					return result(0);
-				}
-				tarCalled = true;
-				return result(0);
-			};
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, "file"), "x");
+			await run(repo, "git", ["add", "file"]);
+			await run(repo, "git", ["commit", "-qm", "base"]);
+			const gitlinkSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			await run(repo, "git", ["update-index", "--add", "--cacheinfo", `160000,${gitlinkSha},submodule`]);
+			await run(repo, "git", ["commit", "-qm", "gitlink"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+
 			await assert.rejects(
-				materializePrSnapshot(exec, "/repo", HEAD_SHA, { tmpDir: snapshots, maxArchiveBytes: 1 }),
-				/archive bytes \(9\) exceeds the limit \(1\)/,
+				materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+					tmpDir: snapshots,
+					maxTrackedEntries: 1,
+					objectProcess: { env: vcsEnv, spawn: spawnImpl },
+				}),
+				/tracked entries \(2\) exceeds the limit \(1\)/,
 			);
-			assert.equal(tarCalled, false);
+			assert.equal(batchCalled, false);
 			assert.deepEqual(readdirSync(snapshots), []);
 		} finally {
-			rmSync(snapshots, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("propagates an execution abort and removes the partial snapshot", async () => {
-		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-aborted-snapshot-"));
+	it("rejects the tree-metadata limit before creating a snapshot root", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-metadata-limit-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
 		try {
-			const controller = new AbortController();
-			const exec: ExecFn = async (_command, args, options) => {
-				assert.equal(options.signal, controller.signal);
-				if (args[0] === "ls-tree") return result(0, treeRecord("100644", "blob", 9, "file"));
-				throw new Error("cancelled by signal");
-			};
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, "file"), "x");
+			await run(repo, "git", ["add", "file"]);
+			await run(repo, "git", ["commit", "-qm", "metadata"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
 			await assert.rejects(
-				materializePrSnapshot(exec, "/repo", HEAD_SHA, { tmpDir: snapshots, signal: controller.signal }),
-				/cancelled by signal/,
+				materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+					tmpDir: snapshots,
+					maxTreeMetadataBytes: 1,
+					objectProcess: { env: vcsEnv },
+				}),
+				/tree metadata .* exceeds the limit \(1\)/,
 			);
 			assert.deepEqual(readdirSync(snapshots), []);
 		} finally {
-			rmSync(snapshots, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("removes its temporary directory when archive creation fails", async () => {
-		const snapshots = mkdtempSync(join(tmpdir(), "panel-pr-failed-snapshot-"));
+	it("propagates a batch-read abort and removes the partial snapshot", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-aborted-snapshot-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		const controller = new AbortController();
+		const spawnImpl: SnapshotGitSpawn = (command, args, options) => {
+			const child = spawn(command, args, options);
+			if (args.includes("cat-file")) controller.abort();
+			return child;
+		};
 		try {
-			const exec: ExecFn = async (_command, args) =>
-				args[0] === "ls-tree" ? result(0, treeRecord("100644", "blob", 9, "file")) : result(1, "", "archive failed");
-			await assert.rejects(materializePrSnapshot(exec, "/repo", HEAD_SHA, { tmpDir: snapshots }), /archive failed/);
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, "file"), Buffer.alloc(1024, 0x61));
+			await run(repo, "git", ["add", "file"]);
+			await run(repo, "git", ["commit", "-qm", "abort"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			await assert.rejects(
+				materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+					tmpDir: snapshots,
+					signal: controller.signal,
+					objectProcess: { env: vcsEnv, spawn: spawnImpl },
+				}),
+				/aborted/,
+			);
 			assert.deepEqual(readdirSync(snapshots), []);
 		} finally {
-			rmSync(snapshots, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("removes its temporary directory when object transport fails", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-failed-snapshot-"));
+		const repo = join(root, "repo");
+		const snapshots = join(root, "snapshots");
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		const spawnImpl: SnapshotGitSpawn = (command, args, options) => {
+			if (!args.includes("cat-file")) return spawn(command, args, options);
+			const invalidArgs = args.slice(0, args.indexOf("cat-file") + 1).concat("--definitely-invalid");
+			return spawn(command, invalidArgs, options);
+		};
+		try {
+			mkdirSync(repo);
+			mkdirSync(snapshots);
+			await run(repo, "git", ["init", "-q"]);
+			writeFileSync(join(repo, "file"), "content");
+			await run(repo, "git", ["add", "file"]);
+			await run(repo, "git", ["commit", "-qm", "transport"]);
+			const headSha = await run(repo, "git", ["rev-parse", "HEAD"]);
+			await assert.rejects(
+				materializePrSnapshot(createRealExec(vcsEnv), repo, headSha, {
+					tmpDir: snapshots,
+					objectProcess: { env: vcsEnv, spawn: spawnImpl },
+				}),
+				/batch output ended|Git process failed|EPIPE/,
+			);
+			assert.deepEqual(readdirSync(snapshots), []);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 });
