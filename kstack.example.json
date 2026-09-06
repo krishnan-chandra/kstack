@@ -22,7 +22,7 @@
       },
       {
         "label": "deepseek",
-        "model": "openrouter/deepseek/deepseek-v4-flash",
+        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
         "thinking": "medium"
       },
       {
@@ -44,7 +44,7 @@
   },
   "plan-implement": {
     "planner": {
-      "model": "openai/gpt-5.6-sol",
+      "model": "openai/gpt-6-astra",
       "thinking": "high"
     },
     "implementer": {
@@ -84,8 +84,8 @@
       }
     ],
     "crossJudge": {
-      "model": "openai/gpt-5.6-sol",
-      "thinking": "medium"
+      "model": "openai/gpt-6-astra",
+      "thinking": "high"
     },
     "maxConcurrency": 4
   },
@@ -113,7 +113,7 @@
       },
       {
         "label": "deepseek",
-        "model": "openrouter/deepseek/deepseek-v4-flash",
+        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
         "thinking": "low"
       },
       {
@@ -138,7 +138,7 @@
         "thinking": "high"
       },
       {
-        "model": "openrouter/deepseek/deepseek-v4-flash",
+        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
         "thinking": "medium"
       },
       {
