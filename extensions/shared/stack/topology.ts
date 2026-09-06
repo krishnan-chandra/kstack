@@ -371,6 +371,7 @@ export function createNavigationCommentStore(github: GitHubGateway): StackTopolo
 			for (const slice of input.published) {
 				if (slice.prNumber === undefined || failedFetches.has(slice.prNumber)) continue;
 				const existing = findKstackComment(existingByPr.get(slice.prNumber) ?? [], user);
+				if (existing?.body === body) continue;
 				try {
 					await github.createOrUpdateComment({
 						repo: input.repo,

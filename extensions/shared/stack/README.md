@@ -22,6 +22,11 @@ version 1, at most 100 entries, and at most 60,000 UTF-8 bytes. Changes must
 remain backward-compatible with both the encoded payload and legacy Markdown
 table fallback.
 
+Reconciliation refreshes owned comments and ancestor statuses before it renders
+the desired body. It does not rewrite an owned comment when its body is
+byte-identical to that output. Completed navigation actions count only comment
+writes; missing or different bodies still use the create-or-update path.
+
 ## Status alphabet
 
 Every stack mutation reports one of nine statuses:
