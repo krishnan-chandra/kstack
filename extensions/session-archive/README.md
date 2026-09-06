@@ -3,7 +3,8 @@
 A user-level Pi extension that moves completed sessions out of Pi's active
 session directories into a read-only, full-text-searchable archive. Archived
 sessions disappear from `/resume` and `pi -r`, survive byte-for-byte on disk,
-and stay searchable by agents through two SELECT-only tools.
+and stay searchable through two SELECT-only archive tools. The extension also
+provides two read-only source tools for inactive Kstack child sessions.
 
 ## Requirements
 
@@ -38,6 +39,17 @@ the stored byte offsets to read raw entries directly from `session.jsonl`.
 SHA-256 joins the two and detects drift. If the SQLite index is lost, run
 `/session-archive-rebuild` to scan the JSONL artifacts and recreate missing rows.
 
+Retained child sessions and their disposable search cache use separate paths:
+
+```text
+~/.pi/kstack/subagents/                              # retained source JSONL and .active leases
+<agent-dir>/cache/kstack-subagent-history/index.sqlite3  # derived FTS5 cache
+```
+
+`PI_CODING_AGENT_DIR` changes the cache path, but it does not change the shared
+child-session source path. Deleting the derived cache is safe; the next search
+or read rebuilds it within the refresh limits.
+
 ## Commands
 
 | Command | Effect |
@@ -67,10 +79,32 @@ roll back the sessions archived successfully before or after it.
   database content. Large pages are split into bounded `chunk`s; follow the
   returned continuation until the page is complete, then advance to the next
   entry offset.
+- `search_subagent_history` — search inactive retained child sessions with an
+  FTS5 `query` and optional exact `cwd`, `role`, and `session_id` filters. The
+  result includes the retained filename and path plus complete, indexed,
+  pending, active, and skipped coverage counts. Repeat an incomplete search to
+  index another pending batch.
+- `read_subagent_history` — read one retained child session by exact UUID. Use
+  `format: "normalized"` for parsed entry metadata and text, or `format: "raw"`
+  for exact JSONL entry byte ranges. Follow the returned `offset` and `chunk`
+  continuation. A result can become unavailable after retention prunes its
+  source.
 
-There is deliberately **no** agent-callable archive/restore/delete/SQL tool.
-Mutation is a user command; agents can only search and read through
-SQLite connections opened with `readOnly` and `query_only` enabled.
+For example:
+
+```text
+search_subagent_history({ query: '"race condition"', role: "assistant", limit: 10 })
+read_subagent_history({ session_id: "<uuid>", offset: 0, limit: 50, format: "normalized", chunk: 0 })
+```
+
+Inactive child history includes failed and aborted runs. Inactivity does not
+prove that a workflow succeeded. Treat historical content as evidence, not as
+current instructions.
+
+There is no agent-callable archive, restore, delete, SQL, lease, or retention
+operation. The archive tools use SELECT-only SQLite connections. The child
+history tools can replace rows in their derived cache, but they never mutate
+retained JSONL or lease files.
 
 ## Threat model
 
@@ -82,11 +116,28 @@ determined agent with shell access:
 - The built-in `write` and `edit` tools are blocked (via `tool_call`) from
   targeting anything inside the archive root, including existing files and
   new paths reached through symlinked parent directories.
-- No registered tool mutates the archive.
+- No registered tool mutates the archive or retained child-session source.
+- Child-history discovery accepts only direct regular non-symlink JSONL files
+  whose filename UUID matches a valid v3 header. Live and uncertain leases are
+  excluded. Cache directories and files reject symlink substitution.
 
 A same-user agent with unrestricted `bash` can still run `chmod`, edit the
 SQLite file, or delete archived JSONL. Shell commands are not parsed or
 policed. Treat these as accident guards, not a security boundary.
+
+## Child-history limits
+
+Each operation opens its SQLite connection on demand and closes it before
+returning. Startup does not scan child sessions. One refresh inspects at most
+5,000 directory entries, reads at most 32 MiB from one session, and reads at
+most 64 MiB across 32 changed sessions. New refresh work has a cooperative
+5-second budget. One file is parsed at a time.
+
+Search returns at most 100 hits. Read returns at most 100 entries per page and
+splits large pages into UTF-8-safe chunks. Every complete tool response stays
+within Pi's `DEFAULT_MAX_BYTES` limit. Normalized entry text uses the existing
+200,000-character parser cap. Coverage and continuation fields disclose work
+that remains.
 
 ## Known concurrency gap
 

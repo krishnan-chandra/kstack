@@ -29,7 +29,10 @@ describe("buildChildArgs", () => {
 		assert.ok(!joined.includes("session-archive/index.ts"));
 		assert.match(joined, /--no-skills/);
 		assert.match(joined, /--no-prompt-templates/);
-		assert.match(joined, /--tools bash,read,grep,find,ls,search_session_archive,read_session_archive/);
+		assert.match(
+			joined,
+			/--tools bash,read,grep,find,ls,search_session_archive,read_session_archive,search_subagent_history,read_subagent_history/,
+		);
 		assert.ok(!joined.includes("write"));
 		assert.ok(!joined.includes("edit"));
 		assert.deepEqual(args[args.length - 1], "Review /tmp/b.md");
