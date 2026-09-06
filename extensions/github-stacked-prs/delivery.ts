@@ -291,7 +291,7 @@ export async function publishGitHubStack(input: {
 				return { status: "declined", planId: fresh.plan.planId };
 			}
 		}
-		return applyPublication(fresh.plan, input.ready, input.deps);
+		return await applyPublication(fresh.plan, input.ready, input.deps);
 	} finally {
 		lock.lock.release();
 	}
