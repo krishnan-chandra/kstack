@@ -124,8 +124,10 @@ async function readPullRequestJson(
 	fields: string,
 	signal: AbortSignal | undefined,
 	limits: GithubLimits,
+	repository?: string,
 ): Promise<PullRequestJson> {
-	const out = await exec("gh", ["pr", "view", String(number), "--json", fields], {
+	const repoArgs = repository === undefined ? [] : ["-R", repository];
+	const out = await exec("gh", ["pr", "view", String(number), ...repoArgs, "--json", fields], {
 		cwd,
 		timeout: limits.queryMs,
 		signal,
@@ -224,6 +226,8 @@ export async function getPullRequestReviewTarget(
 	number: number,
 	signal?: AbortSignal,
 	limitOverrides: Partial<GithubLimits> = {},
+	/** `owner/name` for `gh -R`; required when `cwd` has no Git remotes (jj workspaces). */
+	repository?: string,
 ): Promise<PullRequestReviewTarget> {
 	const limits = withDefaults(limitOverrides);
 	const { value, identity } = await readPullRequestJson(
@@ -233,6 +237,7 @@ export async function getPullRequestReviewTarget(
 		"number,url,title,state,baseRefName,headRefOid,baseRefOid",
 		signal,
 		limits,
+		repository,
 	);
 	if (
 		!isString(value.baseRefName) ||

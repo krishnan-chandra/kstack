@@ -28,8 +28,9 @@ values into slash-command text. Import `requestPanelReview` from `api.ts` and
 pass structured `{ intent, base?, pr?, repositoryPath? }` options plus the
 caller's current `ExtensionCommandContext`. `PanelWorktreeArgs` and
 `PanelPrArgs` expose the two mutually exclusive target shapes. `repositoryPath`
-is for trusted in-process callers that need to review another validated Git
-working tree, such as a managed worktree. Panel-review claims the request
+(`--repo <path>` on the command line) selects another Git worktree or jj
+workspace; the repository is otherwise inferred from the current directory.
+Panel-review claims the request
 synchronously on
 Pi's event bus and exposes a completion promise that resolves a structured
 `PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
@@ -39,15 +40,24 @@ ignores the outcome.
 
 ## How it works
 
-1. Resolves the review target:
-   - In a colocated jj workspace, snapshots the working copy through jj and
-     pins revision `@`. This works in both the primary workspace and secondary
-     workspaces created by `jj workspace add`, which do not have their own
-     `.git` entry. An explicit `--base` is resolved as a jj revision; otherwise
-     the base is `trunk()`. The committed diff covers
-     `merge-base(base, @)..@`, including the current jj change and its
-     description. Unresolved conflicts stop the run before reviewers launch.
-     Ignored files are excluded because jj does not snapshot them.
+1. Locates the repository (`repository-source.ts`), independently of what is
+   reviewed. A jj workspace (`jj workspace root`) takes precedence; its Git
+   object store comes from `jj git root`, which for `--no-colocate`
+   repositories and secondary `jj workspace add` workspaces lives outside the
+   workspace. Otherwise the path must be inside a Git worktree. Every later Git
+   call runs with that store (`--git-dir`), and `gh` receives the `origin`
+   repository through `-R`, so PR review and jj review both work from a
+   directory that has no `.git` entry of its own.
+2. Resolves the review target:
+   - In a jj workspace, snapshots the working copy through jj and pins
+     revision `@`. An explicit `--base` is resolved as a jj revision; otherwise
+     the base is `trunk()`. When `trunk()` resolves to jj's virtual root
+     commit (no remote-tracking default branch), panel-review falls back to the
+     local `main` or `master` bookmark with a warning, or asks for `--base`.
+     The committed diff covers `merge-base(base, @)..@`, including the current
+     jj change and its description. Unresolved conflicts stop the run before
+     reviewers launch. Ignored files are excluded because jj does not snapshot
+     them.
    - In PR mode (`--pr <number>`), fetches the PR head and base source refs
      from `origin` with an empty refmap, then verifies the pinned commit OIDs
      locally. The fetch writes objects but does not update local or
@@ -69,15 +79,15 @@ ignores the outcome.
      Reviewers inspect the pinned commit rather than the live workspace. The run
      does not create, move, or reset Git worktrees, jj workspaces, branches, or
      bookmarks.
-2. Builds a bounded bundle in a mode-`0600` temp file outside the repository:
+3. Builds a bounded bundle in a mode-`0600` temp file outside the repository:
    `git diff --find-renames --find-copies <merge-base>` (committed + staged +
    unstaged together), porcelain status, bounded contents of untracked text
    files (`--untracked-files=all`, so new directories are expanded into their
    files; symlinks, binaries, and path escapes skipped), and commit subjects.
    The diff is never passed on a command line.
-3. Obtains the review intent (from positional arguments or an editor prefilled
+4. Obtains the review intent (from positional arguments or an editor prefilled
    with commit subjects) and launches reviewers immediately without confirmation prompts.
-4. Spawns 2–5 reviewers concurrently. Each is an isolated child process with a retained native session:
+5. Spawns 2–5 reviewers concurrently. Each is an isolated child process with a retained native session:
 
    ```
    pi --mode json -p --session-dir ~/.pi/kstack/subagents \
@@ -165,7 +175,7 @@ ignores the outcome.
    (`maxRuntimeMinutes`, default 30) bounds total runtime regardless of
    activity. Timeout failures report the turns completed, last activity, and
    token usage observed before the kill.
-5. Synthesizes the successful reports with the configured synthesis model
+6. Synthesizes the successful reports with the configured synthesis model
    (required in `kstack.json`; **GPT-5.6 Terra** at medium thinking by default)
    in an isolated child, using
    the lead-judgment framework: deduplication, consensus mapping, and
@@ -175,7 +185,7 @@ ignores the outcome.
    Bar is included in the synthesis prompt so structural
    regressions, missed code-judo moves, and file-size explosions promote
    into **Act On** as presumptive blockers.
-6. Appends the verdict to the session as a displayed `panel-review` custom
+7. Appends the verdict to the session as a displayed `panel-review` custom
    message, so it stays in context and can guide later fixes. No fixes are
    applied automatically.
 

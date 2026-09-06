@@ -100,17 +100,23 @@ function git(
 	return exec("git", args, { cwd, timeout, signal });
 }
 
+/**
+ * Resolve a PR through `gh` and fetch its commits into the object store `exec`
+ * addresses. `githubRepository` (`owner/name`) lets `gh` work from a jj
+ * workspace whose directory has no Git remotes of its own.
+ */
 export async function resolvePrTarget(
 	exec: ExecFn,
 	cwd: string,
 	prNumber: number,
 	signal?: AbortSignal,
+	githubRepository?: string,
 ): Promise<PrTarget> {
 	if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
 		throw new Error(`Invalid PR number: ${prNumber}`);
 	}
 
-	const pr = await getPullRequestReviewTarget(exec, cwd, prNumber, signal);
+	const pr = await getPullRequestReviewTarget(exec, cwd, prNumber, signal, {}, githubRepository);
 	const validBase = await git(exec, cwd, ["check-ref-format", "--branch", pr.baseRef], signal, 10_000);
 	if (validBase.code !== 0) {
 		throw new Error(`PR base ref ${JSON.stringify(pr.baseRef)} is not a valid Git branch name.`);
@@ -164,7 +170,7 @@ export async function resolvePrTarget(
 	};
 }
 
-/** Extract the pinned PR tree without creating a branch, worktree, or jj workspace. */
+/** Extract a pinned commit tree without creating a branch, worktree, or jj workspace. */
 export async function materializePrSnapshot(
 	exec: ExecFn,
 	cwd: string,

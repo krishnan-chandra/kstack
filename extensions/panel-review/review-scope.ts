@@ -29,7 +29,7 @@ export type { ScopeBundle } from "./types.ts";
 /** Run git with the given args in cwd and return stdout (never a shell). */
 export type GitExec = (args: string[], cwd: string) => string;
 
-export const defaultGitExec: GitExec = (args, cwd) =>
+const defaultGitExec: GitExec = (args, cwd) =>
 	execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, shell: false });
 
 function tryGit(exec: GitExec, args: string[], cwd: string): string | null {
@@ -40,7 +40,7 @@ function tryGit(exec: GitExec, args: string[], cwd: string): string | null {
 	}
 }
 
-export function requireWorkTree(exec: GitExec, cwd: string): string {
+function requireWorkTree(exec: GitExec, cwd: string): string {
 	const root = tryGit(exec, ["rev-parse", "--show-toplevel"], cwd);
 	if (!root) throw new Error(`${cwd} is not inside a Git worktree.`);
 	return root.trim();

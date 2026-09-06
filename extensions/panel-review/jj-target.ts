@@ -1,34 +1,24 @@
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import type { GitExec } from "./review-scope.ts";
-import type { BaseResolution } from "./types.ts";
+/** Pin the jj working-copy revision and its base for a snapshot review. */
+
+import { type CommandExec, defaultCommandExec, type RepositorySource, tryCommand } from "./repository-source.ts";
+import type { BaseResolution, BaseStrategy } from "./types.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
+/** jj's virtual root commit, which has no Git counterpart. */
+const ROOT_COMMIT = "0".repeat(40);
 
-type CommandExec = (command: string, args: string[], cwd: string) => string;
-
-const defaultCommandExec: CommandExec = (command, args, cwd) =>
-	execFileSync(command, args, {
-		cwd,
-		encoding: "utf8",
-		maxBuffer: 64 * 1024 * 1024,
-		shell: false,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-export interface JjReviewTarget {
-	workspaceRoot: string;
-	gitRoot: string;
+interface JjReviewTarget {
 	headSha: string;
 	base: BaseResolution;
+	warnings: string[];
 }
 
-function tryCommand(exec: CommandExec, command: string, args: string[], cwd: string): string | null {
-	try {
-		return exec(command, args, cwd);
-	} catch {
-		return null;
-	}
+/** Base revision before its Git merge base is computed. */
+interface BaseCandidate {
+	ref: string;
+	sha: string;
+	strategy: BaseStrategy;
+	warning?: string;
 }
 
 function resolveSingleRevision(exec: CommandExec, cwd: string, revision: string, label: string): string {
@@ -49,56 +39,72 @@ function resolveSingleRevision(exec: CommandExec, cwd: string, revision: string,
 	return commits[0].toLowerCase();
 }
 
+/**
+ * Default base selection. `trunk()` is jj's remote-tracking default branch and
+ * resolves to the virtual root commit when the repository has no remote; the
+ * root has no Git commit, so fall back to local `main` / `master` bookmarks.
+ */
+function resolveDefaultBase(exec: CommandExec, cwd: string): BaseCandidate {
+	const trunk = resolveSingleRevision(exec, cwd, "trunk()", "base revision");
+	if (trunk !== ROOT_COMMIT) return { ref: "trunk()", sha: trunk, strategy: "jj-trunk" };
+	for (const bookmark of ["main", "master"] as const) {
+		const sha = tryCommand(
+			exec,
+			"jj",
+			["log", "--no-graph", "--limit", "1", "-r", `present(${bookmark})`, "-T", "commit_id"],
+			cwd,
+		)?.trim();
+		if (sha && SHA_RE.test(sha)) {
+			return {
+				ref: bookmark,
+				sha: sha.toLowerCase(),
+				strategy: bookmark,
+				warning: `jj trunk() resolves to the root commit (no remote default branch); reviewing against local bookmark ${bookmark} instead.`,
+			};
+		}
+	}
+	throw new Error(
+		"jj trunk() resolves to the root commit and no local main or master bookmark exists. Pass --base <revset>.",
+	);
+}
+
 export function resolveJjReviewTarget(
-	cwd: string,
+	source: RepositorySource,
 	explicitBase?: string,
 	exec: CommandExec = defaultCommandExec,
-): JjReviewTarget | null {
-	const workspace = tryCommand(exec, "jj", ["workspace", "root"], cwd)?.trim();
-	if (!workspace) return null;
-	const gitRoot = tryCommand(exec, "jj", ["git", "root"], workspace)?.trim();
-	if (!gitRoot) throw new Error(`${workspace} is a jj workspace without a colocated Git store.`);
-
-	const workspaceRoot = realpathSync(workspace);
-	const resolvedGitRoot = realpathSync(gitRoot);
+): JjReviewTarget {
+	const cwd = source.root;
 	const conflicts = tryCommand(
 		exec,
 		"jj",
 		["log", "--no-graph", "-r", "conflicts() & @", "-T", 'commit_id ++ "\\n"'],
-		workspaceRoot,
+		cwd,
 	);
 	if (conflicts === null) throw new Error("Could not inspect the jj working-copy commit for conflicts.");
 	if (conflicts.trim())
 		throw new Error("Cannot review a conflicted jj working-copy commit. Resolve its conflicts first.");
 
-	const headSha = resolveSingleRevision(exec, workspaceRoot, "@", "working-copy revision");
-	const baseRef = explicitBase ?? "trunk()";
-	const baseCommit = resolveSingleRevision(exec, workspaceRoot, baseRef, "base revision");
-	const mergeBase = tryCommand(
-		exec,
-		"git",
-		[`--git-dir=${resolvedGitRoot}`, "merge-base", baseCommit, headSha],
-		workspaceRoot,
-	)
-		?.trim()
-		.toLowerCase();
-	if (!mergeBase || !SHA_RE.test(mergeBase)) {
-		throw new Error(`Could not calculate a merge base between jj revisions ${baseRef} and @.`);
+	const headSha = resolveSingleRevision(exec, cwd, "@", "working-copy revision");
+	const warnings: string[] = [];
+	let base: BaseCandidate;
+	if (explicitBase === undefined) {
+		base = resolveDefaultBase(exec, cwd);
+		if (base.warning) warnings.push(base.warning);
+	} else {
+		base = {
+			ref: explicitBase,
+			sha: resolveSingleRevision(exec, cwd, explicitBase, "base revision"),
+			strategy: "explicit",
+		};
 	}
-	return {
-		workspaceRoot,
-		gitRoot: resolvedGitRoot,
-		headSha,
-		base: { ref: baseRef, mergeBaseSha: mergeBase, strategy: explicitBase ? "explicit" : "jj-trunk" },
-	};
-}
-
-export function createGitStoreExec(gitRoot: string): GitExec {
-	return (args, cwd) =>
-		execFileSync("git", [`--git-dir=${gitRoot}`, ...args], {
-			cwd,
-			encoding: "utf8",
-			maxBuffer: 64 * 1024 * 1024,
-			shell: false,
-		});
+	let mergeBaseSha = "";
+	try {
+		mergeBaseSha = source.git(["merge-base", base.sha, headSha], cwd).trim().toLowerCase();
+	} catch {
+		/* reported below */
+	}
+	if (!SHA_RE.test(mergeBaseSha)) {
+		throw new Error(`Could not calculate a merge base between jj revisions ${base.ref} and @.`);
+	}
+	return { headSha, base: { ref: base.ref, mergeBaseSha, strategy: base.strategy }, warnings };
 }
