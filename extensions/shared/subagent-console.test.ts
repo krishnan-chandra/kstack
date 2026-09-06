@@ -186,6 +186,32 @@ describe("wrapAndSanitizeText", () => {
 		};
 		assert.deepEqual(wrapAndSanitizeText("aa 👨‍👩‍👧‍👦 bb", 4, terminalText), ["aa", "👨‍👩‍👧‍👦", "bb"]);
 	});
+
+	it("preserves exact whitespace, control, and oversized-grapheme wrapping behavior", () => {
+		assert.deepEqual(wrapAndSanitizeText("alpha   beta gamma", 8, fakeText), ["alpha  ", "beta", "gamma"]);
+		assert.deepEqual(wrapAndSanitizeText("ab\tcd", 3, fakeText), ["ab", "cd"]);
+		assert.deepEqual(wrapAndSanitizeText("ééé", 2, fallbackTerminalText), ["éé", "é"]);
+		assert.deepEqual(wrapAndSanitizeText("漢", 1, fallbackTerminalText), ["漢"]);
+	});
+
+	it("performs bounded width work as fixed-width input doubles", () => {
+		const counts: number[] = [];
+		for (const size of [8, 16, 32].map((kilobytes) => kilobytes * 1024)) {
+			let measuredCodeUnits = 0;
+			const terminalText: TerminalText = {
+				stripTerminalSequences: (text) => text,
+				truncateToWidth: (text) => text,
+				visibleWidth: (text) => {
+					measuredCodeUnits += text.length;
+					return text.length;
+				},
+			};
+			wrapAndSanitizeText("x".repeat(size), 80, terminalText);
+			counts.push(measuredCodeUnits);
+		}
+		assert.ok(counts[1] <= counts[0] * 3, `${counts[0]} -> ${counts[1]}`);
+		assert.ok(counts[2] <= counts[1] * 3, `${counts[1]} -> ${counts[2]}`);
+	});
 });
 
 describe("format helpers", () => {
@@ -657,6 +683,44 @@ describe("SubagentConsoleComponent", () => {
 		const { component } = setup({ rows: 31 });
 		const lines = component.render(80);
 		assert.equal(lines.length, 31);
+		component.dispose();
+	});
+
+	it("reuses finalized layouts across renders and dashboard ticks", () => {
+		const dashboard = makeDashboard([makeRow("r1", "alpha", "model-a")]);
+		const transcripts = makeTranscripts();
+		transcripts.push("r1", { kind: "text", text: "x".repeat(8192), turn: 1, at: 0 });
+		let measured = 0;
+		const text: TerminalText = {
+			...fakeText,
+			visibleWidth: (value) => {
+				if (value.length > 1000) measured += value.length;
+				return value.length;
+			},
+		};
+		const component = new SubagentConsoleComponent(
+			dashboard,
+			transcripts,
+			{ requestRender: () => {}, terminal: { rows: 24 } },
+			fakeTheme,
+			() => {},
+			undefined,
+			text,
+		);
+		component.render(120);
+		const afterCold = measured;
+		component.render(120);
+		dashboard.emit();
+		component.render(120);
+		assert.equal(measured, afterCold);
+
+		transcripts.setTail("r1", `tail update ${"y".repeat(2048)}`);
+		component.render(120);
+		assert.ok(measured > afterCold);
+		const afterTail = measured;
+		component.invalidate();
+		component.render(120);
+		assert.ok(measured > afterTail);
 		component.dispose();
 	});
 });
