@@ -17,6 +17,8 @@ describe("kstack-router argument completions", () => {
 		assert.ok(labels.includes("--stack"));
 		assert.ok(labels.includes("--worktree"));
 		assert.ok(labels.includes("--change-kind"));
+		assert.ok(labels.includes("--no-adversary"));
+		assert.ok(labels.includes("--plan-only"));
 		assert.ok(labels.includes("--mode"));
 		assert.ok(labels.includes("--pr"));
 		assert.ok(labels.includes("--method"));

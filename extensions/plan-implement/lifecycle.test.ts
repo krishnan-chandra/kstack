@@ -3,47 +3,47 @@ import { describe, it } from "node:test";
 import { WorkflowLifecycle } from "./lifecycle.ts";
 
 describe("WorkflowLifecycle", () => {
-	it("arms cancellation only while a child is running", () => {
+	it("arms cancellation only while a hosted role is running", () => {
 		const lifecycle = new WorkflowLifecycle();
 		lifecycle.startSession();
 		const token = lifecycle.beginWorkflow();
 		assert.ok(token);
 		if (!token) return;
 		assert.equal(lifecycle.currentPhase(), "approval");
-		assert.equal(lifecycle.abortActiveChild(), false);
+		assert.equal(lifecycle.abortActiveRole(), false);
 
-		const planner = lifecycle.beginChild(token, "planning");
+		const planner = lifecycle.beginRole(token, "planning");
 		assert.ok(planner);
-		assert.equal(lifecycle.abortActiveChild(), true);
+		assert.equal(lifecycle.abortActiveRole(), true);
 		assert.equal(planner?.signal.aborted, true);
-		if (planner) lifecycle.endChild(token, planner);
+		if (planner) lifecycle.endRole(token, planner);
 		assert.equal(lifecycle.currentPhase(), "approval");
 
-		const implementer = lifecycle.beginChild(token, "implementing");
+		const implementer = lifecycle.beginRole(token, "implementing");
 		assert.ok(implementer);
 		assert.equal(implementer?.signal.aborted, false);
-		if (implementer) lifecycle.endChild(token, implementer);
+		if (implementer) lifecycle.endRole(token, implementer);
 
-		const fixer = lifecycle.beginChild(token, "fixing");
+		const fixer = lifecycle.beginRole(token, "fixing");
 		assert.ok(fixer);
 		assert.equal(lifecycle.currentPhase(), "fixing");
-		if (fixer) lifecycle.endChild(token, fixer);
+		if (fixer) lifecycle.endRole(token, fixer);
 
-		const publisher = lifecycle.beginChild(token, "publishing");
+		const publisher = lifecycle.beginRole(token, "publishing");
 		assert.ok(publisher);
 		assert.equal(lifecycle.currentPhase(), "publishing");
 	});
 
-	it("invalidates stale callbacks and aborts the active child on shutdown", () => {
+	it("invalidates stale callbacks and aborts the active role on shutdown", () => {
 		const lifecycle = new WorkflowLifecycle();
 		lifecycle.startSession();
 		const token = lifecycle.beginWorkflow();
 		assert.ok(token);
 		if (!token) return;
-		const child = lifecycle.beginChild(token, "planning");
-		assert.ok(child);
+		const role = lifecycle.beginRole(token, "planning");
+		assert.ok(role);
 		lifecycle.shutdownSession();
-		assert.equal(child?.signal.aborted, true);
+		assert.equal(role?.signal.aborted, true);
 		assert.equal(lifecycle.isCurrent(token), false);
 		assert.equal(lifecycle.isSessionCurrent(token), false);
 

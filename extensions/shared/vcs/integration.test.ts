@@ -24,7 +24,7 @@ describe("configured VCS adapter boundary", () => {
 	it("owns reusable workflow preflight below the Pi adapter", () => {
 		assert.doesNotMatch(source(join(EXTENSIONS_DIR, "pr-autopilot", "index.ts")), /\.preflight\s*\(/);
 		assert.equal(source(join(EXTENSIONS_DIR, "pr-autopilot", "driver.ts")).match(/\.preflight\s*\(/g)?.length, 1);
-		// plan-implement deliberately owns separate normal and fast-mode adapter preflights.
+		// plan-implement owns normal and stack adapter preflights; fast-mode preflight stays in fast-runner.
 		assert.equal(source(join(EXTENSIONS_DIR, "plan-implement", "index.ts")).match(/\.preflight\s*\(/g)?.length, 2);
 	});
 

@@ -115,7 +115,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("kstack", {
 		description:
 			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] " +
-			"[--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>. " +
+			"[--no-adversary] [--plan-only] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>. " +
 			"Prompts for classification when no --route is given.",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
@@ -205,6 +205,10 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 			const { route, delivery, changeKind, overrode, modelSource, confidence } = resolution.resolved;
+			if (route !== "change" && (parsed.args.planOnly || parsed.args.adversary === false)) {
+				notify("--no-adversary and --plan-only apply only to the change route.", "warning");
+				return;
+			}
 			const worktree = parsed.args.worktree ?? false;
 
 			const postPrResolution = await resolvePostPrOptions(route, parsed.args, {
@@ -345,6 +349,10 @@ export default function (pi: ExtensionAPI): void {
 					pi,
 					ctx,
 					postPr,
+					{
+						adversary: parsed.args.adversary ?? true,
+						planOnly: parsed.args.planOnly ?? false,
+					},
 				);
 				routeCard.dispatchStatus = result.status;
 				pi.sendMessage({

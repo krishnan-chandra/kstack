@@ -26,22 +26,46 @@ describe("plan-implement in-process API", () => {
 			workLocation: WorkLocation;
 			changeKind: ChangeKind;
 			fast: boolean;
+			adversary: boolean;
+			planOnly: boolean;
 			ctx: ExtensionCommandContext;
 		}[] = [];
 		const ctx =
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext;
 		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: fakeBus((data) => {
-				claimPlanImplementRequest(data, async (task, mode, workLocation, changeKind, fast, receivedCtx) => {
-					assert.equal(receivedCtx, ctx);
-					calls.push({ task, mode, workLocation, changeKind, fast, ctx });
-				});
+				claimPlanImplementRequest(
+					data,
+					async (task, mode, workLocation, changeKind, fast, adversary, planOnly, receivedCtx) => {
+						assert.equal(receivedCtx, ctx);
+						calls.push({ task, mode, workLocation, changeKind, fast, adversary, planOnly, ctx });
+					},
+				);
 			}),
 		} as never;
-		const result = await requestPlanImplement(pi, "Add feature X", "single", "worktree", "feature", false, ctx);
+		const result = await requestPlanImplement(
+			pi,
+			"Add feature X",
+			"single",
+			"worktree",
+			"feature",
+			false,
+			true,
+			false,
+			ctx,
+		);
 		assert.deepEqual(result, { handled: true });
 		assert.deepEqual(calls, [
-			{ task: "Add feature X", mode: "single", workLocation: "worktree", changeKind: "feature", fast: false, ctx },
+			{
+				task: "Add feature X",
+				mode: "single",
+				workLocation: "worktree",
+				changeKind: "feature",
+				fast: false,
+				adversary: true,
+				planOnly: false,
+				ctx,
+			},
 		]);
 	});
 
@@ -56,6 +80,8 @@ describe("plan-implement in-process API", () => {
 			"current",
 			"generic",
 			false,
+			true,
+			false,
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext,
 		);
 		assert.deepEqual(result, { handled: false });
@@ -63,7 +89,7 @@ describe("plan-implement in-process API", () => {
 
 	it("allows only one listener to claim a request", () => {
 		const request = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			payload: {
 				task: "test",
 				mode: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "single" as DeliveryMode,
@@ -72,6 +98,8 @@ describe("plan-implement in-process API", () => {
 				changeKind:
 					/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ "generic" as ChangeKind,
 				fast: false,
+				adversary: true,
+				planOnly: false,
 				ctx: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as ExtensionCommandContext,
 			},
 			claimed: false,

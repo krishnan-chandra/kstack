@@ -79,6 +79,47 @@ describe("dispatchRoute", () => {
 		assert.equal(result.status, "aborted");
 	});
 
+	it("passes adversary and plan-only options through the change request", async () => {
+		const { lifecycle, token } = setup();
+		const seen: BoundaryValue[] = [];
+		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			events: {
+				emit(name: string, value: { payload: BoundaryValue; claimed: boolean; completion?: Promise<unknown> }) {
+					assert.equal(name, PLAN_IMPLEMENT_REQUEST_EVENT);
+					seen.push(value.payload);
+					value.claimed = true;
+					value.completion = Promise.resolve();
+				},
+			},
+		} as never;
+		const result = await dispatchRoute(
+			"change",
+			"task",
+			"single",
+			false,
+			"feature",
+			token,
+			lifecycle,
+			bus,
+			ctx,
+			undefined,
+			{ adversary: false, planOnly: true },
+		);
+		assert.equal(result.status, "dispatched");
+		assert.deepEqual(seen, [
+			{
+				task: "task",
+				mode: "single",
+				workLocation: "current",
+				changeKind: "feature",
+				fast: false,
+				adversary: false,
+				planOnly: true,
+				ctx,
+			},
+		]);
+	});
+
 	it("keeps current fast-change dispatch in the active session", async () => {
 		const { lifecycle, token } = setup();
 		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {

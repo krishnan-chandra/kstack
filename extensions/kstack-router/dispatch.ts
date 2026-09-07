@@ -33,6 +33,7 @@ export async function dispatchRoute(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	postPr?: PostPrRequest,
+	planOptions: { adversary: boolean; planOnly: boolean } = { adversary: true, planOnly: false },
 ): Promise<DispatchResult> {
 	if (!lifecycle.isCurrentDispatch(dispatchToken)) {
 		return { status: "aborted" };
@@ -49,6 +50,8 @@ export async function dispatchRoute(
 					worktree ? "worktree" : "current",
 					changeKind,
 					false,
+					planOptions.adversary,
+					planOptions.planOnly,
 					ctx,
 				);
 				if (!result.handled) {
@@ -82,6 +85,8 @@ export async function dispatchRoute(
 					worktree ? "worktree" : "current",
 					changeKind,
 					true,
+					false,
+					false,
 					ctx,
 				);
 				if (!result.handled) {

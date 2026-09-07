@@ -1,12 +1,12 @@
 /** Deterministic plan/implement phase runners with UI and lifecycle effects injected. */
 
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
 import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
-import type { ChildEvent } from "../shared/child-agent-runner.ts";
+import { extractSlug } from "../shared/slug.ts";
 import {
 	newlyCreatedDrafts,
 	publicationMetadataFollowUp,
@@ -15,26 +15,26 @@ import {
 } from "../shared/stack/outcome.ts";
 import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
-import { runAgent } from "./agent-runner.ts";
+import type { RoleRunner } from "./agent-runner.ts";
 import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
+import { parseCritique } from "./critique.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
-import type { PlanPipelineDashboard } from "./live-dashboard.ts";
-import type { AgentRole, AgentRunResult, DeliveryMode, WorkLocation } from "./types.ts";
+import type { AgentRunResult, CritiqueResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
 type Level = "info" | "warning" | "error";
 
 export interface PhaseEffects {
-	runAgent?: typeof runAgent;
+	runner: RoleRunner;
 	confirm(title: string, body: string): Promise<boolean>;
 	notify(message: string, level: Level): void;
 	setStatus(status: string | undefined): void;
 	sendPhase(result: AgentRunResult): void;
 	isCurrent(): boolean;
 	isSessionCurrent(): boolean;
-	beginChild(phase: Exclude<WorkflowPhase, "idle" | "approval">): AbortController | undefined;
-	endChild(controller: AbortController): void;
+	beginRole(phase: Exclude<WorkflowPhase, "idle" | "approval">): AbortController | undefined;
+	endRole(controller: AbortController): void;
 	backend: VcsBackend;
 	requestPanelReview(options: PanelArgs): Promise<{ handled: false } | { handled: true; outcome: PanelReviewOutcome }>;
 	resolvePublishedPr(cwd: string): Promise<{ ok: true; prNumber: number } | { ok: false; error: string }>;
@@ -44,7 +44,6 @@ export interface PhaseEffects {
 		cwd: string,
 	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
 	requestStackPublication?(cwd: string): Promise<{ handled: false } | { handled: true; outcome: StackPublishOutcome }>;
-	dashboard?: PlanPipelineDashboard;
 }
 
 interface WorkflowState {
@@ -59,11 +58,16 @@ export interface ApprovedWorkflowOptions {
 	initialCwd: string;
 	promptsDir: string;
 	plannerModel: string;
+	adversaryModel?: string;
+	adversaryPromptFile?: string;
+	maxRounds?: number;
+	adversaryTimeoutMinutes?: number;
+	planOnly?: boolean;
 	implementerModel: string;
 	timeoutMinutes: number;
 	skillPaths: string[];
 	changePrompts: string[];
-	/** Appended only to stack implementer and review-fixer children. */
+	/** Appended only to stack implementer and review-fixer hosted agents. */
 	mutationPrompts?: string[];
 	trunkSha?: string;
 	stackTrunkRef?: string;
@@ -73,6 +77,7 @@ export interface ApprovedWorkflowOptions {
 export function phaseErrorText(result: AgentRunResult): string {
 	if (result.status === "failed") return result.error;
 	if (result.status === "aborted") return `${result.role} was aborted.`;
+	if (result.status === "blocked") return `${result.role} is blocked in pane ${result.paneId}.`;
 	return result.output;
 }
 
@@ -141,7 +146,6 @@ export async function runPostReviewPhases(
 		mutationPrompts,
 	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
-	const executeAgent = fx.runAgent ?? runAgent;
 	let reviewDir: string | undefined;
 	try {
 		reviewDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-review-"));
@@ -162,48 +166,25 @@ export async function runPostReviewPhases(
 				"verifies each against the repository, and re-runs focused tests. It commits verified fixes locally but does not push or publish.",
 		);
 		if (fx.isCurrent() && fixConfirmed) {
-			const controller = fx.beginChild("fixing");
+			const controller = fx.beginRole("fixing");
 			if (controller) {
 				try {
-					fx.setStatus(`plan-implement: fixer ${implementerModel}…`);
-					if (fx.isCurrent()) {
-						fx.dashboard?.addPhase("fixer", "Review fixer", implementerModel, "fixer");
-						fx.dashboard?.markRunning("fixer");
-						fx.dashboard?.note("fixer", "Review fixer started");
-					}
-					const fixer = await executeAgent({
+					fx.setStatus(`plan-implement: fixer ${implementerModel} · tab ${fx.runner.tabId}`);
+					const fixer = await fx.runner.run({
 						role: "fixer",
 						model: implementerModel,
 						promptFile: join(promptsDir, "review-fixer.md"),
 						taskFile,
 						verdictFile,
 						cwd: state.workflowCwd,
+						timeoutMs,
 						signal: controller.signal,
-						deps: { timeoutMs },
-						onProgress: ({ role, turns, activity, preview }) => {
-							if (fx.isCurrent()) {
-								fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
-								fx.dashboard?.progress(role, { turns, activity, preview });
-							}
-						},
-						onEvent: (event) => {
-							if (fx.isCurrent()) fx.dashboard?.event("fixer", event);
-						},
 						mode,
 						workLocation,
 						skillPaths,
 						supplementalPrompts: [...changePrompts, ...(mutationPrompts ?? [])],
 					});
 					if (fx.isCurrent()) {
-						fx.dashboard?.complete("fixer", {
-							status: fixer.status,
-							turns: fixer.status === "completed" ? fixer.usage.turns : undefined,
-							error: fixer.status === "failed" ? fixer.error : undefined,
-						});
-						fx.dashboard?.note(
-							"fixer",
-							`Review fixer ${fixer.status}${fixer.status === "failed" ? `: ${fixer.error}` : ""}`,
-						);
 						fx.sendPhase(fixer);
 						if (fixer.status !== "completed") {
 							fx.notify(
@@ -224,7 +205,7 @@ export async function runPostReviewPhases(
 						}
 					}
 				} finally {
-					fx.endChild(controller);
+					fx.endRole(controller);
 					if (fx.isCurrent()) fx.setStatus(undefined);
 				}
 			}
@@ -321,48 +302,25 @@ export async function runPostReviewPhases(
 				);
 			}
 		}
-		const controller = fx.beginChild("publishing");
+		const controller = fx.beginRole("publishing");
 		if (!controller) return;
 		let publisher: AgentRunResult | undefined;
 		try {
-			fx.setStatus(`plan-implement: publisher ${implementerModel}…`);
-			if (fx.isCurrent()) {
-				fx.dashboard?.addPhase("publisher", "Publisher", implementerModel, "publisher");
-				fx.dashboard?.markRunning("publisher");
-				fx.dashboard?.note("publisher", "Publisher started");
-			}
-			publisher = await executeAgent({
+			fx.setStatus(`plan-implement: publisher ${implementerModel} · tab ${fx.runner.tabId}`);
+			publisher = await fx.runner.run({
 				role: "publisher",
 				model: implementerModel,
 				promptFile: join(promptsDir, "publisher.md"),
 				taskFile,
 				verdictFile,
 				cwd: state.workflowCwd,
+				timeoutMs,
 				signal: controller.signal,
-				deps: { timeoutMs },
-				onProgress: ({ role, turns, activity, preview }) => {
-					if (fx.isCurrent()) {
-						fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
-						fx.dashboard?.progress(role, { turns, activity, preview });
-					}
-				},
-				onEvent: (event) => {
-					if (fx.isCurrent()) fx.dashboard?.event("publisher", event);
-				},
 				mode,
 				workLocation,
 				skillPaths,
 			});
 			if (fx.isCurrent()) {
-				fx.dashboard?.complete("publisher", {
-					status: publisher.status,
-					turns: publisher.status === "completed" ? publisher.usage.turns : undefined,
-					error: publisher.status === "failed" ? publisher.error : undefined,
-				});
-				fx.dashboard?.note(
-					"publisher",
-					`Publisher ${publisher.status}${publisher.status === "failed" ? `: ${publisher.error}` : ""}`,
-				);
 				fx.sendPhase(publisher);
 				fx.notify(
 					publisher.status === "completed"
@@ -372,7 +330,7 @@ export async function runPostReviewPhases(
 				);
 			}
 		} finally {
-			fx.endChild(controller);
+			fx.endRole(controller);
 			if (fx.isCurrent()) fx.setStatus(undefined);
 		}
 		if (mode === "single" && publisher?.status === "completed" && fx.isCurrent()) {
@@ -461,6 +419,11 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		initialCwd,
 		promptsDir,
 		plannerModel,
+		adversaryModel,
+		adversaryPromptFile,
+		maxRounds,
+		adversaryTimeoutMinutes,
+		planOnly,
 		implementerModel,
 		timeoutMinutes,
 		skillPaths,
@@ -470,30 +433,10 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		worktreePlan,
 	} = options;
 	const timeoutMs = timeoutMinutes * 60_000;
-	const executeAgent = fx.runAgent ?? runAgent;
 	const policy = vcsPolicy(fx.backend.id);
 	const state: WorkflowState = {
 		workflowCwd: initialCwd,
 		workstreamCheckpoint: worktreePlan ? { ref: worktreePlan.ref, baseSha: worktreePlan.baseSha } : undefined,
-	};
-	const progress = ({
-		role,
-		turns,
-		activity,
-		preview,
-	}: {
-		role: AgentRole;
-		turns: number;
-		activity: string;
-		preview?: string;
-	}) => {
-		if (fx.isCurrent()) {
-			fx.setStatus(`plan-implement: ${role} · ${turns} turn(s) · ${activity}`);
-			fx.dashboard?.progress(role, { turns, activity, preview });
-		}
-	};
-	const onEvent = (role: AgentRole) => (event: ChildEvent) => {
-		if (fx.isCurrent()) fx.dashboard?.event(role, event);
 	};
 	let tempDir: string | undefined;
 	let reviewOptions: PanelArgs | undefined;
@@ -501,6 +444,8 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		try {
 			tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
 			const taskFile = join(tempDir, "task.md");
+			const debatePlanFile = join(tempDir, "debate-plan.md");
+			const critiqueFile = join(tempDir, "critique.md");
 			const planFile = join(tempDir, "approved-plan.md");
 			const ledgerFile = join(tempDir, "execution-ledger.md");
 			let immutablePlanSnapshot: string | undefined;
@@ -513,51 +458,99 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					mode: 0o600,
 				},
 			);
+			let debateApproval = adversaryModel ? `Adversary ${adversaryModel}: awaiting critique.` : "Adversary: skipped.";
+			const runPlanningRole = async (
+				role: "planner" | "adversary",
+				model: string,
+				promptFile: string,
+				roleOptions: { planFile?: string; instructions?: string; supplementalPrompts?: string[] } = {},
+			): Promise<AgentRunResult> => {
+				const controller = fx.beginRole("planning");
+				if (!controller) return { status: "aborted", role, model };
+				try {
+					fx.setStatus(`plan-implement: ${role} ${model} · tab ${fx.runner.tabId}`);
+					const roleTimeoutMs = role === "adversary" ? (adversaryTimeoutMinutes ?? timeoutMinutes) * 60_000 : timeoutMs;
+					const result = await fx.runner.run({
+						role,
+						model,
+						promptFile,
+						taskFile,
+						planFile: roleOptions.planFile,
+						cwd: initialCwd,
+						timeoutMs: roleTimeoutMs,
+						signal: controller.signal,
+						instructions: roleOptions.instructions,
+						mode,
+						workLocation,
+						skillPaths,
+						supplementalPrompts: roleOptions.supplementalPrompts,
+					});
+					if (fx.isCurrent()) fx.sendPhase(result);
+					return result;
+				} finally {
+					fx.endRole(controller);
+				}
+			};
 			const outcome = await runWorkflow({
-				runPlanner: async () => {
-					const controller = fx.beginChild("planning");
-					if (!controller) return { status: "aborted", role: "planner", model: plannerModel };
-					try {
-						fx.setStatus(`plan-implement: planner ${plannerModel}…`);
-						if (fx.isCurrent()) {
-							fx.dashboard?.markRunning("planner");
-							fx.dashboard?.note("planner", "Planner started");
-						}
-						const result = await executeAgent({
-							role: "planner",
-							model: plannerModel,
-							promptFile: join(promptsDir, "planner.md"),
-							taskFile,
-							cwd: initialCwd,
-							signal: controller.signal,
-							deps: { timeoutMs },
-							onProgress: progress,
-							onEvent: onEvent("planner"),
-							mode,
-							workLocation,
-							skillPaths,
-							supplementalPrompts: changePrompts,
-						});
-						if (fx.isCurrent()) {
-							fx.dashboard?.complete("planner", {
-								status: result.status,
-								turns: result.status === "completed" ? result.usage.turns : undefined,
-								error: result.status === "failed" ? result.error : undefined,
-							});
-							fx.dashboard?.note(
-								"planner",
-								`Planner ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
-							);
-						}
-						return result;
-					} finally {
-						fx.endChild(controller);
+				runPlanner: () =>
+					runPlanningRole("planner", plannerModel, join(promptsDir, "planner.md"), {
+						supplementalPrompts: changePrompts,
+					}),
+				revisePlan:
+					adversaryModel && adversaryPromptFile
+						? async (previous, critique) => {
+								writeFileSync(debatePlanFile, previous, { encoding: "utf8", mode: 0o600 });
+								writeFileSync(critiqueFile, critique, { encoding: "utf8", mode: 0o600 });
+								return runPlanningRole("planner", plannerModel, join(promptsDir, "planner.md"), {
+									instructions: `Read the previous plan at ${debatePlanFile} and the adversary critique at ${critiqueFile}. Return the complete revised plan with the same required header and sections. Add a Changes since last round section that addresses every blocking finding by ID.`,
+									supplementalPrompts: changePrompts,
+								});
+							}
+						: undefined,
+				critique:
+					adversaryModel && adversaryPromptFile
+						? async (plan): Promise<CritiqueResult> => {
+								writeFileSync(debatePlanFile, plan, { encoding: "utf8", mode: 0o600 });
+								const result = await runPlanningRole("adversary", adversaryModel, adversaryPromptFile, {
+									planFile: debatePlanFile,
+								});
+								if (result.status === "aborted") return { status: "aborted" };
+								if (result.status !== "completed") return { status: "failed", error: phaseErrorText(result) };
+								const parsed = parseCritique(result.output);
+								return parsed.ok
+									? { status: "completed", critique: parsed.critique }
+									: { status: "failed", error: parsed.error };
+							}
+						: undefined,
+				maxRounds,
+				resolveExhaustion:
+					adversaryModel && adversaryPromptFile
+						? async (_plan, findings) => {
+								const open =
+									findings.map((finding) => `- [${finding.id}] ${finding.text}`).join("\n") ||
+									"- No parsed blocking findings.";
+								const plannerPane = fx.runner.paneId("planner") ?? "unknown";
+								const adversaryPane = fx.runner.paneId("adversary") ?? "unknown";
+								const verify = await fx.confirm(
+									"Adversarial debate exhausted",
+									`Open findings:\n${open}\n\nPlan: ${debatePlanFile}\nPlanner pane: ${plannerPane}\nAdversary pane: ${adversaryPane}\n\nEdit the plan file or steer the planner, then choose Verify. Decline to reject the plan.`,
+								);
+								return verify ? "verify" : "reject";
+							}
+						: undefined,
+				readPlan: adversaryModel && adversaryPromptFile ? () => readFileSync(debatePlanFile, "utf8") : undefined,
+				onRound: (round, result, roundOptions) => {
+					if (result.status === "completed" && result.critique.verdict === "approve") {
+						debateApproval = roundOptions.countsAgainstBudget
+							? `Adversary ${adversaryModel}: approved in round ${round}.`
+							: `Adversary ${adversaryModel}: approved after human edit.`;
 					}
 				},
 				onPlan: (plan) => {
 					if (!fx.isCurrent()) return;
 					const approved = `# Approved implementation plan\n\n${plan.output}\n`;
 					writeFileSync(planFile, approved, { encoding: "utf8", mode: 0o600 });
+					writeFileSync(debatePlanFile, plan.output, { encoding: "utf8", mode: 0o600 });
 					const ledger = createExecutionLedger(plan.output);
 					if (!ledger.ok) planValidationError = ledger.error;
 					else {
@@ -565,7 +558,11 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						immutablePlanSnapshot = approved;
 						chmodSync(planFile, 0o444);
 					}
-					fx.sendPhase(plan);
+					if (planOnly && !planValidationError) {
+						const plansDir = join(initialCwd, "local", "plans");
+						mkdirSync(plansDir, { recursive: true });
+						writeFileSync(join(plansDir, `${extractSlug(task)}.md`), `${plan.output}\n`, { mode: 0o600 });
+					}
 					fx.setStatus(undefined);
 				},
 				approvePlan: async () => {
@@ -577,25 +574,14 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					return fx.confirm(
 						"Approve planner output?",
 						mode === "stack"
-							? `Review the Planner card above. Continue with ${implementerModel}, which creates a local ${fx.backend.id} stack?`
-							: `Review the Planner card above. Continue with ${implementerModel}, which ${policy.approvalSummary}?`,
+							? `${debateApproval}\nReview the Planner card above. Continue with ${implementerModel}, which creates a local ${fx.backend.id} stack?`
+							: `${debateApproval}\nReview the Planner card above. Continue with ${implementerModel}, which ${policy.approvalSummary}?`,
 					);
 				},
+				planOnly,
 				runImplementer: async () => {
-					const completeEarly = (result: AgentRunResult): AgentRunResult => {
-						if (fx.isCurrent()) {
-							fx.dashboard?.complete("implementer", {
-								status: result.status,
-								error: result.status === "failed" ? result.error : undefined,
-							});
-							fx.dashboard?.note(
-								"implementer",
-								`Implementer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
-							);
-						}
-						return result;
-					};
-					const controller = fx.beginChild("implementing");
+					const completeEarly = (result: AgentRunResult): AgentRunResult => result;
+					const controller = fx.beginRole("implementing");
 					if (!controller) return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
 					try {
 						if (worktreePlan && state.workflowCwd === initialCwd) {
@@ -640,7 +626,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								{ encoding: "utf8", mode: 0o600 },
 							);
 						}
-						fx.setStatus(`plan-implement: implementer ${implementerModel}…`);
+						fx.setStatus(`plan-implement: implementer ${implementerModel} · tab ${fx.runner.tabId}`);
 						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
 							return completeEarly({
 								status: "failed",
@@ -648,11 +634,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								model: implementerModel,
 								error: "Approved plan changed before implementation; the plan is read-only.",
 							});
-						if (fx.isCurrent()) {
-							fx.dashboard?.markRunning("implementer");
-							fx.dashboard?.note("implementer", "Implementer started");
-						}
-						const result = await executeAgent({
+						const result = await fx.runner.run({
 							role: "implementer",
 							model: implementerModel,
 							promptFile: join(promptsDir, "implementer.md"),
@@ -660,26 +642,13 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							planFile,
 							ledgerFile,
 							cwd: state.workflowCwd,
+							timeoutMs,
 							signal: controller.signal,
-							deps: { timeoutMs },
-							onProgress: progress,
-							onEvent: onEvent("implementer"),
 							mode,
 							workLocation,
 							skillPaths,
 							supplementalPrompts: [...changePrompts, ...(options.mutationPrompts ?? [])],
 						});
-						if (fx.isCurrent()) {
-							fx.dashboard?.complete("implementer", {
-								status: result.status,
-								turns: result.status === "completed" ? result.usage.turns : undefined,
-								error: result.status === "failed" ? result.error : undefined,
-							});
-							fx.dashboard?.note(
-								"implementer",
-								`Implementer ${result.status}${result.status === "failed" ? `: ${result.error}` : ""}`,
-							);
-						}
 						if (result.status !== "completed") return result;
 						if (readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
 							return {
@@ -704,7 +673,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 							? withLedger
 							: { status: "failed", role: "implementer", model: implementerModel, error: verified.error };
 					} finally {
-						fx.endChild(controller);
+						fx.endRole(controller);
 					}
 				},
 				onImplementation: (result) => {
@@ -720,8 +689,15 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						`Planner did not complete: ${phaseErrorText(outcome.planner)}`,
 						outcome.planner.status === "aborted" ? "info" : "error",
 					);
-				else if (outcome.status === "rejected") fx.notify("Plan rejected; the implementer was not launched.", "info");
-				else if (outcome.status === "implementer-failed")
+				else if (outcome.status === "debate-failed") {
+					const error = outcome.critique.status === "failed" ? outcome.critique.error : "the adversary was aborted";
+					fx.notify(`Adversarial debate did not complete: ${error}`, "error");
+				} else if (outcome.status === "rejected") fx.notify("Plan rejected; the implementer was not launched.", "info");
+				else if (outcome.status === "plan-only") {
+					const savedPlan = join(initialCwd, "local", "plans", `${extractSlug(task)}.md`);
+					if (planValidationError) fx.notify(`Plan-only run failed validation: ${planValidationError}`, "error");
+					else fx.notify(`Plan-only run complete; plan at ${savedPlan}; no workstream created.`, "info");
+				} else if (outcome.status === "implementer-failed")
 					fx.notify(
 						`Implementer did not complete: ${phaseErrorText(outcome.implementer)} Committed checkpoints may exist on the task branch, and uncommitted partial edits may remain; panel review was not started.`,
 						outcome.implementer.status === "aborted" ? "warning" : "error",

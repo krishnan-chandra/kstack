@@ -35,6 +35,8 @@ const ALL_FLAGS = [
 	"--stack",
 	"--worktree",
 	"--change-kind",
+	"--no-adversary",
+	"--plan-only",
 	"--mode",
 	"--pr",
 	"--method",
@@ -57,7 +59,7 @@ function splitLastToken(prefix: string) {
 	return { base: prefix.slice(0, start), token: prefix.slice(start) };
 }
 
-const BOOLEAN_FLAGS = new Set(["--single", "--stack", "--worktree"]);
+const BOOLEAN_FLAGS = new Set(["--single", "--stack", "--worktree", "--no-adversary", "--plan-only"]);
 const VALUE_TAKING_FLAGS = new Set([...VALUE_FLAGS.keys(), "--pr"]);
 
 /**

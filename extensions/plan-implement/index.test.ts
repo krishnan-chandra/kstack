@@ -84,6 +84,16 @@ describe("parsePlanImplementArgs", () => {
 		}
 	});
 
+	it("parses adversary and plan-only flags and rejects fast plan-only runs", () => {
+		const parsed = parsePlanImplementArgs("--no-adversary --plan-only --change-kind feature Draft it");
+		assert.ok(parsed.ok);
+		assert.equal(parsed.adversary, false);
+		assert.equal(parsed.planOnly, true);
+		assert.equal(parsed.task, "Draft it");
+		assert.equal(parsePlanImplementArgs("--fast --plan-only task").ok, false);
+		assert.equal(parsePlanImplementArgs("--no-adversary --no-adversary task").ok, false);
+	});
+
 	it("accepts a managed worktree only with single delivery", () => {
 		const r = parsePlanImplementArgs("--worktree --single --change-kind feature add search");
 		assert.equal(r.ok, true);
@@ -135,6 +145,8 @@ describe("getArgumentCompletions", () => {
 			{ value: "--worktree", label: "--worktree" },
 			{ value: "--change-kind", label: "--change-kind" },
 			{ value: "--fast", label: "--fast" },
+			{ value: "--no-adversary", label: "--no-adversary" },
+			{ value: "--plan-only", label: "--plan-only" },
 		]);
 	});
 

@@ -7,7 +7,7 @@ before waiting, classification, or dispatch. It never overwrites an explicit
 session name.
 
 ```
-/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>
+/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--no-adversary] [--plan-only] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>
 ```
 
 ## Route table
@@ -16,7 +16,7 @@ session name.
 |---|---|---|
 | `investigate` | Read-only research, explain, diagnose | Active session, read-only tools |
 | `change` | Feature, fix, refactor, prototype | plan-implement → panel-review |
-| `fast-change` | Implement an explicit, bounded existing plan | plan-implement --fast (current session or worktree child) |
+| `fast-change` | Implement an explicit, bounded existing plan | plan-implement --fast in one hosted Herdr pane |
 | `arena` | Competing parallel candidates | Arena skill, frame-first |
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
@@ -32,6 +32,8 @@ session name.
 /kstack Explain the archive indexing strategy
 /kstack --route investigate What does the handoff extension do?
 /kstack --route change --change-kind refactor Refactor the config loader
+/kstack --route change --plan-only --change-kind feature Draft the migration
+/kstack --route change --no-adversary --change-kind feature Use the existing plan
 /kstack --route change --worktree --change-kind feature Add isolated search
 /kstack --route fast-change --worktree --change-kind bug-fix Fix a narrow parser bug
 /kstack --route change --stack --change-kind feature Split feature into three PRs
@@ -51,8 +53,8 @@ Typing `/kstack` in the TUI offers Tab-completion for leading flag names and,
 right after a flag with a finite value set, that flag's valid values:
 `--route` (route IDs), `--change-kind` (change kinds), `--mode` (`check`,
 `threads`, `drive`, `watch`, `cleanup`), `--method` (`squash`, `rebase`), and
-`--readiness` (`check`, `watch`). `--single`, `--stack`, `--worktree`, and
-`--` complete as flags with no further value. `--pr` completes only as a
+`--readiness` (`check`, `watch`). `--single`, `--stack`, `--worktree`,
+`--no-adversary`, `--plan-only`, and `--` complete as flags with no further value. `--pr` completes only as a
 flag; its numeric value is never guessed. Completion stops once the task or a
 bare `--` has started, because `/kstack` only accepts flags before the task.
 
@@ -94,7 +96,10 @@ the classifier has insufficient context:
 
 `--worktree` is valid only for a change route and dispatches single-PR work
 to a managed Git linked worktree beneath `~/.pi/kstack/worktrees`. It cannot be
-combined with `--stack` in v1. `fast-change` always uses single delivery; use `change --stack` for a decomposed jj stack.
+combined with `--stack`. `--no-adversary` skips the configured debate, and
+`--plan-only` returns the final plan without a workstream. Both flags apply
+only to the `change` route. `fast-change` always uses single delivery; use
+`change --stack` for a decomposed stack.
 
 The classifier recommends `fast-change` when the task explicitly says an approved plan already exists and implementation is bounded and low risk. The route selection UI also offers **Fast implement** as an override after a `change` recommendation. Security, authentication, concurrency, persistence, schemas, migrations, dependency updates, public APIs, multi-package changes, architectural choices, and unclear scope remain on the higher-assurance `change` or `investigate` routes.
 
@@ -104,8 +109,8 @@ write and commit coherent increments as work proceeds. They stop on a dirty
 current working tree and never push or publish. Read-only routes
 (`investigate`, `review`, `session-pickup`) do not create branches.
 
-Non-generic kinds attach a concise proof-obligation playbook to both child
-roles. Bug fixes reproduce and rerun the same regression check; refactors pin
+Non-generic kinds attach a concise proof-obligation playbook to hosted
+planning and implementation roles. Bug fixes reproduce and rerun the same regression check; refactors pin
 and preserve behavior; performance work records matching baseline and
 post-change measurements; features exercise observable user behavior; and
 prototypes remain isolated and answer a decision question. `generic` retains

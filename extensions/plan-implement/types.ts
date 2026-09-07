@@ -1,5 +1,4 @@
 /** Shared types and limits for the plan/implement workflow. */
-import type { ChildSession } from "../shared/child-agent-runner.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
 export type { ModelThinkingLevel };
@@ -10,7 +9,7 @@ export type DeliveryMode = "single" | "stack";
 /** Where single-PR implementation and follow-up phases run. */
 export type WorkLocation = "current" | "worktree";
 
-/** A discovered skill we may pass to a child via --skill. */
+/** A discovered skill we may pass to a hosted agent with --skill. */
 export interface SkillRef {
 	/** Skill name (frontmatter `name`), used for Arena exclusion. */
 	name: string;
@@ -42,8 +41,31 @@ interface UsageSummary {
 	turns: number;
 }
 
-/** Child roles in the plan → implement → review-fix → publish loop. */
-export type AgentRole = "planner" | "implementer" | "fixer" | "publisher";
+/** Hosted roles in the plan → debate → implement → review-fix → publish loop. */
+export type AgentRole = "planner" | "adversary" | "implementer" | "fixer" | "publisher";
+
+export interface CritiqueFinding {
+	id: string;
+	text: string;
+}
+
+export interface ResolvedCritiqueFinding {
+	id: string;
+	summary: string;
+}
+
+export interface Critique {
+	verdict: "approve" | "revise";
+	blocking: CritiqueFinding[];
+	suggestions: CritiqueFinding[];
+	resolved: ResolvedCritiqueFinding[];
+	raw: string;
+}
+
+export type CritiqueResult =
+	| { status: "completed"; critique: Critique }
+	| { status: "failed"; error: string }
+	| { status: "aborted" };
 
 export type AgentRunResult =
 	| {
@@ -52,16 +74,18 @@ export type AgentRunResult =
 			model: string;
 			output: string;
 			usage: UsageSummary;
-			session?: ChildSession;
+			session?: string;
 			/** Execution-ledger section preserved for panel review, including omissions. */
 			executionLedger?: string;
 	  }
-	| { status: "failed"; role: AgentRole; model: string; error: string; session?: ChildSession }
-	| { status: "aborted"; role: AgentRole; model: string; session?: ChildSession };
+	| { status: "blocked"; role: AgentRole; model: string; paneId: string; session?: string }
+	| { status: "failed"; role: AgentRole; model: string; error: string; session?: string }
+	| { status: "aborted"; role: AgentRole; model: string; session?: string };
 
 export const LIMITS = {
 	taskBytes: 32 * 1024,
 	plannerOutputBytes: 64 * 1024,
+	critiqueOutputBytes: 32 * 1024,
 	implementerOutputBytes: 32 * 1024,
 	stderrBytes: 8 * 1024,
 	stdoutLineBytes: 2 * 1024 * 1024,

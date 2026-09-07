@@ -1,4 +1,4 @@
-/** Two-model plan → approve → implement → panel-review orchestration. */
+/** Hosted planner → adversary debate → implementation → panel-review orchestration. */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,7 +8,6 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { requestLand } from "../land/api.ts";
 import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
-import { getAgentPaneHost } from "../shared/agent-pane.ts";
 import {
 	CHANGE_KINDS,
 	type ChangeKind,
@@ -19,30 +18,22 @@ import {
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { findOpenPullRequestByHead } from "../shared/github.ts";
+import { openAgentHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
+import { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
-import { splitModelRef } from "../shared/model-spec.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
+import { extractSlug } from "../shared/slug.ts";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
+import { createRoleRunner } from "./agent-runner.ts";
 import { claimPlanImplementRequest, PLAN_IMPLEMENT_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parsePlanImplementArgs, validateTask } from "./command.ts";
-import { loadConfig, modelCliId, resolveImplementerOnly, resolveRoles } from "./config.ts";
-import { buildFastImplementerGuidance, type FastImplementOutcome, runFastWorktree } from "./fast-runner.ts";
-import {
-	buildFastKickoff,
-	checkFastSettlement,
-	createFastWorkstream,
-	FAST_IMPLEMENT_RUN_COMPLETE_ENTRY,
-	FAST_IMPLEMENT_RUN_ENTRY,
-	type FastPendingRun,
-	FastTakeoverController,
-	preflightFastWorkstream,
-} from "./fast-takeover.ts";
+import { loadConfig, modelCliId, resolveAdversary, resolveImplementerOnly, resolveRoles } from "./config.ts";
+import { type FastImplementOutcome, runFastCurrent, runFastWorktree } from "./fast-runner.ts";
 import { WorkflowLifecycle } from "./lifecycle.ts";
-import type { PlanPipelineDashboard } from "./live-dashboard.ts";
 import { runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { createStackDeliveryClient } from "./stack-delivery.ts";
@@ -51,7 +42,6 @@ import {
 	type AgentRunResult,
 	type DeliveryMode,
 	LIMITS,
-	type RoleSpec,
 	type SkillRef,
 	type WorkLocation,
 } from "./types.ts";
@@ -60,14 +50,18 @@ import { validateVcsMode } from "./vcs-mode.ts";
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 const PLAYBOOKS_DIR = join(EXTENSION_DIR, "..", "shared", "playbooks");
+const ADVERSARY_PROMPT_FILE = join(EXTENSION_DIR, "..", "..", "skills", "adversarial-planning", "adversary-prompt.md");
 interface PhaseDetails {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	phase: AgentRole;
 	status: AgentRunResult["status"];
 	model: string;
+	turns?: number;
+	cost?: number;
 }
 const PHASE_LABELS = {
 	planner: "Planner",
+	adversary: "Adversary",
 	implementer: "Implementer",
 	fixer: "Review fixer",
 	publisher: "Publisher",
@@ -76,10 +70,15 @@ const PHASE_LABELS = {
 function errorText(result: AgentRunResult): string {
 	if (result.status === "failed") return result.error;
 	if (result.status === "aborted") return `${result.role} was aborted.`;
+	if (result.status === "blocked") return `${result.role} is blocked in pane ${result.paneId}.`;
 	return result.output;
 }
 function sendPhaseMessage(pi: ExtensionAPI, result: AgentRunResult): void {
-	const details: PhaseDetails = { schemaVersion: 1, phase: result.role, status: result.status, model: result.model };
+	const details: PhaseDetails = { schemaVersion: 2, phase: result.role, status: result.status, model: result.model };
+	if (result.status === "completed") {
+		details.turns = result.usage.turns;
+		details.cost = result.usage.cost;
+	}
 	pi.sendMessage({
 		customType: "plan-implement",
 		content: result.status === "completed" ? result.output : errorText(result),
@@ -93,56 +92,23 @@ function discoveredSkillRefs(ctx: { getSystemPromptOptions(): { skills?: Skill[]
 export default function planImplementExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "plan-implement");
 	const lifecycle = new WorkflowLifecycle();
-	const fastSettlement = new FastTakeoverController();
-	const paneHost = getAgentPaneHost(pi);
 	const backendFor = (id: VcsBackend["id"]): VcsBackend => createVcsBackend(id, makeExec(pi));
-	let pendingFastToken: ReturnType<WorkflowLifecycle["currentSessionToken"]>;
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();
-	pi.on("session_start", () => {
-		fastSettlement.reset();
-		pendingFastToken = undefined;
-		lifecycle.startSession();
-	});
-	pi.on("session_shutdown", () => {
-		pendingFastToken = undefined;
-		lifecycle.shutdownSession();
-	});
-	pi.on("agent_settled", async (_event, ctx) => {
-		const pending = fastSettlement.begin(ctx.sessionManager.getBranch());
-		if (!pending) return;
-		ctx.ui.setStatus("plan-implement", "plan-implement: verifying committed work…");
-		try {
-			const settlement = await checkFastSettlement(pending, backendFor(pending.backend));
-			if (settlement.kind === "pending") {
-				ctx.ui.notify(
-					`Fast implementation is not committed yet: ${settlement.reason} Continue working or steer the session; verification will retry after the next settle.`,
-					"warning",
-				);
-				return;
-			}
-			await restoreFastModel(pending, ctx);
-			pi.appendEntry(FAST_IMPLEMENT_RUN_COMPLETE_ENTRY, { runId: pending.runId, status: "completed" });
-			postFastOutcome(settlement.outcome, pending.implementerModel ?? "", ctx);
-			if (pendingFastToken) lifecycle.finishWorkflow(pendingFastToken);
-			pendingFastToken = undefined;
-		} finally {
-			ctx.ui.setStatus("plan-implement", undefined);
-			fastSettlement.finish(pending.runId);
-		}
-	});
+	pi.on("session_start", () => lifecycle.startSession());
+	pi.on("session_shutdown", () => lifecycle.shutdownSession());
 	pi.registerShortcut("ctrl+shift+i", {
-		description: "Abort the running plan/implement agent",
+		description: "Abort the running plan/implement hosted agent",
 		handler: async (ctx) => {
-			if (lifecycle.abortActiveChild()) {
-				if (ctx.mode !== "tui") {
-					ctx.ui.setStatus("plan-implement", "plan-implement: aborting child process…");
-				}
+			if (lifecycle.abortActiveRole()) {
+				ctx.ui.setStatus("plan-implement", "plan-implement: aborting hosted agent…");
 			} else {
 				const suffix =
-					lifecycle.currentPhase() === "approval" ? " The workflow is awaiting approval; no child is running." : "";
-				ctx.ui.notify(`No plan/implement child is running.${suffix}`, "info");
+					lifecycle.currentPhase() === "approval"
+						? " The workflow is awaiting approval; no hosted agent is running."
+						: "";
+				ctx.ui.notify(`No plan/implement hosted agent is running.${suffix}`, "info");
 			}
 		},
 	});
@@ -160,7 +126,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					? theme.fg("warning", "■")
 					: theme.fg("error", "■");
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-		const header = `${icon} ${theme.fg("accent", phase)}${theme.fg("muted", ` — ${details?.model ?? "unknown model"} — ${status}`)}`;
+		const usage = details?.turns === undefined ? "" : ` — ${details.turns} turn(s), $${(details.cost ?? 0).toFixed(4)}`;
+		const header = `${icon} ${theme.fg("accent", phase)}${theme.fg("muted", ` — ${details?.model ?? "unknown model"} — ${status}${usage}`)}`;
 		box.addChild(
 			new Text(
 				expanded ? `${header}\n\n${message.content}` : `${header}${theme.fg("dim", " (Ctrl+O to expand)")}`,
@@ -195,11 +162,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		workLocation: WorkLocation,
 		changeKind: ChangeKind,
 		fast: boolean,
+		adversary: boolean,
+		planOnly: boolean,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
 		const notify = ctx.ui.notify.bind(ctx.ui);
-		if (!ctx.hasUI) {
-			notify("plan-implement requires interactive TUI or RPC mode.", "error");
+		if (ctx.mode !== "tui") {
+			notify("plan-implement requires interactive TUI mode inside Herdr.", "error");
 			return;
 		}
 		if (lifecycle.isRunning()) {
@@ -213,6 +182,12 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
+		const herdrExec = createNodeHerdrExec();
+		const herdr = await preflightHerdr({ exec: herdrExec });
+		if (!herdr.ok) {
+			notify(herdr.error, "error");
+			return;
+		}
 		const vcsConfig = loadVcsBackend();
 		for (const warning of vcsConfig.warnings) notify(warning, "warning");
 		const modeError = validateVcsMode(vcsConfig.backend, mode, workLocation);
@@ -234,13 +209,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const changePrompts = playbookPrompt
 			? [engineeringPrinciplesPrompt, playbookPrompt, backendPrompt]
 			: [engineeringPrinciplesPrompt, backendPrompt];
-		const preflightError = await checkBasicPreflights(ctx);
+		const preflightError = planOnly ? undefined : await checkBasicPreflights(ctx);
 		if (!lifecycle.isSessionCurrent(commandSession)) return;
 		if (preflightError) {
 			notify(preflightError, "error");
 			return;
 		}
-		if (mode === "single") {
+		if (mode === "single" && !planOnly) {
 			const preflight = await backend.preflight(ctx.cwd);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!preflight.ok) {
@@ -249,7 +224,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			}
 		}
 		const discoveredSkills = discoveredSkillRefs(ctx);
-		const missingPublish = missingPublishSkills(discoveredSkills);
+		const missingPublish = planOnly ? [] : missingPublishSkills(discoveredSkills);
 		if (missingPublish.length > 0) {
 			notify(
 				`plan-implement requires the ${missingPublish.map((skill) => `"${skill}"`).join(" and ")} skill(s) for its publish phase; they were not found in the session's discovered skill set.`,
@@ -272,6 +247,17 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const roles = roleResolution.roles;
 		const plannerModel = modelCliId(roles.planner);
 		const implementerModel = modelCliId(roles.implementer);
+		const adversaryResolution = resolveAdversary(adversary, roles.planner.model, {
+			available: (provider, modelId) => isChildModelAvailable(ctx.modelRegistry, provider, modelId),
+		});
+		if (!adversaryResolution.ok) {
+			notify(adversaryResolution.error, "error");
+			return;
+		}
+		if (adversaryResolution.notice) notify(adversaryResolution.notice, "info");
+		const adversaryModel = adversaryResolution.adversary?.model;
+		const adversaryTimeoutMinutes = adversaryResolution.adversary?.timeoutMinutes;
+		const maxRounds = adversaryResolution.adversary?.maxRounds;
 		let trunkSha: string | undefined;
 		let stackTrunkRef: string | undefined;
 		let skillPaths: string[] = [];
@@ -309,7 +295,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				);
 			}
 			mutationPrompts = [preflight.childPolicy];
-		} else if (workLocation === "worktree") {
+		} else if (workLocation === "worktree" && !planOnly) {
 			if (!backend.isolation) {
 				notify("--worktree requires a backend with managed-worktree support.", "error");
 				return;
@@ -326,27 +312,54 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		if (stackClient?.provider === "jj") stackBaseLabel = "trunk()";
 		else if (stackClient?.provider === "graphite") stackBaseLabel = "Graphite trunk";
 		else if (stackClient?.provider === "github") stackBaseLabel = "Git remote trunk";
+		let maxAgents = planOnly ? 1 : 4;
+		if (adversaryModel) maxAgents++;
+		const opened = await openAgentHost(
+			{ owner: "plan-implement", label: extractSlug(task), cwd: ctx.cwd, maxAgents },
+			{ exec: herdrExec },
+		);
+		if (!opened.ok) {
+			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
+			notify(opened.error, "error");
+			return;
+		}
+		const host = opened.host;
+		let confirmationTitle = "Run plan → implement → panel review → fix → publish?";
+		if (planOnly) confirmationTitle = "Run planner and stop after the final plan?";
+		else if (mode === "stack") confirmationTitle = "Run plan → implement (stacked PRs) → panel review → fix → publish?";
+		else if (workLocation === "worktree") {
+			confirmationTitle = "Run plan → implement in managed worktree → panel review → fix → publish?";
+		}
 		const confirmed = await ctx.ui.confirm(
+			confirmationTitle,
 			mode === "stack"
-				? "Run plan → implement (stacked PRs) → panel review → fix → publish?"
-				: workLocation === "worktree"
-					? "Run plan → implement in managed worktree → panel review → fix → publish?"
-					: "Run plan → implement → panel review → fix → publish?",
-			mode === "stack"
-				? `Planner (read-only): ${plannerModel}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${implementerModel}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role\n\nThe implementer builds a LOCAL stack only — it does not push or create PRs. The parent independently validates the complete stack, shows the exact publication plan, confirms it, and verifies every resulting draft PR before launching the metadata/reviewer child.`
-				: `Planner (read-only): ${plannerModel}\nImplementer (${policy.taskWorkstreamSummary}): ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role\n\nChildren keep normal skill and context-file discovery enabled. Extensions are disabled in children. ${worktreePlan ? "The worktree is created only after plan approval. Implementation, review fixing, and publishing run there on the parent-created branch; the worktree is retained for explicit cleanup. " : policy.currentModeDisclosure}After the verdict you approve addressing its findings, then publishing a draft PR with reviewer recommendations.`,
+				? `Planner (read-only): ${plannerModel}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role`
+				: `Planner (read-only): ${plannerModel}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (${policy.taskWorkstreamSummary}): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role`,
 		);
 		if (!lifecycle.isSessionCurrent(commandSession) || !confirmed) {
+			await host.dispose({ closeTab: true });
 			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 			return;
 		}
 		const token = lifecycle.beginWorkflow(commandSession);
 		if (!token) {
+			await host.dispose({ closeTab: true });
 			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 			notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
 			return;
 		}
-		const dashboard = createDashboard(ctx, plannerModel, implementerModel);
+		const runner = createRoleRunner(host, {
+			onStarted: (role, model, paneId) => {
+				if (lifecycle.isCurrent(token)) {
+					ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
+				}
+			},
+			onBlocked: async (role, paneId) =>
+				ctx.ui.confirm(
+					`${PHASE_LABELS[role]} is waiting for input`,
+					`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
+				),
+		});
 		try {
 			await runApprovedWorkflow(
 				{
@@ -356,6 +369,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					initialCwd: ctx.cwd,
 					promptsDir: PROMPTS_DIR,
 					plannerModel,
+					adversaryModel,
+					adversaryPromptFile: adversaryModel ? ADVERSARY_PROMPT_FILE : undefined,
+					maxRounds,
+					adversaryTimeoutMinutes,
+					planOnly,
 					implementerModel,
 					timeoutMinutes: roles.timeoutMinutes,
 					skillPaths,
@@ -366,14 +384,15 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					worktreePlan,
 				},
 				{
+					runner,
 					confirm: ctx.ui.confirm.bind(ctx.ui),
 					notify,
 					setStatus: (status) => ctx.ui.setStatus("plan-implement", status),
 					sendPhase: (result) => sendPhaseMessage(pi, result),
 					isCurrent: () => lifecycle.isCurrent(token),
 					isSessionCurrent: () => lifecycle.isSessionCurrent(token),
-					beginChild: (phase) => lifecycle.beginChild(token, phase),
-					endChild: (controller) => lifecycle.endChild(token, controller),
+					beginRole: (phase) => lifecycle.beginRole(token, phase),
+					endRole: (controller) => lifecycle.endRole(token, controller),
 					backend,
 					requestPanelReview: (options) => requestPanelReview(pi, options, ctx),
 					resolvePublishedPr: async (cwd) => {
@@ -404,11 +423,13 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 									outcome: await stackClient.publish(cwd, stackManifestPath, ctx.signal),
 								}
 							: { handled: false },
-					dashboard,
 				},
 			);
 		} finally {
-			dashboard?.dispose();
+			await runner.dispose();
+			if (lifecycle.isSessionCurrent(token)) {
+				notify(`Hosted agents retained in Herdr tab ${runner.tabId}.`, "info");
+			}
 			lifecycle.finishWorkflow(token);
 			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 		}
@@ -423,7 +444,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			customType: "plan-implement",
 			content: outcome.status === "completed" ? outcome.output : `${outcome.error}${retained}`,
 			display: true,
-			details: { schemaVersion: 1, phase: "implementer", status: outcome.status, model: implementerModel },
+			details: { schemaVersion: 2, phase: "implementer", status: outcome.status, model: implementerModel },
 		});
 		ctx.ui.notify(
 			outcome.status === "completed"
@@ -431,114 +452,6 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				: `Fast implementation ${outcome.status}; ${retained ? "inspect the retained workstream." : "no workstream was created."}`,
 			outcome.status === "completed" ? "info" : "error",
 		);
-	}
-
-	async function restoreFastModel(run: FastPendingRun, ctx: ExtensionContext): Promise<void> {
-		if (!run.previousModel || !run.implementerModel || ctx.model === undefined) return;
-		if (`${ctx.model.provider}/${ctx.model.id}` !== run.implementerModel) {
-			ctx.ui.notify(
-				"Fast implementation left your model selection unchanged because it changed during the run.",
-				"info",
-			);
-			return;
-		}
-		const { provider, modelId } = splitModelRef(run.previousModel);
-		const previous = ctx.modelRegistry.find(provider, modelId);
-		if (!previous) return;
-		try {
-			if (await pi.setModel(previous)) {
-				if (run.previousThinking) pi.setThinkingLevel(run.previousThinking);
-			}
-		} catch {
-			// Restoration is best effort after verified work.
-		}
-	}
-
-	async function startFastTakeover(
-		task: string,
-		implementer: RoleSpec,
-		backend: VcsBackend,
-		changeKind: ChangeKind,
-		ctx: ExtensionCommandContext,
-	): Promise<boolean> {
-		const created = await createFastWorkstream(backend, ctx.cwd, task);
-		if (!created.ok) {
-			postFastOutcome({ status: "failed", error: created.error }, modelCliId(implementer), ctx);
-			return false;
-		}
-		const cwd = ctx.cwd;
-		const pending: FastPendingRun = {
-			schemaVersion: 1,
-			runId: crypto.randomUUID(),
-			task,
-			changeKind,
-			backend: backend.id,
-			cwd,
-			checkpoint: created,
-			implementerModel: implementer.model,
-			...(ctx.model ? { previousModel: `${ctx.model.provider}/${ctx.model.id}` } : undefined),
-			...(ctx.thinkingLevel ? { previousThinking: ctx.thinkingLevel } : undefined),
-		};
-		let kickoff: string;
-		try {
-			kickoff = buildFastKickoff(pending, buildFastImplementerGuidance(changeKind, backend));
-		} catch (error) {
-			postFastOutcome(
-				{ status: "failed", error: error instanceof Error ? error.message : String(error), branch: created.ref, cwd },
-				modelCliId(implementer),
-				ctx,
-			);
-			return false;
-		}
-		const { provider, modelId } = splitModelRef(implementer.model);
-		const targetModel = ctx.modelRegistry.find(provider, modelId);
-		if (!targetModel) {
-			postFastOutcome(
-				{
-					status: "failed",
-					error: `Implementer ${implementer.model} is no longer available.`,
-					branch: created.ref,
-					cwd,
-				},
-				modelCliId(implementer),
-				ctx,
-			);
-			return false;
-		}
-		try {
-			if (!(await pi.setModel(targetModel))) {
-				postFastOutcome(
-					{
-						status: "failed",
-						error: `No credentials are available for ${implementer.model}.`,
-						branch: created.ref,
-						cwd,
-					},
-					modelCliId(implementer),
-					ctx,
-				);
-				return false;
-			}
-			if (implementer.thinking) pi.setThinkingLevel(implementer.thinking);
-			pi.appendEntry(FAST_IMPLEMENT_RUN_ENTRY, pending);
-		} catch (error) {
-			await restoreFastModel(pending, ctx);
-			postFastOutcome(
-				{ status: "failed", error: error instanceof Error ? error.message : String(error), branch: created.ref, cwd },
-				modelCliId(implementer),
-				ctx,
-			);
-			return false;
-		}
-		try {
-			pi.sendUserMessage(kickoff);
-		} catch (error) {
-			ctx.ui.notify(
-				`Fast implementation kickoff may have been accepted: ${error instanceof Error ? error.message : String(error)}. The run remains pending and will be verified when the session settles.`,
-				"warning",
-			);
-		}
-		return true;
 	}
 
 	async function runFastPrepared(
@@ -549,8 +462,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		vcsConfig: ReturnType<typeof loadVcsBackend>,
 	): Promise<void> {
 		const notify = ctx.ui.notify.bind(ctx.ui);
-		if (!ctx.hasUI) {
-			notify("plan-implement requires interactive TUI or RPC mode.", "error");
+		if (ctx.mode !== "tui") {
+			notify("plan-implement requires interactive TUI mode inside Herdr.", "error");
 			return;
 		}
 		if (lifecycle.isRunning()) {
@@ -575,14 +488,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		}
 		const backend = backendFor(vcsConfig.backend);
 		const policy = vcsPolicy(backend.id);
-		const current = workLocation === "current";
-		if (current) {
-			const preflight = await preflightFastWorkstream(backend, ctx.cwd);
-			if (!preflight.ok) {
-				postFastOutcome({ status: "failed", error: preflight.error }, "", ctx);
-				return;
-			}
-		} else if (!backend.isolation) {
+		if (workLocation === "worktree" && !backend.isolation) {
 			notify("--worktree requires a backend with managed-worktree support.", "error");
 			return;
 		}
@@ -597,44 +503,59 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		const implementerModel = modelCliId(implementer);
 		const timeoutMinutes =
 			configLoad.status === "loaded" ? configLoad.config.timeoutMinutes : LIMITS.defaultTimeoutMinutes;
+		const confirmed = await ctx.ui.confirm(
+			"Run one fast hosted implementer?",
+			`Implementer: ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\nLocation: ${workLocation === "current" ? policy.currentWorkspaceLabel : "managed Git worktree"}\nTimeout: ${timeoutMinutes} min\n\nFast mode skips planning, panel review, and publishing. It runs in a visible Herdr pane, verifies locally recorded changes, and never publishes automatically.`,
+		);
+		if (!lifecycle.isSessionCurrent(fastSession) || !confirmed) return;
 		const runToken = lifecycle.beginWorkflow(fastSession);
 		if (!runToken) {
 			notify("A plan/implement run is already active.", "warning");
 			return;
 		}
-		const childController = current ? undefined : lifecycle.beginChild(runToken, "implementing");
-		if (!current && !childController) {
+		const controller = lifecycle.beginRole(runToken, "implementing");
+		if (!controller) {
 			lifecycle.finishWorkflow(runToken);
 			notify("plan-implement could not start an abortable run.", "error");
 			return;
 		}
+		let retainedTab: string | undefined;
+		const openRunner = async (cwd: string) => {
+			const opened = await openAgentHost(
+				{ owner: "plan-implement", label: `fast-${extractSlug(task)}`, cwd, maxAgents: 1 },
+				{ exec: createNodeHerdrExec() },
+			);
+			if (!opened.ok) return opened;
+			const runner = createRoleRunner(opened.host, {
+				onStarted: (role, model, paneId) => {
+					if (lifecycle.isCurrent(runToken)) {
+						ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
+					}
+				},
+				onBlocked: async (_role, paneId) =>
+					ctx.ui.confirm(
+						"Implementer is waiting for input",
+						`Answer the agent in pane ${paneId}, then continue. Decline to abort the run.`,
+					),
+			});
+			retainedTab = runner.tabId;
+			return { ok: true as const, runner };
+		};
 		try {
-			const confirmed = await ctx.ui.confirm(
-				current ? "Run a fast implementation in this session?" : "Run one fast implementation worktree child?",
-				`Implementer: ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\nLocation: ${current ? policy.currentWorkspaceLabel : "managed Git worktree"}\nTimeout: ${current ? "none (interrupt or steer the session normally)" : `${timeoutMinutes} min`}\n\nFast mode skips planning, panel review, and publishing, but still requires inspection, verification, and locally recorded changes. It never publishes automatically.${current ? " The implementation starts in this session, so its existing plan and discussion remain in context." : ""}`,
-			);
-			if (!lifecycle.isCurrent(runToken) || !confirmed) return;
-			ctx.ui.setStatus(
-				"plan-implement",
-				current ? "plan-implement: starting fast implementation in this session…" : "plan-implement: implementing…",
-			);
-			if (current) {
-				if (await startFastTakeover(task, implementer, backend, changeKind, ctx)) pendingFastToken = runToken;
-			} else {
-				postFastOutcome(
-					await runFastWorktree({ task, changeKind }, implementer, ctx.cwd, {
-						backend,
-						signal: childController?.signal,
-						timeoutMinutes,
-					}),
-					implementerModel,
-					ctx,
-				);
-			}
+			ctx.ui.setStatus("plan-implement", "plan-implement: preparing fast workstream…");
+			const fastEffects = { backend, openRunner, signal: controller.signal, timeoutMinutes };
+			const outcome =
+				workLocation === "current"
+					? await runFastCurrent({ task, changeKind }, implementer, ctx.cwd, fastEffects)
+					: await runFastWorktree({ task, changeKind }, implementer, ctx.cwd, fastEffects);
+			postFastOutcome(outcome, implementerModel, ctx);
 		} finally {
+			if (retainedTab && lifecycle.isSessionCurrent(runToken)) {
+				notify(`Hosted implementer retained in Herdr tab ${retainedTab}.`, "info");
+			}
 			if (lifecycle.isCurrent(runToken)) ctx.ui.setStatus("plan-implement", undefined);
-			if (childController) lifecycle.endChild(runToken, childController);
-			if (pendingFastToken !== runToken) lifecycle.finishWorkflow(runToken);
+			lifecycle.endRole(runToken, controller);
+			lifecycle.finishWorkflow(runToken);
 		}
 	}
 
@@ -644,18 +565,22 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		workLocation: WorkLocation,
 		changeKind: ChangeKind,
 		fast: boolean,
+		adversary: boolean,
+		planOnly: boolean,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
 		const task = prepareTask(rawTask, ctx.ui.notify.bind(ctx.ui));
-		if (task) await runPreparedPlanImplement(task, mode, workLocation, changeKind, fast, ctx);
+		if (task) {
+			await runPreparedPlanImplement(task, mode, workLocation, changeKind, fast, adversary, planOnly, ctx);
+		}
 	}
 	pi.registerCommand("plan-implement", {
 		description: "Plan, approve, implement here or in --worktree, panel-review, fix findings, then publish a draft PR",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
-			if (!ctx.hasUI) {
-				notify("plan-implement requires interactive TUI or RPC mode.", "error");
+			if (ctx.mode !== "tui") {
+				notify("plan-implement requires interactive TUI mode inside Herdr.", "error");
 				return;
 			}
 			if (lifecycle.isRunning()) {
@@ -673,7 +598,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			if (parsed.task.trim() && !task) return;
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
-			const preflightError = await checkBasicPreflights(ctx);
+			const preflightError = parsed.fast || parsed.planOnly ? undefined : await checkBasicPreflights(ctx);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (preflightError) {
 				notify(preflightError, "error");
@@ -703,34 +628,19 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			if (!rawTask.trim()) rawTask = (await ctx.ui.editor("Plan and implement task:", "")) ?? "";
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			task ??= prepareTask(rawTask, notify);
-			if (task) await runPreparedPlanImplement(task, mode, workLocation, changeKind, fast, ctx);
+			if (task) {
+				await runPreparedPlanImplement(
+					task,
+					mode,
+					workLocation,
+					changeKind,
+					fast,
+					parsed.adversary,
+					parsed.planOnly,
+					ctx,
+				);
+			}
 		},
 	});
 	pi.events.on(PLAN_IMPLEMENT_REQUEST_EVENT, (data) => claimPlanImplementRequest(data, runPlanImplement));
-
-	function createDashboard(
-		ctx: ExtensionCommandContext,
-		plannerModel: string,
-		implementerModel: string,
-	): PlanPipelineDashboard | undefined {
-		if (ctx.mode !== "tui") return undefined;
-		const pane = paneHost.startRun({
-			ctx,
-			title: "Plan & implement",
-			onAbort: () => {
-				if (!lifecycle.abortActiveChild()) ctx.ui.notify("No plan/implement child is running.", "info");
-			},
-		});
-		pane.addChild({ id: "planner", label: "Planner", model: plannerModel });
-		pane.addChild({ id: "implementer", label: "Implementer", model: implementerModel });
-		return {
-			addPhase: (id, label, model) => pane.addChild({ id, label, model }),
-			markRunning: (id) => pane.markRunning(id),
-			progress: (id, info) => pane.progress(id, info),
-			complete: (id, info) => pane.complete(id, info),
-			event: (id, event) => pane.event(id, event),
-			note: (id, text) => pane.note(id, text),
-			dispose: () => pane.dispose(),
-		};
-	}
 }

@@ -7,7 +7,7 @@ const WRITE_PR_SKILL_NAME = "write-pr";
 const FIND_REVIEWERS_SKILL_NAME = "find-reviewers";
 
 /**
- * Exclude Arena from stack-mode children because parallel candidates would
+ * Exclude Arena from stack-mode hosted agents because parallel candidates would
  * mutate the same jj operation log. Preserve every other discovered skill.
  */
 export function buildStackSkillPolicy(skills: SkillRef[]): SkillRef[] {
@@ -17,8 +17,8 @@ export function buildStackSkillPolicy(skills: SkillRef[]): SkillRef[] {
 /**
  * The publish phase needs both `write-pr` (draft PR title/body) and
  * `find-reviewers` (reviewer recommendations). Both must be discovered skills
- * so the publisher child can consult them; in stack mode they are re-added
- * via --skill, in single mode the child discovers them itself.
+ * so the publisher can consult them; in stack mode they are re-added with
+ * --skill, while single-mode hosted agents use normal discovery.
  */
 export function missingPublishSkills(skills: SkillRef[]): string[] {
 	const names = new Set(skills.map((s) => s.name));

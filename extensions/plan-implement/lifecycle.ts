@@ -7,7 +7,7 @@ type WorkflowToken = SessionToken;
 
 export class WorkflowLifecycle extends SessionRunLifecycle {
 	private phase: WorkflowPhase = "idle";
-	private childAbort: AbortController | undefined;
+	private roleAbort: AbortController | undefined;
 
 	beginWorkflow(expectedSession?: WorkflowToken): WorkflowToken | undefined {
 		const session = expectedSession ?? this.currentSessionToken();
@@ -17,33 +17,33 @@ export class WorkflowLifecycle extends SessionRunLifecycle {
 		return token;
 	}
 
-	beginChild(
+	beginRole(
 		token: WorkflowToken,
 		phase: "planning" | "implementing" | "fixing" | "publishing",
 	): AbortController | undefined {
-		if (!this.isCurrent(token) || this.childAbort) return undefined;
+		if (!this.isCurrent(token) || this.roleAbort) return undefined;
 		const controller = new AbortController();
-		this.childAbort = controller;
+		this.roleAbort = controller;
 		this.phase = phase;
 		return controller;
 	}
 
-	endChild(token: WorkflowToken, controller: AbortController): void {
-		if (!this.isCurrent(token) || this.childAbort !== controller) return;
-		this.childAbort = undefined;
+	endRole(token: WorkflowToken, controller: AbortController): void {
+		if (!this.isCurrent(token) || this.roleAbort !== controller) return;
+		this.roleAbort = undefined;
 		this.phase = "approval";
 	}
 
-	abortActiveChild(): boolean {
-		if (!this.childAbort || this.childAbort.signal.aborted) return false;
-		this.childAbort.abort();
+	abortActiveRole(): boolean {
+		if (!this.roleAbort || this.roleAbort.signal.aborted) return false;
+		this.roleAbort.abort();
 		return true;
 	}
 
 	finishWorkflow(token: WorkflowToken): void {
 		if (!this.isSessionCurrent(token)) return;
-		this.childAbort?.abort();
-		this.childAbort = undefined;
+		this.roleAbort?.abort();
+		this.roleAbort = undefined;
 		this.endRun(token);
 		this.phase = "idle";
 	}
@@ -55,13 +55,13 @@ export class WorkflowLifecycle extends SessionRunLifecycle {
 	protected override onStart(): void {
 		super.onStart();
 		this.phase = "idle";
-		this.childAbort = undefined;
+		this.roleAbort = undefined;
 	}
 
 	protected override onShutdown(): void {
 		super.onShutdown();
-		this.childAbort?.abort();
-		this.childAbort = undefined;
+		this.roleAbort?.abort();
+		this.roleAbort = undefined;
 		this.phase = "idle";
 	}
 }

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
-import type { RunAgentOptions } from "./agent-runner.ts";
+import type { RoleRunner, RunAgentOptions } from "./agent-runner.ts";
 import {
 	type ApprovedWorkflowOptions,
 	offerLandContinuation,
@@ -34,28 +36,94 @@ function options(): ApprovedWorkflowOptions {
 	};
 }
 
-function effects(overrides: Partial<PhaseEffects> = {}) {
+type RunRole = (input: RunAgentOptions) => Promise<AgentRunResult>;
+type EffectOverrides = Omit<Partial<PhaseEffects>, "runner"> & { runner?: RoleRunner; runAgent?: RunRole };
+
+function fakeRunner(run: RunRole): RoleRunner {
+	return {
+		tabId: "w1:t-test",
+		paneId: (role) => `w1:p-${role}`,
+		run,
+		abortActive: async () => false,
+		dispose: async () => {},
+	};
+}
+
+const defaultRunRole: RunRole = async (input) => ({
+	status: "completed",
+	role: input.role,
+	model: input.model,
+	output: input.role === "planner" ? validPlan : validLedger,
+	usage,
+});
+
+function effects(overrides: EffectOverrides = {}) {
 	const notifications: string[] = [];
+	const { runAgent, ...phaseOverrides } = overrides;
 	const fx: PhaseEffects = {
+		runner: overrides.runner ?? fakeRunner(runAgent ?? defaultRunRole),
 		confirm: async () => true,
 		notify: (message) => notifications.push(message),
 		setStatus: () => {},
 		sendPhase: () => {},
 		isCurrent: () => true,
 		isSessionCurrent: () => true,
-		beginChild: () => new AbortController(),
-		endChild: () => {},
+		beginRole: () => new AbortController(),
+		endRole: () => {},
 		backend: new GitBackend(async () => ({ code: 1, stdout: "", stderr: "not configured" })),
 		requestPanelReview: async () => ({ handled: false }),
 		resolvePublishedPr: async () => ({ ok: false, error: "not resolved (test default)" }),
 		requestLand: async () => ({ handled: false }),
 		requestAutopilot: async () => ({ handled: false }),
-		...overrides,
+		...phaseOverrides,
 	};
 	return { fx, notifications };
 }
 
 describe("plan-implement phases", () => {
+	it("runs an adversary and persists a plan-only result without an implementer", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "kstack-plan-only-"));
+		const roles: string[] = [];
+		let requestedReview = false;
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				roles.push(input.role);
+				if (input.role === "planner") {
+					return { status: "completed", role: "planner", model: input.model, output: validPlan, usage };
+				}
+				if (input.role === "adversary") {
+					return {
+						status: "completed",
+						role: "adversary",
+						model: input.model,
+						output: "Verdict: approve\n\n## Blocking\nNone.\n\n## Suggestions\nNone.\n",
+						usage,
+					};
+				}
+				return assert.fail(`unexpected role ${input.role}`);
+			},
+			requestPanelReview: async () => {
+				requestedReview = true;
+				return { handled: false };
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				initialCwd: cwd,
+				planOnly: true,
+				adversaryModel: "test/adversary:medium",
+				adversaryPromptFile: "/prompts/adversary.md",
+				maxRounds: 3,
+			},
+			fx,
+		);
+		assert.deepEqual(roles, ["planner", "adversary"]);
+		assert.equal(requestedReview, false);
+		assert.match(readFileSync(join(cwd, "local", "plans", "change.md"), "utf8"), /STEP-1/);
+		assert.match(notifications.join("\n"), /Plan-only run complete/);
+	});
+
 	it("rejects planner output when ledger creation fails", async () => {
 		let implementerRan = false;
 		const runAgent = async (input: RunAgentOptions): Promise<AgentRunResult> => {
@@ -222,7 +290,7 @@ describe("plan-implement phases", () => {
 		assert.equal(publisherSawPublication, true);
 	});
 
-	it("does not launch the stack publisher child when structural publication is not completed", async () => {
+	it("does not launch the stack publisher agent when structural publication is not completed", async () => {
 		let publisherRan = false;
 		const { fx, notifications } = effects({
 			runAgent: async (input) => {

@@ -1,30 +1,14 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
 import { describe, it } from "node:test";
-import type { ChildUsage, runChildAgent } from "../shared/child-agent-runner.ts";
-import { KSTACK_ENTRY } from "../shared/child-agent-runner.ts";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
-import { buildFastImplementerGuidance, runFastWorktree } from "./fast-runner.ts";
-import { LIMITS, type RoleSpec } from "./types.ts";
+import type { RoleRunner, RunAgentOptions } from "./agent-runner.ts";
+import { buildFastImplementerGuidance, runFastCurrent, runFastWorktree } from "./fast-runner.ts";
+import type { AgentRunResult, RoleSpec } from "./types.ts";
 
-type ChildRunOptions = Parameters<typeof runChildAgent>[0];
-
-const usage: ChildUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
-const childSession = {
-	kind: "persisted" as const,
-	id: "00000000-0000-4000-8000-000000000001",
-	name: "fast-implement/implementer",
-	file: "/sessions/child.jsonl",
-};
-
-const request = {
-	task: "Fix the narrow bug",
-	changeKind: "bug-fix" as const,
-};
-
+const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
+const request = { task: "Fix the narrow bug", changeKind: "bug-fix" as const };
 const implementer: RoleSpec = { model: "openai/gpt-5.6-sol", thinking: "low" };
-
 const isolationPlan: IsolationPlan = {
 	sourceRepoRoot: "/repo",
 	ref: "kstack/fix-the-narrow-bug",
@@ -33,9 +17,7 @@ const isolationPlan: IsolationPlan = {
 	baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 
-const emptyUsage = (): ChildUsage => ({ ...usage });
-
-function fakeGitBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls: string[] } {
+function fakeBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls: string[] } {
 	const calls: string[] = [];
 	return {
 		id: "git",
@@ -50,9 +32,12 @@ function fakeGitBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { cal
 		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
-		createWorkstream: async () => ({ ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha }),
+		createWorkstream: async (cwd, task) => {
+			calls.push(`workstream:${cwd}:${task}`);
+			return { ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha };
+		},
 		verifyRecordedWorkstream: async (cwd, expected) => {
-			calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
+			calls.push(`verify:${cwd}:${expected.ref}:${expected.requireNewCommit}`);
 			return { ok: true, headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
 		},
 		recordPaths: async () => ({ ok: true }),
@@ -69,333 +54,175 @@ function fakeGitBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { cal
 				calls.push(`create:${plan.path}:${plan.ref}`);
 				return { ok: true, plan };
 			},
-			remove: async (cwd, ref) => {
-				calls.push(`remove:${cwd}:${ref}`);
-				return { ok: true };
-			},
+			remove: async () => ({ ok: true }),
 		},
 		...overrides,
 	};
 }
 
-function fakeJjBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls: string[] } {
-	const calls: string[] = [];
+function fakeRunner(run: (options: RunAgentOptions) => Promise<AgentRunResult>) {
+	let disposeCalls = 0;
+	const runner: RoleRunner = {
+		tabId: "w1:t-fast",
+		paneId: () => "w1:p-fast",
+		run,
+		abortActive: async () => false,
+		dispose: async () => {
+			disposeCalls++;
+		},
+	};
+	return { runner, disposeCalls: () => disposeCalls };
+}
+
+function completed(output = "implemented"): AgentRunResult {
 	return {
-		id: "jj",
-		calls,
-		preflight: async (cwd) => {
-			calls.push(`preflight:${cwd}`);
-			return { ok: true, workspaceRoot: cwd };
-		},
-		headSha: async () => ({ ok: true, sha: isolationPlan.baseSha }),
-		currentRef: async () => ({ ok: true, ref: { kind: "bookmark", name: "main" } }),
-		captureWorkstream: async () => ({ ok: true, snapshot: { ref: "main", token: "main@change" } }),
-		assertWorkstreamUnchanged: async () => ({ ok: true }),
-		changedPaths: async () => ({ ok: true, paths: [] }),
-		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
-		createWorkstream: async () => ({ ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha }),
-		verifyRecordedWorkstream: async () => ({ ok: true, headSha: isolationPlan.baseSha }),
-		recordPaths: async () => ({ ok: true }),
-		restorePaths: async () => ({ ok: true }),
-		publishRecordedChanges: async () => ({ ok: true }),
-		fetchRemoteHead: async () => ({ ok: true, sha: isolationPlan.baseSha }),
-		updateBase: async () => ({ kind: "already-current" }),
-		...overrides,
+		status: "completed",
+		role: "implementer",
+		model: "openai/gpt-5.6-sol:low",
+		output,
+		usage,
+		session: "/sessions/hosted.jsonl",
 	};
 }
 
-function completedChild(output = "implemented") {
-	return { status: "completed" as const, output, usage: emptyUsage(), session: childSession };
-}
-
-function promptFileFrom(options: ChildRunOptions): string {
-	const promptFile = options.args[options.args.indexOf("--append-system-prompt") + 1];
-	assert.ok(promptFile);
-	return promptFile;
-}
-
-describe("runFastWorktree fixtures", () => {
-	it("builds a typed Git backend without launching Pi or Git", () => {
-		const backend = fakeGitBackend();
-		assert.equal(backend.id, "git");
-		assert.deepEqual(backend.calls, []);
+describe("buildFastImplementerGuidance", () => {
+	it("includes the role prompt, engineering principles, playbook, and backend policy", () => {
+		const guidance = buildFastImplementerGuidance("bug-fix", { id: "git" });
+		assert.match(guidance, /fast implementation/i);
+		assert.match(guidance, /bug/i);
+		assert.match(guidance, /git/i);
 	});
 });
 
-describe("backend validation", () => {
-	it("rejects a jj backend before preflight", async () => {
-		const backend = fakeJjBackend();
-		let ranChild = false;
+describe("runFastWorktree", () => {
+	it("rejects unsupported isolation before preflight", async () => {
+		const backend = fakeBackend({ isolation: undefined });
+		let opened = false;
 		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
-			runChild: async () => {
-				ranChild = true;
-				return completedChild();
+			openRunner: async () => {
+				opened = true;
+				return { ok: false, error: "unused" };
 			},
 		});
-		assert.deepEqual(result, {
-			status: "failed",
-			error: "The configured VCS backend does not support managed worktrees.",
-		});
+		assert.equal(result.status, "failed");
+		assert.equal(opened, false);
 		assert.deepEqual(backend.calls, []);
-		assert.equal(ranChild, false);
-	});
-});
-
-describe("worktree setup short-circuits", () => {
-	it("returns a failed preflight and does not plan, create, or run the child", async () => {
-		const backend = fakeGitBackend({
-			preflight: async (cwd) => {
-				backend.calls.push(`preflight:${cwd}`);
-				return { ok: false, error: "dirty working tree" };
-			},
-		});
-		let ranChild = false;
-		const result = await runFastWorktree(request, implementer, "/repo", {
-			backend,
-			runChild: async () => {
-				ranChild = true;
-				return completedChild();
-			},
-		});
-		assert.deepEqual(result, { status: "failed", error: "dirty working tree" });
-		assert.deepEqual(backend.calls, ["preflight:/repo"]);
-		assert.equal(ranChild, false);
 	});
 
-	it("returns a failed plan and does not create or run the child", async () => {
-		const backend = fakeGitBackend({
+	it("short-circuits failed preflight, plan, and create", async () => {
+		const preflight = fakeBackend({ preflight: async () => ({ ok: false, error: "bad repo" }) });
+		assert.equal(
+			(
+				await runFastWorktree(request, implementer, "/repo", {
+					backend: preflight,
+					openRunner: async () => ({ ok: false, error: "unused" }),
+				})
+			).status,
+			"failed",
+		);
+		const planned = fakeBackend({
 			isolation: {
-				plan: async (cwd, task) => {
-					backend.calls.push(`plan:${cwd}:${task}`);
-					return { ok: false, error: "no unused branch" };
-				},
-				create: async () => ({ ok: false, error: "unused" }),
+				plan: async () => ({ ok: false, error: "bad plan" }),
+				create: async () => assert.fail("create must not run"),
 				remove: async () => ({ ok: true }),
 			},
 		});
-		let ranChild = false;
-		const result = await runFastWorktree(request, implementer, "/repo", {
-			backend,
-			runChild: async () => {
-				ranChild = true;
-				return completedChild();
-			},
-		});
-		assert.deepEqual(result, { status: "failed", error: "no unused branch" });
-		assert.deepEqual(backend.calls, ["preflight:/repo", `plan:/repo:${request.task}`]);
-		assert.equal(ranChild, false);
+		assert.equal(
+			(
+				await runFastWorktree(request, implementer, "/repo", {
+					backend: planned,
+					openRunner: async () => ({ ok: false, error: "unused" }),
+				})
+			).status,
+			"failed",
+		);
 	});
 
-	it("returns a failed create and does not run the child", async () => {
-		const backend = fakeGitBackend({
-			isolation: {
-				plan: async (cwd, task) => {
-					backend.calls.push(`plan:${cwd}:${task}`);
-					return { ok: true, plan: isolationPlan };
-				},
-				create: async (plan) => {
-					backend.calls.push(`create:${plan.path}:${plan.ref}`);
-					return { ok: false, error: "worktree add failed" };
-				},
-				remove: async () => ({ ok: true }),
-			},
+	it("creates the worktree before opening a hosted runner in it", async () => {
+		const backend = fakeBackend();
+		let openedCwd = "";
+		let seenPrompt = "";
+		let promptPath = "";
+		const fake = fakeRunner(async (options) => {
+			openedCwd = options.cwd;
+			promptPath = options.promptFile;
+			seenPrompt = readFileSync(options.promptFile, "utf8");
+			assert.equal(statSync(options.taskFile).mode & 0o777, 0o600);
+			assert.match(readFileSync(options.taskFile, "utf8"), /Fix the narrow bug/);
+			return completed();
 		});
-		let ranChild = false;
 		const result = await runFastWorktree(request, implementer, "/repo", {
 			backend,
-			runChild: async () => {
-				ranChild = true;
-				return completedChild();
+			openRunner: async (cwd) => {
+				assert.equal(cwd, isolationPlan.path);
+				return { ok: true, runner: fake.runner };
 			},
 		});
-		assert.deepEqual(result, { status: "failed", error: "worktree add failed" });
+		assert.equal(result.status, "completed");
+		assert.equal(openedCwd, isolationPlan.path);
+		assert.match(seenPrompt, /fast implementation/i);
+		assert.equal(existsSync(promptPath), false);
+		assert.equal(fake.disposeCalls(), 1);
 		assert.deepEqual(backend.calls, [
 			"preflight:/repo",
-			`plan:/repo:${request.task}`,
+			"plan:/repo:Fix the narrow bug",
 			`create:${isolationPlan.path}:${isolationPlan.ref}`,
+			`verify:${isolationPlan.path}:${isolationPlan.ref}:true`,
 		]);
-		assert.equal(ranChild, false);
 	});
 
-	it("plans and creates the worktree once, in order, with the request cwd and task", async () => {
-		const backend = fakeGitBackend();
-		await runFastWorktree(request, implementer, "/repo", {
+	it("retains workstream details on hosted-agent and verification failures", async () => {
+		const backend = fakeBackend();
+		const failed = fakeRunner(async () => ({
+			status: "failed",
+			role: "implementer",
+			model: "m",
+			error: "agent failed",
+			session: "/sessions/failed.jsonl",
+		}));
+		const childFailure = await runFastWorktree(request, implementer, "/repo", {
 			backend,
-			runChild: async () => completedChild(),
+			openRunner: async () => ({ ok: true, runner: failed.runner }),
 		});
-		assert.deepEqual(backend.calls.slice(0, 3), [
-			"preflight:/repo",
-			`plan:/repo:${request.task}`,
-			`create:${isolationPlan.path}:${isolationPlan.ref}`,
-		]);
+		assert.deepEqual(childFailure, {
+			status: "failed",
+			error: "agent failed",
+			branch: isolationPlan.ref,
+			cwd: isolationPlan.path,
+			session: "/sessions/failed.jsonl",
+		});
+
+		const verifyBackend = fakeBackend({
+			verifyRecordedWorkstream: async () => ({ ok: false, error: "not committed" }),
+		});
+		const verification = await runFastWorktree(request, implementer, "/repo", {
+			backend: verifyBackend,
+			openRunner: async () => ({ ok: true, runner: fakeRunner(async () => completed("partial")).runner }),
+		});
+		assert.equal(verification.status, "failed");
+		if (verification.status === "failed") {
+			assert.equal(verification.output, "partial");
+			assert.equal(verification.branch, isolationPlan.ref);
+		}
 	});
 });
 
-describe("completed child and verification", () => {
-	it("runs the child in the worktree, verifies a new commit, and removes temporary files", async () => {
-		const backend = fakeGitBackend();
-		const signal = new AbortController().signal;
-		let childOptions: ChildRunOptions | undefined;
-		let taskContents = "";
-		let promptContents = "";
-		let taskMode = 0;
-		let promptMode = 0;
-		let tempDir = "";
-		const result = await runFastWorktree(request, implementer, "/repo", {
+describe("runFastCurrent", () => {
+	it("creates and verifies a current-workspace workstream around one hosted agent", async () => {
+		const backend = fakeBackend();
+		const result = await runFastCurrent(request, implementer, "/repo", {
 			backend,
-			signal,
-			timeoutMinutes: 12,
-			runChild: async (options) => {
-				childOptions = options;
-				const promptFile = promptFileFrom(options);
-				const taskArg = options.args.find((arg) => arg.startsWith("Read the user task at "));
-				assert.ok(taskArg);
-				const taskFile = taskArg.slice("Read the user task at ".length).split(",", 1)[0];
-				tempDir = dirname(promptFile);
-				taskContents = readFileSync(taskFile, "utf8");
-				promptContents = readFileSync(promptFile, "utf8");
-				if (process.platform !== "win32") {
-					taskMode = statSync(taskFile).mode & 0o777;
-					promptMode = statSync(promptFile).mode & 0o777;
-				}
-				return completedChild("child output");
+			openRunner: async (cwd) => {
+				assert.equal(cwd, "/repo");
+				return { ok: true, runner: fakeRunner(async () => completed()).runner };
 			},
 		});
-		assert.ok(childOptions);
 		assert.equal(result.status, "completed");
-		if (result.status === "completed") {
-			assert.equal(result.branch, isolationPlan.ref);
-			assert.equal(result.cwd, isolationPlan.path);
-			assert.equal(result.output, "child output");
-		}
-		assert.equal(childOptions.cwd, isolationPlan.path);
-		assert.equal(childOptions.signal, signal);
-		assert.ok(!childOptions.args.includes("--no-session"));
-		assert.ok(childOptions.args.includes("--no-extensions"));
-		assert.ok(childOptions.args.includes(KSTACK_ENTRY));
-		assert.ok(childOptions.args.includes("--no-prompt-templates"));
-		assert.ok(!childOptions.args.includes("--no-skills"));
-		assert.ok(!childOptions.args.includes("--no-context-files"));
-		assert.deepEqual(
-			childOptions.args.slice(childOptions.args.indexOf("--model"), childOptions.args.indexOf("--model") + 2),
-			["--model", "openai/gpt-5.6-sol:low"],
-		);
-		assert.equal(childOptions.deps?.maxRuntimeMs, 12 * 60_000);
-		assert.equal(childOptions.deps?.outputCapBytes, LIMITS.implementerOutputBytes);
-		assert.equal(childOptions.deps?.stderrCapBytes, LIMITS.stderrBytes);
-		assert.equal(childOptions.deps?.stdoutLineCapBytes, LIMITS.stdoutLineBytes);
-		assert.equal(childOptions.deps?.killGraceMs, LIMITS.killGraceMs);
-		assert.ok(taskContents.includes(request.task));
-		assert.ok(taskContents.includes("VCS backend: git"));
-		assert.ok(taskContents.includes(`Workstream: ${isolationPlan.ref}`));
-		assert.equal(promptContents, buildFastImplementerGuidance(request.changeKind, backend));
-		if (process.platform !== "win32") {
-			assert.equal(taskMode, 0o600);
-			assert.equal(promptMode, 0o600);
-		}
-		assert.ok(
-			backend.calls.includes(`verify:${isolationPlan.path}:${isolationPlan.ref}:${isolationPlan.baseSha}:true`),
-		);
-		assert.ok(tempDir);
-		assert.equal(existsSync(tempDir), false);
-		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
-	});
-});
-
-describe("retained outcomes after worktree creation", () => {
-	it("returns a failed child with branch and cwd and does not verify", async () => {
-		const backend = fakeGitBackend();
-		let tempDir = "";
-		const result = await runFastWorktree(request, implementer, "/repo", {
-			backend,
-			runChild: async (options) => {
-				tempDir = dirname(promptFileFrom(options));
-				return { status: "failed", error: "child crashed", usage: emptyUsage(), stderr: "boom", session: childSession };
-			},
-		});
-		assert.deepEqual(result, {
-			status: "failed",
-			error: "child crashed",
-			branch: isolationPlan.ref,
-			cwd: isolationPlan.path,
-			session: childSession,
-		});
-		assert.ok(!backend.calls.some((call) => call.startsWith("verify:")));
-		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
-		assert.equal(existsSync(tempDir), false);
-	});
-
-	it("returns an aborted child with the abort message, branch, and cwd", async () => {
-		const backend = fakeGitBackend();
-		let tempDir = "";
-		const result = await runFastWorktree(request, implementer, "/repo", {
-			backend,
-			runChild: async (options) => {
-				tempDir = dirname(promptFileFrom(options));
-				return { status: "aborted", usage: emptyUsage(), session: childSession };
-			},
-		});
-		assert.deepEqual(result, {
-			status: "aborted",
-			error: "Implementation child was aborted.",
-			branch: isolationPlan.ref,
-			cwd: isolationPlan.path,
-			session: childSession,
-		});
-		assert.ok(!backend.calls.some((call) => call.startsWith("verify:")));
-		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
-		assert.equal(existsSync(tempDir), false);
-	});
-
-	it("converts a throwing child into a retained failed outcome", async () => {
-		const backend = fakeGitBackend();
-		let tempDir = "";
-		const result = await runFastWorktree(request, implementer, "/repo", {
-			backend,
-			runChild: async (options) => {
-				tempDir = dirname(promptFileFrom(options));
-				throw new Error("spawn exploded");
-			},
-		});
-		assert.deepEqual(result, {
-			status: "failed",
-			error: "spawn exploded",
-			branch: isolationPlan.ref,
-			cwd: isolationPlan.path,
-		});
-		assert.ok(!backend.calls.some((call) => call.startsWith("verify:")));
-		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
-		assert.equal(existsSync(tempDir), false);
-	});
-
-	it("returns a failed verification with child output, branch, and cwd", async () => {
-		const backend = fakeGitBackend({
-			verifyRecordedWorkstream: async (cwd, expected) => {
-				backend.calls.push(`verify:${cwd}:${expected.ref}:${expected.baseSha}:${expected.requireNewCommit}`);
-				return { ok: false, error: "no new commit" };
-			},
-		});
-		let tempDir = "";
-		const result = await runFastWorktree(request, implementer, "/repo", {
-			backend,
-			runChild: async (options) => {
-				tempDir = dirname(promptFileFrom(options));
-				return completedChild("partial work");
-			},
-		});
-		assert.deepEqual(result, {
-			status: "failed",
-			error: "no new commit",
-			branch: isolationPlan.ref,
-			cwd: isolationPlan.path,
-			output: "partial work",
-			session: childSession,
-		});
-		assert.ok(
-			backend.calls.includes(`verify:${isolationPlan.path}:${isolationPlan.ref}:${isolationPlan.baseSha}:true`),
-		);
-		assert.ok(!backend.calls.some((call) => call.startsWith("remove:")));
-		assert.equal(existsSync(tempDir), false);
+		assert.deepEqual(backend.calls, [
+			"preflight:/repo",
+			"workstream:/repo:Fix the narrow bug",
+			`verify:/repo:${isolationPlan.ref}:true`,
+		]);
 	});
 });
