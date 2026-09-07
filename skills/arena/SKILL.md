@@ -1,15 +1,22 @@
 ---
 name: arena
 description: "Spawn N parallel candidates at the same task, pick a base, graft the strongest parts of the losers into it. Use for /arena, 'arena this', 'throw it in the arena', or when one attempt at a non-trivial artifact would lock in the wrong shape."
+compatibility: Pi running inside Herdr with the Herdr Pi integration installed.
 ---
 
 # Arena
 
-Fan out N parallel attempts at the same task. Read every candidate end to end. Pick the strongest as the base. Graft the best ideas from the others into it. Verify the synthesized result.
+Fan out N parallel attempts at the same task in a dedicated Herdr tab. Read every candidate end to end. Pick the strongest as the base. Graft the best ideas from the others into it. Verify the synthesized result.
+
+## Guard and resolve paths
+
+1. Run `test "${HERDR_ENV:-}" = 1`. Stop and explain that this skill requires a Pi session inside Herdr if the check fails.
+2. Resolve this skill directory from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it.
+3. Never split or focus the user's pane. Hosted agents run in their own tab created by the fan-out tool.
 
 ## Track the phases
 
-Keep one visible checklist in working notes or status updates before launching candidates. The `parallel_agents` tool supplies a live status pane during fan-out and cross-judging; the checklist tracks the parent-only pick, graft, and verify phases.
+Keep one visible checklist in working notes or status updates before launching candidates. The `cli.mjs fanout` command launches all candidates in one dedicated Herdr tab (`arena: <label>`). You and the user can watch candidate progress in that tab, inspect transcripts, or steer a candidate by prompting its pane. The checklist tracks the parent-only pick, graft, and verify phases.
 
 1. Frame
 2. Fan out
@@ -49,30 +56,64 @@ The N candidates will receive the same prompt, so the prompt is the contract. Ge
 1. **State the artifact** each candidate is producing.
 2. **Derive the rubric.** State what success looks like for *this* task, then turn it into 3–6 concrete gradeable criteria. Concrete: `Adds a --dry-run flag that skips writes`. Vague: `code is correct`. The rubric is the picker’s tool in Phase D; candidates only see the task.
 3. **Pick the runners.** Use `runners` from `kstack.json` when present. Otherwise default to 3–4 candidates across different available models. Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
-4. **Assign output paths.** Each candidate writes to its own pre-created worktree or directory. Use the `git-worktrees` skill when the repository uses Git; use the repository's configured workspace mechanism for other VCS backends. N candidates writing to the same path is shared mutable state and will produce corrupt results.
+4. **Assign output paths.** Each candidate writes to its own pre-created worktree or directory. Use the `git-worktrees` skill when the repository uses Git (or `herdr worktree create --cwd "$PWD" --branch <name> --base <trunk> --no-focus`); use the repository's configured workspace mechanism for other VCS backends. N candidates writing to the same path is shared mutable state and will produce corrupt results.
 
 ## Phase B: Fan out
 
-Spawn all N candidates in one `parallel_agents` tool call with `kind: "arena"` and the configured `maxConcurrency`. The extension shows the shared live agent pane with queued/running/completed state, model, elapsed time, current tool, and output preview. While the call is active, **Ctrl+Shift+V** opens the read-only transcript console and **Ctrl+Shift+X** aborts it. Do not replace it with background `pi` commands or a silent shell `wait`.
+Spawn all N candidates in one `cli.mjs fanout` call with the configured `maxConcurrency`.
 
-Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared writable directories. Children run without extensions, skills, prompt templates, or context files. Put self-contained instructions in each prompt because repository instruction files are not loaded.
-
-Each candidate receives:
+Write one prompt file per candidate in a temp directory (for example under `/tmp/arena-<run-id>/prompts/`). Each prompt file contains:
 - The full task description
-- Its own output path
-- Instructions to produce both the artifact and a short **rationale**
+- Its assigned output path
+- Instructions to produce both the artifact and a short **rationale** (the alternatives the candidate considered and what it rejected)
 
-The rationale is mandatory. Without it, the parent cannot tell whether a candidate's structure is principled or accidental, which makes Phase E grafting unreliable. Each rationale names the alternatives the candidate considered and what it rejected.
+Compose a spec JSON file at `/tmp/arena-<run-id>/spec.json`:
 
-If a candidate fails to produce output, proceed with N−1 and note the dropout in the synthesis record.
+```json
+{
+  "owner": "arena",
+  "label": "<run-id>",
+  "cwd": "<repo-root>",
+  "tasks": [
+    {
+      "label": "<candidate-label>",
+      "model": "<provider/model[:thinking]>",
+      "cwd": "<candidate-worktree-or-dir>",
+      "promptFile": "/tmp/arena-<run-id>/prompts/<label>.md",
+      "outputFile": "/tmp/arena-<run-id>/outputs/<label>.md",
+      "access": "workspace",
+      "noContextFiles": true,
+      "timeoutMinutes": 30
+    }
+  ],
+  "maxConcurrency": 4
+}
+```
+
+Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared or overlapping writable directories. Children run without extensions, skills, prompt templates, or context files.
+
+Launch the candidates:
+
+```sh
+node "$KSTACK/extensions/shared/herdr/cli.mjs" fanout \
+  --spec "/tmp/arena-<run-id>/spec.json" \
+  --out "/tmp/arena-<run-id>/result.json"
+```
+
+Watch candidates in the `arena: <run-id>` tab. You or the user can inspect progress and steer a candidate by prompting its pane directly if it needs help.
+
+Read `/tmp/arena-<run-id>/result.json` and the output files. If a candidate fails to produce output, proceed with N−1 and note the dropout in the synthesis record.
 
 ## Phase C: Cross-judge
 
-After all candidates complete, run the judge through a second `parallel_agents` call with one `kind: "arena"` task on a different model from the candidates. This call receives a fresh live pane with no fan-out transcript state. The judge sees:
-- The rubric (from Phase A)
-- Each candidate's output (by candidate label, not by model name — blind judging)
+After all candidates complete, run the judge through a second `cli.mjs fanout` call with one `owner: "arena"`, `label: "judge-<run-id>"` task on a different model from the candidates.
 
-The judge scores each criterion and recommends a base with rationale.
+Write the judge prompt file containing:
+- The rubric (from Phase A)
+- Each candidate's output and rationale (by candidate label, not by model name — blind judging)
+- Instructions to score each criterion and recommend a base with rationale
+
+Write a judge spec JSON (`access: "read-only"`, `tools: ["read", "grep", "find", "ls"]`) and launch via `cli.mjs fanout`. The judge tab opens independently with no fan-out transcript state.
 
 Use the `crossJudge` model from `kstack.json`. If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
 

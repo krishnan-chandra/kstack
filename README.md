@@ -18,7 +18,6 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset, a pinned jj working-copy snapshot (including secondary workspaces), or a GitHub PR snapshot, then synthesizes a lead-review verdict with a live multi-agent TUI dashboard. |
-| [`parallel-agents`](extensions/parallel-agents/) | Runs the isolated child agents used by Simplify and Arena, with the shared live multi-agent TUI dashboard, bounded concurrency, cancellation, and per-child runtime limits. |
 | [`plan-implement`](extensions/plan-implement/) | Runs a planner and optional adversary in visible Herdr panes, gates the final plan, implements on a dedicated Git/Graphite branch or jj bookmark, runs panel review, fixes findings, and publishes a draft PR with reviewer recommendations. Supports local stacks, managed worktrees, `--plan-only`, and a hosted `--fast` implementer. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
@@ -386,7 +385,6 @@ node --test scripts/check-exports/index.test.mjs
 npm run test:handoff
 npm run test:session-archive
 node --test extensions/panel-review/
-node --test 'extensions/parallel-agents/*.test.ts'
 node --test extensions/plan-implement/
 node --test extensions/kstack-router/
 node --test extensions/land/
