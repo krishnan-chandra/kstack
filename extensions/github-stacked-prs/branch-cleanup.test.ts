@@ -113,6 +113,30 @@ describe("cleanupLocalBranch", () => {
 		}
 	});
 
+	it("warns when ref verification fails fatally with empty stdout", async () => {
+		const fixture = createFixture();
+		try {
+			const exec: ExecFn = async (command, args, options) => {
+				if (args[0] === "rev-parse") {
+					return { code: 128, stdout: "", stderr: "fatal: unable to read repository" };
+				}
+				assert.notEqual(args[0], "update-ref");
+				return fixture.exec(command, args, options);
+			};
+			const result = await cleanupLocalBranch({
+				branch: "kstack/one",
+				expectedHeadSha: "a".repeat(40),
+				cwd: fixture.repo,
+				exec,
+			});
+			assert.deepEqual(result.completedMutations, []);
+			assert.equal(result.warnings.length, 1);
+			assert.match(result.warnings[0], /Could not verify local branch.*unable to read repository/);
+		} finally {
+			rmSync(fixture.root, { recursive: true, force: true });
+		}
+	});
+
 	it("preserves a local branch that moved to another commit and returns a warning", async () => {
 		const fixture = createFixture();
 		try {
