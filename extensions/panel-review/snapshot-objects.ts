@@ -146,6 +146,10 @@ class ManagedGitProcess {
 			this.child.on("close", (code, signal) => {
 				this.closed = true;
 				this.clearLifecycle();
+				if (code !== 0) {
+					const detail = this.diagnostic() || `exit ${code}, signal ${signal}`;
+					this.fail(new Error(`Git process failed: ${detail}`));
+				}
 				resolve({ code, signal });
 			});
 		});
@@ -153,7 +157,7 @@ class ManagedGitProcess {
 			this.fail(new Error(`Git process failed: ${error.message}`));
 		});
 		this.child.stdin.on("error", (error) => {
-			this.fail(new Error(`Git stdin failed: ${error.message}`));
+			this.failInput(error);
 		});
 		this.child.stderr.on("data", (chunk) => {
 			const remaining = STDERR_BYTES - this.stderr.byteLength;
@@ -227,17 +231,23 @@ class ManagedGitProcess {
 		return Promise.race([operation, this.failurePromise]);
 	}
 
+	private failInput(error: Error): Error {
+		const failure = this.failure ?? new Error(`Git process failed: stdin: ${error.message}`, { cause: error });
+		this.fail(failure);
+		return failure;
+	}
+
 	async write(bytes: Buffer): Promise<void> {
 		if (this.failure) throw this.failure;
 		await this.race(
 			new Promise<void>((resolve, reject) => {
 				try {
 					this.child.stdin.write(bytes, (error) => {
-						if (error) reject(error);
+						if (error) reject(this.failInput(error));
 						else resolve();
 					});
 				} catch (error) {
-					reject(error);
+					reject(this.failInput(error instanceof Error ? error : new Error(String(error))));
 				}
 			}),
 		);
@@ -249,11 +259,11 @@ class ManagedGitProcess {
 			new Promise<void>((resolve, reject) => {
 				try {
 					this.child.stdin.end((error?: Error | null) => {
-						if (error) reject(error);
+						if (error) reject(this.failInput(error));
 						else resolve();
 					});
 				} catch (error) {
-					reject(error);
+					reject(this.failInput(error instanceof Error ? error : new Error(String(error))));
 				}
 			}),
 		);

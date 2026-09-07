@@ -71,8 +71,8 @@ export async function cleanupLocalBranch(input: CleanupLocalBranchInput): Promis
 		input.signal,
 	);
 	if (preRead.code !== 0) {
-		// Nonzero exit with empty output means the branch is already gone: idempotent success, skip mutation
-		if (!preRead.stdout.trim()) {
+		// Quiet verification reports a missing ref with status 1 and no diagnostics.
+		if (preRead.code === 1 && !preRead.stdout.trim() && !preRead.stderr.trim()) {
 			return { completedMutations, warnings };
 		}
 		warnings.push(`Could not verify local branch ${branch}: ${commandDiagnostic(preRead)}. Retaining branch.`);

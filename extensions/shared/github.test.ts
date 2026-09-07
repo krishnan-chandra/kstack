@@ -358,6 +358,14 @@ test("deleteRemoteBranch deletes an unchanged remote branch at the expected head
 	assert.ok(calls[2].includes("name=refs/heads/feature"));
 	assert.ok(calls[2].includes(`beforeOid=${SHA}`));
 	assert.ok(calls[2].includes(`afterOid=${"0".repeat(40)}`));
+	for (const field of [
+		"repositoryId=R_node123",
+		"name=refs/heads/feature",
+		`beforeOid=${SHA}`,
+		`afterOid=${"0".repeat(40)}`,
+	]) {
+		assert.equal(calls[2][calls[2].indexOf(field) - 1], "-f", `${field} must remain a JSON string`);
+	}
 });
 
 test("deleteRemoteBranch short-circuits when the remote branch is already gone", async () => {

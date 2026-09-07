@@ -262,6 +262,39 @@ describe("snapshot batch object reader", () => {
 		assert.deepEqual(Buffer.concat(chunks), payload);
 	});
 
+	it("reports a failed child close before the first request with Git diagnostics", async () => {
+		const child = new FakeGitChild();
+		const reader = openSnapshotObjectReader({
+			gitDir: "/store",
+			cwd: "/workspace",
+			process: { spawn: spawnOne(child) },
+		});
+		child.stderr.write("fatal: invalid cat-file option");
+		child.stdin.destroy();
+		child.close(129);
+		await new Promise<void>((resolve) => queueMicrotask(resolve));
+		await assert.rejects(
+			reader.readBlob({ objectId: OID, size: 1, path: "file" }, async () => {}),
+			/Git process failed.*invalid cat-file option/,
+		);
+		await reader.abort();
+	});
+
+	it("normalizes a destroyed stdin before the child close event", async () => {
+		const child = new FakeGitChild();
+		const reader = openSnapshotObjectReader({
+			gitDir: "/store",
+			cwd: "/workspace",
+			process: { spawn: spawnOne(child) },
+		});
+		child.stdin.destroy();
+		await assert.rejects(
+			reader.readBlob({ objectId: OID, size: 1, path: "file" }, async () => {}),
+			/Git process failed.*stdin/,
+		);
+		await reader.abort();
+	});
+
 	it("reports synchronous spawn and stdin failures", async () => {
 		const failedSpawn: SnapshotGitSpawn = () => {
 			throw new Error("spawn denied");
