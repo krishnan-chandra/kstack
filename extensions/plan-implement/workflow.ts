@@ -16,14 +16,19 @@ interface CritiqueOptions {
 	countsAgainstBudget: boolean;
 }
 
+interface Debate {
+	revisePlan: (previous: string, critique: string) => Promise<AgentRunResult>;
+	critique: (plan: string, options: CritiqueOptions) => Promise<CritiqueResult>;
+	maxRounds?: number;
+	resolveExhaustion: (plan: string, openFindings: CritiqueFinding[]) => Promise<"verify" | "reject">;
+	readPlan: () => string;
+	onRound?: (round: number, result: CritiqueResult, options: CritiqueOptions) => Promise<void> | void;
+}
+
 interface WorkflowDeps {
 	runPlanner: () => Promise<AgentRunResult>;
-	revisePlan?: (previous: string, critique: string) => Promise<AgentRunResult>;
-	critique?: (plan: string, options: CritiqueOptions) => Promise<CritiqueResult>;
-	maxRounds?: number;
-	resolveExhaustion?: (plan: string, openFindings: CritiqueFinding[]) => Promise<"verify" | "reject">;
-	readPlan?: () => string;
-	onRound?: (round: number, result: CritiqueResult, options: CritiqueOptions) => Promise<void> | void;
+	/** Absent means skip debate; enabled debate has every required operation. */
+	debate?: Debate;
 	onPlan: (plan: CompletedAgentRun) => Promise<void> | void;
 	approvePlan: (plan: CompletedAgentRun) => Promise<boolean>;
 	planOnly?: boolean;
@@ -35,11 +40,7 @@ function debateFailure(planner: CompletedAgentRun, error: string): WorkflowResul
 	return { status: "debate-failed", planner, critique: { status: "failed", error } };
 }
 
-async function runDebate(initial: CompletedAgentRun, deps: WorkflowDeps): Promise<WorkflowResult | CompletedAgentRun> {
-	if (!deps.critique) return initial;
-	if (!deps.revisePlan || !deps.resolveExhaustion || !deps.readPlan) {
-		return debateFailure(initial, "Adversarial debate dependencies are incomplete.");
-	}
+async function runDebate(initial: CompletedAgentRun, deps: Debate): Promise<WorkflowResult | CompletedAgentRun> {
 	const maxRounds = deps.maxRounds ?? 3;
 	let planner = initial;
 	let exhaustedCritique: Extract<CritiqueResult, { status: "completed" }> | undefined;
@@ -78,7 +79,7 @@ export async function runWorkflow(deps: WorkflowDeps): Promise<WorkflowResult> {
 	const initialPlanner = await deps.runPlanner();
 	if (initialPlanner.status !== "completed") return { status: "planner-failed", planner: initialPlanner };
 
-	const debated = await runDebate(initialPlanner, deps);
+	const debated = deps.debate ? await runDebate(initialPlanner, deps.debate) : initialPlanner;
 	if ("planner" in debated) return debated;
 	const planner = debated;
 

@@ -8,51 +8,49 @@ disable-model-invocation: true
 
 # Adversarial planning
 
-Draft a repository-grounded implementation plan, then run a bounded debate with one named adversary. Keep the adversary pane open so the user can inspect or steer it.
+Draft a repository-grounded implementation plan, then run a bounded debate with one named adversary. Keep its pane open for inspection and steering. The parent plans; the adversary has read-only repository tools.
 
 ## Guard and resolve paths
 
-1. Run `test "${HERDR_ENV:-}" = 1`. Stop and explain that this skill requires a Pi session inside Herdr if the check fails.
+1. Run `test "${HERDR_ENV:-}" = 1`. Stop if this is not a Pi session inside Herdr.
 2. Resolve this skill directory from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it.
-3. Set the Pi integration path to `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts`. Stop with `Run herdr integration install pi` if the file is missing.
-4. Resolve the adversary model through the shared validator and alias resolver:
+3. Check `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts`. If missing, stop with `Run herdr integration install pi`.
+4. Resolve the adversary model:
 
    ```sh
    MODEL="$(node "$KSTACK/extensions/shared/herdr/cli.mjs" resolve-model \
      --section plan-adversary --key adversary)"
    ```
 
-   If the user supplied a model or alias, append `--model '<argument>'`. Stop on a nonzero exit and show the resolver's guidance.
+   Append `--model '<argument>'` for an explicit model or alias. Stop on resolver failure. Use a model distinct from the parent planner.
 
 ## Open or reuse the adversary pane
 
-1. Derive a short lowercase task slug. The Herdr agent name is `adversary-<slug>` and must match `[a-z][a-z0-9_-]{0,31}`.
-2. Run `herdr agent list`. Reuse the exact live name when it already exists.
-3. Otherwise inspect the caller with `herdr pane layout --pane "$HERDR_PANE_ID"`. Split a wide pane to the right and a narrow or tall pane down. Always preserve the current directory and user focus:
+1. Derive `adversary-<slug>`, matching `[a-z][a-z0-9_-]{0,31}`.
+2. Run `herdr agent list`. Reuse the exact live name when it already exists and has the intended cwd and model.
+3. Otherwise inspect `herdr pane layout --pane "$HERDR_PANE_ID"`. Split right when wide, down when narrow or tall:
 
    ```sh
    herdr pane split "$HERDR_PANE_ID" --direction <right-or-down> --cwd "$PWD" --no-focus
    ```
 
-4. Read the new pane ID from `.result.pane.pane_id`. Start the adversary there:
+4. Read `.result.pane.pane_id`, then start the adversary:
 
    ```sh
    herdr agent start "adversary-<slug>" --kind pi --pane "<pane-id>" -- \
-     --no-extensions \
-     -e "$KSTACK/kstack.ts" \
+     --no-extensions -e "$KSTACK/kstack.ts" \
      -e "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts" \
-     --no-skills --no-prompt-templates \
-     --tools read,grep,find,ls \
+     --no-skills --no-prompt-templates --tools read,grep,find,ls \
      --model "$MODEL" \
      --append-system-prompt "$KSTACK/skills/adversarial-planning/adversary-prompt.md" \
      --name "adversary/<slug>"
    ```
 
-If startup reports `agent_not_ready`, tell the user which pane contains the prompt. Do not answer a project-trust or approval prompt for the user.
+If startup reports `agent_not_ready`, tell the user which pane contains the prompt. The user answers project-trust and approval prompts.
 
 ## Draft the plan
 
-Ground every code claim in the repository. Write the plan to `local/plans/<slug>.md`; create `local/plans/` if needed. Use this contract:
+Create `local/plans/`, then write `local/plans/<slug>.md`. Ground code claims in the repository and keep scope within the request:
 
 ```markdown
 # <plan title>
@@ -60,47 +58,52 @@ Ground every code claim in the repository. Write the plan to `local/plans/<slug>
 Delivery: single-pr
 
 ## Ordered implementation steps
-
-1. [STEP-1] <bounded change and its verification>
+1. [STEP-1] <bounded change and verification>
 
 ## Acceptance criteria
-
-- [AC-1] <observable, testable result>
+- [AC-1] <observable result>
 ```
 
-Name the change-kind proof-obligation playbook when one applies. Keep the plan within the user's scope.
+Name the change-kind proof-obligation playbook when one applies.
 
 ## Run the debate
 
-Run at most three budgeted rounds. Keep prompts short and pass content by file path; never paste the task, plan, or critique into the terminal.
+Run at most three budgeted rounds. For round N, write `local/plans/<slug>-round-N.md` with the task, absolute plan path, prior critique path if any, and the instruction to return a structured critique in the final reply. The adversary does not write a report file.
 
-For round `N`, set the critique path to `local/plans/<slug>-critique-N.md`, then run:
+Use the shared host request protocol against the existing agent:
 
 ```sh
-herdr agent prompt "adversary-<slug>" \
-  "Round N. Read the task and plan at <absolute-plan-path>. Write your critique to <absolute-critique-path> and reply with exactly: DONE <absolute-critique-path>" \
-  --wait --timeout 900000
+node "$KSTACK/extensions/shared/herdr/cli.mjs" ask \
+  --agent "adversary-<slug>" \
+  --prompt "<absolute-round-instructions-path>" \
+  --out "<absolute-critique-path>"
 ```
+
+`ask` validates a request-specific successful final response in Pi's session, then saves it at `--out`. It has a 15-minute timeout and drains work on SIGINT/SIGTERM. SIGKILL cannot trigger cleanup. Never paste the task, plan, or critique into the terminal.
 
 After each round:
 
-- If Herdr returns `blocked`, inspect `herdr agent read "adversary-<slug>" --source recent-unwrapped --lines 200`. Show the user the pane ID and ask them to answer there before continuing.
-- Read the critique file. Reject malformed output that does not use `Verdict: approve` or `Verdict: revise` and the required sections.
-- On `approve`, present the final plan and stop the debate.
-- On `revise`, address every `[B-n]` in the plan. Add `## Changes since last round`, with one entry per blocking ID. Then run the next round.
+- On a nonzero exit, inspect the reported status and pane. A blocked CLI request is cancelled before return; ask the user to resolve input in the pane before explicitly retrying the round. An output file alone does not prove completion.
+- On success, read the critique file. Require one `Verdict: approve` or `Verdict: revise`, `## Blocking`, and `## Suggestions`. Reject unparseable nonempty blocking content; only `None.` represents an empty section. Any `[B-n]` blocker makes the verdict `revise`, even if the declared verdict says `approve`.
+- On `approve`, present the exact final plan and stop.
+- On `revise`, address every blocker by ID. Add `## Changes since last round` and run the next round.
 
-After round 3 returns `revise`, stop. Present every open blocking finding and the plan path. Tell the user that they can edit the plan or steer the adversary in its pane. Start another round only when the user asks.
+After round 3 returns `revise`, stop and present open blockers and the plan path. The user can edit the plan or steer the adversary. Start another round only when the user asks.
 
 ## Hand off
 
-Leave the adversary pane open and report its agent name and pane ID. For a bounded approved plan, offer:
+Leave the adversary pane open and report its name and pane ID. After the user approves a bounded plan, offer:
 
 ```text
-/plan-implement --fast --change-kind <kind> <task>
+/plan-implement --fast --plan-file <absolute-plan-path> --change-kind <kind> <task>
 ```
 
-For a full run that should not repeat the debate, offer:
+The path must contain no whitespace; copy the selected plan to a suitable path if necessary. Fast mode snapshots the file before workstream creation and passes it to the fresh implementer. It does not inherit this conversation.
+
+For a full run with implementation review and publication gates, offer:
 
 ```text
-/plan-implement --no-adversary <task>
+/plan-implement --no-adversary Implement the plan at <absolute-plan-path>
 ```
+
+This performs another planning pass but skips another adversarial debate. Neither handoff authorizes publication or landing.

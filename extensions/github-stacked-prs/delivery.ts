@@ -83,24 +83,27 @@ export async function preflightGitHubStack(
 	manifestPath: string | undefined,
 	exec: ExecFn,
 	gateway: GitHubGateway,
+	planOnly = false,
 ): Promise<VcsResult<StackPreflight>> {
 	const common = await preflightVcs(cwd, "git", exec);
 	if (!common.ok) return common;
 	const version = await requireGit238(common.workspaceRoot, exec);
 	if (!version.ok) return version;
-	const clean = await runCommand(
-		exec,
-		"git",
-		["status", "--porcelain=v1", "--untracked-files=all"],
-		common.workspaceRoot,
-	);
-	if (clean.code !== 0 || clean.stdout.trim()) {
-		return {
-			ok: false,
-			error: "GitHub stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
-		};
+	if (!planOnly) {
+		const clean = await runCommand(
+			exec,
+			"git",
+			["status", "--porcelain=v1", "--untracked-files=all"],
+			common.workspaceRoot,
+		);
+		if (clean.code !== 0 || clean.stdout.trim()) {
+			return {
+				ok: false,
+				error: "GitHub stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
+			};
+		}
 	}
-	if (!manifestPath) return { ok: false, error: "GitHub stack mode requires a private manifest path." };
+	if (!planOnly && !manifestPath) return { ok: false, error: "GitHub stack mode requires a private manifest path." };
 	const remote = await resolveGitRemote(common.workspaceRoot, "origin", exec);
 	if (!remote.ok) return remote;
 	const trunk = await resolveGitTrunk({
@@ -108,7 +111,7 @@ export async function preflightGitHubStack(
 		remote: remote.remote,
 		exec,
 		gateway,
-		fetch: true,
+		fetch: !planOnly,
 	});
 	if (!trunk.ok) return trunk;
 	return {
@@ -116,7 +119,9 @@ export async function preflightGitHubStack(
 		workspaceRoot: common.workspaceRoot,
 		trunkRef: trunk.trunk.ref,
 		trunkSha: trunk.trunk.sha,
-		childPolicy: childPolicy({ trunkRef: trunk.trunk.ref, trunkSha: trunk.trunk.sha, manifestPath }),
+		childPolicy: manifestPath
+			? childPolicy({ trunkRef: trunk.trunk.ref, trunkSha: trunk.trunk.sha, manifestPath })
+			: "",
 	};
 }
 

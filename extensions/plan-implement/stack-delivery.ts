@@ -14,7 +14,7 @@ import type { VcsBackendConfig } from "../shared/vcs/config.ts";
 
 interface StackDeliveryClient {
 	readonly provider: StackProviderId;
-	preflight(cwd: string, manifestPath?: string): Promise<VcsResult<StackPreflight>>;
+	preflight(cwd: string, manifestPath?: string, planOnly?: boolean): Promise<VcsResult<StackPreflight>>;
 	publish(cwd: string, manifestPath?: string, signal?: AbortSignal): Promise<StackPublishOutcome>;
 }
 
@@ -27,12 +27,17 @@ export function createStackDeliveryClient(
 	if (!provider) return undefined;
 	return {
 		provider,
-		async preflight(cwd: string, manifestPath?: string): Promise<VcsResult<StackPreflight>> {
+		async preflight(cwd: string, manifestPath?: string, planOnly?: boolean): Promise<VcsResult<StackPreflight>> {
 			const caps = await requestStackCapabilities(pi, provider);
 			if (!caps.handled || !caps.outcome.publication) {
 				return { ok: false, error: `Stack mode requires the ${provider}-stacked-prs extension to be loaded.` };
 			}
-			const response = await requestStackPreflight(pi, { provider, cwd, manifestPath });
+			const response = await requestStackPreflight(pi, {
+				provider,
+				cwd,
+				manifestPath,
+				...(planOnly ? { planOnly } : undefined),
+			});
 			if (!response.handled) {
 				return { ok: false, error: `The ${provider}-stacked-prs extension is unavailable.` };
 			}

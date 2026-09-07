@@ -54,9 +54,9 @@ Keep the bundle under 2 MiB. If the diff is larger, include `git diff --stat` an
 
 Launch all three reviewers in one `cli.mjs fanout` call.
 
-Use one task per lens. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. Reviewers run with read/grep/find/ls-only tools, disabled extensions, skills, prompt templates, and context files.
+Use one task per lens. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. Reviewers use read/grep/find/ls-only tools. They load only Kstack and the Herdr integration; other extensions, skills, prompt templates, and context files are disabled.
 
-Write each lens prompt file under `.workspace/simplify/<run-id>/<lens>-prompt.md`. Include the scope bundle path, the scope summary, and the matching template below. Instruct reviewers to return only findings within scope, cite `path:line` or diff hunks, write their complete response to their assigned output file, and make no writes to the repository. A reviewer with nothing worth reporting writes `No simplification findings.`
+Write each lens prompt file under `.workspace/simplify/<run-id>/<lens>-prompt.md`. Include the scope bundle path, the scope summary, and the matching template below. Instruct reviewers to return only findings within scope, cite `path:line` or diff hunks, return their complete response in the final reply, and make no writes to the repository. The host validates and saves the reply to `outputFile`. A reviewer with nothing worth reporting returns `No simplification findings.`
 
 | Lens | Read this template | Focus |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Write each lens prompt file under `.workspace/simplify/<run-id>/<lens>-prompt.md
 | Performance | [`references/performance-reviewer.md`](references/performance-reviewer.md) | Hot-path cost, repeated work, chatty I/O |
 | Reuse | [`references/reuse-reviewer.md`](references/reuse-reviewer.md) | Existing helpers and house patterns to reuse |
 
-Compose `.workspace/simplify/<run-id>/spec.json`:
+Create the run directory, then compose `.workspace/simplify/<run-id>/spec.json`. Replace `<repo-root>` with its absolute path in every field; relative prompt/output paths are rejected:
 
 ```json
 {
@@ -76,8 +76,8 @@ Compose `.workspace/simplify/<run-id>/spec.json`:
       "label": "code-quality",
       "model": "<model>",
       "cwd": "<repo-root>",
-      "promptFile": ".workspace/simplify/<run-id>/code-quality-prompt.md",
-      "outputFile": ".workspace/simplify/<run-id>/code-quality.txt",
+      "promptFile": "<repo-root>/.workspace/simplify/<run-id>/code-quality-prompt.md",
+      "outputFile": "<repo-root>/.workspace/simplify/<run-id>/code-quality.txt",
       "access": "read-only",
       "tools": ["read", "grep", "find", "ls"],
       "noContextFiles": true,
@@ -87,8 +87,8 @@ Compose `.workspace/simplify/<run-id>/spec.json`:
       "label": "performance",
       "model": "<model>",
       "cwd": "<repo-root>",
-      "promptFile": ".workspace/simplify/<run-id>/performance-prompt.md",
-      "outputFile": ".workspace/simplify/<run-id>/performance.txt",
+      "promptFile": "<repo-root>/.workspace/simplify/<run-id>/performance-prompt.md",
+      "outputFile": "<repo-root>/.workspace/simplify/<run-id>/performance.txt",
       "access": "read-only",
       "tools": ["read", "grep", "find", "ls"],
       "noContextFiles": true,
@@ -98,8 +98,8 @@ Compose `.workspace/simplify/<run-id>/spec.json`:
       "label": "reuse",
       "model": "<model>",
       "cwd": "<repo-root>",
-      "promptFile": ".workspace/simplify/<run-id>/reuse-prompt.md",
-      "outputFile": ".workspace/simplify/<run-id>/reuse.txt",
+      "promptFile": "<repo-root>/.workspace/simplify/<run-id>/reuse-prompt.md",
+      "outputFile": "<repo-root>/.workspace/simplify/<run-id>/reuse.txt",
       "access": "read-only",
       "tools": ["read", "grep", "find", "ls"],
       "noContextFiles": true,

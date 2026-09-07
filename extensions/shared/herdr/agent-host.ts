@@ -11,11 +11,13 @@
  * fake herdr instead of spawning the binary.
  */
 
-import { existsSync } from "node:fs";
-import { chmod, type FileHandle, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
-import { KSTACK_ENTRY, truncateHeadUtf8 } from "../child-agent-runner.ts";
+import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { KSTACK_ENTRY } from "../child-agent-runner.ts";
 import { getAgentDir } from "../kstack-config.ts";
 import { type BoundaryValue, isObject } from "../validation.ts";
 import {
@@ -26,6 +28,7 @@ import {
 	type HerdrRunOptions,
 } from "./herdr-cli.ts";
 import { type AgentPanePlacement, placeAgent } from "./layout.ts";
+import { readResponse, responseMarker } from "./response.ts";
 import { emptyUsage, readUsageSince, type UsageSummary, usageOffset } from "./session-usage.ts";
 
 const HERDR_INTEGRATION_FILE = "extensions/herdr-agent-state.ts";
@@ -53,7 +56,7 @@ export interface HostedAgentSpec {
 export interface AskOptions {
 	/** 0600 instructions file the host or caller wrote. */
 	promptFile: string;
-	/** Where the agent must write its complete answer. */
+	/** Where the host materializes the validated final response. */
 	outputFile: string;
 	/** 1..60 minutes. */
 	timeoutMs: number;
@@ -77,8 +80,8 @@ export interface HostedAgent {
 	readonly sessionFile: string | undefined;
 	/** One ask in flight; a second concurrent call rejects. */
 	ask(options: AskOptions): Promise<AskResult>;
-	/** After a `blocked` result: wait for idle/done, then collect the answer. */
-	resume(options: Omit<AskOptions, "promptFile">): Promise<AskResult>;
+	/** Resume the stored blocked request, delivering it if it was rejected before send. */
+	resume(): Promise<AskResult>;
 	/** esc, then ctrl+c twice, then pane close; each step only when the previous one does not settle the agent. */
 	abort(): Promise<void>;
 	dispose(options?: { closePane?: boolean }): Promise<void>;
@@ -138,16 +141,20 @@ export function hostedAgentArgs(spec: HostedAgentSpec, integrationPath: string):
 	}
 	args.push("--model", spec.model);
 	for (const path of spec.systemPromptFiles ?? []) args.push("--append-system-prompt", path);
+	args.push(
+		"--append-system-prompt",
+		"For a hosted request, put the requested KSTACK_RESPONSE acknowledgement on the first line of your final reply, then the complete answer. Role-specific output formats apply to the answer after that line. The host saves the reply; no response-writing tool is needed.",
+	);
 	if (spec.sessionName) args.push("--name", spec.sessionName);
 	return args;
 }
 
 /** The fixed pointer prompt sent through the terminal; instructions stay in files. */
-export function pointerPrompt(promptFile: string, outputFile: string): string {
+export function pointerPrompt(promptFile: string, requestId: string): string {
 	return (
 		`Read and follow the instructions in ${promptFile}. ` +
-		`Write your complete final response to ${outputFile}. ` +
-		`When finished, reply with exactly one line: DONE ${outputFile}`
+		`Return your complete answer in your final reply, starting with the exact line ${responseMarker(requestId)}\n` +
+		`The host saves your response; do not write an answer file.`
 	);
 }
 
@@ -221,21 +228,6 @@ function emptyFailed(error: string): AskResult {
 	return { status: "failed", error, usage: emptyUsage() };
 }
 
-function isUnder(dir: string, path: string): boolean {
-	const rel = relative(resolve(dir), resolve(path));
-	return rel !== "" && !rel.startsWith("..");
-}
-
-/** Pull a `DONE <path>` pointer out of recent terminal output, accepting only paths under the exchange directory. */
-export function extractDonePath(text: string, exchangeDir: string): string | undefined {
-	for (const line of text.split("\n")) {
-		const match = /\bDONE\s+(\S+)\s*$/.exec(line);
-		const candidate = match?.[1];
-		if (candidate && isUnder(exchangeDir, candidate)) return resolve(candidate);
-	}
-	return undefined;
-}
-
 function validateAskOptions(options: Pick<AskOptions, "timeoutMs" | "outputCapBytes">): string | undefined {
 	if (
 		!Number.isFinite(options.timeoutMs) ||
@@ -255,12 +247,19 @@ function errorText(error: BoundaryValue): string {
 	return isObject(error) && error instanceof Error ? error.message : String(error);
 }
 
-function truncateToCap(text: string, cap: number): string {
-	if (Buffer.byteLength(text, "utf8") <= cap) return text;
-	return truncateHeadUtf8(text, cap);
-}
-
 type SendOutcome = { settled: true } | AskResult;
+
+interface PendingRequest {
+	id: string;
+	options: AskOptions;
+	prompt: string;
+	delivered: boolean;
+	sessionFile: string | undefined;
+	responseOffset: number;
+	usageOffset: number;
+	cancelled: boolean;
+	onAbort: () => void;
+}
 
 class HostedAgentImpl implements HostedAgent {
 	readonly name: string;
@@ -270,56 +269,42 @@ class HostedAgentImpl implements HostedAgent {
 	sessionFile: string | undefined;
 	private readonly cli: HerdrCli;
 	private readonly deps: HostDeps;
-	private readonly exchangeDir: string;
+	private readonly cwd: string;
 	private askBusy = false;
 	private abortPromise: Promise<void> | undefined;
-	private usageOffsetValue: number | undefined;
-	private pendingOffset: number | undefined;
+	private pending: PendingRequest | undefined;
+	private closed = false;
 
 	constructor(
-		init: { name: string; role: string; paneId: string; tabId: string; sessionFile?: string },
+		init: { name: string; role: string; cwd: string; paneId: string; tabId: string; sessionFile?: string },
 		cli: HerdrCli,
 		deps: HostDeps,
-		exchangeDir: string,
 	) {
 		this.name = init.name;
+		this.cwd = init.cwd;
 		this.role = init.role;
 		this.paneId = init.paneId;
 		this.tabId = init.tabId;
 		this.sessionFile = init.sessionFile;
 		this.cli = cli;
 		this.deps = deps;
-		this.exchangeDir = exchangeDir;
 	}
 
 	hasAskInFlight(): boolean {
-		return this.askBusy;
+		return this.askBusy || this.pending !== undefined;
 	}
 
 	private sleep(ms: number): Promise<void> {
 		return (this.deps.sleep ?? ((delay) => new Promise((resolveSleep) => setTimeout(resolveSleep, delay))))(ms);
 	}
 
-	/** Byte offset in the session file where the next ask's usage starts. */
-	private offsetBefore(): number {
-		if (this.usageOffsetValue === undefined) {
-			this.usageOffsetValue = this.sessionFile ? usageOffset(this.sessionFile) : 0;
-		}
-		return this.usageOffsetValue;
-	}
-
-	/** Snapshot the usage window before a prompt is sent so the ask is charged exactly its own appends. */
-	private beginUsageWindow(): void {
-		this.pendingOffset = this.offsetBefore();
-	}
-
-	/** Usage appended since the ask started, advancing the offset. */
+	/** Usage is incremental across blocked returns, but starts fresh for every request. */
 	private usage(): UsageSummary {
-		if (!this.sessionFile) return emptyUsage();
-		const start = this.pendingOffset ?? this.offsetBefore();
-		const read = readUsageSince(this.sessionFile, start);
-		this.pendingOffset = read.nextOffset;
-		this.usageOffsetValue = read.nextOffset;
+		const request = this.pending;
+		if (!this.sessionFile || !request || (request.sessionFile && request.sessionFile !== this.sessionFile))
+			return emptyUsage();
+		const read = readUsageSince(this.sessionFile, request.usageOffset);
+		request.usageOffset = read.nextOffset;
 		return read.usage;
 	}
 
@@ -328,42 +313,59 @@ class HostedAgentImpl implements HostedAgent {
 	}
 
 	async ask(options: AskOptions): Promise<AskResult> {
-		if (this.askBusy) throw new Error(`Agent ${this.name} already has an ask in flight.`);
+		if (this.askBusy || this.pending) throw new Error(`Agent ${this.name} already has an ask in flight.`);
+		if (this.closed) return emptyFailed(`Agent ${this.name} is closed.`);
 		const optionsError = validateAskOptions(options);
 		if (optionsError) return emptyFailed(`${this.role}: ${optionsError}`);
 		this.askBusy = true;
 		try {
-			const promptText = pointerPrompt(options.promptFile, options.outputFile);
-			if (Buffer.byteLength(promptText, "utf8") > POINTER_PROMPT_MAX_BYTES) {
+			const id = randomUUID();
+			const prompt = pointerPrompt(options.promptFile, id);
+			if (Buffer.byteLength(prompt, "utf8") > POINTER_PROMPT_MAX_BYTES) {
 				return emptyFailed(
-					`${this.role}: pointer prompt exceeds ${POINTER_PROMPT_MAX_BYTES} bytes; shorten the instruction and output paths.`,
+					`${this.role}: pointer prompt exceeds ${POINTER_PROMPT_MAX_BYTES} bytes; shorten the instruction path.`,
 				);
 			}
 			const prepared = await this.prepareExchangeFiles(options.promptFile, options.outputFile);
 			if (!prepared.ok) return emptyFailed(`${this.role}: ${prepared.error}`);
-			this.beginUsageWindow();
-			return await this.runAsk(() => this.sendPointerPrompt(promptText, options), {
-				outputFile: options.outputFile,
-				outputCapBytes: options.outputCapBytes,
-				signal: options.signal,
-			});
+			const current = await this.cli.agentGet({ name: this.name }, { timeoutMs: CONTROL_TIMEOUT_MS });
+			if (!current.ok) return emptyFailed(current.message);
+			if (!current.value.cwd || canonicalCwd(current.value.cwd) !== canonicalCwd(this.cwd))
+				return emptyFailed(`${this.role}: hosted cwd is missing or differs from the assigned cwd.`);
+			// A prompt queued behind a human turn settles when that turn ends, before this request ran.
+			if (current.value.agentStatus === "working")
+				return emptyFailed(`${this.role}: the hosted agent is working on another turn; wait for it to settle.`);
+			this.refreshSession(current.value);
+			const offset = this.sessionFile ? usageOffset(this.sessionFile) : 0;
+			this.abortPromise = undefined;
+			const request: PendingRequest = {
+				id,
+				options: { ...options },
+				prompt,
+				delivered: false,
+				sessionFile: this.sessionFile,
+				responseOffset: offset,
+				usageOffset: offset,
+				cancelled: false,
+				onAbort: () => {
+					void this.abort();
+				},
+			};
+			this.pending = request;
+			options.signal?.addEventListener("abort", request.onAbort, { once: true });
+			return await this.runRequest(request, false);
 		} finally {
 			this.askBusy = false;
 		}
 	}
 
-	async resume(options: Omit<AskOptions, "promptFile">): Promise<AskResult> {
+	async resume(): Promise<AskResult> {
 		if (this.askBusy) throw new Error(`Agent ${this.name} already has an ask in flight.`);
-		const optionsError = validateAskOptions(options);
-		if (optionsError) return emptyFailed(`${this.role}: ${optionsError}`);
+		const request = this.pending;
+		if (!request) return emptyFailed(`${this.role}: no blocked request to resume.`);
 		this.askBusy = true;
 		try {
-			this.beginUsageWindow();
-			return await this.runAsk(() => this.waitForSettle(options), {
-				outputFile: options.outputFile,
-				outputCapBytes: options.outputCapBytes,
-				signal: options.signal,
-			});
+			return await this.runRequest(request, true);
 		} finally {
 			this.askBusy = false;
 		}
@@ -375,7 +377,9 @@ class HostedAgentImpl implements HostedAgent {
 		outputFile: string,
 	): Promise<{ ok: true } | { ok: false; error: string }> {
 		try {
+			if (resolve(promptFile) === resolve(outputFile)) throw new Error("Instruction and output paths must differ.");
 			await chmod(promptFile, 0o600);
+			await mkdir(dirname(outputFile), { recursive: true, mode: 0o700 });
 			await writeFile(outputFile, "", { mode: 0o600 });
 			await chmod(outputFile, 0o600);
 			return { ok: true };
@@ -384,38 +388,66 @@ class HostedAgentImpl implements HostedAgent {
 		}
 	}
 
-	/** Shared ask skeleton: send (or wait), then collect; abort and error paths still report usage. */
-	private async runAsk(
-		send: () => Promise<SendOutcome>,
-		collect: { outputFile: string; outputCapBytes?: number; signal?: AbortSignal },
-	): Promise<AskResult> {
-		const signal = collect.signal;
-		if (signal?.aborted) {
-			await this.abort();
-			return { status: "aborted", usage: this.usage() };
-		}
-		const onAbort = (): void => {
-			void this.abort();
-		};
-		signal?.addEventListener("abort", onAbort, { once: true });
+	private async runRequest(request: PendingRequest, resume: boolean): Promise<AskResult> {
+		let blocked = false;
 		try {
-			const sent = await send();
-			if (!("settled" in sent)) return sent;
-			return await this.collectAnswer(collect.outputFile, collect.outputCapBytes);
-		} catch (error) {
-			if (signal?.aborted) {
+			if (request.cancelled || request.options.signal?.aborted) {
 				await this.abort();
 				return { status: "aborted", usage: this.usage() };
 			}
-			return { status: "failed", error: errorText(error), usage: this.usage() };
+			let sent: SendOutcome;
+			if (resume) {
+				sent = await this.waitForSettle(request.options);
+				if ("settled" in sent && !request.delivered && !request.cancelled)
+					sent = await this.sendPointerPrompt(request.prompt, request.options);
+			} else {
+				sent = await this.sendPointerPrompt(request.prompt, request.options);
+			}
+			if (request.cancelled || request.options.signal?.aborted) {
+				await this.abort();
+				return { status: "aborted", usage: this.usage() };
+			}
+			if (!("settled" in sent)) {
+				blocked = sent.status === "blocked";
+				if (sent.status === "failed") await this.abort();
+				return sent;
+			}
+			const result = await this.collectAnswer(request);
+			if (request.cancelled || request.options.signal?.aborted) {
+				await this.abort();
+				await writeFile(request.options.outputFile, "", { mode: 0o600 });
+				return { status: "aborted", usage: this.usage() };
+			}
+			return result;
+		} catch (error) {
+			const cancelled = request.cancelled || request.options.signal?.aborted;
+			await this.abort();
+			return cancelled
+				? { status: "aborted", usage: this.usage() }
+				: { status: "failed", error: `${this.role}: ${errorText(error)}`, usage: this.usage() };
 		} finally {
-			signal?.removeEventListener("abort", onAbort);
+			if (!blocked) {
+				request.options.signal?.removeEventListener("abort", request.onAbort);
+				this.pending = undefined;
+			}
 		}
+	}
+
+	private observeSettlement(info: HerdrAgentInfo): SendOutcome {
+		this.refreshSession(info);
+		if (!info.cwd || canonicalCwd(info.cwd) !== canonicalCwd(this.cwd))
+			return { status: "failed", error: "Hosted cwd changed during the request.", usage: this.usage() };
+		if (this.pending?.sessionFile && this.sessionFile !== this.pending.sessionFile)
+			return { status: "failed", error: "Hosted session changed during the request.", usage: this.usage() };
+		if (info.agentStatus === "blocked") return { status: "blocked", paneId: this.paneId, usage: this.usage() };
+		if (info.agentStatus === "idle" || info.agentStatus === "done") return { settled: true };
+		return { status: "failed", error: `Herdr returned an unsettled agent (${info.agentStatus}).`, usage: this.usage() };
 	}
 
 	private async sendPointerPrompt(promptText: string, options: AskOptions): Promise<SendOutcome> {
 		for (let attempt = 0; attempt < 2; attempt++) {
 			if (attempt > 0) await this.sleep(STALLED_RETRY_DELAY_MS);
+			if (this.pending?.cancelled || options.signal?.aborted) return { status: "aborted", usage: this.usage() };
 			const execOptions: HerdrRunOptions = { timeoutMs: options.timeoutMs + 30_000 };
 			if (options.signal) execOptions.signal = options.signal;
 			const outcome = await this.cli.agentPrompt(
@@ -423,11 +455,8 @@ class HostedAgentImpl implements HostedAgent {
 				execOptions,
 			);
 			if (outcome.ok) {
-				this.refreshSession(outcome.value);
-				if (outcome.value.agentStatus === "blocked") {
-					return { status: "blocked", paneId: this.paneId, usage: this.usage() };
-				}
-				return { settled: true };
+				if (this.pending) this.pending.delivered = true;
+				return this.observeSettlement(outcome.value);
 			}
 			if (options.signal?.aborted) {
 				await this.abort();
@@ -436,7 +465,6 @@ class HostedAgentImpl implements HostedAgent {
 			if (outcome.code === "agent_blocked") return { status: "blocked", paneId: this.paneId, usage: this.usage() };
 			if (outcome.code === "agent_prompt_stalled") continue;
 			if (isTimeoutError(outcome)) {
-				await this.abort();
 				return {
 					status: "failed",
 					error: `Timed out after ${Math.round(options.timeoutMs / 1000)}s.`,
@@ -459,10 +487,7 @@ class HostedAgentImpl implements HostedAgent {
 			{ name: this.name, timeoutMs: options.timeoutMs, until: ["idle", "done"] },
 			execOptions,
 		);
-		if (outcome.ok) {
-			this.refreshSession(outcome.value);
-			return { settled: true };
-		}
+		if (outcome.ok) return this.observeSettlement(outcome.value);
 		if (options.signal?.aborted) {
 			await this.abort();
 			return { status: "aborted", usage: this.usage() };
@@ -478,55 +503,22 @@ class HostedAgentImpl implements HostedAgent {
 		return { status: "failed", error: `${outcome.code}: ${outcome.message}`, usage: this.usage() };
 	}
 
-	private async collectAnswer(outputFile: string, outputCapBytes: number | undefined): Promise<AskResult> {
-		const cap = outputCapBytes ?? DEFAULT_OUTPUT_CAP_BYTES;
-		const primary = await this.readAnswerFile(outputFile, cap);
-		const answer = primary.ok ? primary : await this.fallbackAnswer(cap);
-		if (answer.ok) {
-			const completed: AskResult = {
-				status: "completed",
-				output: answer.text,
-				usage: this.usage(),
-			};
-			if (this.sessionFile) completed.session = this.sessionFile;
-			return completed;
-		}
-		return { status: "failed", error: `${this.role} produced no output file.`, usage: this.usage() };
-	}
-
-	/** Missing primary output: check recent terminal output for a DONE pointer to a different existing exchange file. */
-	private async fallbackAnswer(cap: number): Promise<{ ok: true; text: string } | { ok: false }> {
-		try {
-			const screen = await this.cli.agentRead({ name: this.name, lines: 200 }, { timeoutMs: CONTROL_TIMEOUT_MS });
-			if (!screen.ok) return { ok: false };
-			const alternative = extractDonePath(screen.value, this.exchangeDir);
-			if (!alternative) return { ok: false };
-			return await this.readAnswerFile(alternative, cap);
-		} catch {
-			return { ok: false };
-		}
-	}
-
-	private async readAnswerFile(path: string, cap: number): Promise<{ ok: true; text: string } | { ok: false }> {
-		if (!Number.isSafeInteger(cap) || cap < 1) return { ok: false };
-		let handle: FileHandle | undefined;
-		try {
-			handle = await open(path, "r");
-			const size = (await handle.stat()).size;
-			if (size === 0) return { ok: false };
-			const bytesToRead = Math.min(size, cap + 4);
-			const buffer = Buffer.alloc(bytesToRead);
-			const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
-			const text = buffer.toString("utf8", 0, bytesRead);
-			return { ok: true, text: size > cap ? truncateToCap(text, cap) : text };
-		} catch {
-			return { ok: false };
-		} finally {
-			await handle?.close().catch(() => undefined);
-		}
+	private async collectAnswer(request: PendingRequest): Promise<AskResult> {
+		if (!this.sessionFile) throw new Error("Herdr did not report a Pi session file.");
+		if (request.sessionFile && this.sessionFile !== request.sessionFile)
+			throw new Error("Hosted session changed during the request; retry in the selected session.");
+		const output = await readResponse(
+			this.sessionFile,
+			request.responseOffset,
+			request.id,
+			request.options.outputCapBytes ?? DEFAULT_OUTPUT_CAP_BYTES,
+		);
+		await writeFile(request.options.outputFile, output, { mode: 0o600 });
+		return { status: "completed", output, usage: this.usage(), session: this.sessionFile };
 	}
 
 	async abort(): Promise<void> {
+		if (this.pending) this.pending.cancelled = true;
 		this.abortPromise ??= this.runAbort();
 		await this.abortPromise;
 	}
@@ -538,6 +530,7 @@ class HostedAgentImpl implements HostedAgent {
 		await this.sleep(1_000);
 		await this.sendKey("ctrl+c");
 		if (await this.settles(2_000)) return;
+		this.closed = true;
 		try {
 			await this.cli.paneClose({ paneId: this.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
 		} catch {
@@ -553,12 +546,13 @@ class HostedAgentImpl implements HostedAgent {
 		}
 	}
 
+	/** The host tab is unseen (`--no-focus`), so herdr reports a settled agent as `done`, not `idle`. */
 	private async settles(timeoutMs: number): Promise<boolean> {
 		try {
 			return await this.cli
-				.agentWait({ name: this.name, timeoutMs, until: ["idle"] }, { timeoutMs: timeoutMs + 5_000 })
+				.agentWait({ name: this.name, timeoutMs, until: ["idle", "done"] }, { timeoutMs: timeoutMs + 5_000 })
 				.then(
-					(outcome) => outcome.ok,
+					(outcome) => outcome.ok && (outcome.value.agentStatus === "idle" || outcome.value.agentStatus === "done"),
 					() => false,
 				);
 		} catch {
@@ -567,7 +561,13 @@ class HostedAgentImpl implements HostedAgent {
 	}
 
 	async dispose(options?: { closePane?: boolean }): Promise<void> {
+		if (this.pending) {
+			await this.abort();
+			this.pending?.options.signal?.removeEventListener("abort", this.pending.onAbort);
+			if (!this.askBusy) this.pending = undefined;
+		}
 		if (options?.closePane) {
+			this.closed = true;
 			try {
 				await this.cli.paneClose({ paneId: this.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
 			} catch {
@@ -575,6 +575,25 @@ class HostedAgentImpl implements HostedAgent {
 			}
 		}
 	}
+}
+
+/** Use the same request lifecycle for a skill's already-running named Pi agent. */
+export async function attachHostedAgent(
+	name: string,
+	deps: HostDeps,
+): Promise<{ ok: true; agent: HostedAgent } | { ok: false; error: string }> {
+	if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) return { ok: false, error: "Invalid hosted agent name." };
+	const preflight = await preflightHerdr(deps);
+	if (!preflight.ok) return preflight;
+	const cli = createHerdrCli(deps.exec);
+	const found = await cli.agentGet({ name }, { timeoutMs: CONTROL_TIMEOUT_MS });
+	if (!found.ok) return { ok: false, error: found.message };
+	if (found.value.paneId === preflight.callerPane) return { ok: false, error: "Cannot ask the caller's own pane." };
+	if (!found.value.cwd) return { ok: false, error: "Herdr did not report the agent cwd." };
+	return {
+		ok: true,
+		agent: new HostedAgentImpl({ ...found.value, name, role: name, cwd: found.value.cwd }, cli, deps),
+	};
 }
 
 /** Create the host: preflight, one `--no-focus` tab in the caller's workspace, a 0700 exchange directory. */
@@ -598,7 +617,44 @@ export async function openAgentHost(
 	const ownsExchangeDir = deps.exchangeDir === undefined;
 	const exchangeDir = deps.exchangeDir ?? (await createExchangeDir());
 	const agents: HostedAgentImpl[] = [];
+	const panes: string[] = [];
+	let allocation = Promise.resolve();
 	let disposed = false;
+
+	const allocatePane = (spec: HostedAgentSpec): Promise<string> => {
+		const next = allocation.then(async () => {
+			if (disposed) throw new Error("The agent host is disposed.");
+			if (panes.length >= options.maxAgents) throw new Error(`This run hosts at most ${options.maxAgents} agent(s).`);
+			const index = panes.length;
+			const placement: AgentPanePlacement | undefined = placeAgent(index, options.maxAgents, { widthColumns });
+			let paneId = tab.value.rootPaneId;
+			if (placement || resolve(spec.cwd) !== resolve(options.cwd)) {
+				const sourcePane =
+					placement && placement.splitFrom !== "root"
+						? (panes[placement.splitFrom] ?? tab.value.rootPaneId)
+						: tab.value.rootPaneId;
+				const split = await cli.paneSplit(
+					{
+						paneId: sourcePane,
+						direction: placement?.direction ?? "right",
+						ratio: placement?.ratio ?? 0.5,
+						cwd: spec.cwd,
+					},
+					{ timeoutMs: CONTROL_TIMEOUT_MS },
+				);
+				if (!split.ok) throw new Error(`Could not split a pane for ${spec.role}: ${split.message}`);
+				paneId = split.value.paneId;
+			}
+			// Reserve before startup: failed or concurrent starts cannot reuse this pane.
+			panes.push(paneId);
+			return paneId;
+		});
+		allocation = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
+	};
 
 	const removeExchangeDir = async (): Promise<void> => {
 		if (!ownsExchangeDir) return;
@@ -610,9 +666,6 @@ export async function openAgentHost(
 		exchangeDir,
 		async start(spec) {
 			if (disposed) return { ok: false, error: "The agent host is disposed." };
-			if (agents.length >= options.maxAgents) {
-				return { ok: false, error: `This run hosts at most ${options.maxAgents} agent(s).` };
-			}
 			const startupTimeoutMs = spec.startupTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
 			if (
 				!Number.isSafeInteger(startupTimeoutMs) ||
@@ -624,41 +677,46 @@ export async function openAgentHost(
 					error: `startup timeout must be an integer from ${START_TIMEOUT_MIN_MS} to ${START_TIMEOUT_MAX_MS} ms.`,
 				};
 			}
-			const index = agents.length;
-			const placement: AgentPanePlacement | undefined = placeAgent(index, options.maxAgents, { widthColumns });
-			let paneId = tab.value.rootPaneId;
-			if (placement) {
-				const sourcePane =
-					placement.splitFrom === "root"
-						? tab.value.rootPaneId
-						: (agents[placement.splitFrom]?.paneId ?? tab.value.rootPaneId);
-				const split = await cli.paneSplit(
-					{ paneId: sourcePane, direction: placement.direction, ratio: placement.ratio, cwd: spec.cwd },
-					{ timeoutMs: CONTROL_TIMEOUT_MS },
-				);
-				if (!split.ok) return { ok: false, error: `Could not split a pane for ${spec.role}: ${split.message}` };
-				paneId = split.value.paneId;
+			let paneId: string;
+			try {
+				paneId = await allocatePane(spec);
+			} catch (error) {
+				return { ok: false, error: errorText(error) };
 			}
 			const args = hostedAgentArgs(spec, preflight.integrationPath);
 			let lastError: CliError | undefined;
 			for (let attempt = 0; attempt < 3; attempt++) {
 				const name = buildAgentName(options.owner, spec.role, randomSuffix());
-				const started = await cli.agentStart(
+				let started = await cli.agentStart(
 					{ name, paneId, timeoutMs: startupTimeoutMs, args },
 					{ timeoutMs: startupTimeoutMs + 30_000 },
 				);
+				// New panes can precede the shell prompt. Only this rejection proves no agent was launched.
+				for (let retry = 0; !started.ok && started.code === "agent_pane_busy" && retry < 3; retry++) {
+					await (deps.sleep ?? delay)(1_000);
+					if (disposed) return { ok: false, error: "The agent host is disposed." };
+					started = await cli.agentStart(
+						{ name, paneId, timeoutMs: startupTimeoutMs, args },
+						{ timeoutMs: startupTimeoutMs + 30_000 },
+					);
+				}
 				if (started.ok) {
+					if (!started.value.cwd || canonicalCwd(started.value.cwd) !== canonicalCwd(spec.cwd))
+						return {
+							ok: false,
+							error: `Herdr started ${spec.role} with a missing or unexpected cwd; expected ${spec.cwd}. No task was sent.`,
+						};
 					const agent = new HostedAgentImpl(
 						{
 							name: started.value.name || name,
 							role: spec.role,
+							cwd: spec.cwd,
 							paneId,
 							tabId: tab.value.tabId,
 							...(started.value.sessionFile ? { sessionFile: started.value.sessionFile } : undefined),
 						},
 						cli,
 						deps,
-						exchangeDir,
 					);
 					agents.push(agent);
 					return { ok: true, agent };
@@ -679,6 +737,7 @@ export async function openAgentHost(
 		async dispose(disposeOptions) {
 			if (disposed) return;
 			disposed = true;
+			await Promise.all(agents.map((agent) => agent.dispose()));
 			if (disposeOptions?.closeTab) {
 				try {
 					await cli.tabClose({ tabId: tab.value.tabId }, { timeoutMs: CONTROL_TIMEOUT_MS });
@@ -696,6 +755,14 @@ export async function openAgentHost(
 		},
 	};
 	return { ok: true, host };
+}
+
+function canonicalCwd(cwd: string): string {
+	try {
+		return realpathSync(cwd);
+	} catch {
+		return resolve(cwd);
+	}
 }
 
 async function createExchangeDir(): Promise<string> {

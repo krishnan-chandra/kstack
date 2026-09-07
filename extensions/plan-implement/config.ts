@@ -2,7 +2,6 @@ import { type BoundaryValue, isObject, type JsonObject } from "../shared/validat
 /** Unified kstack.json configuration and role-model resolution. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
-import { resolveModelRef } from "../shared/herdr/resolve-model.ts";
 import {
 	isThinkingLevel,
 	loadKstackSection,
@@ -13,6 +12,7 @@ import {
 } from "../shared/kstack-config.ts";
 import { collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
+import { resolveModelRef } from "../shared/resolve-model.ts";
 import {
 	LIMITS,
 	type ModelThinkingLevel,

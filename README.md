@@ -77,7 +77,9 @@ instructions and options.
 
 ## Subagent sessions
 
-Kstack extension child agents persist native Pi sessions under `~/.pi/kstack/subagents/`. The managed flat store protects active runs and retains at most 500 sessions, pruning completed sessions oldest-first. These sessions do not appear in normal `/resume` results; reopen one with `pi --session <absolute-jsonl-path>`. Panel-review verdicts expose reviewer and lead evidence paths when expanded. The session archive does not currently index this custom directory, and retained references can point to files that later age out.
+Short headless Kstack child agents persist native Pi sessions under `~/.pi/kstack/subagents/`. The managed flat store protects active runs and retains at most 500 sessions, pruning completed sessions oldest-first. These sessions do not appear in normal `/resume` results; reopen one with `pi --session <absolute-jsonl-path>`. Panel-review verdicts expose reviewer and lead evidence paths when expanded. The session archive does not currently index this custom directory, and retained references can point to files that later age out.
+
+Long-lived [Herdr-hosted agents](extensions/shared/herdr/) use Pi's normal session directory. Read-only roles return final replies through their sessions; the host validates completion and saves response artifacts without giving them repository write tools. Fast implementation starts a fresh hosted session: use `--fast --plan-file <absolute-plan-path>` to carry a selected plan explicitly.
 
 ## Configuration
 

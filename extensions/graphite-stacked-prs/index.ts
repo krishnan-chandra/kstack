@@ -96,7 +96,7 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
 		claimStackPreflight(data, "graphite", async (payload) =>
-			preflightGraphiteStack(payload.cwd, payload.manifestPath, exec),
+			preflightGraphiteStack(payload.cwd, payload.manifestPath, exec, payload.planOnly),
 		),
 	);
 

@@ -124,6 +124,56 @@ describe("plan-implement phases", () => {
 		assert.match(notifications.join("\n"), /Plan-only run complete/);
 	});
 
+	it("displays the verified human edit as the final plan at approval and implementation", async () => {
+		let visible = "";
+		let debateFile = "";
+		let critiques = 0;
+		let implemented = "";
+		const edited = validPlan.replace("Make the change.", "Human-approved different operation.");
+		const { fx } = effects({
+			sendPhase: (result) => {
+				if (result.role === "planner" && result.status === "completed") visible = result.output;
+			},
+			confirm: async (title) => {
+				if (title === "Adversarial debate exhausted") {
+					writeFileSync(debateFile, edited);
+					return true;
+				}
+				if (title === "Approve planner output?") {
+					assert.equal(visible, edited);
+					return true;
+				}
+				return false;
+			},
+			runAgent: async (input) => {
+				if (input.role === "planner")
+					return { status: "completed", role: input.role, model: input.model, output: validPlan, usage };
+				if (input.role === "adversary") {
+					debateFile = input.planFile ?? "";
+					critiques++;
+					return {
+						status: "completed",
+						role: input.role,
+						model: input.model,
+						output:
+							critiques === 1
+								? "Verdict: revise\n\n## Blocking\n- [B-1] Unsafe operation.\n\n## Suggestions\nNone.\n"
+								: "Verdict: approve\n\n## Blocking\nNone.\n\n## Suggestions\nNone.\n",
+						usage,
+					};
+				}
+				implemented = readFileSync(input.planFile ?? "", "utf8");
+				return { status: "failed", role: input.role, model: input.model, error: "stop after inspection" };
+			},
+		});
+		await runApprovedWorkflow(
+			{ ...options(), adversaryModel: "test/adversary", adversaryPromptFile: "/prompt.md", maxRounds: 1 },
+			fx,
+		);
+		assert.equal(implemented, `# Approved implementation plan\n\n${edited}\n`);
+		assert.equal(critiques, 2);
+	});
+
 	it("rejects planner output when ledger creation fails", async () => {
 		let implementerRan = false;
 		const runAgent = async (input: RunAgentOptions): Promise<AgentRunResult> => {

@@ -74,6 +74,23 @@ describe("Graphite stack delivery", () => {
 		});
 	});
 
+	it("plan-only accepts a dirty tree and needs no publication manifest", async () => {
+		const { exec, calls } = scripted({
+			"gt --version": { stdout: "1.8.5\n" },
+			"git --version": { stdout: "git version 2.38.0\n" },
+			"gt --no-interactive trunk": { stdout: "main\n" },
+			"git status --porcelain=v1 --untracked-files=all": { stdout: " M existing.ts\n" },
+		});
+		const result = await preflightGraphiteStack("/repo", undefined, exec, true);
+		assert.ok(result.ok);
+		assert.equal(result.trunkSha, trunkSha);
+		assert.equal(result.childPolicy, "");
+		assert.equal(
+			calls.some((call) => /submit|fetch|checkout|switch|status/.test(call)),
+			false,
+		);
+	});
+
 	it("accepts only a bounded, exact, linear kstack manifest", () => {
 		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);

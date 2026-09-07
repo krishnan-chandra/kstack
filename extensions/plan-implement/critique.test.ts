@@ -9,6 +9,17 @@ function parse(raw: string) {
 }
 
 describe("parseCritique", () => {
+	it("rejects unparseable nonempty blocking content instead of silently approving", () => {
+		for (const blocking of [
+			"- **[B-1]** Deletes user data.",
+			"This is unsafe.",
+			"```\n- [B-1] Hidden blocker\n```",
+			"## Other heading\nunsafe",
+		]) {
+			const parsed = parseCritique(`Verdict: approve\n\n## Blocking\n${blocking}\n\n## Suggestions\nNone.\n`);
+			assert.equal(parsed.ok, false, blocking);
+		}
+	});
 	it("parses verdict, blocking, suggestion, and resolved sections", () => {
 		const critique = parse(`Verdict: revise
 

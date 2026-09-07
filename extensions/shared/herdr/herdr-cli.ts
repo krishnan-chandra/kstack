@@ -54,6 +54,7 @@ type HerdrAgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 /** The subset of a Herdr agent record the agent host needs. */
 export interface HerdrAgentInfo {
 	name: string;
+	cwd?: string;
 	agentStatus: HerdrAgentStatus;
 	paneId: string;
 	tabId: string;
@@ -96,6 +97,7 @@ function agentInfoOf(raw: BoundaryValue): HerdrAgentInfo | undefined {
 	const sessionFile = sessionRecord && isString(sessionRecord.value) ? sessionRecord.value : undefined;
 	return {
 		name: isString(record.name) ? record.name : "",
+		...(isString(record.cwd) ? { cwd: record.cwd } : undefined),
 		agentStatus: asStatus(record.agent_status),
 		paneId: record.pane_id,
 		tabId: isString(record.tab_id) ? record.tab_id : "",
@@ -411,6 +413,11 @@ export function createNodeHerdrExec(binary = "herdr"): HerdrExec {
 					let diagnostic = String(stderr);
 					if (error !== null && options.signal?.aborted) {
 						diagnostic = JSON.stringify({ error: { code: "aborted", message: "herdr command was aborted" } });
+					} else if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+						// node kills the child on overflow too; report the cause, not a timeout.
+						diagnostic = JSON.stringify({
+							error: { code: "output_overflow", message: `herdr output exceeded ${HERDR_OUTPUT_CAP_BYTES} bytes` },
+						});
 					} else if (error?.killed) {
 						diagnostic = JSON.stringify({
 							error: { code: "timeout", message: `herdr command timed out after ${options.timeoutMs} ms` },

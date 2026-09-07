@@ -27,6 +27,7 @@ The command accepts these leading flags:
 | `--no-adversary` | Skip the configured adversary for this run. |
 | `--plan-only` | Stop after the final plan and write it under `local/plans/`. This conflicts with `--fast`. |
 | `--fast` | Run one hosted implementer. Skip planning, panel review, and publication. |
+| `--plan-file <path>` | With `--fast`, snapshot this selected plan before workstream creation. The path must contain no whitespace; the file must be nonempty and at most 64 KiB. |
 
 Use `--` before a task that starts with a dash. The argument-less command prompts for delivery, change kind, and task.
 
@@ -41,7 +42,7 @@ Use `--` before a task that starts with a dash. The argument-less command prompt
 - `panel-review` for full implementation runs; and
 - the `write-pr` and `find-reviewers` skills for runs that can publish.
 
-`--plan-only` does not require panel review, publication skills, or mutation-only workstream preflight. RPC, JSON, and print modes are not supported.
+`--plan-only` does not require panel review or publication skills. Single mode checks the configured VCS workspace without creating a workstream. Stack mode also resolves the local trunk through its provider, but skips clean-tree checks, fetching, and publication manifests. Fetch the desired trunk yourself before planning when local refs are stale. RPC, JSON, and print modes are not supported.
 
 ## Workflow
 
@@ -52,7 +53,7 @@ A full run follows these phases:
 3. Start a read-only planner in the tab's root pane.
 4. If `plan-adversary` is configured, start a read-only adversary and run the debate.
 5. Validate the final plan's ordered `[STEP-n]` items and `[AC-n]` criteria.
-6. Ask for approval. The approval card names the planner, adversary, implementer, change kind, and Herdr tab.
+6. Display the exact final validated plan, including verified human edits, then ask for approval. That same snapshot is persisted and supplied to the implementer.
 7. Create the backend workstream only after approval, then start the implementer.
 8. Verify the immutable plan, execution-ledger parity, and locally recorded work.
 9. Run panel review against the exact workstream or stack base.
@@ -80,11 +81,11 @@ The adversary model must differ from the planner model. An unavailable adversary
 local/plans/<task-slug>.md
 ```
 
-It does not create a branch, bookmark, Graphite workstream, worktree, panel review, or PR. Use the resulting plan with `--fast` when the bounded implementation no longer needs another debate.
+It does not create a branch, bookmark, Graphite workstream, worktree, panel review, or PR. Use the resulting plan with `--fast --plan-file <absolute-plan-path>` when the bounded implementation no longer needs another debate.
 
 ## Fast mode
 
-`--fast` opens one Herdr tab and runs one hosted implementer in the current workstream or a newly created managed worktree. It preserves change-kind and backend guidance, verifies a new recorded revision, retains the pane and workstream, and never publishes. It no longer takes over the parent Pi session.
+`--fast` opens one Herdr tab and runs one hosted implementer in the current workstream or a newly created managed worktree. It preserves change-kind and backend guidance, verifies a new recorded revision, retains the pane and workstream, and never publishes. It no longer takes over the parent Pi session. Supply `--plan-file` to carry a selected plan into that fresh session; the implementer receives a bounded immutable snapshot, not implicit access to the parent conversation.
 
 ## Delivery modes
 
@@ -129,7 +130,7 @@ Planner thinking must be `high`, `xhigh`, or `max`. Planner and implementer mode
 
 ## Hosted-agent protocol and limits
 
-The shared module under [`../shared/herdr/`](../shared/herdr/) creates the tab, panes, agents, and protected exchange files. Terminal prompts contain only short file pointers. Task, plan, critique, verdict, and final output cross through mode-`0600` files in a mode-`0700` temporary directory.
+The shared module under [`../shared/herdr/`](../shared/herdr/) creates the tab, panes, agents, and protected exchange files. Terminal prompts contain only short file pointers. Task, plan, critique, and verdict inputs cross through mode-`0600` files in a mode-`0700` temporary directory. Agents return request-tagged final replies through Pi's session. The host validates successful terminal completion and writes the response artifacts, so read-only roles need no file-writing tool.
 
 | Item | Limit |
 | --- | --- |
@@ -148,7 +149,7 @@ This is a capability restriction, not a sandbox. Hosted agents use the user's OS
 
 Failures before approval do not create a workstream. An implementation failure may leave recorded checkpoints or partial edits on the retained workstream. A fixer failure prevents publication when backend postconditions fail. Publication failures can leave a pushed ref or draft PR that needs inspection.
 
-Abort sends Escape, then Ctrl+C twice, then closes only the hosted pane if the agent does not settle. Session replacement and shutdown abort the active role. Host disposal removes exchange files but leaves the created Herdr tab open.
+Abort sends Escape, then Ctrl+C twice, then closes only the hosted pane if the agent does not settle. Session replacement and shutdown abort the active role. Cancellation remains connected while a blocked-input confirmation is open. Resume retains the original request and sends it only if Herdr rejected it before delivery. Host disposal cancels pending work and removes exchange files when no request is outstanding, but leaves idle panes open.
 
 ## In-process request interface
 

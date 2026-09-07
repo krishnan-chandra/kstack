@@ -50,20 +50,20 @@ When `kstack.json` is absent or has no `swarm` section, ask the user which model
    - **Mix** — partition some slices and race others.
 3. **Set N** from the user request or derive it from the shape (e.g. one worker per package directory).
 4. **Pick the worker model.** Use `worker` from `kstack.json` when present. Otherwise default to a fast available model for coverage work. For a model race, name each arm’s model up front.
-5. **Give each worker its own writable output** when it writes. Use a branch, directory under `/tmp/swarm-<slug>/worker-<n>/`, or a subdirectory of the workspace. Workers must not share a write target. When workers only inspect or analyze, keep them read-only.
+5. **Give each worker its own writable output** when it writes. Use a distinct linked worktree or directory under `/tmp/swarm-<slug>/worker-<n>/`, outside the repository root. A branch name alone does not isolate a cwd; repository subdirectories and overlapping directories are rejected. Workers must not share a write target. When workers only inspect or analyze, keep them read-only.
 
 ## Phase B: Fan out
 
 Spawn all N workers in parallel using `cli.mjs fanout`.
 
-Write one prompt file per worker under `/tmp/swarm-<run-id>/prompts/worker-<n>.md`.
+Create `/tmp/swarm-<run-id>/prompts/`, then write one prompt file per worker at `worker-<n>.md`. The host creates output parents and saves each validated final reply; workers need no report-writing tool.
 **Every brief stands alone.** Include:
 - The goal and scope
 - The exact slice or race arm
 - How to verify the result
 - What to report: use `PASS`, `ISSUES`, or `BLOCKED` with evidence
 
-Compose a spec JSON file at `/tmp/swarm-<run-id>/spec.json`:
+Compose a spec JSON file at `/tmp/swarm-<run-id>/spec.json`. Substitute absolute paths for every cwd, prompt, and output field:
 
 ```json
 {

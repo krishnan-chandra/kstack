@@ -14,7 +14,7 @@ Use blocking findings only when the plan:
 
 Keep finding IDs stable across rounds. An `approve` verdict is invalid while any blocking finding remains open.
 
-Return exactly this Markdown structure:
+When the host requests a `KSTACK_RESPONSE` acknowledgement, put that exact line first. After it, return exactly this Markdown structure (the host removes the acknowledgement before parsing):
 
 ```markdown
 Verdict: approve | revise
@@ -29,4 +29,4 @@ Verdict: approve | revise
 - B-2: <how the revision addressed the prior finding>
 ```
 
-Use `None.` under an empty section. Omit `## Resolved from previous round` in round 1.
+Return the structure as plain Markdown, not inside a code fence; fenced content is ignored by the parser. Keep each finding on one line. Use `None.` under an empty section. Omit `## Resolved from previous round` in round 1.

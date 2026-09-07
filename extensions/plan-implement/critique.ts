@@ -14,9 +14,9 @@ function withoutFencedBlocks(markdown: string): string {
 			if (match) {
 				if (fence === undefined) fence = match[1]?.[0];
 				else if (match[1]?.startsWith(fence)) fence = undefined;
-				return "";
+				return "[fenced content]";
 			}
-			return fence === undefined ? line : "";
+			return fence === undefined ? line : "[fenced content]";
 		})
 		.join("\n");
 }
@@ -75,6 +75,12 @@ export function parseCritique(raw: string): CritiqueParseResult {
 		if (section === "blocking") {
 			const finding = parseFinding(line, "B");
 			if (finding) blocking.push(finding);
+			else if (line.trim() && !/^None\.$/i.test(line.trim())) {
+				return {
+					ok: false,
+					error: "Critique Blocking section contains unparseable content; use - [B-N] text or None.",
+				};
+			}
 		} else if (section === "suggestions") {
 			const finding = parseFinding(line, "S");
 			if (finding) suggestions.push(finding);

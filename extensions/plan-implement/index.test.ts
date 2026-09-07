@@ -94,6 +94,16 @@ describe("parsePlanImplementArgs", () => {
 		assert.equal(parsePlanImplementArgs("--no-adversary --no-adversary task").ok, false);
 	});
 
+	it("accepts an explicit plan only for fast mode", () => {
+		const parsed = parsePlanImplementArgs("--fast --plan-file /plans/approved.md implement it");
+		assert.ok(parsed.ok);
+		assert.equal(parsed.planFile, "/plans/approved.md");
+		assert.equal(parsed.task, "implement it");
+		assert.equal(parsePlanImplementArgs("--plan-file /plans/a.md task").ok, false);
+		assert.equal(parsePlanImplementArgs("--fast --plan-file").ok, false);
+		assert.equal(parsePlanImplementArgs("--fast --plan-file a --plan-file b task").ok, false);
+	});
+
 	it("accepts a managed worktree only with single delivery", () => {
 		const r = parsePlanImplementArgs("--worktree --single --change-kind feature add search");
 		assert.equal(r.ok, true);
@@ -147,6 +157,7 @@ describe("getArgumentCompletions", () => {
 			{ value: "--fast", label: "--fast" },
 			{ value: "--no-adversary", label: "--no-adversary" },
 			{ value: "--plan-only", label: "--plan-only" },
+			{ value: "--plan-file", label: "--plan-file" },
 		]);
 	});
 

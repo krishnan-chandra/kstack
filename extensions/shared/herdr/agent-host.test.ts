@@ -5,6 +5,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -15,8 +16,8 @@ import { after, describe, it } from "node:test";
 import {
 	type AgentHost,
 	type AskOptions,
+	attachHostedAgent,
 	buildAgentName,
-	extractDonePath,
 	type HostDeps,
 	type HostedAgent,
 	type HostedAgentSpec,
@@ -37,6 +38,7 @@ type ExecHandler = (call: ExecCall) => ExecResponse | Promise<ExecResponse>;
 
 interface AgentFixture {
 	agent: string;
+	cwd: string;
 	agent_status: string;
 	name: string;
 	pane_id: string;
@@ -47,6 +49,7 @@ interface AgentFixture {
 function agentRecord(status: string, paneId: string, sessionFile: string): AgentFixture {
 	return {
 		agent: "pi",
+		cwd: "/repo",
 		agent_status: status,
 		name: "unused",
 		pane_id: paneId,
@@ -66,7 +69,7 @@ class FakeHerdr {
 	agentStatus = "idle";
 	readOutput = "";
 	/** Called whenever an `agent prompt` is accepted, before the response is produced. */
-	onPrompt: ((call: ExecCall) => void) | undefined;
+	onPrompt: ((call: ExecCall) => void | Promise<void>) | undefined;
 	sleptMs: number[] = [];
 	private nextPaneNumber = 100;
 	private nextTabNumber = 200;
@@ -109,7 +112,11 @@ class FakeHerdr {
 	/** Queue responses for successive `agent prompt` calls. */
 	promptResponses: Array<ExecResponse | "accept"> = [];
 
-	appendSession(messages: Array<{ input: number; output: number; cost: number }>): void {
+	respond(text: string, usage = { input: 0, output: 0, cost: 0 }): void {
+		this.appendSession([usage], text);
+	}
+
+	appendSession(messages: Array<{ input: number; output: number; cost: number }>, answer?: string): void {
 		for (const message of messages) {
 			appendFileSync(
 				this.sessionFile,
@@ -117,6 +124,13 @@ class FakeHerdr {
 					type: "message",
 					message: {
 						role: "assistant",
+						stopReason: "stop",
+						content: [
+							{
+								type: "text",
+								text: `${/KSTACK_RESPONSE [^\n]+/.exec(this.callsMatching("agent prompt").at(-1)?.args[3] ?? "")?.[0]}\n${answer ?? ""}`,
+							},
+						],
 						usage: {
 							input: message.input,
 							output: message.output,
@@ -177,7 +191,7 @@ class FakeHerdr {
 			};
 		}
 		if (joined.startsWith("agent start")) {
-			const paneId = args[5] ?? this.rootPaneId;
+			const paneId = args[6] ?? this.rootPaneId;
 			return {
 				code: 0,
 				stdout: JSON.stringify({
@@ -190,7 +204,7 @@ class FakeHerdr {
 		if (joined.startsWith("agent prompt")) {
 			const queued = this.promptResponses.shift();
 			if (queued && queued !== "accept") return queued;
-			this.onPrompt?.(call);
+			await this.onPrompt?.(call);
 			return {
 				code: 0,
 				stdout: JSON.stringify({
@@ -414,7 +428,46 @@ describe("agent-host: layout and start", () => {
 		const started = await opened.host.start(PLANNER_SPEC);
 		assert.equal(started.ok, false);
 		if (!started.ok) assert.match(started.error, /pane w5:p/);
+		assert.equal(harness.fake.callsMatching("agent start").length, 1);
+		assert.deepEqual(harness.fake.sleptMs, []);
 	});
+
+	for (const busyStarts of [1, 100]) {
+		it(`bounds shell-readiness retries after ${busyStarts} busy responses`, async () => {
+			const harness = makeHarness(`shell-busy-${busyStarts}`);
+			let starts = 0;
+			harness.fake.on(
+				(args) => args.join(" ").startsWith("agent start"),
+				() => {
+					if (++starts <= busyStarts)
+						return {
+							code: 1,
+							stdout: "",
+							stderr: JSON.stringify({ error: { code: "agent_pane_busy", message: "not an available shell" } }),
+						};
+					return {
+						code: 0,
+						stderr: "",
+						stdout: JSON.stringify({
+							result: {
+								type: "agent_started",
+								agent: agentRecord("idle", harness.fake.rootPaneId, harness.fake.sessionFile),
+							},
+						}),
+					};
+				},
+			);
+			const opened = await openAgentHost({ owner: "o", label: "l", cwd: "/repo", maxAgents: 1 }, harness.fake.deps());
+			assert.ok(opened.ok);
+			const started = await opened.host.start(PLANNER_SPEC);
+			assert.equal(started.ok, busyStarts === 1);
+			assert.equal(starts, busyStarts === 1 ? 2 : 4);
+			assert.equal(new Set(harness.fake.callsMatching("agent start").map((call) => call.args[2])).size, 1);
+			assert.equal(harness.fake.callsMatching("agent prompt").length, 0);
+			assert.equal(harness.fake.sleptMs.length, starts - 1);
+			await opened.host.dispose({ closeTab: true });
+		});
+	}
 
 	it("retries agent name conflicts with a fresh suffix", async () => {
 		const harness = makeHarness("name-conflict");
@@ -462,12 +515,9 @@ describe("agent-host: ask protocol", () => {
 		harness.fake.onPrompt = (call) => {
 			const text = call.args[3] ?? "";
 			assert.match(text, new RegExp(harness.instructionsFile.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-			assert.match(text, /DONE /);
-			harness.fake.appendSession([
-				{ input: 100, output: 20, cost: 0.2 },
-				{ input: 30, output: 5, cost: 0.05 },
-			]);
-			writeFileSync(harness.outputFile, "# Answer\n\nAll done.\n");
+			assert.match(text, /KSTACK_RESPONSE /);
+			harness.fake.appendSession([{ input: 100, output: 20, cost: 0.2 }]);
+			harness.fake.respond("# Answer\n\nAll done.\n", { input: 30, output: 5, cost: 0.05 });
 		};
 		const { agent } = await startOne(harness.fake);
 		const result = await agent.ask(askOptions(harness));
@@ -511,9 +561,8 @@ describe("agent-host: ask protocol", () => {
 		assert.equal(blocked.status, "blocked");
 		harness.fake.agentStatus = "idle";
 		// The agent finished while blocked: its session grew and the answer landed.
-		writeFileSync(harness.outputFile, "resumed answer\n");
-		harness.fake.appendSession([{ input: 4, output: 2, cost: 0.01 }]);
-		const resumed = await agent.resume({ outputFile: harness.outputFile, timeoutMs: 60_000 });
+		harness.fake.respond("resumed answer\n", { input: 4, output: 2, cost: 0.01 });
+		const resumed = await agent.resume();
 		assert.equal(resumed.status, "completed");
 		if (resumed.status === "completed") {
 			assert.equal(resumed.output, "resumed answer\n");
@@ -534,7 +583,7 @@ describe("agent-host: ask protocol", () => {
 			},
 			"accept",
 		];
-		harness.fake.onPrompt = () => writeFileSync(harness.outputFile, "late\n");
+		harness.fake.onPrompt = () => harness.fake.respond("late\n");
 		const { agent } = await startOne(harness.fake);
 		const result = await agent.ask(askOptions(harness));
 		assert.equal(result.status, "completed");
@@ -594,7 +643,52 @@ describe("agent-host: ask protocol", () => {
 		assert.equal(closes[0]?.args[2], harness.fake.rootPaneId);
 	});
 
-	it("falls back to a DONE pointer from recent terminal output", async () => {
+	it("settles an abort when the unseen tab reports done instead of idle", async () => {
+		const harness = makeHarness("abort-done");
+		const { agent } = await startOne(harness.fake);
+		harness.fake.agentStatus = "working";
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent send-keys"),
+			() => {
+				// Escape lands; the no-focus host tab is unseen, so herdr reports done, never idle.
+				harness.fake.agentStatus = "done";
+				return { code: 0, stdout: '{"id":"x","result":{"type":"ok"}}', stderr: "" };
+			},
+		);
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent wait"),
+			(call) => {
+				const until = call.args.filter((_arg, index) => call.args[index - 1] === "--until");
+				if (!until.includes(harness.fake.agentStatus)) {
+					return {
+						code: 1,
+						stdout: "",
+						stderr: JSON.stringify({
+							id: "x",
+							error: { code: "timeout", message: "timed out waiting for agent status" },
+						}),
+					};
+				}
+				return {
+					code: 0,
+					stderr: "",
+					stdout: JSON.stringify({
+						id: "x",
+						result: {
+							type: "agent_info",
+							agent: agentRecord(harness.fake.agentStatus, harness.fake.rootPaneId, harness.fake.sessionFile),
+						},
+					}),
+				};
+			},
+		);
+		await agent.abort();
+		const keys = harness.fake.callsMatching("agent send-keys").map((call) => call.args[3]);
+		assert.deepEqual(keys, ["esc"]);
+		assert.equal(harness.fake.callsMatching("pane close").length, 0);
+	});
+
+	it("rejects a screen DONE pointer without request-specific session completion", async () => {
 		const harness = makeHarness("ask-fallback");
 		const opened = await openAgentHost(
 			{ owner: "plan-implement", label: "test", cwd: "/repo", maxAgents: 1 },
@@ -609,8 +703,8 @@ describe("agent-host: ask protocol", () => {
 		writeFileSync(exchangeAlt, "alternative answer\n");
 		harness.fake.readOutput = `Working...\nDONE ${exchangeAlt}\n`;
 		const result = await agent.ask(askOptions(harness));
-		assert.equal(result.status, "completed");
-		if (result.status === "completed") assert.equal(result.output, "alternative answer\n");
+		assert.equal(result.status, "failed");
+		assert.equal(readFileSync(harness.outputFile, "utf8"), "");
 	});
 
 	it("fails with a role-labelled error when no output file exists", async () => {
@@ -619,18 +713,19 @@ describe("agent-host: ask protocol", () => {
 		const { agent } = await startOne(harness.fake);
 		const result = await agent.ask(askOptions(harness));
 		assert.equal(result.status, "failed");
-		if (result.status === "failed") assert.match(result.error, /planner produced no output file/);
+		if (result.status === "failed") assert.match(result.error, /planner:/);
 	});
 
 	it("truncates oversized output with a marker", async () => {
 		const harness = makeHarness("ask-cap");
-		harness.fake.onPrompt = () => writeFileSync(harness.outputFile, "x".repeat(400));
+		harness.fake.onPrompt = () => harness.fake.respond("x".repeat(400));
 		const { agent } = await startOne(harness.fake);
 		const result = await agent.ask(askOptions(harness, { outputCapBytes: 100 }));
 		assert.equal(result.status, "completed");
 		if (result.status === "completed") {
 			assert.ok(result.output.length < 200);
 			assert.match(result.output, /truncated at 100 bytes/);
+			assert.equal(readFileSync(harness.outputFile, "utf8"), result.output);
 		}
 	});
 
@@ -673,6 +768,195 @@ describe("agent-host: ask protocol", () => {
 		const badCap = await agent.ask(askOptions(harness, { outputCapBytes: 0 }));
 		assert.equal(badCap.status, "failed");
 		if (badCap.status === "failed") assert.match(badCap.error, /output cap/);
+	});
+});
+
+describe("agent-host review regressions", () => {
+	it("attaches a standalone skill to the same response and cancellation lifecycle", async () => {
+		const h = makeHarness("attach");
+		h.fake.onPrompt = () => h.fake.respond("standalone response");
+		const attached = await attachHostedAgent("adversary-test", h.fake.deps());
+		assert.ok(attached.ok);
+		assert.equal((await attached.agent.ask(askOptions(h))).status, "completed");
+		assert.equal(h.fake.callsMatching("tab create").length, 0);
+		await attached.agent.dispose();
+	});
+
+	it("collects a read-only response through real Pi read and native session persistence", async () => {
+		const { createReadTool, SessionManager } = await import("@earendil-works/pi-coding-agent");
+		const h = makeHarness("native-response");
+		writeFileSync(h.instructionsFile, "ECHO OK");
+		const session = SessionManager.create(h.root, join(h.root, "sessions"));
+		h.fake.sessionFile = session.getSessionFile() ?? "";
+		h.fake.onPrompt = async (call) => {
+			const tools = hostedAgentArgs(PLANNER_SPEC, h.fake.integrationPath);
+			assert.equal(tools[tools.indexOf("--tools") + 1], "read,grep,find,ls");
+			const read = await createReadTool(h.root).execute("read-instructions", { path: h.instructionsFile });
+			const answer = read.content
+				.filter((block) => block.type === "text")
+				.map((block) => block.text)
+				.join("");
+			const marker = /KSTACK_RESPONSE [^\n]+/.exec(call.args[3] ?? "")?.[0];
+			session.appendMessage({ role: "user", content: call.args[3] ?? "", timestamp: Date.now() });
+			session.appendMessage({
+				role: "assistant",
+				content: [{ type: "text", text: `${marker}\n${answer}` }],
+				stopReason: "stop",
+				api: "anthropic-messages",
+				provider: "fixture",
+				model: "fixture",
+				timestamp: Date.now(),
+				usage: {
+					input: 1,
+					output: 1,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 2,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+			});
+		};
+		const { agent, host } = await startOne(h.fake);
+		const result = await agent.ask(askOptions(h));
+		assert.equal(result.status, "completed");
+		assert.equal(readFileSync(h.outputFile, "utf8"), "ECHO OK");
+		await host.dispose();
+	});
+
+	it("delivers a rejected-before-send request once after the dialog resolves", async () => {
+		const h = makeHarness("blocked-delivery");
+		h.fake.promptResponses.push({
+			code: 1,
+			stdout: "",
+			stderr: JSON.stringify({ error: { code: "agent_blocked", message: "dialog" } }),
+		});
+		h.fake.onPrompt = () => h.fake.respond("delivered");
+		const { agent } = await startOne(h.fake);
+		assert.equal((await agent.ask(askOptions(h))).status, "blocked");
+		assert.equal((await agent.resume()).status, "completed");
+		assert.equal(h.fake.callsMatching("agent prompt").length, 2);
+		assert.equal(readFileSync(h.outputFile, "utf8"), "delivered");
+	});
+
+	it("cancellation wins over a successful prompt envelope and drains before returning", async () => {
+		const h = makeHarness("cancel-success");
+		const controller = new AbortController();
+		h.fake.onPrompt = () => {
+			h.fake.respond("too late");
+			controller.abort();
+		};
+		const { agent } = await startOne(h.fake);
+		assert.equal((await agent.ask(askOptions(h, { signal: controller.signal }))).status, "aborted");
+		assert.equal(h.fake.callsMatching("agent send-keys").length, 1);
+		assert.equal(h.fake.callsMatching("agent wait").length, 1);
+		assert.equal(readFileSync(h.outputFile, "utf8"), "");
+	});
+
+	it("keeps cancellation connected while blocked and resets abort for the next request", async () => {
+		const h = makeHarness("cancel-blocked");
+		const { agent } = await startOne(h.fake);
+		for (let round = 0; round < 2; round++) {
+			const controller = new AbortController();
+			h.fake.agentStatus = "blocked";
+			assert.equal((await agent.ask(askOptions(h, { signal: controller.signal }))).status, "blocked");
+			controller.abort();
+			h.fake.agentStatus = "idle";
+			assert.equal((await agent.resume()).status, "aborted");
+		}
+		assert.equal(h.fake.callsMatching("agent send-keys").length, 2);
+	});
+
+	it("drains a timed-out resume", async () => {
+		const h = makeHarness("resume-timeout");
+		h.fake.agentStatus = "blocked";
+		const { agent } = await startOne(h.fake);
+		assert.equal((await agent.ask(askOptions(h))).status, "blocked");
+		h.fake.on(
+			(args) => args[0] === "agent" && args[1] === "wait" && args.includes("60000"),
+			() => ({ code: 1, stdout: "", stderr: JSON.stringify({ error: { code: "timeout", message: "timed out" } }) }),
+		);
+		h.fake.agentStatus = "idle";
+		assert.equal((await agent.resume()).status, "failed");
+		assert.equal(h.fake.callsMatching("agent send-keys").length, 1);
+	});
+
+	it("rejects partial file output followed by a provider error", async () => {
+		const h = makeHarness("provider-error");
+		h.fake.onPrompt = () => {
+			h.fake.respond("partial");
+			writeFileSync(h.outputFile, "partial file");
+			appendFileSync(
+				h.fake.sessionFile,
+				`${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", content: [] } })}\n`,
+			);
+		};
+		const { agent } = await startOne(h.fake);
+		const result = await agent.ask(askOptions(h));
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") assert.match(result.error, /successful terminal/);
+	});
+
+	it("excludes human usage between asks and rejects a session switch during one", async () => {
+		const h = makeHarness("usage-windows");
+		h.fake.onPrompt = () => h.fake.respond("answer", { input: 1, output: 1, cost: 1 });
+		const { agent } = await startOne(h.fake);
+		assert.equal((await agent.ask(askOptions(h))).usage.cost, 1);
+		h.fake.appendSession([{ input: 100, output: 100, cost: 100 }]);
+		assert.equal((await agent.ask(askOptions(h))).usage.cost, 1);
+		h.fake.onPrompt = () => {
+			h.fake.sessionFile = join(h.root, "switched.jsonl");
+			h.fake.respond("wrong session");
+		};
+		const switched = await agent.ask(askOptions(h));
+		assert.equal(switched.status, "failed");
+		if (switched.status === "failed") assert.match(switched.error, /session changed/);
+	});
+
+	it("refuses to queue a request behind a human turn that is already working", async () => {
+		const h = makeHarness("busy-human-turn");
+		const { agent } = await startOne(h.fake);
+		h.fake.agentStatus = "working";
+		const result = await agent.ask(askOptions(h));
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") assert.match(result.error, /working on another turn/);
+		assert.equal(h.fake.callsMatching("agent prompt").length, 0);
+		assert.equal(h.fake.callsMatching("agent send-keys").length, 0);
+		h.fake.agentStatus = "idle";
+		h.fake.onPrompt = () => h.fake.respond("later answer");
+		assert.equal((await agent.ask(askOptions(h))).status, "completed");
+	});
+
+	it("refuses to prompt when Herdr reports a cwd different from the candidate's assignment", async () => {
+		const h = makeHarness("wrong-reported-cwd");
+		const opened = await openAgentHost({ owner: "arena", label: "test", cwd: "/repo", maxAgents: 1 }, h.fake.deps());
+		assert.ok(opened.ok);
+		const started = await opened.host.start({ ...PLANNER_SPEC, cwd: "/candidate" });
+		assert.equal(started.ok, false);
+		if (!started.ok) assert.match(started.error, /unexpected cwd/);
+		assert.equal(h.fake.callsMatching("agent prompt").length, 0);
+		await opened.host.dispose();
+	});
+
+	it("allocates the first different cwd and never reuses a failed startup pane", async () => {
+		const h = makeHarness("first-cwd");
+		const opened = await openAgentHost({ owner: "arena", label: "test", cwd: "/repo", maxAgents: 2 }, h.fake.deps());
+		assert.ok(opened.ok);
+		h.fake.on(
+			(args) => args[0] === "agent" && args[1] === "start",
+			() => ({
+				code: 1,
+				stdout: "",
+				stderr: JSON.stringify({ error: { code: "agent_not_ready", message: "startup failed" } }),
+			}),
+		);
+		await opened.host.start({ ...PLANNER_SPEC, cwd: "/candidate-a" });
+		await opened.host.start({ ...PLANNER_SPEC, cwd: "/candidate-b" });
+		const splits = h.fake.callsMatching("pane split");
+		assert.equal(splits[0]?.args.at(-3), "--cwd");
+		assert.ok(splits[0]?.args.includes("/candidate-a"));
+		const starts = h.fake.callsMatching("agent start");
+		assert.notEqual(starts[0]?.args[6], starts[1]?.args[6]);
+		await opened.host.dispose();
 	});
 });
 
@@ -742,16 +1026,10 @@ describe("agent-host helpers", () => {
 	});
 
 	it("keeps instruction content in files via the fixed pointer prompt", () => {
-		const text = pointerPrompt("/tmp/x/in.md", "/tmp/x/out.md");
+		const text = pointerPrompt("/tmp/x/in.md", "request-id");
 		assert.match(text, /Read and follow the instructions in \/tmp\/x\/in\.md/);
-		assert.match(text, /Write your complete final response to \/tmp\/x\/out\.md/);
-		assert.match(text, /DONE \/tmp\/x\/out\.md/);
-	});
-
-	it("accepts only DONE pointers under the exchange directory", () => {
-		assert.equal(extractDonePath("DONE /tmp/exchange/alt.md", "/tmp/exchange"), "/tmp/exchange/alt.md");
-		assert.equal(extractDonePath("DONE /etc/passwd", "/tmp/exchange"), undefined);
-		assert.equal(extractDonePath("no pointer here", "/tmp/exchange"), undefined);
+		assert.match(text, /KSTACK_RESPONSE request-id/);
+		assert.match(text, /do not write an answer file/);
 	});
 });
 

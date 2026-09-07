@@ -13,6 +13,7 @@ const PLAN_IMPLEMENT_FLAGS = [
 	"--fast",
 	"--no-adversary",
 	"--plan-only",
+	"--plan-file",
 ] as const;
 
 const PLAN_IMPLEMENT_BOOLEAN_FLAGS = new Set([
@@ -45,7 +46,7 @@ export function getArgumentCompletions(prefix: string): Array<{ value: string; l
 		const prior = priorTokens[i];
 		if (prior === "--") return null;
 		if (PLAN_IMPLEMENT_BOOLEAN_FLAGS.has(prior)) continue;
-		if (prior === "--change-kind") {
+		if (prior === "--change-kind" || prior === "--plan-file") {
 			const value = priorTokens[i + 1];
 			if (value !== undefined && !value.startsWith("--")) i++;
 			continue;
@@ -54,6 +55,7 @@ export function getArgumentCompletions(prefix: string): Array<{ value: string; l
 	}
 
 	const previousToken = priorTokens.at(-1);
+	if (previousToken === "--plan-file") return null;
 	if (previousToken === "--change-kind") {
 		const items = CHANGE_KINDS.filter((kind) => kind.startsWith(token)).map((kind) => ({
 			value: `${base}${kind}`,
@@ -95,6 +97,7 @@ export function parsePlanImplementArgs(args: string):
 			fast: boolean;
 			adversary: boolean;
 			planOnly: boolean;
+			planFile?: string;
 			task: string;
 	  }
 	| { ok: false; error: string } {
@@ -117,6 +120,7 @@ export function parsePlanImplementArgs(args: string):
 	let fast = false;
 	let adversary = true;
 	let planOnly = false;
+	let planFile: string | undefined;
 	let deliverySeen = false;
 	let changeKind: ChangeKind | undefined;
 	let i = 0;
@@ -160,6 +164,15 @@ export function parsePlanImplementArgs(args: string):
 			continue;
 		}
 
+		if (token === "--plan-file") {
+			if (planFile !== undefined) return { ok: false, error: "Duplicate --plan-file flag." };
+			const value = tokens[++i];
+			if (!value || value.startsWith("--"))
+				return { ok: false, error: "--plan-file requires a path (without whitespace)." };
+			planFile = value;
+			continue;
+		}
+
 		if (token === "--change-kind") {
 			if (changeKind !== undefined) return { ok: false, error: "Duplicate --change-kind flag." };
 			const value = tokens[++i];
@@ -197,7 +210,18 @@ export function parsePlanImplementArgs(args: string):
 				"--stack and --worktree cannot currently be combined. Use --stack in the jj workspace or --single --worktree.",
 		};
 	}
-	return { ok: true, mode, workLocation, changeKind, fast, adversary, planOnly, task: tokens.slice(i).join(" ") };
+	if (planFile && !fast) return { ok: false, error: "--plan-file requires --fast." };
+	return {
+		ok: true,
+		mode,
+		workLocation,
+		changeKind,
+		fast,
+		adversary,
+		planOnly,
+		...(planFile ? { planFile } : undefined),
+		task: tokens.slice(i).join(" "),
+	};
 }
 
 function boundedPanelIntent(task: string): string {

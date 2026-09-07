@@ -14,26 +14,22 @@ test("adversarial planning is explicit-only and guarded by Herdr", () => {
 	assert.match(skill, /herdr integration install pi/);
 });
 
-test("the skill resolves the configured model through the shared CLI", () => {
-	assert.match(skill, /extensions\/shared\/herdr\/cli\.mjs" resolve-model/);
+test("the skill keeps standalone planning and uses the shared request lifecycle", () => {
+	assert.match(skill, /resolve-model/);
 	assert.match(skill, /--section plan-adversary --key adversary/);
-	assert.match(skill, /--model/);
-});
-
-test("the skill uses a no-focus named pane and file-based rounds", () => {
-	assert.match(skill, /herdr pane split "\$HERDR_PANE_ID"/);
+	assert.match(skill, /herdr agent start/);
+	assert.match(skill, /herdr pane split/);
 	assert.match(skill, /--no-focus/);
-	assert.match(skill, /herdr agent start "adversary-<slug>"/);
-	assert.match(skill, /local\/plans\/<slug>-critique-N\.md/);
+	assert.match(skill, /cli\.mjs" ask/);
 	assert.match(skill, /at most three budgeted rounds/i);
-	assert.match(skill, /never paste the task, plan, or critique into the terminal/);
 	assert.match(skill, /After round 3 returns `revise`, stop/);
+	assert.doesNotMatch(skill, /herdr agent prompt/);
 });
 
-test("the skill keeps the pane and offers both implementation handoffs", () => {
+test("the skill keeps panes and makes both handoffs explicit", () => {
 	assert.match(skill, /Leave the adversary pane open/);
-	assert.match(skill, /\/plan-implement --fast --change-kind <kind> <task>/);
-	assert.match(skill, /\/plan-implement --no-adversary <task>/);
+	assert.match(skill, /--fast --plan-file <absolute-plan-path>/);
+	assert.match(skill, /--no-adversary Implement the plan at <absolute-plan-path>/);
 });
 
 test("the skill never falls back to headless or parallel child agents", () => {

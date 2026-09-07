@@ -21,6 +21,7 @@ interface ExecCall {
 
 interface AgentFixture {
 	agent: string;
+	cwd: string;
 	agent_status: string;
 	name: string;
 	pane_id: string;
@@ -28,9 +29,10 @@ interface AgentFixture {
 	agent_session: { kind: string; value: string };
 }
 
-function agentRecord(status: string, paneId: string, sessionFile: string): AgentFixture {
+function agentRecord(status: string, paneId: string, sessionFile: string, cwd: string): AgentFixture {
 	return {
 		agent: "pi",
+		cwd,
 		agent_status: status,
 		name: "unused",
 		pane_id: paneId,
@@ -49,6 +51,8 @@ class FakeHerdr {
 	promptDelayMs = 0;
 	agentStatusByRole = new Map<string, string>();
 	private nextPaneNumber = 100;
+	private paneCwds = new Map<string, string>();
+	private agentCwds = new Map<string, string>();
 	private readonly agentDir: string;
 
 	constructor(agentDir: string) {
@@ -93,6 +97,7 @@ class FakeHerdr {
 			return { code: 0, stdout: "status: running\n", stderr: "" };
 		}
 		if (joined.startsWith("tab create")) {
+			this.paneCwds.set(this.rootPaneId, args[args.indexOf("--cwd") + 1] ?? "");
 			return {
 				code: 0,
 				stdout: JSON.stringify({
@@ -118,6 +123,7 @@ class FakeHerdr {
 		}
 		if (joined.startsWith("pane split")) {
 			const paneId = `w5:p${this.nextPaneNumber++}`;
+			this.paneCwds.set(paneId, args[args.indexOf("--cwd") + 1] ?? "");
 			return {
 				code: 0,
 				stdout: JSON.stringify({
@@ -131,12 +137,18 @@ class FakeHerdr {
 			return { code: 0, stdout: '{"id":"x","result":{"type":"ok"}}', stderr: "" };
 		}
 		if (joined.startsWith("agent start")) {
-			const paneId = args[5] ?? this.rootPaneId;
+			const paneId = args[6] ?? this.rootPaneId;
+			const cwd = this.paneCwds.get(paneId) ?? "";
+			this.agentCwds.set(args[2] ?? "", cwd);
 			return {
 				code: 0,
 				stdout: JSON.stringify({
 					id: "x",
-					result: { type: "agent_started", agent: agentRecord("idle", paneId, this.sessionFile), argv: ["pi"] },
+					result: {
+						type: "agent_started",
+						agent: agentRecord("idle", paneId, `${this.sessionFile}-${args[2]}`, cwd),
+						argv: ["pi"],
+					},
 				}),
 				stderr: "",
 			};
@@ -144,15 +156,11 @@ class FakeHerdr {
 		if (joined.startsWith("agent prompt")) {
 			const agentName = args[2] ?? "";
 			const promptText = args[3] ?? "";
-			const match = /DONE\s+(\S+)/.exec(promptText);
-			if (match) {
-				const outPath = match[1];
-				try {
-					writeFileSync(outPath, "simulated answer\n");
-				} catch {
-					/* ignore */
-				}
-			}
+			const marker = /KSTACK_RESPONSE [^\n]+/.exec(promptText)?.[0];
+			appendFileSync(
+				`${this.sessionFile}-${agentName}`,
+				`${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: `${marker}\nsimulated answer\n` }] } })}\n`,
+			);
 			this.activeConcurrentPrompts++;
 			if (this.activeConcurrentPrompts > this.peakConcurrentPrompts) {
 				this.peakConcurrentPrompts = this.activeConcurrentPrompts;
@@ -172,7 +180,15 @@ class FakeHerdr {
 				code: 0,
 				stdout: JSON.stringify({
 					id: "x",
-					result: { type: "agent_prompted", agent: agentRecord(status, this.rootPaneId, this.sessionFile) },
+					result: {
+						type: "agent_prompted",
+						agent: agentRecord(
+							status,
+							this.rootPaneId,
+							`${this.sessionFile}-${args[2]}`,
+							this.agentCwds.get(args[2] ?? "") ?? "",
+						),
+					},
 				}),
 				stderr: "",
 			};
@@ -182,7 +198,15 @@ class FakeHerdr {
 				code: 0,
 				stdout: JSON.stringify({
 					id: "x",
-					result: { type: "agent_info", agent: agentRecord("idle", this.rootPaneId, this.sessionFile) },
+					result: {
+						type: "agent_info",
+						agent: agentRecord(
+							"idle",
+							this.rootPaneId,
+							`${this.sessionFile}-${args[2]}`,
+							this.agentCwds.get(args[2] ?? "") ?? "",
+						),
+					},
 				}),
 				stderr: "",
 			};
