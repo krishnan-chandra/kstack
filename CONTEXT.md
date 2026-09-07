@@ -5,6 +5,32 @@ pull requests, including stacked PRs, across multiple version-control backends.
 
 ## Language
 
+### Agents
+
+**Hosted agent**:
+A Pi agent that kstack starts in a named Herdr pane. Hosted agents are
+long-lived, visible, and steerable by the user.
+_Avoid_: subagent, child
+
+**Headless child**:
+A short, non-interactive `pi -p --mode json` process run through
+`child-agent-runner.ts`.
+
+**Adversary**:
+A read-only hosted agent that critiques an implementation plan.
+_Avoid_: reviewer
+
+**Critique**:
+One structured adversary response. It contains an `approve` or `revise`
+verdict, blocking `[B-n]` findings, optional `[S-n]` suggestions, and findings
+resolved from the previous round.
+
+**Round**:
+One plan, critique, and revision cycle.
+
+**Debate**:
+A bounded sequence of rounds that produces a final plan.
+
 ### Version control
 
 **VCS backend**:

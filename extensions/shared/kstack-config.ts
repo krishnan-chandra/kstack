@@ -1,4 +1,4 @@
-import { type BoundaryValue, isObject, isString, type JsonObject } from "./validation.ts";
+import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } from "./validation.ts";
 /** Shared base for sections of $PI_CODING_AGENT_DIR/kstack.json.
  *
  * Unlike the standalone installer, extension callers historically expanded
@@ -28,6 +28,15 @@ const thinkingLevelsComplete: ThinkingLevelsComplete = true;
 void thinkingLevelsComplete;
 export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
+export type PlanAdversaryModel = string | { model: string; thinking?: ModelThinkingLevel };
+
+/* exported: shared configuration contract for plan-implement and the adversarial-planning CLI */
+export interface PlanAdversaryConfig {
+	adversary: PlanAdversaryModel;
+	maxRounds: number;
+	timeoutMinutes: number;
+}
+
 export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLevel {
 	return (
 		isString(value) &&
@@ -35,6 +44,56 @@ export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLev
 			THINKING_LEVELS as readonly string[]
 		).includes(value)
 	);
+}
+
+function validatePlanAdversaryModel(
+	value: BoundaryValue,
+): { ok: true; model: PlanAdversaryModel } | { ok: false; error: string } {
+	if (isString(value)) {
+		if (!/^[A-Za-z0-9_-]{1,16}$/.test(value)) {
+			return {
+				ok: false,
+				error: "plan-adversary.adversary alias must use 1–16 letters, digits, underscores, or hyphens.",
+			};
+		}
+		return { ok: true, model: value };
+	}
+	if (!isObject(value) || value === null || Array.isArray(value)) {
+		return { ok: false, error: "plan-adversary.adversary must be a model object or alias string." };
+	}
+	// SAFETY: the object guard above establishes a string-keyed config record.
+	const record = value as JsonObject;
+	if (!isString(record.model) || !MODEL_ID_RE.test(record.model)) {
+		return { ok: false, error: "plan-adversary.adversary.model must be provider/model." };
+	}
+	if (record.thinking !== undefined && !isThinkingLevel(record.thinking)) {
+		return { ok: false, error: "plan-adversary.adversary.thinking is not a supported thinking level." };
+	}
+	const model: Exclude<PlanAdversaryModel, string> = { model: record.model };
+	if (isThinkingLevel(record.thinking)) model.thinking = record.thinking;
+	return { ok: true, model };
+}
+
+/** Validate the shared adversarial-planning settings once for the skill CLI and plan-implement. */
+export function validatePlanAdversaryConfig(
+	value: BoundaryValue,
+): { ok: true; config: PlanAdversaryConfig } | { ok: false; error: string } {
+	if (!isObject(value) || value === null || Array.isArray(value)) {
+		return { ok: false, error: "plan-adversary must be an object." };
+	}
+	// SAFETY: the object guard above establishes a string-keyed config record.
+	const record = value as JsonObject;
+	const adversary = validatePlanAdversaryModel(record.adversary);
+	if (!adversary.ok) return adversary;
+	const maxRounds = record.maxRounds ?? 3;
+	if (!isNumber(maxRounds) || !Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 5) {
+		return { ok: false, error: "plan-adversary.maxRounds must be an integer from 1 to 5." };
+	}
+	const timeoutMinutes = record.timeoutMinutes ?? 15;
+	if (!isNumber(timeoutMinutes) || !Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 60) {
+		return { ok: false, error: "plan-adversary.timeoutMinutes must be an integer from 1 to 60." };
+	}
+	return { ok: true, config: { adversary: adversary.model, maxRounds, timeoutMinutes } };
 }
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
