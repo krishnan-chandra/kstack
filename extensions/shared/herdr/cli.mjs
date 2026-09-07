@@ -5,6 +5,11 @@
  * the TypeScript modules beside it, which Node loads through type stripping.
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { isObject } from "../validation.ts";
+import { parseFanoutSpec, runFanout } from "./fanout.ts";
+import { createNodeHerdrExec } from "./herdr-cli.ts";
 import { resolveConfiguredModel } from "./resolve-model.ts";
 
 const USAGE = `usage: cli.mjs <subcommand> [options]
@@ -44,6 +49,37 @@ export function parseResolveModelArgs(argv) {
 	};
 }
 
+export function parseFanoutArgs(argv) {
+	const values = {};
+	for (let index = 0; index < argv.length; index += 2) {
+		const flag = argv[index];
+		const value = argv[index + 1];
+		if (flag !== "--spec" && flag !== "--out" && flag !== "--label" && flag !== "--max-concurrency") {
+			return { ok: false, error: `unknown fanout option: ${flag ?? "(missing)"}` };
+		}
+		if (value === undefined || value.startsWith("--")) return { ok: false, error: `${flag} requires a value` };
+		if (values[flag] !== undefined) return { ok: false, error: `${flag} may be provided only once` };
+		values[flag] = value;
+	}
+	if (values["--spec"] === undefined) return { ok: false, error: "--spec is required" };
+	if (values["--out"] === undefined) return { ok: false, error: "--out is required" };
+	let maxConcurrency;
+	if (values["--max-concurrency"] !== undefined) {
+		const parsed = Number(values["--max-concurrency"]);
+		if (!Number.isInteger(parsed) || parsed < 1 || parsed > 8) {
+			return { ok: false, error: "--max-concurrency must be an integer from 1 to 8" };
+		}
+		maxConcurrency = parsed;
+	}
+	return {
+		ok: true,
+		spec: values["--spec"],
+		out: values["--out"],
+		label: values["--label"],
+		maxConcurrency,
+	};
+}
+
 async function main(argv) {
 	const parsed = parseSubcommand(argv);
 	if (!parsed.ok) {
@@ -69,7 +105,49 @@ async function main(argv) {
 		process.stdout.write(`${result.ref}\n`);
 		return 0;
 	}
-	process.stderr.write(`fanout is not implemented yet.\n${USAGE}\n`);
+	if (parsed.subcommand === "fanout") {
+		const options = parseFanoutArgs(argv.slice(1));
+		if (!options.ok) {
+			process.stderr.write(`${options.error}\n\n${USAGE}\n`);
+			return 2;
+		}
+		let rawSpec;
+		try {
+			const content = readFileSync(options.spec, "utf8");
+			rawSpec = JSON.parse(content);
+		} catch (error) {
+			process.stderr.write(
+				`Could not read spec file ${options.spec}: ${error instanceof Error ? error.message : String(error)}\n`,
+			);
+			return 1;
+		}
+		if (isObject(rawSpec)) {
+			if (options.label !== undefined) rawSpec.label = options.label;
+			if (options.maxConcurrency !== undefined) rawSpec.maxConcurrency = options.maxConcurrency;
+		}
+		const specParsed = parseFanoutSpec(rawSpec);
+		if (!specParsed.ok) {
+			process.stderr.write(`${specParsed.error}\n`);
+			return 1;
+		}
+		const outcome = await runFanout(specParsed.spec, { exec: createNodeHerdrExec() });
+		if (!outcome.ok) {
+			process.stderr.write(`${outcome.error}\n`);
+			return 1;
+		}
+		try {
+			mkdirSync(dirname(options.out), { recursive: true });
+			writeFileSync(options.out, JSON.stringify(outcome.outcome, null, 2), "utf8");
+		} catch (error) {
+			process.stderr.write(
+				`Could not write output file ${options.out}: ${error instanceof Error ? error.message : String(error)}\n`,
+			);
+			return 1;
+		}
+		const allCompleted = outcome.outcome.results.every((result) => result.status === "completed");
+		return allCompleted ? 0 : 1;
+	}
+	process.stderr.write(`unknown subcommand: ${parsed.subcommand}\n\n${USAGE}\n`);
 	return 2;
 }
 

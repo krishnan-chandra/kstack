@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { getAgentPaneHost } from "./agent-pane.ts";
+import { type AgentPaneHost, type AgentPaneRun, getAgentPaneHost } from "./agent-pane.ts";
 import type { BoundaryValue } from "./validation.ts";
 
 interface FakeUiState {
@@ -95,7 +95,8 @@ describe("agent pane host", () => {
 	it("mounts a uniform pane, opens the console, and routes abort", () => {
 		const { pi, ctx, shortcuts, state } = setup();
 		let aborts = 0;
-		const run = getAgentPaneHost(pi).startRun({ ctx, title: "Simplify", onAbort: () => aborts++ });
+		const host: AgentPaneHost = getAgentPaneHost(pi);
+		const run: AgentPaneRun = host.startRun({ ctx, title: "Simplify", onAbort: () => aborts++ });
 		run.addChild({ id: "quality", label: "quality", model: "model/a" });
 		run.markRunning("quality");
 		run.note("quality", "Reviewer started");

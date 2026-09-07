@@ -2,14 +2,20 @@
 name: simplify
 description: Simplify scoped code changes with parallel read-only review lenses (code quality, performance, reuse), then apply targeted cleanup fixes. Use when the user says simplify, clean up, tighten, reduce complexity, remove dead code, or polish a diff; after implementing a feature or refactor; or when local changes feel over-engineered, repetitive, or harder to read than necessary.
 license: MIT
-compatibility: A repository checkout with git. Primarily read-only review subprocesses; the parent may edit scoped files and run lightweight checks. Do not commit, push, or publish unless asked.
+compatibility: A repository checkout with git running inside Herdr. Primarily read-only review subprocesses; the parent may edit scoped files and run lightweight checks. Do not commit, push, or publish unless asked.
 ---
 
 # Simplify
 
-Reduce complexity in scoped code without changing behavior. Parallel read-only reviewers surface simplification opportunities; the parent applies only targeted fixes that preserve behavior.
+Reduce complexity in scoped code without changing behavior. Parallel read-only reviewers surface simplification opportunities in a dedicated Herdr tab; the parent applies only targeted fixes that preserve behavior.
 
 This complements `/panel-review` and `blast-radius`. Panel review judges correctness and risk; blast-radius proves cross-boundary safety. Simplify removes unnecessary complexity in code already deemed acceptable to change.
+
+## Guard and resolve paths
+
+1. Run `test "${HERDR_ENV:-}" = 1`. Stop and explain that this skill requires a Pi session inside Herdr if the check fails.
+2. Resolve this skill directory from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it.
+3. Never split or focus the user's pane. Reviewers run in a dedicated Herdr tab created by the fan-out tool.
 
 ## Scope selection
 
@@ -46,11 +52,11 @@ Keep the bundle under 2 MiB. If the diff is larger, include `git diff --stat` an
 
 ## Parallel read-only reviewers
 
-Launch all three reviewers in one `parallel_agents` tool call with `kind: "simplify"`. The extension shows the shared live agent pane with queued/running/completed state, model, elapsed time, current tool, and output preview. While the call is active, **Ctrl+Shift+V** opens the read-only transcript console and **Ctrl+Shift+X** aborts it. Do not replace it with background `pi` commands or a silent shell `wait`.
+Launch all three reviewers in one `cli.mjs fanout` call.
 
-Use one task per lens. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. The tool runs every task from the repository root, enforces read/grep/find/ls-only isolation, disables extensions, skills, prompt templates, and context files, applies idle and runtime limits, and propagates cancellation.
+Use one task per lens. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. Reviewers run with read/grep/find/ls-only tools, disabled extensions, skills, prompt templates, and context files.
 
-Give each reviewer the scope bundle path, the scope summary, and the matching template below. Instruct reviewers to return only findings within scope, cite `path:line` or diff hunks, and make no writes. A reviewer with nothing worth reporting returns `No simplification findings.`
+Write each lens prompt file under `.workspace/simplify/<run-id>/<lens>-prompt.md`. Include the scope bundle path, the scope summary, and the matching template below. Instruct reviewers to return only findings within scope, cite `path:line` or diff hunks, write their complete response to their assigned output file, and make no writes to the repository. A reviewer with nothing worth reporting writes `No simplification findings.`
 
 | Lens | Read this template | Focus |
 | --- | --- | --- |
@@ -58,7 +64,63 @@ Give each reviewer the scope bundle path, the scope summary, and the matching te
 | Performance | [`references/performance-reviewer.md`](references/performance-reviewer.md) | Hot-path cost, repeated work, chatty I/O |
 | Reuse | [`references/reuse-reviewer.md`](references/reuse-reviewer.md) | Existing helpers and house patterns to reuse |
 
-After the tool returns, save each completed report to `.workspace/simplify/<run-id>/<lens>.txt` when practical so fixes can reference it. If one lens fails or aborts, continue with the completed reports and name the missing lens in **Skipped**; do not rerun an opaque wait or discard sibling findings.
+Compose `.workspace/simplify/<run-id>/spec.json`:
+
+```json
+{
+  "owner": "simplify",
+  "label": "<run-id>",
+  "cwd": "<repo-root>",
+  "tasks": [
+    {
+      "label": "code-quality",
+      "model": "<model>",
+      "cwd": "<repo-root>",
+      "promptFile": ".workspace/simplify/<run-id>/code-quality-prompt.md",
+      "outputFile": ".workspace/simplify/<run-id>/code-quality.txt",
+      "access": "read-only",
+      "tools": ["read", "grep", "find", "ls"],
+      "noContextFiles": true,
+      "timeoutMinutes": 15
+    },
+    {
+      "label": "performance",
+      "model": "<model>",
+      "cwd": "<repo-root>",
+      "promptFile": ".workspace/simplify/<run-id>/performance-prompt.md",
+      "outputFile": ".workspace/simplify/<run-id>/performance.txt",
+      "access": "read-only",
+      "tools": ["read", "grep", "find", "ls"],
+      "noContextFiles": true,
+      "timeoutMinutes": 15
+    },
+    {
+      "label": "reuse",
+      "model": "<model>",
+      "cwd": "<repo-root>",
+      "promptFile": ".workspace/simplify/<run-id>/reuse-prompt.md",
+      "outputFile": ".workspace/simplify/<run-id>/reuse.txt",
+      "access": "read-only",
+      "tools": ["read", "grep", "find", "ls"],
+      "noContextFiles": true,
+      "timeoutMinutes": 15
+    }
+  ],
+  "maxConcurrency": 3
+}
+```
+
+Run the fanout:
+
+```sh
+node "$KSTACK/extensions/shared/herdr/cli.mjs" fanout \
+  --spec ".workspace/simplify/<run-id>/spec.json" \
+  --out ".workspace/simplify/<run-id>/result.json"
+```
+
+Watch reviewers in the `simplify: <run-id>` tab. You or the user can inspect progress directly in each reviewer's pane.
+
+Read the completed reports from `.workspace/simplify/<run-id>/<lens>.txt`. If one lens fails or aborts, continue with the completed reports and name the missing lens in **Skipped**; do not rerun an opaque wait or discard sibling findings.
 
 ## Apply targeted fixes
 
