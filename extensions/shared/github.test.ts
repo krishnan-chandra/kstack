@@ -512,6 +512,102 @@ test("deleteRemoteBranch detects GraphQL errors in exit-0 response", async () =>
 	);
 });
 
+test("deleteRemoteBranch rethrows GraphQL error when recovery read fails", async () => {
+	let readCount = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			readCount++;
+			if (readCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 1, stdout: "", stderr: "rate limit exceeded" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "mutation failed: branch rule locked" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "feature",
+			expectedHeadSha: SHA,
+			cwd: "/repo",
+		}),
+		/mutation failed: branch rule locked/,
+	);
+});
+
+test("deleteRemoteBranch classifies concurrent change from GraphQL errors exit-0 response via re-read", async () => {
+	let readCount = 0;
+	const otherSha = "d".repeat(40);
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			readCount++;
+			if (readCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 0, stdout: `${otherSha}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "stale oid" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+	assert.deepEqual(result, { kind: "changed", actualHeadSha: otherSha });
+});
+
+test("deleteRemoteBranch classifies concurrent deletion from GraphQL errors exit-0 response via re-read", async () => {
+	let readCount = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			readCount++;
+			if (readCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 1, stdout: "", stderr: "HTTP 404: Not Found" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "ref not found" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+	assert.deepEqual(result, { kind: "already-gone" });
+});
+
 test("deleteRemoteBranch rejects missing repository metadata", async () => {
 	const exec: ExecFn = async (_command, args) => {
 		if (args[1]?.includes("/git/ref/heads/feature")) {

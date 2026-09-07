@@ -569,6 +569,18 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 				throw new GitHubError(`Could not resolve repository ID for ${input.repo.owner}/${input.repo.repo}.`);
 			}
 
+			async function classifyRejection(cause: Error): Promise<DeleteRemoteBranchResult> {
+				let postSha: string | undefined;
+				try {
+					postSha = await readBranchSha(input.repo, branch, input.cwd, input.signal);
+				} catch {
+					throw cause;
+				}
+				if (postSha === undefined) return { kind: "already-gone" };
+				if (postSha !== input.expectedHeadSha) return { kind: "changed", actualHeadSha: postSha };
+				throw cause;
+			}
+
 			let mutationResult: { stdout: string };
 			try {
 				mutationResult = await runGh(
@@ -593,15 +605,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 				if (error instanceof GitHubError && error.kind === "indeterminate") {
 					throw error;
 				}
-				let postSha: string | undefined;
-				try {
-					postSha = await readBranchSha(input.repo, branch, input.cwd, input.signal);
-				} catch {
-					throw error;
-				}
-				if (postSha === undefined) return { kind: "already-gone" };
-				if (postSha !== input.expectedHeadSha) return { kind: "changed", actualHeadSha: postSha };
-				throw error;
+				return classifyRejection(error instanceof Error ? error : new Error(String(error)));
 			}
 
 			let parsed: BoundaryValue;
@@ -612,17 +616,9 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			}
 			const record = asRecord(parsed);
 			if (Array.isArray(record?.errors) && record.errors.length > 0) {
-				let postSha: string | undefined;
-				try {
-					postSha = await readBranchSha(input.repo, branch, input.cwd, input.signal);
-				} catch {
-					// Preserve GraphQL error
-				}
-				if (postSha === undefined) return { kind: "already-gone" };
-				if (postSha !== input.expectedHeadSha) return { kind: "changed", actualHeadSha: postSha };
 				const first = asRecord(record.errors[0]);
 				const message = isString(first?.message) ? first.message : "GraphQL updateRefs failed";
-				throw new GitHubError(message);
+				return classifyRejection(new GitHubError(message));
 			}
 			if (asRecord(record?.data)?.updateRefs == null) {
 				throw new GitHubError("GitHub returned an invalid updateRefs success envelope.");

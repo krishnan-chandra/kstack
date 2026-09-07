@@ -130,7 +130,8 @@ describe("cleanupLocalBranch", () => {
 
 			assert.deepEqual(result.completedMutations, []);
 			assert.equal(result.warnings.length, 1);
-			assert.match(result.warnings[0], /ref head changed or could not be locked/);
+			assert.match(result.warnings[0], /local head changed to/);
+			assert.ok(result.warnings[0].includes(newSha));
 			const head = runGit(fixture, ["rev-parse", "refs/heads/kstack/one"]);
 			assert.equal(head, newSha);
 		} finally {
@@ -243,6 +244,35 @@ describe("cleanupLocalBranch", () => {
 			assert.equal(desc, "preserved description");
 			const remote = runGit(fixture, ["config", "branch.kstack/one.remote"]);
 			assert.equal(remote, "origin");
+		} finally {
+			rmSync(fixture.root, { recursive: true, force: true });
+		}
+	});
+
+	it("warns when update-ref fails after pre-read matched the expected head", async () => {
+		const fixture = createFixture();
+		try {
+			runGit(fixture, ["switch", "-qc", "kstack/one"]);
+			const sha = commitFile(fixture, "one.txt", "one\n", "one");
+			runGit(fixture, ["switch", "-q", "main"]);
+
+			const racingExec: ExecFn = async (command, args, options) => {
+				if (args[0] === "update-ref") {
+					return { code: 1, stdout: "", stderr: "fatal: update-ref failed" };
+				}
+				return fixture.exec(command, args, options);
+			};
+
+			const result = await cleanupLocalBranch({
+				branch: "kstack/one",
+				expectedHeadSha: sha,
+				cwd: fixture.repo,
+				exec: racingExec,
+			});
+
+			assert.deepEqual(result.completedMutations, []);
+			assert.equal(result.warnings.length, 1);
+			assert.match(result.warnings[0], /ref head changed or could not be locked/);
 		} finally {
 			rmSync(fixture.root, { recursive: true, force: true });
 		}
