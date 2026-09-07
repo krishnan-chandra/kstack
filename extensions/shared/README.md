@@ -11,6 +11,7 @@
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
 | `git-exec.ts` | Defines the injected command-runner contract, normalizes bounded command failures and diagnostics, and adapts `pi.exec` for VCS modules. |
 | `github.ts` | Provides the single bounded, validated `gh` gateway for repository and PR reads, publication, merges, and merge verification. |
+| `herdr/` | Hosts long-lived Pi agents in Herdr panes: the herdr CLI gateway, the one-tab agent host with a file-based ask protocol, session-JSONL usage, pure pane layout, fan-out, and the skill-facing `cli.mjs`. See [`herdr/README.md`](herdr/README.md). |
 | `subagent-console.ts` | Renders the full-screen read-only subagent console (sidebar + transcript) used by live dashboards. |
 | `live-dashboard.ts` | Stores and renders shared live-dashboard state with extension-specific copy and display policy. |
 | `terminal-text.ts` | Sanitizes and width-bounds untrusted terminal text, with fallbacks for tests outside the Pi host. |
