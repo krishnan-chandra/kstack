@@ -3,7 +3,9 @@ import test from "node:test";
 import type { ExecFn } from "./git-exec.ts";
 import {
 	createGitHubGateway,
+	type DeleteRemoteBranchResult,
 	findOpenPullRequestByHead,
+	GitHubError,
 	getPullRequest,
 	getPullRequestReviewTarget,
 	getRepository,
@@ -322,4 +324,377 @@ test("head gateway preserves malformed-output and API failure behavior", async (
 		createGitHubGateway(failed).listPrsForHead({ owner: "acme", repo: "widgets" }, "feature", "/repo"),
 		/gh api failed: permission denied/,
 	);
+});
+
+test("deleteRemoteBranch deletes an unchanged remote branch at the expected head SHA", async () => {
+	const calls: string[][] = [];
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return { code: 0, stdout: JSON.stringify({ data: { updateRefs: { clientMutationId: null } } }), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result: DeleteRemoteBranchResult = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+
+	assert.deepEqual(result, { kind: "deleted" });
+	assert.equal(calls.length, 3);
+	assert.ok(calls[0].includes("/repos/acme/widgets/git/ref/heads/feature"));
+	assert.ok(calls[1].includes("/repos/acme/widgets"));
+	assert.ok(calls[2].includes("repositoryId=R_node123"));
+	assert.ok(calls[2].includes("name=refs/heads/feature"));
+	assert.ok(calls[2].includes(`beforeOid=${SHA}`));
+	assert.ok(calls[2].includes(`afterOid=${"0".repeat(40)}`));
+});
+
+test("deleteRemoteBranch short-circuits when the remote branch is already gone", async () => {
+	const calls: string[][] = [];
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		return { code: 1, stdout: "", stderr: "HTTP 404: Not Found" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+
+	assert.deepEqual(result, { kind: "already-gone" });
+	assert.equal(calls.length, 1);
+});
+
+test("deleteRemoteBranch skips deletion when the remote head already changed before mutation", async () => {
+	const calls: string[][] = [];
+	const otherSha = "b".repeat(40);
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		return { code: 0, stdout: `${otherSha}\n`, stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+
+	assert.deepEqual(result, { kind: "changed", actualHeadSha: otherSha });
+	assert.equal(calls.length, 1);
+});
+
+test("deleteRemoteBranch classifies concurrent remote change during mutation via re-read", async () => {
+	let callCount = 0;
+	const otherSha = "c".repeat(40);
+	const exec: ExecFn = async (_command, args) => {
+		callCount++;
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			// First read matches expected SHA; post-failure read returns changed SHA
+			return { code: 0, stdout: `${callCount === 1 ? SHA : otherSha}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return { code: 1, stdout: "", stderr: "updateRefs failed: stale oid" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+
+	assert.deepEqual(result, { kind: "changed", actualHeadSha: otherSha });
+});
+
+test("deleteRemoteBranch classifies concurrent remote deletion during mutation via re-read", async () => {
+	let callCount = 0;
+	const exec: ExecFn = async (_command, args) => {
+		callCount++;
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			if (callCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 1, stdout: "", stderr: "HTTP 404: Not Found" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return { code: 1, stdout: "", stderr: "updateRefs failed: ref not found" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+
+	assert.deepEqual(result, { kind: "already-gone" });
+});
+
+test("deleteRemoteBranch preserves rejection when re-read confirms head is unchanged", async () => {
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return { code: 1, stdout: "", stderr: "protected branch deletion forbidden" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "feature",
+			expectedHeadSha: SHA,
+			cwd: "/repo",
+		}),
+		/protected branch deletion forbidden/,
+	);
+});
+
+test("deleteRemoteBranch detects GraphQL errors in exit-0 response", async () => {
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "ref is protected" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "feature",
+			expectedHeadSha: SHA,
+			cwd: "/repo",
+		}),
+		/ref is protected/,
+	);
+});
+
+test("deleteRemoteBranch rethrows GraphQL error when recovery read fails", async () => {
+	let readCount = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			readCount++;
+			if (readCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 1, stdout: "", stderr: "rate limit exceeded" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "mutation failed: branch rule locked" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "feature",
+			expectedHeadSha: SHA,
+			cwd: "/repo",
+		}),
+		/mutation failed: branch rule locked/,
+	);
+});
+
+test("deleteRemoteBranch classifies concurrent change from GraphQL errors exit-0 response via re-read", async () => {
+	let readCount = 0;
+	const otherSha = "d".repeat(40);
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			readCount++;
+			if (readCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 0, stdout: `${otherSha}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "stale oid" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+	assert.deepEqual(result, { kind: "changed", actualHeadSha: otherSha });
+});
+
+test("deleteRemoteBranch classifies concurrent deletion from GraphQL errors exit-0 response via re-read", async () => {
+	let readCount = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			readCount++;
+			if (readCount === 1) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+			return { code: 1, stdout: "", stderr: "HTTP 404: Not Found" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			return {
+				code: 0,
+				stdout: JSON.stringify({ errors: [{ message: "ref not found" }] }),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	const result = await gateway.deleteRemoteBranch({
+		repo: { owner: "acme", repo: "widgets" },
+		branch: "feature",
+		expectedHeadSha: SHA,
+		cwd: "/repo",
+	});
+	assert.deepEqual(result, { kind: "already-gone" });
+});
+
+test("deleteRemoteBranch rejects missing repository metadata", async () => {
+	const exec: ExecFn = async (_command, args) => {
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "\n", stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "feature",
+			expectedHeadSha: SHA,
+			cwd: "/repo",
+		}),
+		/Could not resolve repository ID/,
+	);
+});
+
+test("deleteRemoteBranch propagates indeterminate runner errors without retry", async () => {
+	let calls = 0;
+	const exec: ExecFn = async (_command, args) => {
+		calls++;
+		if (args[1]?.includes("/git/ref/heads/feature")) {
+			return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+		}
+		if (args[1] === "/repos/acme/widgets") {
+			return { code: 0, stdout: "R_node123\n", stderr: "" };
+		}
+		if (args[1] === "graphql") {
+			throw new Error("transport timeout");
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+
+	const gateway = createGitHubGateway(exec);
+	let caughtError: GitHubError | undefined;
+	await assert.rejects(
+		gateway
+			.deleteRemoteBranch({
+				repo: { owner: "acme", repo: "widgets" },
+				branch: "feature",
+				expectedHeadSha: SHA,
+				cwd: "/repo",
+			})
+			.catch((err: Error) => {
+				if (err instanceof GitHubError) caughtError = err;
+				throw err;
+			}),
+		/transport timeout/,
+	);
+	assert.equal(caughtError?.kind, "indeterminate");
+	// 1: ref check, 2: repo id, 3: graphql mutation. No 4th call (no re-read or retry).
+	assert.equal(calls, 3);
+});
+
+test("deleteRemoteBranch validates branch name and SHA before effects", async () => {
+	let called = false;
+	const exec: ExecFn = async () => {
+		called = true;
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const gateway = createGitHubGateway(exec);
+
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "",
+			expectedHeadSha: SHA,
+			cwd: "/repo",
+		}),
+		/Invalid branch name/,
+	);
+	assert.equal(called, false);
+
+	await assert.rejects(
+		gateway.deleteRemoteBranch({
+			repo: { owner: "acme", repo: "widgets" },
+			branch: "feature",
+			expectedHeadSha: "not-a-sha",
+			cwd: "/repo",
+		}),
+		/Invalid expected head SHA/,
+	);
+	assert.equal(called, false);
 });

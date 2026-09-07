@@ -74,7 +74,7 @@ function gatewayFixture(options: GatewayFixtureOptions = {}) {
 		getAllowedMergeMethods: async () => ["squash" as const],
 		getRemoteBranchSha: async () => undefined,
 		markPrReady: async () => {},
-		deleteRemoteBranch: async () => "deleted" as const,
+		deleteRemoteBranch: async () => ({ kind: "deleted" as const }),
 		createDraftPr: async () => ({
 			number: 11,
 			headRef: "feat1",

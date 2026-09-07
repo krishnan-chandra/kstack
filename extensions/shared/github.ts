@@ -57,6 +57,9 @@ const DEFAULT_LIMITS: GithubLimits = {
 	diagnosticsBytes: 8 * 1024,
 };
 const SHA = /^[0-9a-f]{40}$/i;
+const ZERO_OID = "0".repeat(40);
+const UPDATE_REFS_MUTATION =
+	"mutation($repositoryId:ID!,$name:GitRefname!,$beforeOid:GitObjectID!,$afterOid:GitObjectID!){updateRefs(input:{repositoryId:$repositoryId,refUpdates:[{name:$name,beforeOid:$beforeOid,afterOid:$afterOid}]}){clientMutationId}}";
 const REPOSITORY_NAME = /^[^/\s]+\/[^/\s]+$/;
 
 /** Run a bounded GitHub CLI command without propagating execution failures. */
@@ -375,6 +378,11 @@ interface MergedPrInfo {
 	headRef: string;
 }
 
+export type DeleteRemoteBranchResult =
+	| { kind: "deleted" }
+	| { kind: "already-gone" }
+	| { kind: "changed"; actualHeadSha: string };
+
 export interface GitHubGateway {
 	getDefaultBranch(repo: GitHubRepository, cwd: string, signal?: AbortSignal): Promise<string>;
 	listOpenPrs(repo: GitHubRepository, cwd: string, signal?: AbortSignal): Promise<OpenPullRequest[]>;
@@ -391,12 +399,13 @@ export interface GitHubGateway {
 		signal?: AbortSignal,
 	): Promise<string | undefined>;
 	markPrReady(repo: GitHubRepository, prNumber: number, cwd: string, signal?: AbortSignal): Promise<void>;
-	deleteRemoteBranch(
-		repo: GitHubRepository,
-		branch: string,
-		cwd: string,
-		signal?: AbortSignal,
-	): Promise<"deleted" | "already-gone">;
+	deleteRemoteBranch(input: {
+		repo: GitHubRepository;
+		branch: string;
+		expectedHeadSha: string;
+		cwd: string;
+		signal?: AbortSignal;
+	}): Promise<DeleteRemoteBranchResult>;
 	createDraftPr(input: {
 		repo: GitHubRepository;
 		ref: string;
@@ -436,6 +445,28 @@ export function isGitHubIndeterminate(error: BoundaryValue): boolean {
 }
 
 export function createGitHubGateway(run: ExecFn): GitHubGateway {
+	async function readBranchSha(
+		repo: GitHubRepository,
+		branch: string,
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<string | undefined> {
+		assertRefName(branch);
+		try {
+			const result = await runGh(
+				run,
+				["api", `/repos/${repo.owner}/${repo.repo}/git/ref/heads/${branch}`, "--jq", ".object.sha"],
+				{ cwd, signal },
+			);
+			const sha = result.stdout.trim();
+			if (!sha) throw new GitHubError(`Could not read remote branch ${JSON.stringify(branch)}.`);
+			return sha;
+		} catch (error) {
+			if (isNotFound(error)) return undefined;
+			throw error;
+		}
+	}
+
 	return {
 		async getDefaultBranch(repo, cwd, signal) {
 			const result = await runGh(run, ["api", `/repos/${repo.owner}/${repo.repo}`, "--jq", ".default_branch"], {
@@ -509,21 +540,8 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			);
 			return parseMergeCommit(result.stdout, prNumber);
 		},
-		async getRemoteBranchSha(repo, branch, cwd, signal) {
-			assertRefName(branch);
-			try {
-				const result = await runGh(
-					run,
-					["api", `/repos/${repo.owner}/${repo.repo}/git/ref/heads/${branch}`, "--jq", ".object.sha"],
-					{ cwd, signal },
-				);
-				const sha = result.stdout.trim();
-				if (!sha) throw new GitHubError(`Could not read remote branch ${JSON.stringify(branch)}.`);
-				return sha;
-			} catch (error) {
-				if (isNotFound(error)) return undefined;
-				throw error;
-			}
+		getRemoteBranchSha(repo, branch, cwd, signal) {
+			return readBranchSha(repo, branch, cwd, signal);
 		},
 		async markPrReady(repo, prNumber, cwd, signal) {
 			await runGh(run, ["pr", "ready", String(prNumber), "--repo", `${repo.owner}/${repo.repo}`], {
@@ -531,18 +549,81 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 				signal,
 			});
 		},
-		async deleteRemoteBranch(repo, branch, cwd, signal) {
+		async deleteRemoteBranch(input) {
+			const branch = input.branch.startsWith("refs/heads/") ? input.branch.slice("refs/heads/".length) : input.branch;
 			assertRefName(branch);
-			try {
-				await runGh(run, ["api", "-X", "DELETE", `/repos/${repo.owner}/${repo.repo}/git/refs/heads/${branch}`], {
-					cwd,
-					signal,
-				});
-				return "deleted";
-			} catch (error) {
-				if (isNotFound(error)) return "already-gone";
-				throw error;
+			if (!SHA.test(input.expectedHeadSha)) {
+				throw new GitHubError(`Invalid expected head SHA: ${JSON.stringify(input.expectedHeadSha)}.`);
 			}
+			const preSha = await readBranchSha(input.repo, branch, input.cwd, input.signal);
+			if (preSha === undefined) return { kind: "already-gone" };
+			if (preSha !== input.expectedHeadSha) return { kind: "changed", actualHeadSha: preSha };
+
+			const repoResult = await runGh(
+				run,
+				["api", `/repos/${input.repo.owner}/${input.repo.repo}`, "--jq", ".node_id"],
+				{ cwd: input.cwd, signal: input.signal },
+			);
+			const repositoryId = repoResult.stdout.trim();
+			if (!repositoryId) {
+				throw new GitHubError(`Could not resolve repository ID for ${input.repo.owner}/${input.repo.repo}.`);
+			}
+
+			async function classifyRejection(cause: Error): Promise<DeleteRemoteBranchResult> {
+				let postSha: string | undefined;
+				try {
+					postSha = await readBranchSha(input.repo, branch, input.cwd, input.signal);
+				} catch {
+					throw cause;
+				}
+				if (postSha === undefined) return { kind: "already-gone" };
+				if (postSha !== input.expectedHeadSha) return { kind: "changed", actualHeadSha: postSha };
+				throw cause;
+			}
+
+			let mutationResult: { stdout: string };
+			try {
+				mutationResult = await runGh(
+					run,
+					[
+						"api",
+						"graphql",
+						"-f",
+						`query=${UPDATE_REFS_MUTATION}`,
+						"-F",
+						`repositoryId=${repositoryId}`,
+						"-F",
+						`name=refs/heads/${branch}`,
+						"-F",
+						`beforeOid=${input.expectedHeadSha}`,
+						"-F",
+						`afterOid=${ZERO_OID}`,
+					],
+					{ cwd: input.cwd, signal: input.signal },
+				);
+			} catch (error) {
+				if (error instanceof GitHubError && error.kind === "indeterminate") {
+					throw error;
+				}
+				return classifyRejection(error instanceof Error ? error : new Error(String(error)));
+			}
+
+			let parsed: BoundaryValue;
+			try {
+				parsed = parseJson(mutationResult.stdout);
+			} catch {
+				throw new GitHubError("GitHub returned invalid JSON for updateRefs mutation.");
+			}
+			const record = asRecord(parsed);
+			if (Array.isArray(record?.errors) && record.errors.length > 0) {
+				const first = asRecord(record.errors[0]);
+				const message = isString(first?.message) ? first.message : "GraphQL updateRefs failed";
+				return classifyRejection(new GitHubError(message));
+			}
+			if (asRecord(record?.data)?.updateRefs == null) {
+				throw new GitHubError("GitHub returned an invalid updateRefs success envelope.");
+			}
+			return { kind: "deleted" };
 		},
 		async createDraftPr(input) {
 			const created = await runGh(

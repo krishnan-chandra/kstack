@@ -15,7 +15,7 @@ export interface RebaseScopeBranch {
 	sha: string;
 }
 
-interface WorktreeRecord {
+export interface WorktreeRecord {
 	path: string;
 	head: string | undefined;
 	branch: string | undefined;
@@ -332,7 +332,7 @@ function parseRefs(stdout: string): ScopeResult<ReadonlyMap<string, string>> {
 	return { ok: true, value: refs };
 }
 
-function parseWorktrees(stdout: string): ScopeResult<readonly WorktreeRecord[]> {
+export function parseWorktrees(stdout: string): ScopeResult<readonly WorktreeRecord[]> {
 	if (!stdout?.endsWith("\0\0")) {
 		return { ok: false, error: "Git returned an empty or unterminated worktree inventory." };
 	}

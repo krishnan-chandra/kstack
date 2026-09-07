@@ -95,7 +95,7 @@ workspaces.
   `gh stack merge` once for the top PR. Partial-prefix native landing is refused.
   A direct merge is verified PR-by-PR before jj abandons the complete range once,
   fetches once, verifies refreshed trunk, and deletes only branches still at
-  their pinned heads. A merge-queue submission returns `queued` and preserves
+  their pinned heads using atomic GraphQL `updateRefs` compare-and-delete. A merge-queue submission returns `queued` and preserves
   all local history and bookmarks; `--readiness watch` polls for bounded queue
   settlement, while `check` returns after enqueue. Because the queue controls
   its merge method, queued landing also requires `land.repos["owner/repo"]` as
