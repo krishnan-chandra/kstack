@@ -162,7 +162,7 @@ export interface HerdrCli {
 		run: HerdrRunOptions,
 	): Promise<HerdrOutcome<HerdrTabInfo>>;
 	paneSplit(
-		options: { paneId: string; direction: "right" | "down"; ratio: number },
+		options: { paneId: string; direction: "right" | "down"; ratio: number; cwd?: string },
 		run: HerdrRunOptions,
 	): Promise<HerdrOutcome<HerdrPaneInfo>>;
 	paneClose(options: { paneId: string }, run: HerdrRunOptions): Promise<HerdrOutcome<null>>;
@@ -289,24 +289,27 @@ export function createHerdrCli(exec: HerdrExec): HerdrCli {
 				}),
 				runOptions,
 			),
-		paneSplit: (options, runOptions) =>
-			run(
-				[
-					"pane",
-					"split",
-					options.paneId,
-					"--direction",
-					options.direction,
-					"--ratio",
-					String(options.ratio),
-					"--no-focus",
-				],
+		paneSplit: (options, runOptions) => {
+			const args = [
+				"pane",
+				"split",
+				options.paneId,
+				"--direction",
+				options.direction,
+				"--ratio",
+				String(options.ratio),
+			];
+			if (options.cwd) args.push("--cwd", options.cwd);
+			args.push("--no-focus");
+			return run(
+				args,
 				expectType("pane_info", (record) => {
 					const info = paneInfoOf(record.pane);
 					return info ? { ...info } : undefined;
 				}),
 				runOptions,
-			),
+			);
+		},
 		paneClose: (options, runOptions) =>
 			run(
 				["pane", "close", options.paneId],

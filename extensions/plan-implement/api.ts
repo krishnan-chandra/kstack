@@ -15,19 +15,23 @@ interface PlanImplementPayload {
 	changeKind: ChangeKind;
 	/** When true, skip planner/panel-review/publisher and run one bounded implementer. */
 	fast: boolean;
+	/** Run the configured adversary debate before approval. */
+	adversary: boolean;
+	/** Stop after writing the final plan; do not create a workstream. */
+	planOnly: boolean;
 	ctx: ExtensionCommandContext;
 }
 
 /* exported: request-channel contract */
-export interface PlanImplementRequest extends RequestEnvelope<PlanImplementPayload, void, 1> {}
+export interface PlanImplementRequest extends RequestEnvelope<PlanImplementPayload, void, 2> {}
 
 function isWorkLocation(value: BoundaryValue): value is WorkLocation {
 	return value === "current" || value === "worktree";
 }
 
-const channel = createRequestChannel<PlanImplementPayload, void, 1>({
+const channel = createRequestChannel<PlanImplementPayload, void, 2>({
 	event: PLAN_IMPLEMENT_REQUEST_EVENT,
-	schemaVersion: 1,
+	schemaVersion: 2,
 	isPayload: (value): value is PlanImplementPayload =>
 		isObject(value) &&
 		value !== null &&
@@ -44,6 +48,11 @@ const channel = createRequestChannel<PlanImplementPayload, void, 1>({
 		"fast" in value &&
 		isBoolean(value.fast) &&
 		!(value.fast && value.mode === "stack") &&
+		"adversary" in value &&
+		isBoolean(value.adversary) &&
+		"planOnly" in value &&
+		isBoolean(value.planOnly) &&
+		!(value.fast && value.planOnly) &&
 		"changeKind" in value &&
 		isString(value.changeKind) &&
 		isChangeKind(value.changeKind),
@@ -57,11 +66,22 @@ export function claimPlanImplementRequest(
 		workLocation: WorkLocation,
 		changeKind: ChangeKind,
 		fast: boolean,
+		adversary: boolean,
+		planOnly: boolean,
 		ctx: ExtensionCommandContext,
 	) => Promise<void>,
 ): boolean {
 	return channel.claim(value, (payload) =>
-		run(payload.task, payload.mode, payload.workLocation, payload.changeKind, payload.fast, payload.ctx),
+		run(
+			payload.task,
+			payload.mode,
+			payload.workLocation,
+			payload.changeKind,
+			payload.fast,
+			payload.adversary,
+			payload.planOnly,
+			payload.ctx,
+		),
 	);
 }
 
@@ -78,8 +98,10 @@ export async function requestPlanImplement(
 	workLocation: WorkLocation,
 	changeKind: ChangeKind,
 	fast: boolean,
+	adversary: boolean,
+	planOnly: boolean,
 	ctx: ExtensionCommandContext,
 ): Promise<{ handled: true } | { handled: false }> {
-	const result = await channel.request(pi, { task, mode, workLocation, changeKind, fast, ctx });
+	const result = await channel.request(pi, { task, mode, workLocation, changeKind, fast, adversary, planOnly, ctx });
 	return result.handled ? { handled: true } : { handled: false };
 }

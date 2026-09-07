@@ -55,6 +55,15 @@ describe("kstack-router args parser", () => {
 		assert.equal(r.args.task, "Implement CI pipeline");
 	});
 
+	it("passes adversary and plan-only options to the change route", () => {
+		const r = parseArgs("--route change --no-adversary --plan-only Draft the migration");
+		assert.ok(r.ok);
+		assert.equal(r.args.adversary, false);
+		assert.equal(r.args.planOnly, true);
+		assert.equal(r.args.task, "Draft the migration");
+		assert.equal(parseArgs("--route review --plan-only Review it").ok, false);
+	});
+
 	it("parses an explicit change-kind override", () => {
 		const r = parseArgs("--route change --change-kind refactor Simplify the loader");
 		assert.ok(r.ok);

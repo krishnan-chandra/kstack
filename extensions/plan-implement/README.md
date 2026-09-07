@@ -1,334 +1,163 @@
 # plan-implement
 
-Run a high-reason planner and a distinct small/fast implementer in isolated Pi
-processes, with explicit plan approval between them, then invoke kstack's
-existing panel review through an in-process extension API, address the
-verdict's findings with a review-fixer child, and finish with a publisher
-child that creates or updates a **draft** PR (`write-pr`) and recommends
-reviewers (`find-reviewers`).
+`/plan-implement` plans a code change, optionally debates the plan with a distinct adversary, asks for approval, implements on a backend-owned workstream, runs panel review, addresses findings, and publishes a draft PR. Long-lived roles run as named Pi agents in a dedicated Herdr tab.
+
+The extension owns deterministic gates: model and repository preflight, plan and ledger validation, immutable-plan checks, recorded-work verification, stack publication, and cleanup. Hosted agents own planning and repository work.
+
+## Commands
 
 ```text
-/plan-implement Add optimistic locking to the session archive writer
 /plan-implement --change-kind bug-fix Fix the archive race
 /plan-implement --single --change-kind feature Add archive search
-/plan-implement --worktree --change-kind feature Add archive search without touching this checkout
-/plan-implement --stack --change-kind refactor Split the auth rollout into three PRs
-/plan-implement --fast --change-kind feature Add archive search
-/plan-implement
+/plan-implement --worktree --change-kind feature Add archive search
+/plan-implement --stack --change-kind refactor Split the rollout into three PRs
+/plan-implement --plan-only --change-kind feature Draft the migration plan
+/plan-implement --no-adversary --change-kind feature Use an existing approved plan flow
+/plan-implement --fast --change-kind feature Make one bounded change
 ```
 
-Use `--change-kind` with `bug-fix`, `feature`, `refactor`, `performance`,
-`prototype`, or `generic`. If you omit the flag, the command asks you to select
-a change kind. Use `generic` as the explicit escape hatch when no specialized
-proof obligations apply.
+The command accepts these leading flags:
 
-Add `--fast` to skip planning, panel review, and publishing: one bounded
-implementer runs in this session (or in an isolated `--worktree` child), the
-workstream is verified as a new local commit, and publication never happens
-automatically. `--fast` is always single-PR and cannot be combined with `--stack`.
+| Flag | Effect |
+| --- | --- |
+| `--single` | Deliver one PR. This is the default. |
+| `--stack` | Build and publish a local PR stack through the configured stack provider. |
+| `--worktree` | Run a single Git or Graphite delivery in a retained managed worktree. |
+| `--change-kind <kind>` | Select `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. |
+| `--no-adversary` | Skip the configured adversary for this run. |
+| `--plan-only` | Stop after the final plan and write it under `local/plans/`. This conflicts with `--fast`. |
+| `--fast` | Run one hosted implementer. Skip planning, panel review, and publication. |
 
-The argument-less form also asks for the delivery mode before opening the task
-editor. `--single` remains the default when the command includes a task or
-another option. Put `--` before a task that starts with dashes.
+Use `--` before a task that starts with a dash. The argument-less command prompts for delivery, change kind, and task.
 
-Tab-completion covers the leading `--single`, `--stack`, `--worktree`, and
-`--change-kind` flags (plus the finite kind values). Completion stops once the
-task or `--` starts. The task itself is never guessed.
+## Requirements
 
-## Behavior
+`plan-implement` requires:
 
-1. Requires TUI or RPC mode, a workspace accepted by the configured VCS
-   backend, the `panel-review` extension, and the `write-pr` and
-   `find-reviewers` skills in the session's discovered skill set.
-2. Names an unnamed parent session with a short task slug as soon as the task
-   is validated, before waiting, preflight, or any child model call. An
-   explicit or previously assigned session name is preserved.
-3. Resolves authenticated planner and implementer models and confirms the
-   assignments before spending.
-4. Runs the planner with only `read,grep,find,ls`.
-5. Displays the plan and asks for approval before mutation.
-6. Runs the implementer with Pi's normal built-in tools. The approved plan is a read-only file, and the implementer must close every ordered step and acceptance criterion in an execution ledger as `done`, `blocked: <reason>`, or `skip: <reason>`.
-7. Validates item-by-item parity, displays the implementer's final report (including the ledger), and, on success, asks the loaded
-   panel-review extension to run through Pi's in-process event bus. The panel
-   keeps its own confirmation and verdict rendering and returns a structured
-   outcome to the loop.
-8. On a completed verdict, asks whether to address the findings, then runs
-   the review fixer (implementer model, full tools) with the task and the
-   verdict passed through mode-`0600` temp files. The fixer addresses Act On
-   findings, verifies each against the repository, re-runs focused tests, and
-   records verified fixes on the existing branch or bookmark.
-9. Asks whether to publish, then runs the publisher (implementer model). For
-   Graphite, the parent first verifies the exact dry-run scope, submits through
-   `gt`, and resolves the exact PR; the publisher may then edit only that PR's
-   metadata. For other backends, the publisher follows `write-pr` to push the
-   configured branch or bookmark and create a draft PR (or update an existing
-   PR's title/body), then follows `find-reviewers` to recommend 2–5 reviewers
-   with evidence and a review order. Its final report — PR URL,
-   title, and the full reviewer recommendation — is displayed as the run's
-   terminal output. The publisher never marks PRs ready, merges, or
-   force-pushes.
-10. After a successful single-PR publication, resolves the open PR from the
-    workflow branch or bookmark using live GitHub state and offers an optional `/land`
-    continuation. If accepted, `/land` watches pr-autopilot readiness and keeps
-    its own exact-head merge confirmation. Stack mode is excluded, and a
-    missing land extension or unresolved PR ends cleanly at the published draft. Managed-worktree runs pass the retained workflow checkout to both landing and pr-autopilot.
+- interactive TUI mode inside Herdr (`HERDR_ENV=1`);
+- the Pi integration installed by `herdr integration install pi`;
+- an accepted workspace for the configured VCS backend;
+- authenticated role models;
+- `panel-review` for full implementation runs; and
+- the `write-pr` and `find-reviewers` skills for runs that can publish.
 
-Both `kstack-router` and direct `/plan-implement` calls supply a selected
-change kind. The confirmation displays it. The planner, implementer, and review
-fixer receive the shared `playbooks/engineering-principles.md` index, followed
-by the matching non-generic proof-obligation playbook. General principles shape
-the design without expanding scope; the specialized playbook defines the
-change's evidence contract. Generic changes still receive the shared index.
-The publisher receives neither because it packages the already-reviewed change
-rather than shaping implementation.
+`--plan-only` does not require panel review, publication skills, or mutation-only workstream preflight. RPC, JSON, and print modes are not supported.
 
-The planner emits machine-readable ordered `[STEP-n]` items and `[AC-n]`
-acceptance criteria. The parent copies them into the mutable execution ledger,
-preserves the implementer result for panel-review, including missing or
-malformed entries, and passes both the immutable plan and ledger onward.
-Synthesis treats omitted plan items as blocking findings; a prose deviations
-section cannot close an item.
+## Workflow
 
-Bug fixes require a before-and-after reproduction, refactors pin behavior,
-performance work compares matching measurements, features prove observable
-behavior, and prototypes stay isolated and produce a decision.
+A full run follows these phases:
 
-Children persist native sessions under `~/.pi/kstack/subagents/` and use
-`--no-extensions -e <kstack>/kstack.ts --no-prompt-templates`: only Kstack loads, so `openrouter-floor` shapes
-their provider requests without starting the user's other extensions. The
-review-fixer and publisher phases reuse the implementer model and tools; the
-publisher's skills (`write-pr`, `find-reviewers`, and in stack mode the
-re-added skill set) reach the child through normal skill discovery or explicit
-`--skill` flags.
+1. Preflight Herdr, configuration, models, VCS, panel review, and publication skills before a model call.
+2. Create one `plan-implement: <slug>` Herdr tab with `--no-focus`.
+3. Start a read-only planner in the tab's root pane.
+4. If `plan-adversary` is configured, start a read-only adversary and run the debate.
+5. Validate the final plan's ordered `[STEP-n]` items and `[AC-n]` criteria.
+6. Ask for approval. The approval card names the planner, adversary, implementer, change kind, and Herdr tab.
+7. Create the backend workstream only after approval, then start the implementer.
+8. Verify the immutable plan, execution-ledger parity, and locally recorded work.
+9. Run panel review against the exact workstream or stack base.
+10. Offer a hosted review fixer, structural publication, a hosted metadata publisher, PR autopilot, and landing.
 
-### Single-PR mode (default)
+Planner, adversary, implementer, fixer, and publisher agents stay visible in the run tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. The extension retains the tab after completion and reports its ID.
 
-Skills and context files intentionally remain enabled. A task can therefore
-compose with `create-pi-extension`, `create-skill`, `find-reviewers`, or any
-other matching installed/project skill without running recursive extensions.
+The Planner, Adversary, Implementer, Review fixer, and Publisher cards show the model, status, turns, and cost. Expand a card with Ctrl+O. Press Ctrl+Shift+I to abort the active hosted agent. If an agent blocks on a question or approval, the extension shows its pane ID; answer there, then confirm that the run should resume.
 
-The shared `vcs.backend` setting selects the single-PR workstream:
+## Adversarial debate
 
-- Git mode requires a plain Git working tree. It stops on tracked or untracked
-  pre-existing changes and recommends `--worktree`. On a clean tree, it creates
-  `kstack/<task-slug>` from the current `HEAD`, adding a numeric collision
-  suffix when needed.
-- jj mode requires a colocated jj/Git workspace. It creates a `trunk()`-based
-  change with a collision-safe `kstack/<task-slug>` bookmark. jj's automatic
-  snapshot model replaces Git dirty-tree and staging assumptions.
-- Graphite mode creates and records a tracked `kstack/<task-slug>` branch with
-  `gt`. The parent owns submission so a publisher child never bypasses
-  Graphite with a raw Git push.
+The adversary uses [`../../skills/adversarial-planning/adversary-prompt.md`](../../skills/adversarial-planning/adversary-prompt.md), the same contract as the interactive skill. Each critique contains an `approve` or `revise` verdict, `[B-n]` blocking findings, and optional `[S-n]` suggestions.
 
-The parent injects backend-specific guidance into every child. The implementer
-and review fixer stay on the prepared workstream, record coherent verified
-increments with only the selected backend, and never publish. Git mode finishes
-with a clean tree. jj mode finishes with an empty working-copy change above the
-recorded implementation. The publisher describes that empty jj checkpoint,
-moves the task bookmark to `@`, and pushes it so later automation can add fixes
-without rewriting implementation changes.
+The planner and adversary run for at most `maxRounds` budgeted rounds. A `revise` verdict sends the critique back to the same planner session. An `approve` verdict ends the debate.
 
-### Managed worktree mode (`--worktree`)
+Exhaustion blocks approval. The extension lists the open findings, plan path, and planner and adversary panes. Edit the plan file or steer the planner, then choose **Verify**. Verification does not consume the round budget. A further `revise` verdict returns to the same gate; declining rejects the plan.
 
-Worktree mode pins the remote default (falling back through conventional
-main/master refs to `HEAD`) before planning. After plan approval it creates a
-unique branch and linked worktree beneath:
+The adversary model must differ from the planner model. An unavailable adversary, malformed critique, failed planner revision, or aborted role stops before implementation.
+
+## Plan-only mode
+
+`--plan-only` runs the planner and configured debate, validates the final plan, and writes:
 
 ```text
-~/.pi/kstack/worktrees/<repo-name>-<common-dir-hash>/<task-slug>
+local/plans/<task-slug>.md
 ```
 
-The planner inspects the original checkout; the implementer, panel review,
-review fixer, and publisher operate on the managed worktree and reuse the
-parent-created `kstack/<task-slug>` branch rather than creating a second one.
-Panel review uses the pinned SHA as its immutable base. Files and uncommitted
-changes in the original checkout are not modified, although the linked
-worktree necessarily shares Git metadata and branch refs. The worktree is
-retained on success, failure, abort, and publication. Use the `git-worktrees`
-skill to inspect and clean it up explicitly.
+It does not create a branch, bookmark, Graphite workstream, worktree, panel review, or PR. Use the resulting plan with `--fast` when the bounded implementation no longer needs another debate.
 
-`--worktree` requires the Git or Graphite backend and supports single-PR
-delivery only. Graphite creates the linked worktree through Git, tracks the
-branch with Graphite, and keeps later mutations native to `gt`. The jj backend
-rejects worktree mode before model calls; jj single delivery runs in the current
-workspace. Combining `--worktree` with `--stack` also fails before model calls.
+## Fast mode
 
-### Stacked-PR mode (`--stack`)
+`--fast` opens one Herdr tab and runs one hosted implementer in the current workstream or a newly created managed worktree. It preserves change-kind and backend guidance, verifies a new recorded revision, retains the pane and workstream, and never publishes. It no longer takes over the parent Pi session.
 
-Stacked-PR mode builds a **local** stack of changes, one pointer per PR, and
-reviews it once. The implementer never publishes; the parent's publication
-phase owns publication.
+## Delivery modes
 
-Stack mode preflights through `kstack:stack:preflight` and
-`kstack:stack:capabilities`:
+### Single PR
 
-- For `git`: Git 2.38 or newer, a clean plain Git worktree, immutable remote
-  trunk, one `kstack/` branch per slice, and `github-stacked-prs` loaded. Set
-  `vcs.stackProvider` to `"none"` to disable Git stack mode.
-- For `jj`: jj 0.44 or newer, configured user identity, a colocated Git
-  worktree, immutable `trunk()` commit, and `jj-stacked-prs` loaded.
-- For `graphite`: a Git repository root, valid Graphite trunk and SHA, clean
-  working tree, and `graphite-stacked-prs` loaded.
+The configured VCS backend owns workstream creation and verification:
 
-Arena is **deterministically disabled** for both children: skill discovery is
-turned off with `--no-skills` and every other discovered skill is re-added with
-repeated `--skill`. This prevents parallel candidates from corrupting a shared
-VCS log while preserving task-specific skills. The planner produces a
-`Delivery: stacked-prs` plan with ordered PR slices; the implementer follows the
-local stack policy, describes coherent changes incrementally, and places
-bookmarks or branches at PR boundaries. The implementer never runs publication
-commands, raw pushes, or PR creation. After a successful implementation, panel
-review runs once against the immutable trunk base. The review fixer amends findings
-into the correct slices of the local stack. Structural publication is delegated
-to the loaded stack provider extension via `kstack:stack:publish`. Only a
-completed publication writes a trusted PR map and offers a metadata/reviewer
-child. That child may edit titles and bodies for listed PRs and recommend
-reviewers; it does not push, create PRs, repair bases, or update navigation
-comments.
+- Git requires a clean working tree and creates a collision-safe `kstack/<slug>` branch.
+- jj creates a `trunk()`-based change and bookmark, then requires an empty working-copy change above the recorded implementation.
+- Graphite creates and records a tracked `kstack/<slug>` branch through `gt`.
 
-The Planner, Implementer, Review fixer, and Publisher cards identify the
-model used. Expand a card with Ctrl+O. Press **Ctrl+Shift+I** to abort an actively running child process. At
-the plan-approval boundary the shortcut reports that no child is running and
-does not pre-abort the future implementer.
+### Managed worktree
 
-## Live TUI Dashboard & Subagent Console
+`--worktree` supports Git and Graphite single-PR delivery. The backend creates a linked worktree beneath `~/.pi/kstack/worktrees/` after plan approval. Implementation, panel review, fixing, and publication use that path. The extension retains the worktree on every outcome; use the `git-worktrees` skill for cleanup.
 
-In TUI mode, plan-implement mounts a live dashboard widget above the editor and provides an interactive read-only subagent console:
+### Stacked PRs
 
-- **Live Dashboard**: Mounted above the editor during the workflow. Displays status icons (`○` queued, `●` running, `✓` completed, `✗` failed, `⊘` aborted), turns, elapsed time, current tool activity, and a rolling single-line preview of streaming assistant text for each child phase (Planner, Implementer, and subsequent Review fixer / Publisher phases).
-- **Subagent Console (`Ctrl+Shift+V`)**: A strictly read-only full-screen overlay for inspecting the streaming and historical transcripts of each phase (Planner, Implementer, Review fixer, Publisher). On terminals ≥ 100 columns it shows a bordered title bar (run elapsed and total cost), a per-phase sidebar (status, model, turns, elapsed), and a transcript pane; narrower terminals get a compact tab-bar layout.
-  - Use `←` / `→` or `Tab` / `Shift+Tab` to switch between children. Scroll position and follow mode are remembered per child across switches.
-  - Use `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End` / `g` / `G` to scroll.
-  - Press `f` to toggle auto-follow tail.
-  - Press `Escape` to close the console and restore the chat.
-  - Press `Ctrl+Shift+I` from the main view, or `Ctrl+Shift+X` from the main view or console, to abort the running child.
-  - Displays lifecycle notes, tool calls with elapsed durations, turn boundaries with input/output token counts and costs, wrapped assistant text, and the real-time live streaming tail.
-
-Live dashboard state and transcripts are ephemeral (capped at 128 KiB per child) and never written to the session or disk.
-
-## In-process API (composability)
-
-The extension exposes an in-process event-bus API (`kstack:plan-implement:request`)
-to allow other extensions (notably `kstack-router`) to invoke the workflow without
-synthesizing slash-command strings.
-
-The request carries a structured `{ task, mode, workLocation, changeKind, ctx }` payload with a
-synchronous `claimed` flag and an awaited completion promise. The slash command
-and the event listener call the same internal runner. Only the slash command
-collects flags and editor input. Both paths retain task validation,
-VCS/panel/model preflight, confirmations, lifecycle checks, cleanup, and panel
-review.
-
-See `api.ts` for the full contract and `api.test.ts` for usage examples.
+`--stack` preflights the configured GitHub, jj, or Graphite stack provider and pins its trunk. Hosted mutation roles receive only the selected skills, with Arena excluded. The implementer builds a local stack and never publishes it directly. The parent validates and publishes the exact stack, then the publisher may edit metadata only for PRs in the trusted publication map.
 
 ## Configuration
 
-The shared `vcs.backend` setting selects `"git"`, `"jj"`, or `"graphite"` and
-defaults to `"git"` when omitted. The extension reads that setting once at the
-adapter boundary, runs the corresponding preflight, and passes one backend
-through all mutation phases. Repository-local overrides are not supported.
-
-Model configuration is the `"plan-implement"` section of
-`$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
+Kstack reads `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`).
 
 ```json
 {
   "plan-implement": {
-    "planner": { "model": "openai/gpt-5.6-sol", "thinking": "high" },
-    "implementer": {
-      "model": "openai/gpt-5.6-terra",
-      "thinking": "medium"
-    },
+    "planner": { "model": "openai/gpt-6-astra", "thinking": "high" },
+    "implementer": { "model": "openrouter/google/gemini-3.8-flash", "thinking": "high" },
     "timeoutMinutes": 30
+  },
+  "plan-adversary": {
+    "adversary": { "model": "anthropic/claude-fable-5-1", "thinking": "medium" },
+    "maxRounds": 3,
+    "timeoutMinutes": 15
   }
 }
 ```
 
-Planner and implementer models must be distinct and authenticated. Models from
-providers registered by parent extensions are rejected because the parent cannot
-verify that a child reproduces those definitions, routes, or credentials. Planner
-thinking is restricted to `high`, `xhigh`, or `max`; when omitted it defaults
-to `high`. `timeoutMinutes` is an integer from 1 through 60 and applies to each
-child.
+The adversary may be an object or a kstack model alias string. `maxRounds` is an integer from 1 through 5 and defaults to 3. Adversary `timeoutMinutes` is an integer from 1 through 60 and defaults to 15. If `plan-adversary` is absent, the normal command uses the single-planner flow.
 
-Without config, the first authenticated candidate is selected from each list:
+Planner thinking must be `high`, `xhigh`, or `max`. Planner and implementer models must differ. Every configured model must be available and authenticated in the parent registry.
 
-- Planner: GPT-5.6 Sol (high), Claude Opus 4.6 (high), Claude Fable 5 (high).
-- Implementer: GPT-5.6 Terra (medium), then GLM 5.2, DeepSeek V4
-  Flash, or Kimi k3 (medium).
+## Hosted-agent protocol and limits
 
-The extension does not fall back to the active parent model; explicit role and
-cost separation is part of its contract.
-
-## Limits and security
+The shared module under [`../shared/herdr/`](../shared/herdr/) creates the tab, panes, agents, and protected exchange files. Terminal prompts contain only short file pointers. Task, plan, critique, verdict, and final output cross through mode-`0600` files in a mode-`0700` temporary directory.
 
 | Item | Limit |
 | --- | --- |
 | Task | 32 KiB UTF-8 |
-| Planner final output | 64 KiB UTF-8 |
-| Implementer final output | 32 KiB UTF-8 |
-| Child stderr retained | 8 KiB UTF-8 |
-| One JSONL stdout line | 2 MiB; oversized lines terminate the child |
-| Child timeout | 1–60 min, default 30 |
-| Panel intent | 1,000 characters |
-| Abort grace | 5 s before SIGKILL |
+| Planner output | 64 KiB UTF-8 |
+| Critique output | 32 KiB UTF-8 |
+| Implementer, fixer, or publisher output | 32 KiB UTF-8 |
+| Debate rounds | 1–5; default 3 |
+| Role timeout | 1–60 min |
+| Hosted agents in one full run | 5 |
+| Pointer prompt | 512 bytes |
 
-Task, plan, and panel-verdict content are passed through mode-`0600` files
-in a private temp directory, not in child argv. The directory is removed after
-the run.
+This is a capability restriction, not a sandbox. Hosted agents use the user's OS permissions. Planner and adversary tools are limited to `read,grep,find,ls`; mutation roles have Pi's normal tools after approval. Repository files, skills, context files, tasks, plans, and verdicts may contain hostile instructions.
 
-This is process isolation, not a sandbox. The implementer runs with the user's
-Pi/OS permissions and can modify the repository after approval. Skills,
-context files, repository files, task text, and planner output may all contain
-instructions; child system prompts tell agents to honor trusted instructions
-and the explicit user task. The planner's Pi tool set is read-only, but OS file
-permissions are unchanged.
+## Failure and cleanup
 
-In Git current-checkout mode, the implementer refuses a dirty tree so panel
-review sees only the committed task branch. Managed-worktree mode reviews the
-linked worktree against its pinned base. In jj mode, the parent verifies the
-bookmark ancestry, requires at least one non-empty change, and requires an
-empty working-copy change before review. The review-fixer and publisher
-children run with the user's Pi/OS permissions; the publisher's confirmation
-is the only gate before it pushes a branch or bookmark and opens a draft PR.
-Publication stops when workstream changes have not been recorded.
+Failures before approval do not create a workstream. An implementation failure may leave recorded checkpoints or partial edits on the retained workstream. A fixer failure prevents publication when backend postconditions fail. Publication failures can leave a pushed ref or draft PR that needs inspection.
 
-## Failure policy
+Abort sends Escape, then Ctrl+C twice, then closes only the hosted pane if the agent does not settle. Session replacement and shutdown abort the active role. Host disposal removes exchange files but leaves the created Herdr tab open.
 
-- Invalid config, unavailable models, VCS preflight failures, a missing
-  panel-review extension, missing `write-pr`/`find-reviewers` skills, and bad
-  task input stop before model calls.
-- Stack-mode preflight failures, including a dirty or mismatched workspace, an
-  unavailable provider extension, an unresolved immutable trunk, or Arena not
-  being excludable, stop before model calls.
-- Worktree-mode base/path failures stop before model calls. Creation happens
-  only after plan approval; a creation failure stops before the implementer and
-  reports any directory or branch that may need inspection.
-- Planner failure or plan rejection stops before the implementer.
-- Implementer failure is displayed and warns that recorded checkpoints and
-  partial edits may remain; it does not start panel review. Inspect the retained
-  branch or jj change with the configured backend before retrying.
-- Successful implementation invokes panel-review directly through its claimed
-  event-bus request. Missing listeners and request failures are reported.
-  Panel confirmation, partial reviewer failures, and synthesis behavior remain
-  owned by panel-review. A verdict is required to continue: `no-changes`,
-  `declined`, `aborted`, and `failed` outcomes skip the fix and publish
-  phases with a notice.
-- Review-fixer failure is displayed; the publish phase is still offered
-  afterwards (the PR ships the implementation plus whatever fixes landed).
-- Publisher failure (including `gh` auth/network errors) is displayed; the PR
-  may exist partially, such as a pushed branch or bookmark without a PR. Re-run
-  `/plan-implement` or finish publishing manually with the `write-pr` skill.
-- Abort sends SIGTERM to the child process group and SIGKILL after five seconds.
-  Session shutdown invalidates stale callbacks and uses the same cleanup path.
+## In-process request interface
+
+`kstack:plan-implement:request` uses schema version 2. Its payload contains `task`, `mode`, `workLocation`, `changeKind`, `fast`, `adversary`, `planOnly`, and the fresh command context. `kstack-router` uses this channel instead of constructing slash-command text.
 
 ## Development
 
-Unit tests make no provider calls:
+The test suite uses fake Herdr and VCS adapters and makes no provider calls:
 
 ```bash
-node --test extensions/plan-implement/
+node --test extensions/plan-implement/ extensions/kstack-router/
 ```
-
-Implementation plans are temporary working state under `local/plans/` and are
-not tracked. This README, the source, and the tests document the shipped contract.

@@ -8,6 +8,7 @@ import {
 	DEFAULT_PLANNERS,
 	loadConfig,
 	modelCliId,
+	resolveAdversary,
 	resolveRoles,
 	validateConfig,
 } from "./config.ts";
@@ -106,6 +107,64 @@ describe("plan-implement config", () => {
 			);
 			const result = loadConfig({ PI_CODING_AGENT_DIR: dir });
 			assert.equal(result.status, "loaded");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves the configured adversary, aliases, and skip behavior", () => {
+		const dir = mkdtempSync(join(tmpdir(), "plan-adversary-config-"));
+		try {
+			writeFileSync(
+				join(dir, "kstack.json"),
+				JSON.stringify({
+					aliases: [{ label: "fable", model: "anthropic/fable", thinking: "high" }],
+					"plan-adversary": { adversary: "fable", maxRounds: 4, timeoutMinutes: 12 },
+				}),
+			);
+			const result = resolveAdversary(
+				true,
+				"openai/planner",
+				{ available: () => true },
+				{
+					PI_CODING_AGENT_DIR: dir,
+				},
+			);
+			assert.deepEqual(result, {
+				ok: true,
+				adversary: { model: "anthropic/fable:high", maxRounds: 4, timeoutMinutes: 12 },
+			});
+			assert.deepEqual(
+				resolveAdversary(
+					false,
+					"openai/planner",
+					{ available: () => true },
+					{
+						PI_CODING_AGENT_DIR: dir,
+					},
+				),
+				{ ok: true },
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an unavailable or planner-identical adversary", () => {
+		const dir = mkdtempSync(join(tmpdir(), "plan-adversary-invalid-"));
+		try {
+			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ "plan-adversary": { adversary: { model: "a/p" } } }));
+			const same = resolveAdversary(true, "a/p", { available: () => true }, { PI_CODING_AGENT_DIR: dir });
+			assert.equal(same.ok, false);
+			const unavailable = resolveAdversary(
+				true,
+				"other/model",
+				{ available: () => false },
+				{
+					PI_CODING_AGENT_DIR: dir,
+				},
+			);
+			assert.equal(unavailable.ok, false);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

@@ -358,6 +358,10 @@ describe("agent-host: layout and start", () => {
 		const split = harness.fake.callsMatching("pane split")[0];
 		assert.ok(split);
 		assert.deepEqual(split.args.slice(2, 6), [harness.fake.rootPaneId, "--direction", "right", "--ratio"]);
+		assert.deepEqual(split.args.slice(split.args.indexOf("--cwd"), split.args.indexOf("--cwd") + 2), [
+			"--cwd",
+			"/repo",
+		]);
 		await host.dispose({ closeTab: true });
 		assert.equal(harness.fake.callsMatching("tab close").length, 1);
 	});

@@ -633,7 +633,7 @@ export async function openAgentHost(
 						? tab.value.rootPaneId
 						: (agents[placement.splitFrom]?.paneId ?? tab.value.rootPaneId);
 				const split = await cli.paneSplit(
-					{ paneId: sourcePane, direction: placement.direction, ratio: placement.ratio },
+					{ paneId: sourcePane, direction: placement.direction, ratio: placement.ratio, cwd: spec.cwd },
 					{ timeoutMs: CONTROL_TIMEOUT_MS },
 				);
 				if (!split.ok) return { ok: false, error: `Could not split a pane for ${spec.role}: ${split.message}` };

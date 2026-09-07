@@ -92,6 +92,8 @@ export interface RouterArgs {
 	delivery?: DeliveryRecommendation;
 	worktree?: boolean;
 	changeKind?: ChangeKind;
+	adversary?: boolean;
+	planOnly?: boolean;
 	autopilotMode?: AutopilotModeFlag;
 	prNumber?: number;
 	landMethod?: LandMethodFlag;
