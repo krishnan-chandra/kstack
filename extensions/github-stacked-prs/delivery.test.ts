@@ -137,6 +137,22 @@ describe("GitHub stack publication", () => {
 		assert.match(result.ok ? "" : result.error, /clean working tree/);
 	});
 
+	it("plan-only accepts a dirty tree and pins local trunk without fetching or a manifest", async () => {
+		const { exec, calls } = execFixture({
+			"git --version": { stdout: "git version 2.38.0\n" },
+			"git status --porcelain=v1 --untracked-files=all": { stdout: " M existing.ts\n" },
+			"git symbolic-ref refs/remotes/origin/HEAD": { code: 1 },
+		});
+		const result = await preflightGitHubStack("/repo", undefined, exec, gateway(), true);
+		assert.ok(result.ok);
+		assert.equal(result.trunkSha, trunk);
+		assert.equal(result.childPolicy, "");
+		assert.equal(
+			calls.some((call) => /git (fetch|push|checkout|switch|status)/.test(call)),
+			false,
+		);
+	});
+
 	it("fetches and pins the remote-tracking trunk during preflight", async () => {
 		const { exec, calls } = execFixture({
 			"git --version": { stdout: "git version 2.38.0\n" },

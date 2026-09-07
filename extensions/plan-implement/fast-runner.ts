@@ -1,8 +1,9 @@
 /** Hosted `--fast` implementer for current and managed-worktree workstreams. */
 
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
@@ -30,6 +31,7 @@ export type FastImplementOutcome =
 interface FastImplementRequest {
 	task: string;
 	changeKind: ChangeKind;
+	planFile?: string;
 }
 
 type OpenRoleRunner = { ok: true; runner: RoleRunner } | { ok: false; error: string };
@@ -51,12 +53,39 @@ export function buildFastImplementerGuidance(changeKind: ChangeKind, backend: Pi
 	].join("\n\n---\n\n");
 }
 
+async function loadPlan(
+	request: FastImplementRequest,
+	cwd: string,
+): Promise<{ ok: true; snapshot?: string } | { ok: false; status: "failed"; error: string }> {
+	if (!request.planFile) return { ok: true };
+	try {
+		const handle = await open(resolve(cwd, request.planFile), "r");
+		try {
+			const buffer = Buffer.alloc(LIMITS.plannerOutputBytes + 1);
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+			if (bytesRead > LIMITS.plannerOutputBytes) throw new Error(`Plan exceeds ${LIMITS.plannerOutputBytes} bytes.`);
+			const snapshot = buffer.toString("utf8", 0, bytesRead);
+			if (!snapshot.trim()) throw new Error("Plan is empty.");
+			return { ok: true, snapshot };
+		} finally {
+			await handle.close();
+		}
+	} catch (error) {
+		return {
+			ok: false,
+			status: "failed",
+			error: `Cannot load fast plan: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
 async function runHostedFast(
 	request: FastImplementRequest,
 	implementer: RoleSpec,
 	cwd: string,
 	checkpoint: WorkstreamCheckpoint,
 	fx: FastRunEffects,
+	planSnapshot?: string,
 ): Promise<FastImplementOutcome> {
 	const branch = checkpoint.ref;
 	let temp: string | undefined;
@@ -69,6 +98,10 @@ async function runHostedFast(
 		temp = mkdtempSync(join(tmpdir(), "kstack-fast-implement-"));
 		const taskFile = join(temp, "task.md");
 		const promptFile = join(temp, "prompt.md");
+		const planFile = planSnapshot === undefined ? undefined : join(temp, "selected-plan.md");
+		if (planFile) {
+			writeFileSync(planFile, planSnapshot ?? "", { mode: 0o400 });
+		}
 		writeFileSync(
 			taskFile,
 			`# User task\n\n${request.task}\n\nVCS backend: ${fx.backend.id}\nWorkstream: ${checkpoint.ref}\n`,
@@ -86,7 +119,8 @@ async function runHostedFast(
 			timeoutMs: (fx.timeoutMinutes ?? LIMITS.defaultTimeoutMinutes) * 60_000,
 			outputCapBytes: LIMITS.implementerOutputBytes,
 			signal: fx.signal,
-			instructions: `Read the user task at ${taskFile}, inspect the repository, implement it, run focused verification, and commit coherent changes. Do not push, publish, open a PR, or land.`,
+			instructions: `Read the user task at ${taskFile}${planFile ? ` and implement the selected immutable plan snapshot at ${planFile}` : ""}, inspect the repository, implement it, run focused verification, and commit coherent changes. Do not push, publish, open a PR, or land.`,
+			planFile,
 		});
 		session = result.session;
 		if (result.status !== "completed") {
@@ -141,11 +175,13 @@ export async function runFastCurrent(
 	cwd: string,
 	fx: FastRunEffects,
 ): Promise<FastImplementOutcome> {
+	const plan = await loadPlan(request, cwd);
+	if (!plan.ok) return plan;
 	const preflight = await fx.backend.preflight(cwd);
 	if (!preflight.ok) return { status: "failed", error: preflight.error };
 	const created = await fx.backend.createWorkstream(cwd, request.task);
 	if (!created.ok) return { status: "failed", error: created.error };
-	return runHostedFast(request, implementer, cwd, created, fx);
+	return runHostedFast(request, implementer, cwd, created, fx, plan.snapshot);
 }
 
 export async function runFastWorktree(
@@ -157,6 +193,8 @@ export async function runFastWorktree(
 	if (!fx.backend.isolation) {
 		return { status: "failed", error: "The configured VCS backend does not support managed worktrees." };
 	}
+	const plan = await loadPlan(request, initialCwd);
+	if (!plan.ok) return plan;
 	const preflight = await fx.backend.preflight(initialCwd);
 	if (!preflight.ok) return { status: "failed", error: preflight.error };
 	const planned = await fx.backend.isolation.plan(initialCwd, request.task);
@@ -164,5 +202,5 @@ export async function runFastWorktree(
 	const created = await fx.backend.isolation.create(planned.plan);
 	if (!created.ok) return { status: "failed", error: created.error };
 	const checkpoint: WorkstreamCheckpoint = { ref: created.plan.ref, baseSha: created.plan.baseSha };
-	return runHostedFast(request, implementer, created.plan.path, checkpoint, fx);
+	return runHostedFast(request, implementer, created.plan.path, checkpoint, fx, plan.snapshot);
 }

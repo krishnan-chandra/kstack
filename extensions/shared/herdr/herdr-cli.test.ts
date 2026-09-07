@@ -200,6 +200,18 @@ describe("createNodeHerdrExec", () => {
 		});
 	});
 
+	it("reports output overflow as overflow rather than a timeout", async () => {
+		const cli = createHerdrCli(createNodeHerdrExec(process.execPath));
+		const outcome = await cli.runText(["-e", `process.stdout.write("x".repeat(${HERDR_OUTPUT_CAP_BYTES + 1024}))`], {
+			timeoutMs: 5_000,
+		});
+		assert.equal(outcome.ok, false);
+		if (!outcome.ok) {
+			assert.equal(outcome.code, "output_overflow");
+			assert.match(outcome.message, /exceeded/);
+		}
+	});
+
 	it("passes AbortSignal through to the child process", async () => {
 		const controller = new AbortController();
 		const cli = createHerdrCli(createNodeHerdrExec(process.execPath));

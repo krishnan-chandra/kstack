@@ -7,9 +7,9 @@ import {
 	type ModelThinkingLevel,
 	type PlanAdversaryModel,
 	validatePlanAdversaryConfig,
-} from "../kstack-config.ts";
-import { collectKstackModelAliases, type ModelAlias, matchModelAliases } from "../model-aliases.ts";
-import { type BoundaryValue, isObject, isString, type JsonObject } from "../validation.ts";
+} from "./kstack-config.ts";
+import { collectKstackModelAliases, type ModelAlias, matchModelAliases } from "./model-aliases.ts";
+import { type BoundaryValue, isObject, isString, type JsonObject } from "./validation.ts";
 
 interface ResolveModelRequest {
 	argument?: string;

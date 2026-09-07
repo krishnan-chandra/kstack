@@ -67,12 +67,14 @@ describe("runWorkflow", () => {
 		const rounds: number[] = [];
 		const result = await runWorkflow({
 			...baseDeps(),
-			critique: async () => critique("approve"),
-			revisePlan: async () => assert.fail("revision should not run"),
-			resolveExhaustion: async () => assert.fail("exhaustion should not run"),
-			readPlan: () => "unused",
-			onRound: (round) => {
-				rounds.push(round);
+			debate: {
+				critique: async () => critique("approve"),
+				revisePlan: async () => assert.fail("revision should not run"),
+				resolveExhaustion: async () => assert.fail("exhaustion should not run"),
+				readPlan: () => "unused",
+				onRound: (round) => {
+					rounds.push(round);
+				},
 			},
 		});
 		assert.equal(result.status, "completed");
@@ -84,14 +86,16 @@ describe("runWorkflow", () => {
 		let calls = 0;
 		const result = await runWorkflow({
 			...baseDeps(),
-			critique: async (text, options) => {
-				seen.push(`${text}:${options.countsAgainstBudget}`);
-				calls++;
-				return calls === 1 ? critique("revise", ["B-1"]) : critique("approve");
+			debate: {
+				critique: async (text, options) => {
+					seen.push(`${text}:${options.countsAgainstBudget}`);
+					calls++;
+					return calls === 1 ? critique("revise", ["B-1"]) : critique("approve");
+				},
+				revisePlan: async (previous) => ({ ...plan, output: `${previous}-revised` }),
+				resolveExhaustion: async () => assert.fail("exhaustion should not run"),
+				readPlan: () => "unused",
 			},
-			revisePlan: async (previous) => ({ ...plan, output: `${previous}-revised` }),
-			resolveExhaustion: async () => assert.fail("exhaustion should not run"),
-			readPlan: () => "unused",
 		});
 		assert.equal(result.status, "completed");
 		assert.deepEqual(seen, ["plan-1:true", "plan-1-revised:true"]);
@@ -103,21 +107,23 @@ describe("runWorkflow", () => {
 		let calls = 0;
 		const result = await runWorkflow({
 			...baseDeps(),
-			maxRounds: 2,
-			critique: async (_text, options) => {
-				counts.push(options.countsAgainstBudget);
-				calls++;
-				return calls < 3 ? critique("revise", [`B-${calls}`]) : critique("approve");
+			debate: {
+				maxRounds: 2,
+				critique: async (_text, options) => {
+					counts.push(options.countsAgainstBudget);
+					calls++;
+					return calls < 3 ? critique("revise", [`B-${calls}`]) : critique("approve");
+				},
+				revisePlan: async () => ({ ...plan, output: "plan-2" }),
+				resolveExhaustion: async (_text, findings) => {
+					assert.deepEqual(
+						findings.map((finding) => finding.id),
+						["B-2"],
+					);
+					return "verify";
+				},
+				readPlan: () => "human-edited",
 			},
-			revisePlan: async () => ({ ...plan, output: "plan-2" }),
-			resolveExhaustion: async (_text, findings) => {
-				assert.deepEqual(
-					findings.map((finding) => finding.id),
-					["B-2"],
-				);
-				return "verify";
-			},
-			readPlan: () => "human-edited",
 		});
 		assert.equal(result.status, "completed");
 		assert.deepEqual(counts, [true, true, false]);
@@ -130,17 +136,19 @@ describe("runWorkflow", () => {
 		let calls = 0;
 		const result = await runWorkflow({
 			...baseDeps(),
-			maxRounds: 1,
-			critique: async () => {
-				calls++;
-				return calls < 3 ? critique("revise", [`B-${calls}`]) : critique("approve");
+			debate: {
+				maxRounds: 1,
+				critique: async () => {
+					calls++;
+					return calls < 3 ? critique("revise", [`B-${calls}`]) : critique("approve");
+				},
+				revisePlan: async () => assert.fail("budget was one round"),
+				resolveExhaustion: async (text) => {
+					choices.push(text);
+					return "verify";
+				},
+				readPlan: () => edits.shift() ?? "missing",
 			},
-			revisePlan: async () => assert.fail("budget was one round"),
-			resolveExhaustion: async (text) => {
-				choices.push(text);
-				return "verify";
-			},
-			readPlan: () => edits.shift() ?? "missing",
 		});
 		assert.equal(result.status, "completed");
 		assert.deepEqual(choices, ["plan-1", "human-edit-1"]);
@@ -149,11 +157,13 @@ describe("runWorkflow", () => {
 	it("allows rejection at the exhaustion gate", async () => {
 		const result = await runWorkflow({
 			...baseDeps(),
-			maxRounds: 1,
-			critique: async () => critique("revise", ["B-1"]),
-			revisePlan: async () => assert.fail("budget was one round"),
-			resolveExhaustion: async () => "reject",
-			readPlan: () => "unused",
+			debate: {
+				maxRounds: 1,
+				critique: async () => critique("revise", ["B-1"]),
+				revisePlan: async () => assert.fail("budget was one round"),
+				resolveExhaustion: async () => "reject",
+				readPlan: () => "unused",
+			},
 		});
 		assert.equal(result.status, "rejected");
 	});
@@ -161,19 +171,23 @@ describe("runWorkflow", () => {
 	it("reports critique and planner-revision failures", async () => {
 		const critiqueFailed = await runWorkflow({
 			...baseDeps(),
-			critique: async () => ({ status: "failed", error: "bad critique" }),
-			revisePlan: async () => plan,
-			resolveExhaustion: async () => "reject",
-			readPlan: () => "unused",
+			debate: {
+				critique: async () => ({ status: "failed", error: "bad critique" }),
+				revisePlan: async () => plan,
+				resolveExhaustion: async () => "reject",
+				readPlan: () => "unused",
+			},
 		});
 		assert.equal(critiqueFailed.status, "debate-failed");
 
 		const revisionFailed = await runWorkflow({
 			...baseDeps(),
-			critique: async () => critique("revise", ["B-1"]),
-			revisePlan: async () => ({ status: "failed", role: "planner", model: "a/p", error: "bad revision" }),
-			resolveExhaustion: async () => "reject",
-			readPlan: () => "unused",
+			debate: {
+				critique: async () => critique("revise", ["B-1"]),
+				revisePlan: async () => ({ status: "failed", role: "planner", model: "a/p", error: "bad revision" }),
+				resolveExhaustion: async () => "reject",
+				readPlan: () => "unused",
+			},
 		});
 		assert.equal(revisionFailed.status, "debate-failed");
 	});

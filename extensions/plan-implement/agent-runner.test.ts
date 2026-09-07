@@ -15,7 +15,7 @@ class FakeAgent implements HostedAgent {
 	readonly tabId = "w1:t1";
 	readonly sessionFile: string | undefined;
 	asks: AskOptions[] = [];
-	resumes: Omit<AskOptions, "promptFile">[] = [];
+	resumes: number = 0;
 	results: AskResult[] = [];
 	resumeResults: AskResult[] = [];
 	abortCalls = 0;
@@ -36,8 +36,9 @@ class FakeAgent implements HostedAgent {
 		);
 	}
 
-	async resume(options: Omit<AskOptions, "promptFile">): Promise<AskResult> {
-		this.resumes.push(options);
+	async resume(): Promise<AskResult> {
+		this.resumes++;
+		if (this.abortCalls > 0) return { status: "aborted", usage };
 		return this.resumeResults.shift() ?? { status: "completed", output: `${this.role} resumed`, usage };
 	}
 
@@ -161,7 +162,22 @@ describe("createRoleRunner", () => {
 		if (result.status === "completed") {
 			assert.deepEqual(result.usage, { input: 2, output: 4, cacheRead: 0, cacheWrite: 0, cost: 0.02, turns: 2 });
 		}
-		assert.equal(agent.resumes.length, 1);
+		assert.equal(agent.resumes, 1);
+	});
+
+	it("settles a declined blocked request through the host so the role stays usable", async () => {
+		const host = new FakeHost();
+		const runner = createRoleRunner(host, { onBlocked: async () => false });
+		const pending = runner.run(roleOptions("planner"));
+		const agent = host.agents.get("planner");
+		assert.ok(agent);
+		agent.results.push({ status: "blocked", paneId: agent.paneId, usage });
+		const result = await pending;
+		assert.equal(result.status, "aborted");
+		assert.equal(agent.abortCalls, 1);
+		// The host releases a blocked request only when the caller resumes it after cancelling.
+		assert.equal(agent.resumes, 1);
+		assert.equal((await runner.run(roleOptions("planner"))).status, "completed");
 	});
 
 	it("aborts an active ask and disposes without closing the retained tab", async () => {

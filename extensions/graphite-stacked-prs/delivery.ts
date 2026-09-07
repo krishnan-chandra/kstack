@@ -96,20 +96,23 @@ export async function preflightGraphiteStack(
 	cwd: string,
 	manifestPath: string | undefined,
 	exec: ExecFn,
+	planOnly = false,
 ): Promise<VcsResult<StackPreflight>> {
 	const common = await preflightVcs(cwd, "graphite", exec);
 	if (!common.ok) return common;
 	let trunk: ExecFnResult;
 	try {
-		const status = await exec("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-			cwd: common.workspaceRoot,
-			timeout: 8_000,
-		});
-		if (status.code !== 0 || status.stdout.length > 0) {
-			return {
-				ok: false,
-				error: "Graphite stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
-			};
+		if (!planOnly) {
+			const status = await exec("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+				cwd: common.workspaceRoot,
+				timeout: 8_000,
+			});
+			if (status.code !== 0 || status.stdout.length > 0) {
+				return {
+					ok: false,
+					error: "Graphite stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
+				};
+			}
 		}
 		trunk = await exec("gt", ["--no-interactive", "trunk"], {
 			cwd: common.workspaceRoot,
@@ -131,8 +134,8 @@ export async function preflightGraphiteStack(
 	if (head.code !== 0 || !STACK_SHA_RE.test(trunkSha)) {
 		return { ok: false, error: `Could not resolve Graphite trunk ${trunkRef}.` };
 	}
-	if (!manifestPath) return { ok: false, error: "Graphite stack mode requires a private manifest path." };
-	const childPolicy = graphiteChildPolicy({ trunkRef, trunkSha, manifestPath });
+	if (!planOnly && !manifestPath) return { ok: false, error: "Graphite stack mode requires a private manifest path." };
+	const childPolicy = manifestPath ? graphiteChildPolicy({ trunkRef, trunkSha, manifestPath }) : "";
 	return {
 		ok: true,
 		workspaceRoot: common.workspaceRoot,

@@ -40,6 +40,8 @@ export interface StackPreflightPayload {
 	provider: StackProviderId;
 	cwd: string;
 	manifestPath?: string;
+	/** Resolve workspace and local trunk without delivery-only checks or fetching. */
+	planOnly?: boolean;
 }
 
 interface StackPublicationRequestInput {
@@ -144,6 +146,8 @@ const preflightChannel = createRequestChannel<StackPreflightPayload, VcsResult<S
 	isPayload: (value): value is StackPreflightPayload => {
 		if (!isObject(value) || value === null || !("provider" in value) || !isProvider(value.provider)) return false;
 		if (!("cwd" in value) || !isString(value.cwd) || value.cwd.length === 0) return false;
+		if ("planOnly" in value && value.planOnly !== undefined && value.planOnly !== true && value.planOnly !== false)
+			return false;
 		if ("manifestPath" in value && value.manifestPath !== undefined) {
 			if (!isString(value.manifestPath) || value.manifestPath.length === 0) return false;
 		}

@@ -204,29 +204,12 @@ function validateTaskPaths(spec: FanoutSpec): string | undefined {
 	return undefined;
 }
 
-interface StartedTask {
-	task: FanoutTask;
-	agent?: HostedAgent;
-	error?: string;
-}
-
-function failedStart(started: StartedTask): FanoutTaskResult {
-	return {
-		label: started.task.label,
-		status: "failed",
-		outputFile: started.task.outputFile,
-		usage: emptyUsage(),
-		error: started.error ?? "Hosted agent did not start.",
-	};
-}
-
-async function runStartedTask(started: StartedTask): Promise<FanoutTaskResult> {
-	if (!started.agent) return failedStart(started);
-	const { task, agent } = started;
+async function runTask(task: FanoutTask, agent: HostedAgent, signal?: AbortSignal): Promise<FanoutTaskResult> {
 	const result = await agent.ask({
 		promptFile: task.promptFile,
 		outputFile: task.outputFile,
 		timeoutMs: task.timeoutMinutes * 60_000,
+		signal,
 	});
 	if (result.status === "completed") {
 		const completed: FanoutTaskResult = {
@@ -255,31 +238,50 @@ async function runStartedTask(started: StartedTask): Promise<FanoutTaskResult> {
 }
 
 /** Run all tasks in one retained Herdr tab and preserve input order. */
-export async function runFanout(spec: FanoutSpec, deps: HostDeps): Promise<FanoutRun> {
+export async function runFanout(spec: FanoutSpec, deps: HostDeps, signal?: AbortSignal): Promise<FanoutRun> {
 	const pathError = validateTaskPaths(spec);
 	if (pathError) return { ok: false, error: pathError };
 	const opened = await openAgentHost(
-		{ owner: spec.owner, label: spec.label, cwd: spec.cwd, maxAgents: spec.tasks.length },
+		{ owner: spec.owner, label: spec.label, cwd: realpathSync(spec.cwd), maxAgents: spec.tasks.length },
 		deps,
 	);
 	if (!opened.ok) return opened;
-	const started: StartedTask[] = [];
-	for (const task of spec.tasks) {
-		const tools = task.access === "read-only" ? (task.tools ?? [...READ_ONLY_TOOLS]) : task.tools;
-		const result = await opened.host.start({
-			role: task.label,
-			model: task.model,
-			cwd: task.cwd,
-			tools,
-			noSkills: true,
-			noContextFiles: task.noContextFiles,
-			sessionName: `${spec.owner}/${task.label}`,
-		});
-		if (result.ok) started.push({ task, agent: result.agent });
-		else started.push({ task, error: result.error });
-	}
 	try {
-		const results = await mapWithConcurrencyLimit(started, spec.maxConcurrency, runStartedTask);
+		const results = await mapWithConcurrencyLimit(
+			spec.tasks,
+			spec.maxConcurrency,
+			async (task): Promise<FanoutTaskResult> => {
+				const failure = (error: string): FanoutTaskResult => ({
+					label: task.label,
+					status: signal?.aborted ? "aborted" : "failed",
+					outputFile: task.outputFile,
+					usage: emptyUsage(),
+					error,
+				});
+				if (signal?.aborted) return failure("Fanout cancelled before startup.");
+				try {
+					const tools = task.access === "read-only" ? (task.tools ?? [...READ_ONLY_TOOLS]) : task.tools;
+					const started = await opened.host.start({
+						role: task.label,
+						model: task.model,
+						cwd: task.cwd,
+						tools,
+						noSkills: true,
+						noContextFiles: task.noContextFiles,
+						sessionName: `${spec.owner}/${task.label}`,
+					});
+					if (!started.ok) return failure(started.error);
+					try {
+						return await runTask(task, started.agent, signal);
+					} finally {
+						// A blocked result is terminal for this CLI, not permission to leave work running.
+						await started.agent.dispose();
+					}
+				} catch (error) {
+					return failure(error instanceof Error ? error.message : String(error));
+				}
+			},
+		);
 		return { ok: true, outcome: { tabId: opened.host.tabId, results } };
 	} finally {
 		await opened.host.dispose();

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import type { RoleRunner, RunAgentOptions } from "./agent-runner.ts";
@@ -209,6 +211,39 @@ describe("runFastWorktree", () => {
 });
 
 describe("runFastCurrent", () => {
+	it("snapshots the explicit plan before workstream creation and supplies it to the fresh hosted session", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "kstack-fast-plan-"));
+		try {
+			const planFile = join(cwd, "plan.md");
+			writeFileSync(planFile, "Selected operation");
+			const backend = fakeBackend({
+				createWorkstream: async () => {
+					writeFileSync(planFile, "Later edit");
+					return { ok: true, ref: isolationPlan.ref, baseSha: isolationPlan.baseSha };
+				},
+			});
+			const hosted = fakeRunner(async (input) => {
+				assert.ok(input.planFile);
+				assert.equal(readFileSync(input.planFile, "utf8"), "Selected operation");
+				assert.ok(input.instructions?.includes(input.planFile));
+				return completed();
+			});
+			const result = await runFastCurrent({ ...request, planFile: "plan.md" }, implementer, cwd, {
+				backend,
+				openRunner: async () => ({ ok: true, runner: hosted.runner }),
+			});
+			assert.equal(result.status, "completed");
+			const untouched = fakeBackend();
+			const missing = await runFastCurrent({ ...request, planFile: "missing.md" }, implementer, cwd, {
+				backend: untouched,
+				openRunner: async () => assert.fail("must not start"),
+			});
+			assert.equal(missing.status, "failed");
+			assert.deepEqual(untouched.calls, []);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
 	it("creates and verifies a current-workspace workstream around one hosted agent", async () => {
 		const backend = fakeBackend();
 		const result = await runFastCurrent(request, implementer, "/repo", {

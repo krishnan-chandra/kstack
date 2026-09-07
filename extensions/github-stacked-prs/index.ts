@@ -115,7 +115,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 	pi.events.on(STACK_CAPABILITIES_EVENT, (data) => claimStackCapabilities(data, "github", async () => CAPABILITIES));
 	pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
 		claimStackPreflight(data, "github", (payload) =>
-			preflightGitHubStack(payload.cwd, payload.manifestPath, exec, gateway),
+			preflightGitHubStack(payload.cwd, payload.manifestPath, exec, gateway, payload.planOnly),
 		),
 	);
 	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>

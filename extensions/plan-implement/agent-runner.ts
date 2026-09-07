@@ -29,7 +29,7 @@ export interface RunAgentOptions extends BuildRoleOptions {
 
 interface RoleRunnerEffects {
 	onStarted?: (role: AgentRole, model: string, paneId: string) => void;
-	onBlocked?: (role: AgentRole, paneId: string) => Promise<boolean>;
+	onBlocked?: (role: AgentRole, paneId: string, signal?: AbortSignal) => Promise<boolean>;
 }
 
 export interface RoleRunner {
@@ -212,19 +212,12 @@ export function createRoleRunner(host: AgentHost, effects: RoleRunnerEffects = {
 			});
 			addUsage(accumulated, result.usage);
 			while (result.status === "blocked" && effects.onBlocked) {
-				if (!(await effects.onBlocked(options.role, result.paneId))) {
+				if (!(await effects.onBlocked(options.role, result.paneId, options.signal)) || options.signal?.aborted) {
+					// Cancel, then resume: the host settles the cancelled request and releases it, so the
+					// role can accept a later ask instead of throwing "already has an ask in flight".
 					await started.agent.abort();
-					return mapAskResult(options.role, options.model, started.agent, {
-						status: "aborted",
-						usage: accumulated,
-					});
 				}
-				result = await started.agent.resume({
-					outputFile,
-					timeoutMs: options.timeoutMs,
-					outputCapBytes: options.outputCapBytes ?? outputCap(options.role),
-					signal: options.signal,
-				});
+				result = await started.agent.resume();
 				addUsage(accumulated, result.usage);
 			}
 			return mapAskResult(options.role, options.model, started.agent, withUsage(result, accumulated));

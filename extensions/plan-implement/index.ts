@@ -165,6 +165,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		adversary: boolean,
 		planOnly: boolean,
 		ctx: ExtensionCommandContext,
+		planFile?: string,
 	): Promise<void> {
 		const notify = ctx.ui.notify.bind(ctx.ui);
 		if (ctx.mode !== "tui") {
@@ -196,7 +197,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		if (fast) {
-			await runFastPrepared(task, workLocation, changeKind, ctx, vcsConfig);
+			await runFastPrepared(task, workLocation, changeKind, ctx, vcsConfig, planFile);
 			return;
 		}
 		const backend = backendFor(vcsConfig.backend);
@@ -215,7 +216,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			notify(preflightError, "error");
 			return;
 		}
-		if (mode === "single" && !planOnly) {
+		if (mode === "single") {
 			const preflight = await backend.preflight(ctx.cwd);
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
 			if (!preflight.ok) {
@@ -270,11 +271,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 				notify("The configured backend does not provide stack delivery.", "error");
 				return;
 			}
-			if (stackClient.provider !== "jj") {
+			if (stackClient.provider !== "jj" && !planOnly) {
 				stackTempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-stack-"));
 				stackManifestPath = join(stackTempDir, "manifest.json");
 			}
-			const preflight = await stackClient.preflight(ctx.cwd, stackManifestPath);
+			const preflight = await stackClient.preflight(ctx.cwd, stackManifestPath, planOnly);
 			if (!lifecycle.isSessionCurrent(commandSession)) {
 				if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 				return;
@@ -354,10 +355,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
 				}
 			},
-			onBlocked: async (role, paneId) =>
+			onBlocked: async (role, paneId, signal) =>
 				ctx.ui.confirm(
 					`${PHASE_LABELS[role]} is waiting for input`,
 					`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
+					{ signal },
 				),
 		});
 		try {
@@ -460,6 +462,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 		changeKind: ChangeKind,
 		ctx: ExtensionCommandContext,
 		vcsConfig: ReturnType<typeof loadVcsBackend>,
+		planFile?: string,
 	): Promise<void> {
 		const notify = ctx.ui.notify.bind(ctx.ui);
 		if (ctx.mode !== "tui") {
@@ -532,10 +535,11 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 						ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
 					}
 				},
-				onBlocked: async (_role, paneId) =>
+				onBlocked: async (_role, paneId, signal) =>
 					ctx.ui.confirm(
 						"Implementer is waiting for input",
 						`Answer the agent in pane ${paneId}, then continue. Decline to abort the run.`,
+						{ signal },
 					),
 			});
 			retainedTab = runner.tabId;
@@ -546,8 +550,8 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 			const fastEffects = { backend, openRunner, signal: controller.signal, timeoutMinutes };
 			const outcome =
 				workLocation === "current"
-					? await runFastCurrent({ task, changeKind }, implementer, ctx.cwd, fastEffects)
-					: await runFastWorktree({ task, changeKind }, implementer, ctx.cwd, fastEffects);
+					? await runFastCurrent({ task, changeKind, planFile }, implementer, ctx.cwd, fastEffects)
+					: await runFastWorktree({ task, changeKind, planFile }, implementer, ctx.cwd, fastEffects);
 			postFastOutcome(outcome, implementerModel, ctx);
 		} finally {
 			if (retainedTab && lifecycle.isSessionCurrent(runToken)) {
@@ -638,6 +642,7 @@ export default function planImplementExtension(pi: ExtensionAPI): void {
 					parsed.adversary,
 					parsed.planOnly,
 					ctx,
+					parsed.planFile,
 				);
 			}
 		},

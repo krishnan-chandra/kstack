@@ -87,11 +87,8 @@ export const LIMITS = {
 	plannerOutputBytes: 64 * 1024,
 	critiqueOutputBytes: 32 * 1024,
 	implementerOutputBytes: 32 * 1024,
-	stderrBytes: 8 * 1024,
-	stdoutLineBytes: 2 * 1024 * 1024,
 	defaultTimeoutMinutes: 30,
 	minTimeoutMinutes: 1,
 	maxTimeoutMinutes: 60,
-	killGraceMs: 5000,
 	panelIntentChars: 1000,
 } as const;

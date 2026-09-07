@@ -62,12 +62,12 @@ The N candidates will receive the same prompt, so the prompt is the contract. Ge
 
 Spawn all N candidates in one `cli.mjs fanout` call with the configured `maxConcurrency`.
 
-Write one prompt file per candidate in a temp directory (for example under `/tmp/arena-<run-id>/prompts/`). Each prompt file contains:
+Create a temporary prompts directory (for example `/tmp/arena-<run-id>/prompts/`), then write one prompt file per candidate there. The host creates output parents and saves validated final replies; read-only candidates need no report-writing tool. Each prompt file contains:
 - The full task description
 - Its assigned output path
 - Instructions to produce both the artifact and a short **rationale** (the alternatives the candidate considered and what it rejected)
 
-Compose a spec JSON file at `/tmp/arena-<run-id>/spec.json`:
+Compose a spec JSON file at `/tmp/arena-<run-id>/spec.json`. Substitute absolute paths for every cwd, prompt, and output field:
 
 ```json
 {
@@ -90,7 +90,7 @@ Compose a spec JSON file at `/tmp/arena-<run-id>/spec.json`:
 }
 ```
 
-Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared or overlapping writable directories. Children run without extensions, skills, prompt templates, or context files.
+Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared or overlapping writable directories. Children load only Kstack and the Herdr integration; other extensions, skills, prompt templates, and context files are disabled.
 
 Launch the candidates:
 

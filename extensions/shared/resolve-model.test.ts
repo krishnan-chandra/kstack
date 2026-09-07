@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { ModelAlias } from "../model-aliases.ts";
+import type { ModelAlias } from "./model-aliases.ts";
 import { resolveConfiguredModel, resolveModelRef } from "./resolve-model.ts";
 
 function failureMessage(result: ReturnType<typeof resolveModelRef>): string {

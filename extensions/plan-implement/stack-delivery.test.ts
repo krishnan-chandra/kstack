@@ -49,6 +49,7 @@ describe("createStackDeliveryClient", () => {
 
 	it("preflights through provider channels", async () => {
 		const { pi } = createMockPi();
+		const planningModes: Array<boolean | undefined> = [];
 		pi.events.on(STACK_CAPABILITIES_EVENT, (data) =>
 			claimStackCapabilities(data, "jj", async () => ({
 				schemaVersion: 1,
@@ -56,13 +57,16 @@ describe("createStackDeliveryClient", () => {
 			})),
 		);
 		pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
-			claimStackPreflight(data, "jj", async () => ({
-				ok: true,
-				workspaceRoot: "/repo",
-				trunkRef: "trunk()",
-				trunkSha: "a".repeat(40),
-				childPolicy: "jj-policy",
-			})),
+			claimStackPreflight(data, "jj", async (payload) => {
+				planningModes.push(payload.planOnly);
+				return {
+					ok: true,
+					workspaceRoot: "/repo",
+					trunkRef: "trunk()",
+					trunkSha: "a".repeat(40),
+					childPolicy: "jj-policy",
+				};
+			}),
 		);
 
 		const client = createStackDeliveryClient(
@@ -75,6 +79,8 @@ describe("createStackDeliveryClient", () => {
 
 		const preflight = await client.preflight("/repo");
 		assert.equal(preflight.ok, true);
+		assert.equal((await client.preflight("/repo", undefined, true)).ok, true);
+		assert.deepEqual(planningModes, [undefined, true]);
 		if (preflight.ok) {
 			assert.equal(preflight.trunkRef, "trunk()");
 			assert.equal(preflight.childPolicy, "jj-policy");

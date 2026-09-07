@@ -496,56 +496,52 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					runPlanningRole("planner", plannerModel, join(promptsDir, "planner.md"), {
 						supplementalPrompts: changePrompts,
 					}),
-				revisePlan:
+				debate:
 					adversaryModel && adversaryPromptFile
-						? async (previous, critique) => {
-								writeFileSync(debatePlanFile, previous, { encoding: "utf8", mode: 0o600 });
-								writeFileSync(critiqueFile, critique, { encoding: "utf8", mode: 0o600 });
-								return runPlanningRole("planner", plannerModel, join(promptsDir, "planner.md"), {
-									instructions: `Read the previous plan at ${debatePlanFile} and the adversary critique at ${critiqueFile}. Return the complete revised plan with the same required header and sections. Add a Changes since last round section that addresses every blocking finding by ID.`,
-									supplementalPrompts: changePrompts,
-								});
+						? {
+								revisePlan: async (previous, critique) => {
+									writeFileSync(debatePlanFile, previous, { encoding: "utf8", mode: 0o600 });
+									writeFileSync(critiqueFile, critique, { encoding: "utf8", mode: 0o600 });
+									return runPlanningRole("planner", plannerModel, join(promptsDir, "planner.md"), {
+										instructions: `Read the previous plan at ${debatePlanFile} and the adversary critique at ${critiqueFile}. Return the complete revised plan with the same required header and sections. Add a Changes since last round section that addresses every blocking finding by ID.`,
+										supplementalPrompts: changePrompts,
+									});
+								},
+								critique: async (plan): Promise<CritiqueResult> => {
+									writeFileSync(debatePlanFile, plan, { encoding: "utf8", mode: 0o600 });
+									const result = await runPlanningRole("adversary", adversaryModel, adversaryPromptFile, {
+										planFile: debatePlanFile,
+									});
+									if (result.status === "aborted") return { status: "aborted" };
+									if (result.status !== "completed") return { status: "failed", error: phaseErrorText(result) };
+									const parsed = parseCritique(result.output);
+									return parsed.ok
+										? { status: "completed", critique: parsed.critique }
+										: { status: "failed", error: parsed.error };
+								},
+								maxRounds,
+								resolveExhaustion: async (_plan, findings) => {
+									const open =
+										findings.map((finding) => `- [${finding.id}] ${finding.text}`).join("\n") ||
+										"- No parsed blocking findings.";
+									const plannerPane = fx.runner.paneId("planner") ?? "unknown";
+									const adversaryPane = fx.runner.paneId("adversary") ?? "unknown";
+									const verify = await fx.confirm(
+										"Adversarial debate exhausted",
+										`Open findings:\n${open}\n\nPlan: ${debatePlanFile}\nPlanner pane: ${plannerPane}\nAdversary pane: ${adversaryPane}\n\nEdit the plan file or steer the planner, then choose Verify. Decline to reject the plan.`,
+									);
+									return verify ? "verify" : "reject";
+								},
+								readPlan: () => readFileSync(debatePlanFile, "utf8"),
+								onRound: (round, result, roundOptions) => {
+									if (result.status === "completed" && result.critique.verdict === "approve") {
+										debateApproval = roundOptions.countsAgainstBudget
+											? `Adversary ${adversaryModel}: approved in round ${round}.`
+											: `Adversary ${adversaryModel}: approved after human edit.`;
+									}
+								},
 							}
 						: undefined,
-				critique:
-					adversaryModel && adversaryPromptFile
-						? async (plan): Promise<CritiqueResult> => {
-								writeFileSync(debatePlanFile, plan, { encoding: "utf8", mode: 0o600 });
-								const result = await runPlanningRole("adversary", adversaryModel, adversaryPromptFile, {
-									planFile: debatePlanFile,
-								});
-								if (result.status === "aborted") return { status: "aborted" };
-								if (result.status !== "completed") return { status: "failed", error: phaseErrorText(result) };
-								const parsed = parseCritique(result.output);
-								return parsed.ok
-									? { status: "completed", critique: parsed.critique }
-									: { status: "failed", error: parsed.error };
-							}
-						: undefined,
-				maxRounds,
-				resolveExhaustion:
-					adversaryModel && adversaryPromptFile
-						? async (_plan, findings) => {
-								const open =
-									findings.map((finding) => `- [${finding.id}] ${finding.text}`).join("\n") ||
-									"- No parsed blocking findings.";
-								const plannerPane = fx.runner.paneId("planner") ?? "unknown";
-								const adversaryPane = fx.runner.paneId("adversary") ?? "unknown";
-								const verify = await fx.confirm(
-									"Adversarial debate exhausted",
-									`Open findings:\n${open}\n\nPlan: ${debatePlanFile}\nPlanner pane: ${plannerPane}\nAdversary pane: ${adversaryPane}\n\nEdit the plan file or steer the planner, then choose Verify. Decline to reject the plan.`,
-								);
-								return verify ? "verify" : "reject";
-							}
-						: undefined,
-				readPlan: adversaryModel && adversaryPromptFile ? () => readFileSync(debatePlanFile, "utf8") : undefined,
-				onRound: (round, result, roundOptions) => {
-					if (result.status === "completed" && result.critique.verdict === "approve") {
-						debateApproval = roundOptions.countsAgainstBudget
-							? `Adversary ${adversaryModel}: approved in round ${round}.`
-							: `Adversary ${adversaryModel}: approved after human edit.`;
-					}
-				},
 				onPlan: (plan) => {
 					if (!fx.isCurrent()) return;
 					const approved = `# Approved implementation plan\n\n${plan.output}\n`;
@@ -557,6 +553,8 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						writeFileSync(ledgerFile, ledger.ledger, { encoding: "utf8", mode: 0o600 });
 						immutablePlanSnapshot = approved;
 						chmodSync(planFile, 0o444);
+						// This is the selected snapshot, including any verified human edit.
+						fx.sendPhase(plan);
 					}
 					if (planOnly && !planValidationError) {
 						const plansDir = join(initialCwd, "local", "plans");
@@ -580,42 +578,41 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 				},
 				planOnly,
 				runImplementer: async () => {
-					const completeEarly = (result: AgentRunResult): AgentRunResult => result;
 					const controller = fx.beginRole("implementing");
-					if (!controller) return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
+					if (!controller) return { status: "aborted", role: "implementer", model: implementerModel };
 					try {
 						if (worktreePlan && state.workflowCwd === initialCwd) {
 							fx.setStatus("plan-implement: creating managed worktree…");
 							if (!fx.backend.isolation) {
-								return completeEarly({
+								return {
 									status: "failed",
 									role: "implementer",
 									model: implementerModel,
 									error: "The configured VCS backend does not support managed worktrees.",
-								});
+								};
 							}
 							const created = await fx.backend.isolation.create(worktreePlan);
 							if (!created.ok)
-								return completeEarly({
+								return {
 									status: "failed",
 									role: "implementer",
 									model: implementerModel,
 									error: created.error,
-								});
+								};
 							state.workflowCwd = created.plan.path;
 							if (!fx.isCurrent() || controller.signal.aborted)
-								return completeEarly({ status: "aborted", role: "implementer", model: implementerModel });
+								return { status: "aborted", role: "implementer", model: implementerModel };
 							fx.notify(`Managed worktree created and retained at ${state.workflowCwd} (${created.plan.ref}).`, "info");
 						} else if (mode === "single" && !state.workstreamCheckpoint) {
 							fx.setStatus(`plan-implement: creating task ${policy.refNoun}…`);
 							const created = await fx.backend.createWorkstream(state.workflowCwd, task);
 							if (!created.ok)
-								return completeEarly({
+								return {
 									status: "failed",
 									role: "implementer",
 									model: implementerModel,
 									error: created.error,
-								});
+								};
 							state.workstreamCheckpoint = created;
 							fx.notify(`Task ${policy.refNoun} created: ${created.ref}.`, "info");
 						}
@@ -628,12 +625,12 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						}
 						fx.setStatus(`plan-implement: implementer ${implementerModel} · tab ${fx.runner.tabId}`);
 						if (immutablePlanSnapshot === undefined || readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
-							return completeEarly({
+							return {
 								status: "failed",
 								role: "implementer",
 								model: implementerModel,
 								error: "Approved plan changed before implementation; the plan is read-only.",
-							});
+							};
 						const result = await fx.runner.run({
 							role: "implementer",
 							model: implementerModel,

@@ -6,19 +6,34 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
+import { resolveConfiguredModel } from "../resolve-model.ts";
 import { isObject } from "../validation.ts";
+import { attachHostedAgent } from "./agent-host.ts";
 import { parseFanoutSpec, runFanout } from "./fanout.ts";
 import { createNodeHerdrExec } from "./herdr-cli.ts";
-import { resolveConfiguredModel } from "./resolve-model.ts";
 
 const USAGE = `usage: cli.mjs <subcommand> [options]
 
 subcommands:
   resolve-model --section NAME --key NAME [--model REF]
-  fanout --spec FILE --out FILE [--label TEXT] [--max-concurrency N]`;
+  fanout --spec FILE --out FILE [--label TEXT] [--max-concurrency N]
+  ask --agent NAME --prompt FILE --out FILE   (FILE paths must be absolute)`;
 
-const SUBCOMMANDS = new Set(["resolve-model", "fanout"]);
+const SUBCOMMANDS = new Set(["resolve-model", "fanout", "ask"]);
+
+async function withCancellation(run) {
+	const controller = new AbortController();
+	const cancel = () => controller.abort();
+	process.on("SIGINT", cancel);
+	process.on("SIGTERM", cancel);
+	try {
+		return await run(controller.signal);
+	} finally {
+		process.off("SIGINT", cancel);
+		process.off("SIGTERM", cancel);
+	}
+}
 
 export function parseSubcommand(argv) {
 	const [subcommand] = argv;
@@ -80,6 +95,28 @@ export function parseFanoutArgs(argv) {
 	};
 }
 
+export function parseAskArgs(argv) {
+	const values = {};
+	for (let index = 0; index < argv.length; index += 2) {
+		const flag = argv[index];
+		const value = argv[index + 1];
+		if (flag !== "--agent" && flag !== "--prompt" && flag !== "--out") {
+			return { ok: false, error: `unknown ask option: ${flag ?? "(missing)"}` };
+		}
+		if (value === undefined || value.startsWith("--")) return { ok: false, error: `${flag} requires a value` };
+		if (values[flag] !== undefined) return { ok: false, error: `${flag} may be provided only once` };
+		values[flag] = value;
+	}
+	for (const flag of ["--agent", "--prompt", "--out"]) {
+		if (values[flag] === undefined) return { ok: false, error: `${flag} is required` };
+	}
+	// The hosted agent resolves the pointer path from its own cwd, so relative paths would silently miss.
+	for (const flag of ["--prompt", "--out"]) {
+		if (!isAbsolute(values[flag])) return { ok: false, error: `${flag} must be an absolute path` };
+	}
+	return { ok: true, agent: values["--agent"], prompt: values["--prompt"], out: values["--out"] };
+}
+
 async function main(argv) {
 	const parsed = parseSubcommand(argv);
 	if (!parsed.ok) {
@@ -104,6 +141,34 @@ async function main(argv) {
 		}
 		process.stdout.write(`${result.ref}\n`);
 		return 0;
+	}
+	if (parsed.subcommand === "ask") {
+		const options = parseAskArgs(argv.slice(1));
+		if (!options.ok) {
+			process.stderr.write(`${options.error}\n\n${USAGE}\n`);
+			return 2;
+		}
+		return withCancellation(async (signal) => {
+			const attached = await attachHostedAgent(options.agent, { exec: createNodeHerdrExec() });
+			if (!attached.ok) {
+				process.stderr.write(`${attached.error}\n`);
+				return 1;
+			}
+			try {
+				const result = await attached.agent.ask({
+					promptFile: options.prompt,
+					outputFile: options.out,
+					timeoutMs: 900000,
+					signal,
+				});
+				process.stdout.write(
+					`${JSON.stringify({ status: result.status, outputFile: options.out, paneId: attached.agent.paneId, usage: result.usage, ...(result.status === "failed" ? { error: result.error } : undefined) })}\n`,
+				);
+				return result.status === "completed" ? 0 : 1;
+			} finally {
+				await attached.agent.dispose();
+			}
+		});
 	}
 	if (parsed.subcommand === "fanout") {
 		const options = parseFanoutArgs(argv.slice(1));
@@ -130,7 +195,9 @@ async function main(argv) {
 			process.stderr.write(`${specParsed.error}\n`);
 			return 1;
 		}
-		const outcome = await runFanout(specParsed.spec, { exec: createNodeHerdrExec() });
+		const outcome = await withCancellation((signal) =>
+			runFanout(specParsed.spec, { exec: createNodeHerdrExec() }, signal),
+		);
 		if (!outcome.ok) {
 			process.stderr.write(`${outcome.error}\n`);
 			return 1;

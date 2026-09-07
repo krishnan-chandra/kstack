@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { parseFanoutArgs, parseResolveModelArgs, parseSubcommand } from "./cli.mjs";
+import { parseAskArgs, parseFanoutArgs, parseResolveModelArgs, parseSubcommand } from "./cli.mjs";
 
 const execFileAsync = promisify(execFile);
 const CLI = join(import.meta.dirname, "cli.mjs");
@@ -38,6 +38,21 @@ test("parseResolveModelArgs requires one section and key", () => {
 	assert.equal(parseResolveModelArgs(["--bogus", "x"]).ok, false);
 });
 
+test("parseAskArgs requires an agent and absolute prompt and output paths", () => {
+	assert.deepEqual(parseAskArgs(["--agent", "adversary-x", "--prompt", "/tmp/p.md", "--out", "/tmp/o.md"]), {
+		ok: true,
+		agent: "adversary-x",
+		prompt: "/tmp/p.md",
+		out: "/tmp/o.md",
+	});
+	const relative = parseAskArgs(["--agent", "adversary-x", "--prompt", "local/p.md", "--out", "/tmp/o.md"]);
+	assert.equal(relative.ok, false);
+	assert.match(relative.error, /--prompt must be an absolute path/);
+	assert.equal(parseAskArgs(["--agent", "adversary-x", "--prompt", "/tmp/p.md"]).ok, false);
+	assert.equal(parseAskArgs(["--agent", "a", "--agent", "b", "--prompt", "/p", "--out", "/o"]).ok, false);
+	assert.equal(parseAskArgs(["--bogus", "x"]).ok, false);
+});
+
 test("the CLI exits 2 with usage on syntax errors", async () => {
 	const none = await runCli([]);
 	assert.equal(none.code, 2);
@@ -48,6 +63,9 @@ test("the CLI exits 2 with usage on syntax errors", async () => {
 	const missing = await runCli(["resolve-model", "--section", "plan-adversary"]);
 	assert.equal(missing.code, 2);
 	assert.match(missing.stderr, /--key is required/);
+	const relativeAsk = await runCli(["ask", "--agent", "adversary-x", "--prompt", "p.md", "--out", "/tmp/o.md"]);
+	assert.equal(relativeAsk.code, 2);
+	assert.match(relativeAsk.stderr, /--prompt must be an absolute path/);
 });
 
 test("resolve-model loads aliases and the validated plan-adversary default", async () => {
