@@ -11,7 +11,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
-| [`openrouter-floor`](extensions/openrouter-floor/) | Sends every OpenRouter request as the model's `:floor` variant, so OpenRouter sorts endpoints by price and can serve from a provider's flex tier with standard endpoints as fallback. Users keep selecting plain model IDs; models that already carry a variant pass through. |
+| [`openrouter-floor`](extensions/openrouter-floor/) | Sends every OpenRouter request as the model's `:floor` variant and records bounded, redacted rewrite and service-tier observations. Users keep selecting plain model IDs; models that already carry a variant pass through. |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
