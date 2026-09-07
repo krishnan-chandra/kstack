@@ -1,19 +1,10 @@
 /**
  * Argument parsing and model/effort resolution for `/handoff --model`.
  *
- * The handoff command applies the chosen model through `pi.setModel()` and the
- * chosen or inherited effort through `pi.setThinkingLevel()` before calling
- * `ctx.newSession()`. Pi resolves a brand-new session's model and thinking
- * level from the configured defaults, and those setters persist exactly those
- * defaults, so in the default configuration the replacement session starts on
- * the model and effort selected here. Startup-level overrides — a `pi --model`
- * CLI flag, `--thinking`, or model scoping via `--models` / `enabledModels` —
- * take precedence over this mechanism; the handler compares the replacement
- * session's actual model and effort against the expectation and reports any
- * mismatch instead of claiming the requested ones. With no flag, the handler
- * re-applies the parent session's active model and effort the same way (best
- * effort), so inheritance holds whenever the parent's state is usable and not
- * overridden at startup.
+ * This module resolves `--model` references against the catalogue and aliases.
+ * The command handler applies the resolved or inherited model and effort inside
+ * the replacement session's `withSession` callback through the live extension
+ * API published in replacement-selection-api.ts.
  */
 import { THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { type ModelAlias, matchModelAliases } from "../shared/model-aliases.ts";
@@ -37,11 +28,6 @@ type HandoffParseResult =
 
 type ModelResolution =
 	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel }
-	| { status: "not-found" }
-	| { status: "ambiguous"; matches: HandoffModel[] };
-
-type ModelMatch =
-	| { status: "resolved"; model: HandoffModel; aliasThinking?: HandoffEffortLevel }
 	| { status: "not-found" }
 	| { status: "ambiguous"; matches: HandoffModel[] };
 
@@ -192,11 +178,6 @@ export function resolveModelReference(
 	if (trimmed === "") return { status: "not-found" };
 
 	const full = matchModelReference(models, trimmed, aliases);
-	if (full.status === "resolved") {
-		return full.aliasThinking === undefined
-			? { status: "resolved", model: full.model }
-			: { status: "resolved", model: full.model, effort: full.aliasThinking };
-	}
 	if (full.status !== "not-found") return full;
 
 	const lastColon = trimmed.lastIndexOf(":");
@@ -217,7 +198,11 @@ export function resolveModelReference(
 	return prefixMatch;
 }
 
-function matchModelReference(models: HandoffModel[], reference: string, aliases: readonly ModelAlias[]): ModelMatch {
+function matchModelReference(
+	models: HandoffModel[],
+	reference: string,
+	aliases: readonly ModelAlias[],
+): ModelResolution {
 	const lower = reference.toLowerCase();
 
 	// 1. Canonical provider/model-id, case-insensitive.
@@ -243,7 +228,8 @@ function matchModelReference(models: HandoffModel[], reference: string, aliases:
 		}
 		if (targets.size === 1) {
 			const [{ model, thinking }] = targets.values();
-			return { status: "resolved", model, aliasThinking: thinking };
+			if (thinking === undefined) return { status: "resolved", model };
+			return { status: "resolved", model, effort: thinking };
 		}
 		if (targets.size > 1) return { status: "ambiguous", matches: [...targets.values()].map((t) => t.model) };
 		// An alias claimed this reference but its target is unavailable.

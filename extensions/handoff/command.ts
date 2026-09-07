@@ -46,6 +46,24 @@ interface HandoffSessionResult {
 	cancelled: boolean;
 }
 
+interface HandoffModelSelection {
+	targetModel: HandoffModel | undefined;
+	requestedEffort: HandoffEffortLevel | undefined;
+}
+
+interface HandoffPlan {
+	source: HandoffSource;
+	historyRef: string;
+	edited: string;
+	replacementSessionName: string;
+	expectedModel: HandoffModel | undefined;
+	expectedEffort: HandoffEffortLevel | undefined;
+	targetModel: HandoffModel | undefined;
+}
+
+type HandoffSessionOptions = NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]>;
+type FreshSessionContext = Parameters<NonNullable<HandoffSessionOptions["withSession"]>>[0];
+
 export function createHandoffHandler(
 	api: HandoffApi,
 	deps: {
@@ -68,236 +86,315 @@ export function createHandoffHandler(
 		}
 
 		const goal = parsed.goal.trim() || DEFAULT_HANDOFF_GOAL;
-
-		// Resolve an explicit model/effort before opening the editor so a typo
-		// fails fast. The actual switch is deferred until after the editor is
-		// saved, so cancelling never changes the parent session. When model
-		// scoping is active, only scoped models are valid choices: anything
-		// else would be silently replaced in the new session.
-		let targetModel: HandoffModel | undefined;
-		let requestedEffort: HandoffEffortLevel | undefined;
-		if (parsed.modelRef !== undefined) {
-			const scoped = ctx.scopedModels ?? [];
-			const scopedActive = scoped.length > 0;
-			// SAFETY: Pi's model registry owns every model returned by getAll.
-			const catalogue: HandoffModel[] = scopedActive
-				? scoped.map((s) => s.model)
-				: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (ctx.modelRegistry.getAll() as HandoffModel[]);
-			// Short names come from kstack.json {label, model, thinking?} entries
-			// and from model display names; both resolve against the same catalogue.
-			const kstackRoot = loadKstackRoot();
-			const aliases = [
-				...(kstackRoot.status === "found" ? collectKstackModelAliases(kstackRoot.root) : []),
-				...collectCatalogueNameAliases(catalogue),
-			];
-			const resolution = resolveModelReference(catalogue, parsed.modelRef, aliases);
-			if (resolution.status === "not-found") {
-				const hint = scopedActive
-					? " Model scoping is active, so only scoped models are accepted (see /scoped-models)."
-					: " Use provider/model-id, a kstack.json model label, or a model display name (quote names with spaces), optionally with :<effort>; see /model for available models.";
-				ctx.ui.notify(`Unknown model "${parsed.modelRef}".${hint}`, "error");
-				return;
-			}
-			if (resolution.status === "ambiguous") {
-				const options = resolution.matches.slice(0, 8).map(formatModelRef).join(", ");
-				ctx.ui.notify(`Model "${parsed.modelRef}" is ambiguous. Matches: ${options}. Use provider/model-id.`, "error");
-				return;
-			}
-			targetModel = resolution.model;
-			requestedEffort = resolution.effort;
-		}
+		const modelSelection = resolveHandoffModelSelection(ctx, parsed.modelRef);
+		if (modelSelection === undefined) return;
 
 		await ctx.waitForIdle();
 
-		// Reference-only handoff requires a durable source artifact. An ephemeral
-		// session cannot be recovered after replacement, so fail before editing or
-		// creating anything.
-		const oldFile = ctx.sessionManager.getSessionFile();
-		if (oldFile === undefined) {
-			ctx.ui.notify("handoff requires a persisted session and is unavailable with --no-session", "error");
-			return;
-		}
-		// Capture only plain strings before replacement. The old command context
-		// becomes stale after newSession succeeds.
-		const oldId = ctx.sessionManager.getSessionId();
-		const cwd = ctx.cwd;
-		const source: HandoffSource = { version: 1, sessionFile: oldFile, sessionId: oldId, cwd };
-		if (!parsed.archive) {
-			const preflight = preflightHistory(source);
-			if (preflight.kind === "rejected") {
-				ctx.ui.notify(`Cannot create a durable handoff: ${preflight.reason}`, "error");
-				return;
-			}
-		}
+		const source = prepareHandoffSource(ctx, parsed.archive, preflightHistory);
+		if (source === undefined) return;
 
-		const baseHistoryRef = formatHistoryReference(oldFile, oldId, cwd);
-		const historyRef = parsed.archive
-			? `${baseHistoryRef}\nStorage: archived before this handoff; use the archive fallback by exact session ID.`
-			: baseHistoryRef;
-		const draft = buildReferenceHandoffPrompt(goal, historyRef);
+		const historyRef = buildHandoffHistoryRef(parsed.archive, source);
+		const edited = await promptHandoffEditor(ctx, goal, historyRef);
+		if (edited === undefined) return;
 
-		const edited = await ctx.ui.editor("Edit handoff prompt", draft);
-		if (edited === undefined) {
-			ctx.ui.notify("Cancelled", "info");
-			return;
-		}
-		if (edited.trim() === "") {
-			ctx.ui.notify("Handoff prompt cannot be empty", "error");
-			return;
-		}
-		const editedGoal = edited.match(/^## Goal\s*\n+([^\n]+)/m)?.[1]?.trim();
-		const replacementSessionName = deriveSessionName(editedGoal || goal);
+		const plan = buildHandoffPlan({
+			api,
+			ctx,
+			edited,
+			goal,
+			historyRef,
+			source,
+			...modelSelection,
+		});
+		const sessionOptions = buildHandoffSessionOptions(plan, getReplacementApi);
 
-		const previousModel = ctx.model;
-		const previousEffort = readEffort(ctx.thinkingLevel, api);
-		const expectedModel = targetModel ?? previousModel;
-		const expectedEffort = requestedEffort ?? previousEffort;
-
-		let result: HandoffSessionResult;
-		const sessionOptions: NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]> = {
-			parentSession: oldFile,
-			setup: async (sm) => {
-				sm.appendSessionInfo(replacementSessionName);
-				sm.appendCustomMessageEntry("handoff", historyRef, true, source);
-			},
-			withSession: async (fresh) => {
-				// A brand-new session starts on the configured defaults, so switch
-				// it here through its own live API: Pi rebuilt the extension
-				// runtime for the replacement before withSession runs, and the
-				// factory rebinding points at that runtime. Model first so Pi
-				// clamps effort against the selected model's capabilities. Both
-				// calls append to the replacement transcript only; failures fall
-				// through to the effective-state report below.
-				const replacement = getReplacementApi(fresh.sessionManager.getSessionId());
-				let selectionFailure: string | undefined;
-				if (expectedModel || expectedEffort) {
-					if (!replacement) {
-						selectionFailure = "the replacement session API is unavailable";
-					} else {
-						if (
-							expectedModel &&
-							!(
-								fresh.model &&
-								sameModel(
-									/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ fresh.model as HandoffModel,
-									expectedModel,
-								)
-							)
-						) {
-							try {
-								const switched = await replacement.setModel(expectedModel);
-								if (!switched) selectionFailure = `no credentials for ${formatModelRef(expectedModel)}`;
-							} catch (err) {
-								selectionFailure = err instanceof Error ? err.message : String(err);
-							}
-						}
-						if (expectedEffort) {
-							try {
-								replacement.setThinkingLevel(expectedEffort);
-							} catch (err) {
-								selectionFailure ??= err instanceof Error ? err.message : String(err);
-							}
-						}
-					}
-				}
-
-				// Report the effective replacement state. Pi can reject or clamp a
-				// selection when the model is unavailable, unauthenticated, or
-				// lacks the requested effort level.
-				const actual = fresh.model;
-				const actualEffort = readFreshEffort(fresh.thinkingLevel);
-				const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
-				const effortMismatch = Boolean(expectedEffort && actualEffort && actualEffort !== expectedEffort);
-				if ((modelMismatch || effortMismatch) && actual) {
-					const actualLabel = formatModelEffort(actual, actualEffort);
-					const expectedLabel = expectedModel
-						? formatModelEffort(expectedModel, expectedEffort)
-						: (expectedEffort ?? "the requested selection");
-					const failureSuffix = selectionFailure === undefined ? "" : ` (${selectionFailure})`;
-					fresh.ui.notify(
-						`Handoff started, but the replacement could not apply ${expectedLabel}; it is on ${actualLabel}${failureSuffix}. Previous session: ${oldFile}`,
-						"warning",
-					);
-				} else if (actual && (targetModel || expectedEffort)) {
-					const label = formatModelEffort(actual, actualEffort ?? expectedEffort);
-					fresh.ui.notify(`Handoff started. Model: ${label}. Previous session: ${oldFile}`, "info");
-				} else {
-					fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
-				}
-				// The editor already confirmed this text. Check the failures Pi
-				// raises before accepting a user message, and only restore the
-				// editor for those known pre-submission failures. Once sending
-				// starts, an error may occur after the message was persisted, so
-				// restoring it could create a duplicate turn on retry.
-				const leavePromptInEditor = (reason: string): void => {
-					fresh.ui.setEditorText(edited);
-					fresh.ui.notify(`Handoff prompt is ready to submit: ${reason}`, "warning");
-				};
-				if (!actual) {
-					leavePromptInEditor("No model selected");
-					return;
-				}
-
-				let hasAuth = fresh.modelRegistry.hasConfiguredAuth(actual);
-				if (!hasAuth) {
-					try {
-						hasAuth = (await fresh.modelRegistry.getProviderAuth(actual.provider)) !== undefined;
-					} catch (err) {
-						leavePromptInEditor(`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`);
-						return;
-					}
-				}
-				if (!hasAuth) {
-					leavePromptInEditor(`No credentials available for ${formatModelRef(actual)}`);
-					return;
-				}
-
-				await fresh.sendUserMessage(edited);
-			},
-		};
-		if (parsed.archive) {
-			const archiveRoot = getArchiveRoot();
-			let continueInFresh: (() => Promise<void>) | undefined;
-			const archiveResult = await archiveCurrentSession({
-				deps: { archiveRoot, dbPath: getArchiveDbPath(archiveRoot) },
-				snapshot: {
-					sourcePath: oldFile,
-					sessionId: oldId,
-					sessionDir: ctx.sessionManager.getSessionDir(),
-					sessionName: ctx.sessionManager.getSessionName()?.trim() || undefined,
-				},
-				waitForIdle: () => ctx.waitForIdle(),
-				confirm: (title, message) => ctx.ui.confirm(title, message),
-				skipConfirmation: true,
-				notify: (message, level) => ctx.ui.notify(message, level),
-				startNewSession: (archiveInFresh) =>
-					ctx.newSession({
-						// The active parent path is moved before continuation; the
-						// structured handoff metadata preserves durable provenance.
-						...sessionOptions,
-						parentSession: undefined,
-						withSession: async (fresh) => {
-							continueInFresh = () => sessionOptions.withSession?.(fresh) ?? Promise.resolve();
-							await archiveInFresh({ notify: (message, level) => fresh.ui.notify(message, level) });
-						},
-					}),
-				afterArchive: async () => {
-					await continueInFresh?.();
-				},
-			});
-			result = { cancelled: archiveResult.status === "cancelled" };
-		} else {
-			const preflight = preflightHistory(source);
-			if (preflight.kind === "rejected") {
-				ctx.ui.setEditorText(edited);
-				ctx.ui.notify(`Cannot create a durable handoff: ${preflight.reason}`, "error");
-				return;
-			}
-			result = await ctx.newSession(sessionOptions);
-		}
+		const result = parsed.archive
+			? await startArchivedHandoff(ctx, plan, sessionOptions)
+			: await startDirectHandoff(ctx, source, edited, sessionOptions, preflightHistory);
+		if (result === undefined) return;
 
 		if (result.cancelled) ctx.ui.notify("New session cancelled", "info");
 	};
+}
+
+function resolveHandoffModelSelection(
+	ctx: ExtensionCommandContext,
+	modelRef: string | undefined,
+): HandoffModelSelection | undefined {
+	if (modelRef === undefined) {
+		return { targetModel: undefined, requestedEffort: undefined };
+	}
+
+	const scoped = ctx.scopedModels ?? [];
+	const scopedActive = scoped.length > 0;
+	// SAFETY: Pi's model registry owns every model returned by getAll.
+	const catalogue: HandoffModel[] = scopedActive
+		? scoped.map((s) => s.model)
+		: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (ctx.modelRegistry.getAll() as HandoffModel[]);
+	const kstackRoot = loadKstackRoot();
+	const aliases = [
+		...(kstackRoot.status === "found" ? collectKstackModelAliases(kstackRoot.root) : []),
+		...collectCatalogueNameAliases(catalogue),
+	];
+	const resolution = resolveModelReference(catalogue, modelRef, aliases);
+	if (resolution.status === "not-found") {
+		const hint = scopedActive
+			? " Model scoping is active, so only scoped models are accepted (see /scoped-models)."
+			: " Use provider/model-id, a kstack.json model label, or a model display name (quote names with spaces), optionally with :<effort>; see /model for available models.";
+		ctx.ui.notify(`Unknown model "${modelRef}".${hint}`, "error");
+		return undefined;
+	}
+	if (resolution.status === "ambiguous") {
+		const options = resolution.matches.slice(0, 8).map(formatModelRef).join(", ");
+		ctx.ui.notify(`Model "${modelRef}" is ambiguous. Matches: ${options}. Use provider/model-id.`, "error");
+		return undefined;
+	}
+	return { targetModel: resolution.model, requestedEffort: resolution.effort };
+}
+
+function prepareHandoffSource(
+	ctx: ExtensionCommandContext,
+	archive: boolean,
+	preflightHistory: (source: HandoffSource) => HandoffHistoryPreflight,
+): HandoffSource | undefined {
+	const oldFile = ctx.sessionManager.getSessionFile();
+	if (oldFile === undefined) {
+		ctx.ui.notify("handoff requires a persisted session and is unavailable with --no-session", "error");
+		return undefined;
+	}
+	const source: HandoffSource = {
+		version: 1,
+		sessionFile: oldFile,
+		sessionId: ctx.sessionManager.getSessionId(),
+		cwd: ctx.cwd,
+	};
+	if (!archive) {
+		const preflight = preflightHistory(source);
+		if (preflight.kind === "rejected") {
+			ctx.ui.notify(`Cannot create a durable handoff: ${preflight.reason}`, "error");
+			return undefined;
+		}
+	}
+	return source;
+}
+
+function buildHandoffHistoryRef(archive: boolean, source: HandoffSource): string {
+	const baseHistoryRef = formatHistoryReference(source.sessionFile, source.sessionId, source.cwd);
+	if (!archive) return baseHistoryRef;
+	return `${baseHistoryRef}\nStorage: archived before this handoff; use the archive fallback by exact session ID.`;
+}
+
+async function promptHandoffEditor(
+	ctx: ExtensionCommandContext,
+	goal: string,
+	historyRef: string,
+): Promise<string | undefined> {
+	const draft = buildReferenceHandoffPrompt(goal, historyRef);
+	const edited = await ctx.ui.editor("Edit handoff prompt", draft);
+	if (edited === undefined) {
+		ctx.ui.notify("Cancelled", "info");
+		return undefined;
+	}
+	if (edited.trim() === "") {
+		ctx.ui.notify("Handoff prompt cannot be empty", "error");
+		return undefined;
+	}
+	return edited;
+}
+
+function buildHandoffPlan(input: {
+	api: HandoffApi;
+	ctx: ExtensionCommandContext;
+	edited: string;
+	goal: string;
+	historyRef: string;
+	source: HandoffSource;
+	targetModel: HandoffModel | undefined;
+	requestedEffort: HandoffEffortLevel | undefined;
+}): HandoffPlan {
+	const editedGoal = input.edited.match(/^## Goal\s*\n+([^\n]+)/m)?.[1]?.trim();
+	const previousModel = input.ctx.model;
+	const previousEffort = readEffort(input.ctx.thinkingLevel, input.api);
+	return {
+		source: input.source,
+		historyRef: input.historyRef,
+		edited: input.edited,
+		replacementSessionName: deriveSessionName(editedGoal || input.goal),
+		expectedModel: input.targetModel ?? previousModel,
+		expectedEffort: input.requestedEffort ?? previousEffort,
+		targetModel: input.targetModel,
+	};
+}
+
+function buildHandoffSessionOptions(
+	plan: HandoffPlan,
+	getReplacementApi: (sessionId: string) => ReplacementSelectionApi | undefined,
+): HandoffSessionOptions {
+	return {
+		parentSession: plan.source.sessionFile,
+		setup: async (sm) => {
+			sm.appendSessionInfo(plan.replacementSessionName);
+			sm.appendCustomMessageEntry("handoff", plan.historyRef, true, plan.source);
+		},
+		withSession: (fresh) => runReplacementHandoff(fresh, plan, getReplacementApi),
+	};
+}
+
+async function startArchivedHandoff(
+	ctx: ExtensionCommandContext,
+	plan: HandoffPlan,
+	sessionOptions: HandoffSessionOptions,
+): Promise<HandoffSessionResult> {
+	const archiveRoot = getArchiveRoot();
+	let continueInFresh: (() => Promise<void>) | undefined;
+	const archiveResult = await archiveCurrentSession({
+		deps: { archiveRoot, dbPath: getArchiveDbPath(archiveRoot) },
+		snapshot: {
+			sourcePath: plan.source.sessionFile,
+			sessionId: plan.source.sessionId,
+			sessionDir: ctx.sessionManager.getSessionDir(),
+			sessionName: ctx.sessionManager.getSessionName()?.trim() || undefined,
+		},
+		waitForIdle: () => ctx.waitForIdle(),
+		confirm: (title, message) => ctx.ui.confirm(title, message),
+		skipConfirmation: true,
+		notify: (message, level) => ctx.ui.notify(message, level),
+		startNewSession: (archiveInFresh) =>
+			ctx.newSession({
+				...sessionOptions,
+				parentSession: undefined,
+				withSession: async (fresh) => {
+					continueInFresh = () => sessionOptions.withSession?.(fresh) ?? Promise.resolve();
+					await archiveInFresh({ notify: (message, level) => fresh.ui.notify(message, level) });
+				},
+			}),
+		afterArchive: async () => {
+			await continueInFresh?.();
+		},
+	});
+	return { cancelled: archiveResult.status === "cancelled" };
+}
+
+async function startDirectHandoff(
+	ctx: ExtensionCommandContext,
+	source: HandoffSource,
+	edited: string,
+	sessionOptions: HandoffSessionOptions,
+	preflightHistory: (source: HandoffSource) => HandoffHistoryPreflight,
+): Promise<HandoffSessionResult | undefined> {
+	const preflight = preflightHistory(source);
+	if (preflight.kind === "rejected") {
+		ctx.ui.setEditorText(edited);
+		ctx.ui.notify(`Cannot create a durable handoff: ${preflight.reason}`, "error");
+		return undefined;
+	}
+	return await ctx.newSession(sessionOptions);
+}
+
+async function runReplacementHandoff(
+	fresh: FreshSessionContext,
+	plan: HandoffPlan,
+	getReplacementApi: (sessionId: string) => ReplacementSelectionApi | undefined,
+): Promise<void> {
+	const selectionFailure = await applyReplacementModelSelection(fresh, plan, getReplacementApi);
+	notifyHandoffStart(fresh, plan, selectionFailure);
+	await submitHandoffPrompt(fresh, plan.edited);
+}
+
+async function applyReplacementModelSelection(
+	fresh: FreshSessionContext,
+	plan: HandoffPlan,
+	getReplacementApi: (sessionId: string) => ReplacementSelectionApi | undefined,
+): Promise<string | undefined> {
+	const { expectedModel, expectedEffort } = plan;
+	if (!expectedModel && !expectedEffort) return undefined;
+
+	const replacement = getReplacementApi(fresh.sessionManager.getSessionId());
+	if (!replacement) return "the replacement session API is unavailable";
+
+	let selectionFailure: string | undefined;
+	if (
+		expectedModel &&
+		!(
+			fresh.model &&
+			sameModel(
+				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ fresh.model as HandoffModel,
+				expectedModel,
+			)
+		)
+	) {
+		try {
+			const switched = await replacement.setModel(expectedModel);
+			if (!switched) selectionFailure = `no credentials for ${formatModelRef(expectedModel)}`;
+		} catch (err) {
+			selectionFailure = err instanceof Error ? err.message : String(err);
+		}
+	}
+	if (expectedEffort) {
+		try {
+			replacement.setThinkingLevel(expectedEffort);
+		} catch (err) {
+			selectionFailure ??= err instanceof Error ? err.message : String(err);
+		}
+	}
+	return selectionFailure;
+}
+
+function notifyHandoffStart(fresh: FreshSessionContext, plan: HandoffPlan, selectionFailure: string | undefined): void {
+	const { expectedModel, expectedEffort, targetModel, source } = plan;
+	const actual = fresh.model;
+	const actualEffort = readEffort(fresh.thinkingLevel);
+	const oldFile = source.sessionFile;
+	const modelMismatch = Boolean(expectedModel && actual && !sameModel(actual, expectedModel));
+	const effortMismatch = Boolean(expectedEffort && actualEffort && actualEffort !== expectedEffort);
+	if ((modelMismatch || effortMismatch) && actual) {
+		const actualLabel = formatModelEffort(actual, actualEffort);
+		const expectedLabel = expectedModel
+			? formatModelEffort(expectedModel, expectedEffort)
+			: (expectedEffort ?? "the requested selection");
+		const failureSuffix = selectionFailure === undefined ? "" : ` (${selectionFailure})`;
+		fresh.ui.notify(
+			`Handoff started, but the replacement could not apply ${expectedLabel}; it is on ${actualLabel}${failureSuffix}. Previous session: ${oldFile}`,
+			"warning",
+		);
+		return;
+	}
+	if (actual && (targetModel || expectedEffort)) {
+		const label = formatModelEffort(actual, actualEffort ?? expectedEffort);
+		fresh.ui.notify(`Handoff started. Model: ${label}. Previous session: ${oldFile}`, "info");
+		return;
+	}
+	fresh.ui.notify(`Handoff started. Previous session: ${oldFile}`, "info");
+}
+
+async function submitHandoffPrompt(fresh: FreshSessionContext, edited: string): Promise<void> {
+	const leavePromptInEditor = (reason: string): void => {
+		fresh.ui.setEditorText(edited);
+		fresh.ui.notify(`Handoff prompt is ready to submit: ${reason}`, "warning");
+	};
+
+	const actual = fresh.model;
+	if (!actual) {
+		leavePromptInEditor("No model selected");
+		return;
+	}
+
+	let hasAuth = fresh.modelRegistry.hasConfiguredAuth(actual);
+	if (!hasAuth) {
+		try {
+			hasAuth = (await fresh.modelRegistry.getProviderAuth(actual.provider)) !== undefined;
+		} catch (err) {
+			leavePromptInEditor(`Could not resolve credentials: ${err instanceof Error ? err.message : String(err)}`);
+			return;
+		}
+	}
+	if (!hasAuth) {
+		leavePromptInEditor(`No credentials available for ${formatModelRef(actual)}`);
+		return;
+	}
+
+	await fresh.sendUserMessage(edited);
 }
 
 function sameModel(a: HandoffModel, b: HandoffModel): boolean {
@@ -306,19 +403,16 @@ function sameModel(a: HandoffModel, b: HandoffModel): boolean {
 
 function readEffort(
 	fromContext: BoundaryValue,
-	api: Pick<HandoffApi, "getThinkingLevel">,
+	api?: Pick<HandoffApi, "getThinkingLevel">,
 ): HandoffEffortLevel | undefined {
 	if (isString(fromContext) && isHandoffEffortLevel(fromContext)) return fromContext;
+	if (!api) return undefined;
 	try {
 		const fromApi = api.getThinkingLevel();
 		return isHandoffEffortLevel(fromApi) ? fromApi : undefined;
 	} catch {
 		return undefined;
 	}
-}
-
-function readFreshEffort(fromContext: BoundaryValue): HandoffEffortLevel | undefined {
-	return isString(fromContext) && isHandoffEffortLevel(fromContext) ? fromContext : undefined;
 }
 
 function handoffBranchEntry(entry: SessionEntry): HandoffBranchEntry {

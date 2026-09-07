@@ -806,29 +806,9 @@ describe("handoff replacement model selection", () => {
 		assert.equal(fake.calls.sendUserMessage.length, 1);
 	});
 
-	it("leaves the predecessor unchanged when replacement is cancelled", async () => {
+	it("leaves the predecessor unchanged and skips selection when replacement is cancelled", async () => {
 		const order: string[] = [];
 		const { api, apiCalls } = makeFakeApi(order, { thinkingLevel: "medium" });
-		const { ctx, notifications, calls } = makeFakeCtx(order, {
-			model: PARENT_MODEL,
-			thinkingLevel: "medium",
-			newSessionResult: { cancelled: true },
-		});
-
-		await createHandoffHandler(api)(
-			"--model openai/gpt-5.2:high goal",
-			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
-		);
-
-		assert.deepEqual(apiCalls.setModel, []);
-		assert.deepEqual(apiCalls.setThinkingLevel, []);
-		assert.equal(calls.newSession, 1);
-		assert.equal(notifications.at(-1)!.message, "New session cancelled");
-	});
-
-	it("applies no selection when replacement is cancelled", async () => {
-		const order: string[] = [];
-		const { api } = makeFakeApi(order, { thinkingLevel: "medium" });
 		const fake = makeFakeCtx(order, {
 			model: PARENT_MODEL,
 			thinkingLevel: "medium",
@@ -840,8 +820,12 @@ describe("handoff replacement model selection", () => {
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
 		);
 
+		assert.deepEqual(apiCalls.setModel, []);
+		assert.deepEqual(apiCalls.setThinkingLevel, []);
 		assert.deepEqual(fake.replacementCalls.setModel, []);
 		assert.deepEqual(fake.replacementCalls.setThinkingLevel, []);
+		assert.equal(fake.calls.newSession, 1);
+		assert.equal(fake.notifications.at(-1)!.message, "New session cancelled");
 	});
 
 	it("leaves the predecessor unchanged when replacement creation throws", async () => {
