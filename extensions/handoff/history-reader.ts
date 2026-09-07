@@ -12,7 +12,7 @@ import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/ses
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import { isRecord } from "../shared/narrow.ts";
-import { type BoundaryValue, isString } from "../shared/validation.ts";
+import { isString, type JsonValue } from "../shared/validation.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_PREFLIGHT_REASON_BYTES = 1024;
@@ -28,11 +28,12 @@ export interface HandoffSource {
 
 export type HandoffHistoryPreflight = { kind: "ready" } | { kind: "rejected"; reason: string };
 
-interface HandoffEntryLike {
-	type?: BoundaryValue;
-	customType?: BoundaryValue;
-	content?: BoundaryValue;
-	details?: BoundaryValue;
+/** Host fields `findHandoffSource` reads; `details` is JSON, not a domain value. */
+export interface HandoffBranchEntry {
+	type: string;
+	customType?: string;
+	content?: string;
+	details?: JsonValue;
 }
 
 interface ReadHandoffHistoryOptions {
@@ -48,27 +49,21 @@ interface SearchHandoffHistoryOptions {
 	limit?: number;
 }
 
-function sourceFromDetails(details: BoundaryValue): HandoffSource | undefined {
-	if (!isRecord(details)) return undefined;
-	if (
-		details.version !== 1 ||
-		!isString(details.sessionFile) ||
-		!isString(details.sessionId) ||
-		!isString(details.cwd)
-	) {
+function decodeHandoffSource(value: JsonValue): HandoffSource | undefined {
+	if (!isRecord(value)) return undefined;
+	if (value.version !== 1 || !isString(value.sessionFile) || !isString(value.sessionId) || !isString(value.cwd)) {
 		return undefined;
 	}
 	return {
 		version: 1,
-		sessionFile: details.sessionFile,
-		sessionId: details.sessionId,
-		cwd: details.cwd,
+		sessionFile: value.sessionFile,
+		sessionId: value.sessionId,
+		cwd: value.cwd,
 	};
 }
 
 /** Backward-compatible fallback for handoff entries created before structured details. */
-function sourceFromContent(content: BoundaryValue): HandoffSource | undefined {
-	if (!isString(content)) return undefined;
+function decodeLegacyHandoffSource(content: string): HandoffSource | undefined {
 	const file = content.match(/^Previous session: (.+)$/m)?.[1];
 	const metadata = content.match(/^Session ID: (\S+) {2}CWD: (.+)$/m);
 	if (!file || !metadata || file.startsWith("(")) return undefined;
@@ -76,12 +71,16 @@ function sourceFromContent(content: BoundaryValue): HandoffSource | undefined {
 }
 
 /** Find the newest handoff provenance entry on the active branch. */
-export function findHandoffSource(entries: readonly HandoffEntryLike[]): HandoffSource | undefined {
+export function findHandoffSource(entries: readonly HandoffBranchEntry[]): HandoffSource | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry.type !== "custom_message" || entry.customType !== "handoff") continue;
-		const source = sourceFromDetails(entry.details) ?? sourceFromContent(entry.content);
+		const source = decodeHandoffSource(entry.details);
 		if (source) return source;
+		if (entry.content !== undefined) {
+			const legacy = decodeLegacyHandoffSource(entry.content);
+			if (legacy) return legacy;
+		}
 	}
 	return undefined;
 }

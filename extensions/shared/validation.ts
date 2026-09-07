@@ -4,7 +4,8 @@ import { Check } from "typebox/value";
 /** A value at an external boundary that must be decoded before domain use. */
 export type BoundaryValue = ReturnType<<T>(value: T) => T>;
 
-type JsonValue = string | number | boolean | null | undefined | JsonObject | JsonValue[];
+/** Closed JSON before a decoder constructs a domain value. */
+export type JsonValue = string | number | boolean | null | undefined | JsonObject | JsonValue[];
 
 export interface JsonObject {
 	[key: string]: JsonValue;

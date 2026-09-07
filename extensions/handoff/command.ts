@@ -14,15 +14,17 @@ import { type BoundaryValue, isString } from "../shared/validation.ts";
  * defaults.
  */
 
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
 import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
 import { loadKstackRoot } from "../shared/kstack-config.ts";
 import { collectCatalogueNameAliases, collectKstackModelAliases } from "../shared/model-aliases.ts";
+import { isRecord } from "../shared/narrow.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
 import {
 	findHandoffSource,
+	type HandoffBranchEntry,
 	type HandoffHistoryPreflight,
 	type HandoffSource,
 	preflightHandoffHistory,
@@ -319,10 +321,18 @@ function readFreshEffort(fromContext: BoundaryValue): HandoffEffortLevel | undef
 	return isString(fromContext) && isHandoffEffortLevel(fromContext) ? fromContext : undefined;
 }
 
-export function requireHandoffSource(ctx: { sessionManager: { getBranch(): BoundaryValue[] } }): HandoffSource {
-	const source = findHandoffSource(
-		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ ctx.sessionManager.getBranch() as never[],
-	);
+function handoffBranchEntry(entry: SessionEntry): HandoffBranchEntry {
+	if (entry.type !== "custom_message") return { type: entry.type };
+	return {
+		type: entry.type,
+		customType: entry.customType,
+		content: isString(entry.content) ? entry.content : undefined,
+		details: isRecord(entry.details) ? entry.details : undefined,
+	};
+}
+
+export function requireHandoffSource(ctx: { sessionManager: { getBranch(): readonly SessionEntry[] } }): HandoffSource {
+	const source = findHandoffSource(ctx.sessionManager.getBranch().map(handoffBranchEntry));
 	if (!source) {
 		throw new Error("No handoff history is linked to this session. Run /handoff from a persisted session first.");
 	}

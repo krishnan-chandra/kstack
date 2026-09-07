@@ -102,9 +102,54 @@ describe("findHandoffSource", () => {
 		};
 		const found = findHandoffSource([
 			{ type: "custom_message", customType: "handoff", content: "old" },
-			{ type: "custom_message", customType: "handoff", content: "visible", details: source },
+			{
+				type: "custom_message",
+				customType: "handoff",
+				content: "visible",
+				details: {
+					version: 1,
+					sessionFile: source.sessionFile,
+					sessionId: source.sessionId,
+					cwd: source.cwd,
+				},
+			},
 		]);
 		assert.deepEqual(found, source);
+	});
+
+	it("constructs HandoffSource without copying extra details fields", () => {
+		const found = findHandoffSource([
+			{
+				type: "custom_message",
+				customType: "handoff",
+				details: {
+					version: 1,
+					sessionFile: "/sessions/latest.jsonl",
+					sessionId: TEST_SESSION_ID,
+					cwd: "/project",
+					extra: "drop-me",
+				},
+			},
+		]);
+		assert.deepEqual(found, {
+			version: 1,
+			sessionFile: "/sessions/latest.jsonl",
+			sessionId: TEST_SESSION_ID,
+			cwd: "/project",
+		});
+		assert.equal(found && "extra" in found, false);
+	});
+
+	it("ignores malformed details and falls back to legacy content", () => {
+		const found = findHandoffSource([
+			{
+				type: "custom_message",
+				customType: "handoff",
+				content: `Previous session: /sessions/old.jsonl\nSession ID: ${TEST_SESSION_ID}  CWD: /project`,
+				details: { version: 2, sessionFile: "/sessions/wrong.jsonl" },
+			},
+		]);
+		assert.equal(found?.sessionFile, "/sessions/old.jsonl");
 	});
 
 	it("parses legacy visible references without accepting ephemeral ones", () => {
