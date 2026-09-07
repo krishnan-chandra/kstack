@@ -49,6 +49,10 @@ node --test skills/git-worktrees/
 - Prefer exhaustive `if` / `else if` / `switch` over nested ternaries. A
   one-level `a ? b : c` is fine; a chain of `? :` is not.
 - Avoid runtime dependencies unless the platform cannot provide the capability.
+- Place imports at the top of the module. Avoid dynamic `import()` unless
+  strictly necessary (for example optional platform capabilities or breaking a
+  documented circular dependency). Static imports keep dependency graphs visible
+  to tooling and match how Pi loads extension factories.
 - Export a symbol only for a real consumer: another module, a colocated test, or a marked contract (`/* exported: <reason> */`). `npm run check:exports` enforces this.
 
 ## Extension ground rules

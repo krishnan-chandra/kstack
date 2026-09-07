@@ -21,6 +21,7 @@
  * effective model and effort before the continuation prompt is sent.
  */
 
+import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { createHandoffHandler, requireHandoffSource } from "./command.ts";
@@ -34,7 +35,6 @@ import {
 
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "handoff");
-	const { Type, StringEnum } = await import("@earendil-works/pi-ai");
 	let selectionApi: ReplacementSelectionApi | undefined;
 	pi.on("session_start", (_event, ctx) => {
 		selectionApi = {
