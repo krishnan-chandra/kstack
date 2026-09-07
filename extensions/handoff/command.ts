@@ -326,7 +326,6 @@ function handoffBranchEntry(entry: SessionEntry): HandoffBranchEntry {
 	return {
 		type: entry.type,
 		customType: entry.customType,
-		content: isString(entry.content) ? entry.content : undefined,
 		details: isRecord(entry.details) ? entry.details : undefined,
 	};
 }

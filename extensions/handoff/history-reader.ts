@@ -11,7 +11,6 @@ import {
 import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/session-jsonl.ts";
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
-import { isRecord } from "../shared/narrow.ts";
 import { isString, type JsonValue } from "../shared/validation.ts";
 
 const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
@@ -28,12 +27,19 @@ export interface HandoffSource {
 
 export type HandoffHistoryPreflight = { kind: "ready" } | { kind: "rejected"; reason: string };
 
+/** JSON object persisted on a handoff `custom_message`; fields are untrusted until decoded. */
+interface HandoffSourceJson {
+	version?: JsonValue;
+	sessionFile?: JsonValue;
+	sessionId?: JsonValue;
+	cwd?: JsonValue;
+}
+
 /** Host fields `findHandoffSource` reads; `details` is JSON, not a domain value. */
 export interface HandoffBranchEntry {
 	type: string;
 	customType?: string;
-	content?: string;
-	details?: JsonValue;
+	details?: HandoffSourceJson;
 }
 
 interface ReadHandoffHistoryOptions {
@@ -49,8 +55,8 @@ interface SearchHandoffHistoryOptions {
 	limit?: number;
 }
 
-function decodeHandoffSource(value: JsonValue): HandoffSource | undefined {
-	if (!isRecord(value)) return undefined;
+function decodeHandoffSource(value: HandoffSourceJson | undefined): HandoffSource | undefined {
+	if (value === undefined) return undefined;
 	if (value.version !== 1 || !isString(value.sessionFile) || !isString(value.sessionId) || !isString(value.cwd)) {
 		return undefined;
 	}
@@ -62,14 +68,6 @@ function decodeHandoffSource(value: JsonValue): HandoffSource | undefined {
 	};
 }
 
-/** Backward-compatible fallback for handoff entries created before structured details. */
-function decodeLegacyHandoffSource(content: string): HandoffSource | undefined {
-	const file = content.match(/^Previous session: (.+)$/m)?.[1];
-	const metadata = content.match(/^Session ID: (\S+) {2}CWD: (.+)$/m);
-	if (!file || !metadata || file.startsWith("(")) return undefined;
-	return { version: 1, sessionFile: file, sessionId: metadata[1], cwd: metadata[2] };
-}
-
 /** Find the newest handoff provenance entry on the active branch. */
 export function findHandoffSource(entries: readonly HandoffBranchEntry[]): HandoffSource | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
@@ -77,10 +75,6 @@ export function findHandoffSource(entries: readonly HandoffBranchEntry[]): Hando
 		if (entry.type !== "custom_message" || entry.customType !== "handoff") continue;
 		const source = decodeHandoffSource(entry.details);
 		if (source) return source;
-		if (entry.content !== undefined) {
-			const legacy = decodeLegacyHandoffSource(entry.content);
-			if (legacy) return legacy;
-		}
 	}
 	return undefined;
 }
@@ -235,7 +229,7 @@ export function preflightHandoffHistory(
 	}
 }
 
-function formatEntry(entry: {
+interface HistoryEntryView {
 	ordinal: number;
 	entryType: string;
 	role?: string | null;
@@ -243,7 +237,9 @@ function formatEntry(entry: {
 	entryId: string;
 	parentId: string | null;
 	textContent?: string | null;
-}): string {
+}
+
+function formatEntry(entry: HistoryEntryView): string {
 	return [
 		`#${entry.ordinal} [${entry.entryType}${entry.role ? `/${entry.role}` : ""}] ${entry.timestamp} (id ${entry.entryId}, parent ${entry.parentId ?? "none"})`,
 		entry.textContent ?? "",
@@ -252,7 +248,7 @@ function formatEntry(entry: {
 		.join("\n");
 }
 
-function parsedEntryView(entry: ParsedEntry) {
+function parsedEntryView(entry: ParsedEntry): HistoryEntryView {
 	return {
 		ordinal: entry.ordinal,
 		entryType: entry.entryType,
@@ -264,7 +260,7 @@ function parsedEntryView(entry: ParsedEntry) {
 	};
 }
 
-function archiveEntryView(entry: ReturnType<typeof readEntries>[number]) {
+function archiveEntryView(entry: ReturnType<typeof readEntries>[number]): HistoryEntryView {
 	return {
 		ordinal: entry.ordinal,
 		entryType: entry.entry_type,
@@ -281,7 +277,7 @@ function pageOutput(
 	sourceKind: "active" | "archived",
 	cwd: string,
 	total: number,
-	views: Array<ReturnType<typeof parsedEntryView> | ReturnType<typeof archiveEntryView>>,
+	views: HistoryEntryView[],
 	offset: number,
 	limit: number,
 	chunkIndex: number,
