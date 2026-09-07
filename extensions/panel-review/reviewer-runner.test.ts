@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { KSTACK_ENTRY, summarizeToolCall } from "../shared/child-agent-runner.ts";
+import { KSTACK_ENTRY, summarizeToolCall, truncateTailUtf8 } from "../shared/child-agent-runner.ts";
 import { JsonLineParser } from "../shared/pi-json-lines.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { buildChildArgs, type ChildEvent, runReviewer, type SpawnImpl } from "./reviewer-runner.ts";
@@ -616,7 +616,6 @@ describe("runReviewer live text preview", () => {
 	});
 
 	it("bounds the preview within the live-preview budget and stays UTF-8 safe", async () => {
-		const { truncateTailUtf8 } = await import("../shared/child-agent-runner.ts");
 		// 3-byte characters straddling the tail boundary must not split.
 		const text = `x${"語".repeat(200)}`; // 1 + 600 bytes
 		const tail = truncateTailUtf8(text, 100);

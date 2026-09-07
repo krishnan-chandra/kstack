@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, type Stats, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { getArchiveDbPath, getArchiveRoot, isPathInside, validateSessionId } from "../session-archive/archive-files.ts";
 import {
 	countEntries,
@@ -304,6 +305,25 @@ function pageOutput(
 	);
 }
 
+function withArchivedSession<T>(
+	source: HandoffSource,
+	env: NodeJS.ProcessEnv,
+	run: (db: DatabaseSync, session: { cwd: string }) => T,
+): T {
+	const dbPath = getArchiveDbPath(getArchiveRoot(env));
+	if (!existsSync(dbPath)) throw new Error(`Previous session ${source.sessionId} is not active or archived.`);
+	const db = openArchiveDbReadOnly(dbPath);
+	try {
+		const session = getSessionRow(db, source.sessionId);
+		if (session?.state !== "archived") {
+			throw new Error(`Previous session ${source.sessionId} is not active or finalized in the archive.`);
+		}
+		return run(db, session);
+	} finally {
+		db.close();
+	}
+}
+
 /** Read normalized entries, preferring the active JSONL and falling back to the archive by exact ID. */
 export function readHandoffHistory(
 	source: HandoffSource,
@@ -324,14 +344,7 @@ export function readHandoffHistory(
 		return pageOutput(source, "active", active.cwd, total, views, offset, limit, chunk);
 	}
 
-	const dbPath = getArchiveDbPath(getArchiveRoot(env));
-	if (!existsSync(dbPath)) throw new Error(`Previous session ${source.sessionId} is not active or archived.`);
-	const db = openArchiveDbReadOnly(dbPath);
-	try {
-		const session = getSessionRow(db, source.sessionId);
-		if (session?.state !== "archived") {
-			throw new Error(`Previous session ${source.sessionId} is not active or finalized in the archive.`);
-		}
+	return withArchivedSession(source, env, (db, session) => {
 		const total = countEntries(db, source.sessionId);
 		const offset =
 			options.offset === undefined && options.from !== "start"
@@ -339,9 +352,7 @@ export function readHandoffHistory(
 				: boundedInteger(options.offset, 0, 0, 2_147_483_647);
 		const views = readEntries(db, source.sessionId, offset, limit).map(archiveEntryView);
 		return pageOutput(source, "archived", session.cwd, total, views, offset, limit, chunk);
-	} finally {
-		db.close();
-	}
+	});
 }
 
 function searchTerms(query: string): string[] {
@@ -384,29 +395,19 @@ export function searchHandoffHistory(
 				? `No matches in active previous session ${source.sessionId}.`
 				: `Matches in active previous session ${source.sessionId}:\n\n${hits.map(formatEntry).join("\n\n")}`;
 	} else {
-		const dbPath = getArchiveDbPath(getArchiveRoot(env));
-		if (!existsSync(dbPath)) throw new Error(`Previous session ${source.sessionId} is not active or archived.`);
-		const db = openArchiveDbReadOnly(dbPath);
-		try {
-			const session = getSessionRow(db, source.sessionId);
-			if (session?.state !== "archived") {
-				throw new Error(`Previous session ${source.sessionId} is not active or finalized in the archive.`);
-			}
+		output = withArchivedSession(source, env, (db) => {
 			const hits = searchArchive(db, {
 				query: archiveFtsQuery(terms),
 				role: options.role,
 				sessionId: source.sessionId,
 				limit,
 			});
-			output =
-				hits.length === 0
-					? `No matches in archived previous session ${source.sessionId}.`
-					: `Matches in archived previous session ${source.sessionId}:\n\n${hits
-							.map((hit) => `[${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`)
-							.join("\n\n")}`;
-		} finally {
-			db.close();
-		}
+			return hits.length === 0
+				? `No matches in archived previous session ${source.sessionId}.`
+				: `Matches in archived previous session ${source.sessionId}:\n\n${hits
+						.map((hit) => `[${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`)
+						.join("\n\n")}`;
+		});
 	}
 
 	const chunks = splitUtf8Chunks(output, MAX_OUTPUT_BYTES - 512);
