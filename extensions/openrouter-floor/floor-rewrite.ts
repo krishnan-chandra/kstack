@@ -15,7 +15,7 @@ const OPENROUTER_PROVIDER = "openrouter";
 const FLOOR_VARIANT = "floor";
 
 /** The subset of the current session model the rewrite needs. */
-interface CurrentModel {
+export interface CurrentModel {
 	provider: string;
 	id: string;
 }

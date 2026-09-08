@@ -1,15 +1,46 @@
 /**
- * openrouter-floor: send every OpenRouter request as the `:floor` model variant.
- *
- * Users keep selecting plain model IDs such as `openrouter/openai/gpt-5.6-sol`.
- * Right before Pi sends the provider request, this extension rewrites the payload's
- * `model` to `openai/gpt-5.6-sol:floor`, so OpenRouter sorts endpoints by price and
- * may serve the request from a provider's flex tier. Payloads that already name a
- * variant, or that target another provider, pass through untouched.
+ * Route OpenRouter requests through `:floor` and record bounded, redacted
+ * observations about rewrites and the service tier that served completions.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { applyFloor } from "./floor-rewrite.ts";
+import { formatFloorReport, parseStatsRange } from "./floor-report.ts";
+import { createDefaultFloorRuntime } from "./floor-runtime.ts";
 
-export default function openrouterFloor(pi: ExtensionAPI) {
-	pi.on("before_provider_request", (event, ctx) => applyFloor(event.payload, ctx.model));
+export default function openrouterFloor(pi: ExtensionAPI): void {
+	const runtime = createDefaultFloorRuntime();
+
+	pi.on("before_provider_request", (event, ctx) => runtime.rewrite(event.payload, ctx.model, ctx.cwd));
+
+	pi.on("message_end", async (event, ctx) => {
+		await runtime.observeCompletion(
+			event.message,
+			() => ctx.modelRegistry.getProviderAuth("openrouter"),
+			ctx.cwd,
+			ctx.signal,
+		);
+	});
+
+	pi.on("session_shutdown", async () => {
+		await runtime.flush();
+	});
+
+	pi.registerCommand("openrouter-floor-stats", {
+		description: "Show observed :floor rewrites and actual OpenRouter service tiers",
+		getArgumentCompletions: (prefix) => {
+			const ranges = ["process", "today", "7d", "30d"];
+			const matches = ranges
+				.filter((range) => range.startsWith(prefix.trim()))
+				.map((range) => ({ value: range, label: range }));
+			return matches.length === 0 ? null : matches;
+		},
+		handler: async (args, ctx) => {
+			const range = parseStatsRange(args);
+			if (!range.ok) {
+				ctx.ui.notify(range.error, "error");
+				return;
+			}
+			const report = await runtime.report({ range: range.value, scope: ctx.cwd });
+			ctx.ui.notify(formatFloorReport(report), "info");
+		},
+	});
 }
