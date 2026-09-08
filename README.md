@@ -178,7 +178,7 @@ rows stay unnamed.
 ## Requirements
 
 - Pi 0.84.2 or newer
-- Node.js 22.18 or newer for Pi's runtime and local tooling
+- Node 22.18 or newer for Pi's runtime and local tooling. CI tests Node 22.18, 24, and 26.
 - A local filesystem for Pi's agent directory
 - `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step
 - `github/gh-stack` 0.1.0 or newer (`gh extension install github/gh-stack`) — required for multi-PR jj publication and landing

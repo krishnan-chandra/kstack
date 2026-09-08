@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +17,23 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint:ci
       - run: npm run lint:slop
-      - run: npm test
       - run: npm run check:exports
       - run: npm run check:imports
+      - run: npm audit --audit-level=high
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.18 is the declared floor (type stripping, import.meta.main, node:sqlite).
+        # 24 is the current LTS line, and 26 is the current release; all must pass.
+        node: ["22.18", "24", "26"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
