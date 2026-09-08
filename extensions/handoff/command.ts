@@ -394,7 +394,16 @@ async function submitHandoffPrompt(fresh: FreshSessionContext, edited: string): 
 		return;
 	}
 
-	await fresh.sendUserMessage(edited);
+	try {
+		await fresh.sendUserMessage(edited);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		fresh.ui.notify(
+			`Handoff message submission failed: ${message}. Inspect the replacement conversation before submitting again.`,
+			"error",
+		);
+		throw err;
+	}
 }
 
 function sameModel(a: HandoffModel, b: HandoffModel): boolean {

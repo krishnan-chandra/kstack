@@ -206,6 +206,7 @@ describe("archiveCurrentSession lifecycle", () => {
 		const content = richSessionJsonl();
 		const source = tree.writeSession(TEST_SESSION_ID, content);
 		const fake = makeFakeCtx({});
+		let afterArchiveRan = false;
 
 		const result = await archiveCurrentSession({
 			deps: {
@@ -217,13 +218,56 @@ describe("archiveCurrentSession lifecycle", () => {
 			},
 			snapshot: snapshotFor(tree, source),
 			...fake,
+			afterArchive: async () => {
+				afterArchiveRan = true;
+			},
 		});
 		assert.equal(result.status, "failed");
+		assert.equal(afterArchiveRan, false, "continuation must not run when move fails");
 		assert.ok(existsSync(source), "complete source copy preserved");
 		assert.ok(fake.calls.some((c) => c.kind === "fresh-notify:error" && /finalization failed/.test(c.detail ?? "")));
 		const db = openArchiveDb(tree.dbPath);
 		try {
 			assert.equal(getSessionRow(db, TEST_SESSION_ID)?.state, "pending");
+		} finally {
+			db.close();
+		}
+	});
+
+	it("reports a continuation failure without changing the completed archive outcome", async () => {
+		const tree = makeTempTree();
+		const content = richSessionJsonl();
+		const source = tree.writeSession(TEST_SESSION_ID, content);
+		const fake = makeFakeCtx({});
+
+		const result = await archiveCurrentSession({
+			deps: { dbPath: tree.dbPath, archiveRoot: tree.archiveRoot },
+			snapshot: snapshotFor(tree, source),
+			...fake,
+			afterArchive: async () => {
+				assert.ok(!existsSync(source), "source must be moved before continuation");
+				throw new Error("simulated continuation failure");
+			},
+		});
+
+		assert.equal(result.status, "archived");
+		assert.ok(
+			fake.calls.some(
+				(call) =>
+					call.kind === "fresh-notify:warning" &&
+					/archive.*successfully.*continuation failed.*simulated continuation failure/i.test(call.detail ?? ""),
+			),
+		);
+		for (const call of fake.calls) {
+			if (call.kind.startsWith("notify") || call.kind.startsWith("fresh-notify")) {
+				assert.doesNotMatch(call.detail ?? "", /pending/i);
+				assert.doesNotMatch(call.detail ?? "", /finalization failed/i);
+			}
+		}
+
+		const db = openArchiveDb(tree.dbPath);
+		try {
+			assert.equal(getSessionRow(db, TEST_SESSION_ID)?.state, "archived");
 		} finally {
 			db.close();
 		}
