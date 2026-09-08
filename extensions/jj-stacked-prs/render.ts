@@ -147,6 +147,14 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 					"Local jj changes and bookmarks were preserved until GitHub finishes merging the complete stack.",
 				].join("\n"),
 			);
+		case "waiting":
+			return boundText(
+				[
+					`Stack landing is waiting: ${outcome.reason}`,
+					...outcome.frontiers.map(renderFrontierLine),
+					...(outcome.remainingRefs.length > 0 ? [`Remaining: ${outcome.remainingRefs.join(", ")}`] : []),
+				].join("\n"),
+			);
 		case "partial":
 			return boundText(
 				[

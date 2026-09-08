@@ -77,6 +77,18 @@ test("partial publication prompts a rewrite only when a draft was created", () =
 	);
 });
 
+test("pending readiness renders as a resumable wait instead of a failure", () => {
+	const rendered = renderLandOutcome({
+		status: "waiting",
+		reason: "PR #42 still has pending CI; retry landing after CI settles.",
+		...emptyStackLandProgress(),
+		remainingRefs: ["feature"],
+	});
+	assert.match(rendered, /Stack landing is waiting/);
+	assert.match(rendered, /retry landing after CI settles/);
+	assert.match(rendered, /Remaining: feature/);
+});
+
 test("cancelled and failed outcomes retain accumulated warnings", () => {
 	assert.match(
 		renderLandOutcome({

@@ -73,7 +73,7 @@ describe("routeLand", () => {
 		);
 	});
 
-	it("keeps a pre-mutation jj frontier blocked so its recovery is visible", async () => {
+	it("maps a resumable stack wait to a blocked Land result with recovery visible", async () => {
 		const recovery = "Watch is bounded. Inspect PR #11, then retry /land after CI settles.";
 		const result = await routeLand({
 			provider: "jj",
@@ -82,8 +82,8 @@ describe("routeLand", () => {
 				outcome: {
 					status: "stack",
 					outcome: {
-						status: "partial",
-						error: recovery,
+						status: "waiting",
+						reason: recovery,
 						frontiers: [
 							{
 								ref: "feat1",

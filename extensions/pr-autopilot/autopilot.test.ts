@@ -564,11 +564,18 @@ describe("pr-autopilot state machine", () => {
 				}
 				return { code: 1, stdout: "", stderr: "network unavailable" };
 			};
-			const result = await fetchPRState(exec, "/repo", 42, null, {
-				handled: [],
-				pendingReviewReplies: [],
-				legacyPendingReplyIds: [],
-			});
+			const result = await fetchPRState(
+				exec,
+				"/repo",
+				42,
+				null,
+				{
+					handled: [],
+					pendingReviewReplies: [],
+					legacyPendingReplyIds: [],
+				},
+				"owner/repo",
+			);
 			assert.match(String(result), /Could not fetch/);
 		});
 	});

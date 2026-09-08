@@ -8,7 +8,7 @@
  */
 
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
-import { ghExec as gh, resolveRepoNameResult } from "../shared/github.ts";
+import { ghExec as gh } from "../shared/github.ts";
 import {
 	autopilotReplyBody,
 	clipLog,
@@ -303,20 +303,12 @@ export async function getReviewThreads(
 	exec: ExecFn,
 	cwd: string,
 	prNumber: number,
-	repo?: string,
+	repo: string,
 	signal?: AbortSignal,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
-	const repoResult =
-		repo !== undefined ? { code: 0, stdout: repo, stderr: "", repo } : await resolveRepoNameResult(exec, cwd, signal);
-	const split = repoResult.repo ? splitRepo(repoResult.repo) : undefined;
+	const split = splitRepo(repo);
 	if (!split) {
-		const reason = repoResult.stderr.trim() || "GitHub CLI returned an invalid repository identity.";
-		return {
-			code: 1,
-			stdout: "",
-			stderr: `Could not resolve GitHub repository for review threads: ${reason}`,
-			threads: [],
-		};
+		return { code: 1, stdout: "", stderr: "Invalid GitHub repository for review threads.", threads: [] };
 	}
 
 	const threads: ReviewThread[] = [];
@@ -324,7 +316,7 @@ export async function getReviewThreads(
 	const cursors = new Set<string>();
 	const budget = { total: 0 };
 	let cursor: string | undefined;
-	let last: ExecFnResult = repoResult;
+	let last: ExecFnResult = { code: 0, stdout: repo, stderr: "" };
 	for (let pageIndex = 0; pageIndex < LIMITS.reviewThreadPages; pageIndex++) {
 		if (signal?.aborted) return { code: 130, stdout: "", stderr: "aborted", threads };
 		const fetched = await fetchReviewThreadPage(exec, cwd, split.owner, split.name, prNumber, cursor, signal);
@@ -391,28 +383,19 @@ export async function getIssueComments(
 	exec: ExecFn,
 	cwd: string,
 	prNumber: number,
-	repo?: string,
+	repo: string,
 	signal?: AbortSignal,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
-	const repoResult =
-		repo !== undefined ? { code: 0, stdout: repo, stderr: "", repo } : await resolveRepoNameResult(exec, cwd, signal);
-	if (!repoResult.repo || !splitRepo(repoResult.repo)) {
-		const reason = repoResult.stderr.trim() || "GitHub CLI returned an invalid repository identity.";
-		return {
-			code: 1,
-			stdout: "",
-			stderr: `Could not resolve GitHub repository for issue comments: ${reason}`,
-			threads: [],
-		};
+	if (!splitRepo(repo)) {
+		return { code: 1, stdout: "", stderr: "Invalid GitHub repository for issue comments.", threads: [] };
 	}
-	const result = await gh(exec, cwd, [
-		"api",
-		`repos/${repoResult.repo}/issues/${prNumber}/comments`,
-		"--method",
-		"GET",
-		"--paginate",
-		"--slurp",
-	]);
+	const result = await gh(
+		exec,
+		cwd,
+		["api", `repos/${repo}/issues/${prNumber}/comments`, "--method", "GET", "--paginate", "--slurp"],
+		20_000,
+		signal,
+	);
 	if (result.code !== 0) return { ...result, threads: [] };
 	const parsed = parseIssueComments(result.stdout.trim() || "[]");
 	if (!parsed.ok) return { code: 1, stdout: "", stderr: parsed.error, threads: [] };
@@ -516,15 +499,12 @@ export async function replyToReviewComment(
 	prNumber: number,
 	inReplyTo: number,
 	body: string,
-	repo?: string,
+	repo: string,
 ): Promise<ExecFnResult> {
-	const repository = repo ?? "{owner}/{repo}";
-	if (repo !== undefined && !splitRepo(repo)) {
-		return { code: 1, stdout: "", stderr: "Invalid explicit repository for review reply." };
-	}
+	if (!splitRepo(repo)) return { code: 1, stdout: "", stderr: "Invalid GitHub repository for review reply." };
 	return gh(exec, cwd, [
 		"api",
-		`repos/${repository}/pulls/${prNumber}/comments`,
+		`repos/${repo}/pulls/${prNumber}/comments`,
 		"-f",
 		`body=${autopilotReplyBody(body)}`,
 		"-F",

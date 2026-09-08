@@ -175,9 +175,11 @@ Land's readiness pass marks a draft ready when authorized. After Land verifies
 the merge, jj advances locally, verifies that the merge commit is an ancestor
 of refreshed trunk, republishes the remainder, and deletes the merged remote
 branch when it still points at the landed head.
-`--readiness` defaults to `watch` because each restack restarts CI. Re-run the
-command after a partial stop; an already-merged bottom PR is advanced and the
-loop continues.
+`--readiness` defaults to `watch` because each restack restarts CI. The watch is
+bounded. If CI remains pending, landing returns a resumable `waiting` outcome
+instead of reporting an Autopilot failure; retry after CI settles. Infrastructure
+failures remain partial errors with their Autopilot diagnostic. An already-merged
+bottom PR is advanced when the command is rerun.
 
 Do not land a child PR before its base. Do not call `gh pr merge` directly.
 

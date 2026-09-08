@@ -64,6 +64,16 @@ const nativeStack: NativeStack = {
 	})),
 };
 
+function pending(prNumber: number, sha: string): AutopilotResult {
+	return {
+		...ready(prNumber, sha),
+		status: "blocked",
+		mergeReady: false,
+		blockedReasons: ["CI still pending after watch"],
+		blockedCodes: ["ci-pending-after-watch"],
+	};
+}
+
 function ready(prNumber: number, sha: string): AutopilotResult {
 	return {
 		status: "merge-ready",
@@ -116,6 +126,56 @@ function deps(overrides: Partial<ResolvedOrchestratorDeps> = {}): ResolvedOrches
 }
 
 describe("native landing failures", () => {
+	it("classifies bounded pending CI separately from an autopilot failure", async () => {
+		const result = await runNativeLand(
+			{ ...options, readiness: "watch" },
+			deps({
+				preparePr: async ({ prNumber, expectedHeadSha }) => ({
+					handled: true,
+					outcome: pending(prNumber, expectedHeadSha),
+				}),
+			}),
+			"squash",
+			model,
+			slices,
+			nativeStack,
+			repository,
+			gateway(),
+		);
+		assert.equal(result.status, "waiting");
+		if (result.status === "waiting") {
+			assert.match(result.reason, /pending CI.*retry landing/);
+			assert.match(result.reason, /Do not rebase or republish/);
+			assert.match(result.reason, /CI still pending after watch/);
+		}
+		assert.equal(result.frontiers[0]?.state, "blocked");
+	});
+
+	it("preserves autopilot infrastructure failures as partial errors", async () => {
+		const result = await runNativeLand(
+			{ ...options, readiness: "watch" },
+			deps({
+				preparePr: async () => ({
+					handled: true,
+					outcome: {
+						...ready(11, "aaa-commit"),
+						status: "failed",
+						mergeReady: false,
+						blockedReasons: ["GitHub API unavailable"],
+					},
+				}),
+			}),
+			"squash",
+			model,
+			slices,
+			nativeStack,
+			repository,
+			gateway(),
+		);
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") assert.match(result.error, /PR autopilot failed.*GitHub API unavailable/);
+	});
+
 	it("rejects a changed generation before merge submission", async () => {
 		let mergeCalls = 0;
 		const native = gateway({

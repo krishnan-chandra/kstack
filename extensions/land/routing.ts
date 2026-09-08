@@ -55,6 +55,17 @@ function mapStackOutcome(outcome: StackLandOutcome): LandResult {
 			blockers: [`Native stack #${outcome.nativeStackNumber} is queued for merge.`],
 		};
 	}
+	if (outcome.status === "waiting") {
+		return {
+			status: "blocked",
+			frontiers,
+			remainingRefs,
+			completedMutations,
+			warnings,
+			recoveryOperationIds,
+			blockers: [outcome.reason],
+		};
+	}
 	if (outcome.status === "partial" || outcome.status === "indeterminate") {
 		const blocker = outcome.status === "partial" ? outcome.error : outcome.inFlight;
 		const mutationAccepted = frontiers.some((frontier) => frontier.state === "landed" || frontier.state === "queued");

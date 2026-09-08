@@ -70,7 +70,7 @@ export async function runNativeLand(
 				blockers: [{ code: "land-unavailable", message: "pr-autopilot extension is unavailable." }],
 			};
 		}
-		for (const slice of mapped) {
+		for (const [sliceIndex, slice] of mapped.entries()) {
 			if (slice.alreadyMerged) continue;
 			deps.ui.setStatus(`jj-stack: preparing #${slice.prNumber}`);
 			let response = await deps.preparePr({
@@ -107,6 +107,24 @@ export async function runNativeLand(
 				}
 			}
 			const outcome = response.outcome;
+			if (options.readiness === "watch" && outcome.blockedCodes?.includes("ci-pending-after-watch")) {
+				frontiers[sliceIndex] = { ...frontiers[sliceIndex], state: "blocked" };
+				return {
+					status: "waiting",
+					reason: [
+						`PR #${slice.prNumber} still has pending CI after the bounded readiness watch; retry landing after CI settles. Do not rebase or republish unless the PR head or base changed.`,
+						...outcome.blockedReasons,
+					].join(" "),
+					...progress(),
+				};
+			}
+			if (outcome.status === "failed") {
+				return {
+					status: "partial",
+					error: `PR autopilot failed for PR #${slice.prNumber}: ${outcome.blockedReasons.join("; ") || "unknown error"}`,
+					...progress(),
+				};
+			}
 			if (
 				outcome.status !== "merge-ready" ||
 				outcome.prState?.verifiedHeadSha !== slice.headCommitId ||
