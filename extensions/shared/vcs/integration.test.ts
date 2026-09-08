@@ -14,7 +14,8 @@ function source(path: string): string {
 describe("configured VCS adapter boundary", () => {
 	it("loads and constructs exactly one configured backend in every mutating entrypoint", () => {
 		for (const extension of MUTATING_EXTENSIONS) {
-			const text = source(join(EXTENSIONS_DIR, extension, "index.ts"));
+			const modules = extension === "plan-implement" ? ["index.ts", "orchestration.ts"] : ["index.ts"];
+			const text = modules.map((module) => source(join(EXTENSIONS_DIR, extension, module))).join("\n");
 			assert.equal(text.match(/loadVcsBackend\s*\(/g)?.length, 1, `${extension} must load VCS config once`);
 			assert.equal(text.match(/createVcsBackend\s*\(/g)?.length, 1, `${extension} must construct one backend`);
 			assert.doesNotMatch(text, /createGitBackend|new GitBackend|new JjBackend/);
@@ -24,8 +25,13 @@ describe("configured VCS adapter boundary", () => {
 	it("owns reusable workflow preflight below the Pi adapter", () => {
 		assert.doesNotMatch(source(join(EXTENSIONS_DIR, "pr-autopilot", "index.ts")), /\.preflight\s*\(/);
 		assert.equal(source(join(EXTENSIONS_DIR, "pr-autopilot", "driver.ts")).match(/\.preflight\s*\(/g)?.length, 1);
-		// plan-implement owns normal and stack adapter preflights; fast-mode preflight stays in fast-runner.
-		assert.equal(source(join(EXTENSIONS_DIR, "plan-implement", "index.ts")).match(/\.preflight\s*\(/g)?.length, 2);
+		// plan-implement owns normal and stack adapter preflights in its orchestration module;
+		// fast-mode preflight stays in fast-runner.
+		assert.doesNotMatch(source(join(EXTENSIONS_DIR, "plan-implement", "index.ts")), /\.preflight\s*\(/);
+		assert.equal(
+			source(join(EXTENSIONS_DIR, "plan-implement", "orchestration.ts")).match(/\.preflight\s*\(/g)?.length,
+			2,
+		);
 	});
 
 	it("keeps direct Git and jj mutations out of workflow modules", () => {
