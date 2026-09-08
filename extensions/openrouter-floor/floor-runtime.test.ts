@@ -35,7 +35,7 @@ function deferredLedger() {
 			return result;
 		},
 		async read() {
-			return [];
+			return { events: [], scopeLabel: "working directory" };
 		},
 		async flush() {
 			await queue;
@@ -154,6 +154,7 @@ describe("floor runtime", () => {
 		const scope = await tempScope();
 		const ledger = createFloorLedger({
 			rootDirectory: join(scope, "ledger-root"),
+			resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
 			processId: "p-runtime",
 			now: () => now,
 		});
@@ -200,6 +201,7 @@ describe("floor runtime", () => {
 		const scope = await tempScope();
 		const ledger = createFloorLedger({
 			rootDirectory: join(scope, "ledger-root"),
+			resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
 			processId: "p-runtime-failure",
 			now: () => now,
 		});

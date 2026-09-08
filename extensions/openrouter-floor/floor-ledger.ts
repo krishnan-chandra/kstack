@@ -1,9 +1,14 @@
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { ExecFn } from "../shared/git-exec.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import { isRecord } from "../shared/narrow.ts";
+import { resolveRepositoryIdentity } from "../shared/repository-identity.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
+import { loadVcsBackend } from "../shared/vcs/config.ts";
 
 export type ServiceTier = "flex" | "default" | "priority" | "unknown";
 export type StatsRange = "process" | "today" | "7d" | "30d";
@@ -62,9 +67,22 @@ interface LedgerFileSystem {
 	unlink(path: string): Promise<void>;
 }
 
+export type FloorScopeLabel = "repository" | "working directory";
+
+interface FloorScopeResolution {
+	key: string;
+	label: FloorScopeLabel;
+}
+
+interface FloorLedgerReadResult {
+	events: LedgerEvent[];
+	scopeLabel: FloorScopeLabel;
+}
+
 interface FloorLedgerOptions {
 	/** Parent of all scope directories; defaults to <agentDir>/openrouter-floor/ledger-v1. */
 	rootDirectory?: string;
+	resolveScope?: (cwd: string) => Promise<FloorScopeResolution>;
 	fileSystem?: LedgerFileSystem;
 	processId?: string;
 	now?: () => Date;
@@ -76,7 +94,7 @@ interface FloorLedgerOptions {
 export interface FloorLedger {
 	readonly processId: string;
 	append(scope: string, input: LedgerInput): Promise<void>;
-	read(scope: string): Promise<LedgerEvent[]>;
+	read(scope: string): Promise<FloorLedgerReadResult>;
 	flush(): Promise<void>;
 }
 
@@ -85,6 +103,7 @@ const DEFAULT_MAX_LINES_PER_SHARD = 10_000;
 const DEFAULT_MAX_TOTAL_BYTES = 5 * 1024 * 1024;
 const MAX_EVENT_BYTES = 8 * 1024;
 const MAX_EVENT_LINES = 20_000;
+const IDENTITY_OUTPUT_CAP_BYTES = 64 * 1024;
 const SHARD_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const PROCESS_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
@@ -111,6 +130,31 @@ const nativeFileSystem: LedgerFileSystem = {
 		await unlink(path);
 	},
 };
+
+const nodeExec: ExecFn = async (command, args, options) =>
+	new Promise((resolveResult) => {
+		execFile(
+			command,
+			args,
+			{
+				cwd: options.cwd,
+				timeout: options.timeout,
+				killSignal: "SIGKILL",
+				maxBuffer: IDENTITY_OUTPUT_CAP_BYTES,
+				signal: options.signal,
+			},
+			(error, stdout, stderr) => {
+				let code = 0;
+				if (error !== null) code = 1;
+				resolveResult({
+					code,
+					stdout: String(stdout),
+					stderr: String(stderr),
+					killed: error?.killed,
+				});
+			},
+		);
+	});
 
 function isNotFound(error: BoundaryValue): boolean {
 	return isRecord(error) && error.code === "ENOENT";
@@ -225,16 +269,33 @@ function diagnostic(onDiagnostic: (diagnostic: string) => void, message: string)
 	}
 }
 
-function scopeKeyFor(cwd: string): string {
-	return createHash("sha256").update(resolve(cwd)).digest("hex");
+function workingDirectoryScope(cwd: string): FloorScopeResolution {
+	let canonical: string;
+	try {
+		canonical = realpathSync(cwd);
+	} catch {
+		canonical = resolve(cwd);
+	}
+	return {
+		key: createHash("sha256").update(canonical).digest("hex"),
+		label: "working directory",
+	};
+}
+
+async function defaultResolveScope(cwd: string): Promise<FloorScopeResolution> {
+	const identity = await resolveRepositoryIdentity(nodeExec, cwd, {
+		backend: loadVcsBackend().backend,
+		timeoutMs: 5_000,
+	});
+	return identity.ok ? { key: identity.key, label: "repository" } : workingDirectoryScope(cwd);
 }
 
 export function defaultLedgerRoot(env: NodeJS.ProcessEnv = process.env): string {
 	return join(getAgentDir(env), "openrouter-floor", "ledger-v1");
 }
 
-export function ledgerDirectoryFor(rootDirectory: string, cwd: string): string {
-	return join(rootDirectory, scopeKeyFor(cwd));
+export function ledgerDirectoryFor(rootDirectory: string, scopeKey: string): string {
+	return join(rootDirectory, scopeKey);
 }
 
 export function hashGenerationId(responseId: string): GenerationKeyHash {
@@ -285,8 +346,20 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 	if (!Number.isInteger(maxTotalBytes) || maxTotalBytes < 1) throw new Error("Invalid floor ledger byte limit");
 	const onDiagnostic = options.onDiagnostic ?? (() => {});
 	const rootDirectory = options.rootDirectory ?? defaultLedgerRoot();
+	const resolveScope = options.resolveScope ?? defaultResolveScope;
 	let queue = Promise.resolve();
 	const lineCounts = new Map<string, number>();
+	const scopeResolutions = new Map<string, Promise<FloorScopeResolution>>();
+
+	function resolutionFor(cwd: string): Promise<FloorScopeResolution> {
+		const existing = scopeResolutions.get(cwd);
+		if (existing !== undefined) return existing;
+		const pending = Promise.resolve()
+			.then(() => resolveScope(cwd))
+			.catch(() => workingDirectoryScope(cwd));
+		scopeResolutions.set(cwd, pending);
+		return pending;
+	}
 
 	function enqueue(operation: () => Promise<void>): Promise<void> {
 		const result = queue.then(operation);
@@ -345,10 +418,11 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 			diagnostic(onDiagnostic, "ledger append rejected: invalid event id");
 			return;
 		}
-		const directory = ledgerDirectoryFor(rootDirectory, scope);
+		const resolution = await resolutionFor(scope);
+		const scopeKey = resolution.key;
+		const directory = ledgerDirectoryFor(rootDirectory, scopeKey);
 		const path = join(directory, fileNameFor(processId, now()));
 
-		const scopeKey = scopeKeyFor(scope);
 		const event = materializeEvent(input, processId, scopeKey);
 		if (!parseLedgerEvent(event, scopeKey)) {
 			diagnostic(onDiagnostic, "ledger append rejected: invalid event");
@@ -386,19 +460,20 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 		lineCounts.set(path, count + 1);
 	}
 
-	async function read(scope: string): Promise<LedgerEvent[]> {
-		const directory = ledgerDirectoryFor(rootDirectory, scope);
+	async function read(scope: string): Promise<FloorLedgerReadResult> {
+		const resolution = await resolutionFor(scope);
+		const scopeKey = resolution.key;
+		const directory = ledgerDirectoryFor(rootDirectory, scopeKey);
 		let names: string[];
 		try {
 			names = await fileSystem.readdir(directory);
 		} catch (error) {
-			if (isNotFound(error)) return [];
+			if (isNotFound(error)) return { events: [], scopeLabel: resolution.label };
 			diagnostic(onDiagnostic, "ledger read failed: directory unavailable");
-			return [];
+			return { events: [], scopeLabel: resolution.label };
 		}
 
 		names = await pruneOldShards(directory, names);
-		const scopeKey = scopeKeyFor(scope);
 		const events: LedgerEvent[] = [];
 		let totalBytes = 0;
 		for (const name of names.filter(validShardName).sort()) {
@@ -443,7 +518,7 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 				if (dateIsRetained(event.at, now())) events.push(event);
 			}
 		}
-		return events;
+		return { events, scopeLabel: resolution.label };
 	}
 
 	return {

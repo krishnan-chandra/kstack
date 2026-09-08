@@ -170,14 +170,15 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 
 		async report(input) {
 			await dependencies.ledger.flush();
-			const events = await dependencies.ledger.read(input.scope);
+			const readResult = await dependencies.ledger.read(input.scope);
 			const aggregateInput: AggregateFloorReportInput = {
 				range: input.range,
+				scopeLabel: readResult.scopeLabel,
 				now: clock.now(),
 				processId: input.range === "process" ? dependencies.ledger.processId : undefined,
 				onDiagnostic,
 			};
-			return aggregateFloorReport(events, aggregateInput);
+			return aggregateFloorReport(readResult.events, aggregateInput);
 		},
 
 		async flush() {

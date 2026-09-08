@@ -224,8 +224,16 @@ read has the same fail-closed behavior.
 
 Versioned review state and flake reruns persist under the agent directory's
 `pr-autopilot/` subdirectory (`$PI_CODING_AGENT_DIR/pr-autopilot/`, default
-`~/.pi/agent/pr-autopilot/`). State schema 3 identifies a rerun attempt by its
-Actions run ID and exact head SHA. Jobs from one run share that attempt, while
+`~/.pi/agent/pr-autopilot/`). State is keyed by the repository's canonical Git
+common directory, so linked worktrees share one repository scope. If the
+repository-keyed file is missing, Autopilot migrates state stored under the
+current worktree's legacy key and leaves that legacy file in place. An existing
+repository-keyed file is authoritative even when malformed, and legacy files
+from other worktrees are not searched or merged; each worktree migrates its own
+legacy state when it next drives a PR.
+
+State schema 3 identifies a rerun attempt by its Actions run ID and exact head
+SHA. Jobs from one run share that attempt, while
 separate runs remain independent even when their job names match. Every settled
 request consumes the attempt, including a failed request or one whose acceptance
 GitHub did not confirm. Autopilot saves that record before it starts another

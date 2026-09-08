@@ -28,6 +28,7 @@ test("standalone check scopes GitHub commands from a non-colocated jj origin", a
 	});
 
 	let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
+	const identityCalls: string[] = [];
 	const host: Partial<ExtensionAPI> = {
 		on() {},
 		registerCommand(_name, value) {
@@ -40,6 +41,14 @@ test("standalone check scopes GitHub commands from a non-colocated jj origin", a
 		exec: async (program, args, options) => {
 			if (program === "jj" && args.join(" ") === "git remote list --no-pager --color=never") {
 				return { code: 0, stdout: "origin git@github.com:owner/repo.git\n", stderr: "", killed: false };
+			}
+			if (program === "jj" && args.join(" ") === "git root") {
+				identityCalls.push(`${program} ${args.join(" ")}`);
+				return { code: 0, stdout: `${harness.cwd}\n`, stderr: "", killed: false };
+			}
+			if (program === "git" && args.includes("--git-common-dir")) {
+				identityCalls.push(`${program} ${args.join(" ")}`);
+				return { code: 0, stdout: `${harness.cwd}\n`, stderr: "", killed: false };
 			}
 			const result = await harness.exec(program, args, { ...options, cwd: harness.cwd });
 			return { ...result, killed: false };
@@ -74,6 +83,10 @@ test("standalone check scopes GitHub commands from a non-colocated jj origin", a
 		repositoryCalls.join("\n"),
 	);
 	assert.ok(harness.calls.some((call) => call.includes("api repos/owner/repo/issues/42/comments")));
+	assert.deepEqual(identityCalls, [
+		"jj git root",
+		`git --git-dir=${harness.cwd} rev-parse --path-format=absolute --git-common-dir`,
+	]);
 	assert.deepEqual(harness.unexpected, []);
 	assert.ok(notices.some((message) => /looks merge-ready/i.test(message)));
 });

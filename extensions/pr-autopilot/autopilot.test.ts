@@ -650,6 +650,68 @@ describe("pr-autopilot state machine", () => {
 			});
 		});
 
+		it("migrates legacy worktree-keyed state to the repository key", async () => {
+			await withAgentDir(async () => {
+				const legacyRepoKey = "legacykey1";
+				const repoKey = "newkey000001";
+				const legacy = persistedState(legacyRepoKey);
+				const legacyPath = persistPath(legacyRepoKey, 5);
+				const newPath = persistPath(repoKey, 5);
+				await savePersistedState(legacy);
+				const legacyRaw = await readFile(legacyPath, "utf8");
+
+				const loaded = await loadPersistedState(repoKey, 5, legacyRepoKey);
+
+				assert.equal(loaded.kind, "ready");
+				assert.deepEqual(loaded.state, { ...legacy, repoKey });
+				if (loaded.kind === "ready") assert.match(loaded.migrationNote ?? "", /worktree key to the repository key/);
+				assert.equal(await readFile(newPath, "utf8"), JSON.stringify({ ...legacy, repoKey }));
+				assert.equal(await readFile(legacyPath, "utf8"), legacyRaw);
+			});
+		});
+
+		it("prefers existing repository-keyed state over legacy state", async () => {
+			await withAgentDir(async () => {
+				const legacyRepoKey = "legacykey1";
+				const repoKey = "newkey000001";
+				await savePersistedState({ ...persistedState(legacyRepoKey), headSha: "legacy" });
+				const repositoryState = { ...persistedState(repoKey), headSha: "repository" };
+				await savePersistedState(repositoryState);
+
+				const loaded = await loadPersistedState(repoKey, 5, legacyRepoKey);
+
+				assert.deepEqual(loaded.state, repositoryState);
+				if (loaded.kind === "ready") assert.equal(loaded.migrationNote, undefined);
+			});
+		});
+
+		it("does not fall back to legacy state when the repository-keyed file is malformed", async () => {
+			await withAgentDir(async () => {
+				const legacyRepoKey = "legacykey1";
+				const repoKey = "newkey000001";
+				await savePersistedState(persistedState(legacyRepoKey));
+				await writeFile(persistPath(repoKey, 5), "not json", { mode: 0o600 });
+
+				const loaded = await loadPersistedState(repoKey, 5, legacyRepoKey);
+
+				assert.equal(loaded.kind, "blocked");
+			});
+		});
+
+		it("surfaces a corrupt legacy file instead of ignoring it", async () => {
+			await withAgentDir(async () => {
+				const legacyRepoKey = "legacykey1";
+				const repoKey = "newkey000001";
+				const legacyPath = persistPath(legacyRepoKey, 5);
+				await mkdir(dirname(legacyPath), { recursive: true });
+				await writeFile(legacyPath, "not json", { mode: 0o600 });
+
+				const loaded = await loadPersistedState(repoKey, 5, legacyRepoKey);
+
+				assert.equal(loaded.kind, "blocked");
+			});
+		});
+
 		it("keeps the previous state visible until its replacement is ready", async () => {
 			await withAgentDir(async () => {
 				const repoKey = `atomic-${process.pid}-${Date.now()}`;

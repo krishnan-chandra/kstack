@@ -47,7 +47,7 @@ describe("aggregateFloorReport", () => {
 			generation("g3", "2026-09-07T10:04:00.000Z", "observed", "unknown", undefined, "no-response-id"),
 		];
 
-		const report = aggregateFloorReport(events, { range: "today", now });
+		const report = aggregateFloorReport(events, { range: "today", scopeLabel: "repository", now });
 		assert.equal(report.rewrites, 2);
 		assert.equal(report.completedGenerations, 3);
 		assert.deepEqual(report.tiers, { flex: 1, default: 1, priority: 0, unknown: 1 });
@@ -65,7 +65,7 @@ describe("aggregateFloorReport", () => {
 		];
 		events[2] = { ...events[2], processId: "p-other" };
 		events[3] = { ...events[3], processId: "p-other" };
-		const report = aggregateFloorReport(events, { range: "process", now, processId });
+		const report = aggregateFloorReport(events, { range: "process", scopeLabel: "repository", now, processId });
 		assert.equal(report.completedGenerations, 1);
 		assert.equal(report.tiers.priority, 1);
 	});
@@ -78,7 +78,12 @@ describe("aggregateFloorReport", () => {
 				generation("g-conflict", "2026-09-07T10:00:00.000Z", "resolved", "flex", key),
 				generation("g-conflict", "2026-09-07T10:01:00.000Z", "resolved", "default", key),
 			],
-			{ range: "today", now, onDiagnostic: (diagnostic) => diagnostics.push(diagnostic) },
+			{
+				range: "today",
+				scopeLabel: "repository",
+				now,
+				onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			},
 		);
 		assert.equal(report.tiers.default, 1);
 		assert.deepEqual(diagnostics, ["conflicting generation tier resolutions"]);
@@ -96,12 +101,14 @@ describe("stats command helpers", () => {
 	it("formats unknowns and separate populations without network details", () => {
 		const text = formatFloorReport({
 			range: "30d",
+			scopeLabel: "repository",
 			rewrites: 2,
 			completedGenerations: 3,
 			tiers: { flex: 1, default: 1, priority: 0, unknown: 1 },
 			metadataCoverage: 2 / 3,
 			flexAmongKnownTiers: 1 / 2,
 		});
+		assert.match(text, /scope: repository/);
 		assert.match(text, /Floor rewrites observed\s+2/);
 		assert.match(text, /Unknown includes missing response IDs/);
 		assert.doesNotMatch(text, /generation-id|Authorization|prompt/i);

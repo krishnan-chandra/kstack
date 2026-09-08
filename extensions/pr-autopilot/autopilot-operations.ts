@@ -73,8 +73,12 @@ import {
 } from "./types.ts";
 import { shouldForceAsk } from "./untrusted.ts";
 
-export function repoPersistKey(cwd: string): string {
+export function legacyRepoPersistKey(cwd: string): string {
 	return createHash("sha256").update(realpathSync(cwd)).digest("hex").slice(0, 12);
+}
+
+export function repositoryPersistKey(identityKey: string): string {
+	return identityKey.slice(0, 12);
 }
 
 export function persistPath(repoKey: string, prNumber: number): string {
@@ -279,10 +283,33 @@ async function checkStateDir(dir: string): Promise<StateDirCheck> {
 	}
 }
 
-export async function loadPersistedState(repoKey: string, prNumber: number): Promise<LoadedAutopilotState> {
+async function loadLegacyState(
+	repoKey: string,
+	prNumber: number,
+	legacyRepoKey: string | undefined,
+): Promise<LoadedAutopilotState> {
+	const empty = { kind: "ready", state: emptyPersistedState(repoKey, prNumber) } satisfies LoadedAutopilotState;
+	if (legacyRepoKey === undefined || legacyRepoKey === repoKey) return empty;
+	const loaded = await loadPersistedState(legacyRepoKey, prNumber);
+	if (loaded.kind === "blocked") return loaded;
+	if (loaded.state.headSha === "") return empty;
+	const rekeyed = { ...loaded.state, repoKey };
+	await savePersistedState(rekeyed);
+	return {
+		kind: "ready",
+		state: rekeyed,
+		migrationNote: "Migrated PR Autopilot state from the worktree key to the repository key.",
+	};
+}
+
+export async function loadPersistedState(
+	repoKey: string,
+	prNumber: number,
+	legacyRepoKey?: string,
+): Promise<LoadedAutopilotState> {
 	const path = persistPath(repoKey, prNumber);
 	const stateDir = await checkStateDir(dirname(path));
-	if (stateDir === "missing") return { kind: "ready", state: emptyPersistedState(repoKey, prNumber) };
+	if (stateDir === "missing") return loadLegacyState(repoKey, prNumber, legacyRepoKey);
 	if (stateDir === "unsafe") return blockedState(repoKey, prNumber, "the state directory is unsafe.");
 	let handle: FileHandle;
 	try {
@@ -290,7 +317,7 @@ export async function loadPersistedState(repoKey: string, prNumber: number): Pro
 	} catch (error) {
 		const code = /* SAFETY: Node filesystem errors expose an optional string code. */ (error as NodeJS.ErrnoException)
 			.code;
-		if (code === "ENOENT") return { kind: "ready", state: emptyPersistedState(repoKey, prNumber) };
+		if (code === "ENOENT") return loadLegacyState(repoKey, prNumber, legacyRepoKey);
 		return blockedState(repoKey, prNumber, "the state file could not be opened safely.");
 	}
 	try {

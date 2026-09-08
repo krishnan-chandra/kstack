@@ -29,6 +29,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { commandDiagnostic } from "../shared/git-exec.ts";
+import { resolveRepositoryIdentity } from "../shared/repository-identity.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { createPrMutation } from "../shared/vcs/mutation.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
@@ -36,10 +37,11 @@ import {
 	applyThreadReplies,
 	applyTriageGuardrails,
 	fetchPRState,
+	legacyRepoPersistKey,
 	loadPersistedState,
 	maxFixCycles,
 	parseTriage,
-	repoPersistKey,
+	repositoryPersistKey,
 	runChildRole,
 	runCleanup,
 	savePersistedState,
@@ -223,7 +225,6 @@ export async function runAutopilot(
 		return finish("blocked", [msg]);
 	}
 	const prNumber = target.prNumber;
-	const repoKey = repoPersistKey(cwd);
 	const selected = params.selectedModel ?? pickModel(config.models);
 	const terminalPrReason = (snapshot: PRState): string | undefined =>
 		snapshot.state === "open" ? undefined : describeBlockers(snapshot);
@@ -239,7 +240,14 @@ export async function runAutopilot(
 
 	const repoName = params.repository;
 	if (repoName === undefined) return finish("failed", ["resolved GitHub repository was not forwarded"]);
-	const loaded = await ops.loadPersistedState(repoKey, prNumber);
+	const identity = await resolveRepositoryIdentity(exec, cwd, {
+		backend: backend.id === "jj" ? "jj" : "git",
+		signal,
+	});
+	const legacyRepoKey = legacyRepoPersistKey(cwd);
+	const repoKey = identity.ok ? repositoryPersistKey(identity.key) : legacyRepoKey;
+	if (!identity.ok) notify(`Using the worktree key for PR Autopilot state: ${identity.error}`, "warning");
+	const loaded = await ops.loadPersistedState(repoKey, prNumber, legacyRepoKey);
 	let persisted = loaded.state;
 	const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;
 	const reviewMutationBlocker = loaded.kind === "blocked" ? loaded.reviewMutationBlocker : undefined;
