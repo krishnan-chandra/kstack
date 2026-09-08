@@ -44,7 +44,7 @@ function apply(response: Parameters<typeof applyDelegatedFrontierSettlement>[0][
 	return applyDelegatedFrontierSettlement({ response, frontier, progress: prior });
 }
 
-function attempted(state: "queued" | "blocked", expectedHeadSha = LOCAL_SHA): StackLandFrontier {
+function attempted(state: "queued" | "blocked" | "indeterminate", expectedHeadSha = LOCAL_SHA): StackLandFrontier {
 	return { ...frontier, state, expectedHeadSha };
 }
 
@@ -126,7 +126,7 @@ test("preserves indeterminacy regardless of mutations", () => {
 			status: "indeterminate",
 			inFlight: "Land returned indeterminate.",
 			...progress(),
-			frontiers: [attempted("blocked")],
+			frontiers: [attempted("indeterminate")],
 			completedMutations: ["submitted merge"],
 		},
 	});

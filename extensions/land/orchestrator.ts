@@ -1,5 +1,11 @@
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
-import { getPullRequest, getRepository, mergePullRequest, waitForMerge } from "../shared/github.ts";
+import {
+	getPullRequest,
+	getRepository,
+	isGitHubIndeterminate,
+	mergePullRequest,
+	waitForMerge,
+} from "../shared/github.ts";
 import type { ExecFn, FrontierResult, LandOptions, LandResult, MergeMethod } from "./types.ts";
 
 type LandExecution =
@@ -55,7 +61,7 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 	const options = execution.options;
 	const expectedHeadSha = execution.kind === "stack-frontier" ? execution.expectedHeadSha : undefined;
 	const expectedBaseRef = execution.kind === "stack-frontier" ? execution.expectedBaseRef : undefined;
-	let acceptedMutation = false;
+	let dispatchState: "not-attempted" | "dispatched" | "accepted" = "not-attempted";
 	let frontier: FrontierResult | undefined;
 	let autopilotStatus: AutopilotResult["status"] | undefined;
 	const completedMutations: string[] = [];
@@ -190,8 +196,9 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 				],
 			};
 		}
+		dispatchState = "dispatched";
 		await mergePullRequest(deps.exec, deps.cwd, ready.number, method, ready.headOid, deps.signal);
-		acceptedMutation = true;
+		dispatchState = "accepted";
 		completedMutations.push(`GitHub accepted merge/queue request for PR #${ready.number}`);
 
 		const verified = await waitForMerge(
@@ -219,7 +226,20 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 		};
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
-		if (acceptedMutation && frontier) {
+		if (isGitHubIndeterminate(error)) {
+			return {
+				status: "indeterminate",
+				frontiers: frontier ? [{ ...frontier, state: "indeterminate" }] : [],
+				autopilotRan: autopilotStatus !== undefined,
+				autopilotStatus,
+				remainingRefs: [],
+				completedMutations,
+				blockers: [
+					`Merge request for PR #${options.target.prNumber} is indeterminate: ${reason}. Inspect remote state before retrying.`,
+				],
+			};
+		}
+		if (dispatchState === "accepted" && frontier) {
 			return {
 				status: "partially-landed",
 				frontiers: [{ ...frontier, state: "queued" }],
@@ -232,8 +252,25 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 				],
 			};
 		}
-		if (deps.signal.aborted)
-			return empty("aborted", "Landing was aborted before GitHub accepted a merge/queue request.");
-		return empty("failed", reason);
+		if (deps.signal.aborted) {
+			return {
+				status: "aborted",
+				frontiers: frontier ? [{ ...frontier, state: "not-attempted" }] : [],
+				autopilotRan: autopilotStatus !== undefined,
+				autopilotStatus,
+				remainingRefs: [],
+				completedMutations,
+				blockers: ["Landing was aborted before GitHub accepted a merge/queue request."],
+			};
+		}
+		return {
+			status: "failed",
+			frontiers: frontier ? [{ ...frontier, state: "blocked" }] : [],
+			autopilotRan: autopilotStatus !== undefined,
+			autopilotStatus,
+			remainingRefs: [],
+			completedMutations,
+			blockers: [reason],
+		};
 	}
 }

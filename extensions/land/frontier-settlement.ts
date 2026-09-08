@@ -60,7 +60,8 @@ export function applyDelegatedFrontierSettlement(input: {
 
 	const completedMutations = [...progress.completedMutations, ...outcome.completedMutations];
 	const error = outcome.blockers.join(" ") || `Land returned ${outcome.status}.`;
-	const frontierState: StackLandFrontier["state"] = outcome.status === "partially-landed" ? "queued" : "blocked";
+	const frontierState: StackLandFrontier["state"] =
+		outcome.status === "partially-landed" ? "queued" : outcome.status === "indeterminate" ? "indeterminate" : "blocked";
 	const haltedProgress = {
 		...progress,
 		frontiers: [...progress.frontiers, { ...settledFrontier, state: frontierState }],

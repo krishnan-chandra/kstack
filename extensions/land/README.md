@@ -120,6 +120,12 @@ bounds the window of undetected retargeting, but cannot atomically eliminate the
 remote read-to-mutation race on the service side. The merge command passes
 `--match-head-commit`.
 
+A merge request has four observable outcomes at the mutation boundary:
+1. **Not sent**: validation blocked the run, confirmation was declined, or cancellation fired before dispatch.
+2. **Refused by GitHub**: GitHub conclusively rejected the request (nonzero process exit without termination). The PR remains unmerged and the frontier is preserved as blocked.
+3. **Acceptance indeterminate**: the `gh` process was killed by timeout or signal after dispatch, or runner transport was lost. Remote acceptance cannot be disproved. Recovery requires fresh read-only remote inspection, never repeating the merge automatically.
+4. **Accepted but unverified**: GitHub acknowledged the merge/queue request (exit 0), but polling was interrupted, timed out, or stopped before remote `MERGED` state could be verified. Land reports `partially-landed` and preserves the accepted mutation.
+
 A successful `gh pr merge` command is not proof that the PR merged. Land polls
 GitHub until the pinned PR reports `MERGED`. If GitHub accepts the request but
 polling fails, times out, or is cancelled, Land reports `partially-landed` and

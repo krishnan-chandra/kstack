@@ -65,3 +65,14 @@ test("keeps bounded-watch recovery visible in the collapsed result", () => {
 	];
 	assert.equal(summarizeLandResult(blocked), blocked.blockers[0]);
 });
+
+test("summarizes indeterminate single and stacked pull requests", () => {
+	const single = summarizeLandResult(result("indeterminate", [{ ...pr105, state: "indeterminate" }]));
+	assert.equal(single, "Landing PR #105 is indeterminate. Inspect the remote state before retrying.");
+
+	const mixed = summarizeLandResult(result("partially-landed", [pr105, { ...pr106, state: "indeterminate" }]));
+	assert.equal(mixed, "#105 merged. #106 acceptance indeterminate.");
+
+	const empty = summarizeLandResult(result("indeterminate"));
+	assert.equal(empty, "Landing acceptance is indeterminate. Inspect the remote state before retrying.");
+});

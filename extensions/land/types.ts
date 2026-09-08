@@ -18,7 +18,7 @@ export interface FrontierResult {
 	url: string;
 	expectedHeadSha: string;
 	method: MergeMethod | "graphite";
-	state: "landed" | "queued" | "blocked" | "not-attempted";
+	state: "landed" | "queued" | "blocked" | "not-attempted" | "indeterminate";
 }
 export interface LandResult {
 	status: "landed" | "partially-landed" | "indeterminate" | "blocked" | "declined" | "aborted" | "failed";

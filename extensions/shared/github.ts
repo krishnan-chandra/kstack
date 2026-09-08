@@ -1,4 +1,5 @@
 import type { ExecFn, ExecFnResult } from "./git-exec.ts";
+import { GitHubError, isGitHubIndeterminate, runGitHubMutation } from "./github-command.ts";
 import { asRecord } from "./narrow.ts";
 import type { NavigationStatus } from "./stack/topology.ts";
 import { type BoundaryValue, isBoolean, isNumber, isObject, isString, type JsonObject } from "./validation.ts";
@@ -297,12 +298,30 @@ export async function mergePullRequest(
 	signal?: AbortSignal,
 	limitOverrides: Partial<GithubLimits> = {},
 ): Promise<void> {
+	if (signal?.aborted) {
+		throw new GitHubError(`Merge request for PR #${number} was aborted before dispatch.`);
+	}
 	const limits = withDefaults(limitOverrides);
-	const out = await exec("gh", ["pr", "merge", String(number), `--${method}`, "--match-head-commit", sha], {
-		cwd,
-		timeout: limits.mergeMs,
-		signal,
-	});
+	let out: ExecFnResult;
+	try {
+		out = await exec("gh", ["pr", "merge", String(number), `--${method}`, "--match-head-commit", sha], {
+			cwd,
+			timeout: limits.mergeMs,
+			signal,
+		});
+	} catch (error) {
+		if (error instanceof GitHubError && error.kind === "indeterminate") throw error;
+		throw new GitHubError(
+			`GitHub merge request for PR #${number} ended without a conclusive result: ${error instanceof Error ? error.message : String(error)}`,
+			"indeterminate",
+		);
+	}
+	if (out.killed) {
+		throw new GitHubError(
+			`GitHub merge request for PR #${number} was killed before a conclusive result: ${diagnostic(out.stderr || out.stdout, limits.diagnosticsBytes)}`,
+			"indeterminate",
+		);
+	}
 	if (out.code !== 0)
 		throw new GitHubError(
 			`GitHub rejected merge for PR #${number}: ${diagnostic(out.stderr || out.stdout, limits.diagnosticsBytes)}`,
@@ -357,7 +376,6 @@ export interface GitHubComment {
 	body: string;
 	user: string | undefined;
 }
-const GATEWAY_MUTATION_MS = 30_000;
 const GITHUB_URL_PATTERN =
 	/^(?:https:\/\/(?:[^@]+@)?github\.com\/|git@github\.com:|ssh:\/\/(?:[^@]+@)?github\.com\/)([^/]+)\/([^/]+?)(?:\.git)?$/;
 
@@ -432,17 +450,7 @@ export interface GitHubGateway {
 	}): Promise<{ id: number }>;
 }
 
-export class GitHubError extends Error {
-	readonly kind: "failed" | "indeterminate";
-	constructor(message: string, kind: "failed" | "indeterminate" = "failed") {
-		super(message);
-		this.kind = kind;
-	}
-}
-
-export function isGitHubIndeterminate(error: BoundaryValue): boolean {
-	return error instanceof GitHubError && error.kind === "indeterminate";
-}
+export { GitHubError, isGitHubIndeterminate };
 
 export function createGitHubGateway(run: ExecFn): GitHubGateway {
 	async function readBranchSha(
@@ -453,7 +461,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 	): Promise<string | undefined> {
 		assertRefName(branch);
 		try {
-			const result = await runGh(
+			const result = await runGitHubMutation(
 				run,
 				["api", `/repos/${repo.owner}/${repo.repo}/git/ref/heads/${branch}`, "--jq", ".object.sha"],
 				{ cwd, signal },
@@ -469,10 +477,14 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 
 	return {
 		async getDefaultBranch(repo, cwd, signal) {
-			const result = await runGh(run, ["api", `/repos/${repo.owner}/${repo.repo}`, "--jq", ".default_branch"], {
-				cwd,
-				signal,
-			});
+			const result = await runGitHubMutation(
+				run,
+				["api", `/repos/${repo.owner}/${repo.repo}`, "--jq", ".default_branch"],
+				{
+					cwd,
+					signal,
+				},
+			);
 			const branch = result.stdout.trim();
 			if (!branch) throw new GitHubError(`Could not read default branch for ${repo.owner}/${repo.repo}.`);
 			return branch;
@@ -486,14 +498,14 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 		},
 		async getAuthenticatedUser(cwd, signal) {
 			try {
-				const result = await runGh(run, ["api", "user", "--jq", ".login"], { cwd, signal });
+				const result = await runGitHubMutation(run, ["api", "user", "--jq", ".login"], { cwd, signal });
 				return result.stdout.trim() || undefined;
 			} catch {
 				return undefined;
 			}
 		},
 		async getPrStatus(repo, prNumber, cwd, signal) {
-			const result = await runGh(
+			const result = await runGitHubMutation(
 				run,
 				["api", `/repos/${repo.owner}/${repo.repo}/pulls/${prNumber}`, "--jq", "{state, merged, draft}"],
 				{ cwd, signal },
@@ -501,7 +513,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			return parsePrStatus(result.stdout, prNumber);
 		},
 		async getPrComments(repo, prNumber, cwd, signal) {
-			const result = await runGh(
+			const result = await runGitHubMutation(
 				run,
 				[
 					"api",
@@ -515,7 +527,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			return parseComments(result.stdout, prNumber);
 		},
 		async getAllowedMergeMethods(repo, cwd, signal) {
-			const result = await runGh(
+			const result = await runGitHubMutation(
 				run,
 				[
 					"api",
@@ -528,7 +540,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			return parseAllowedMergeMethods(result.stdout, repo);
 		},
 		async getMergeCommit(repo, prNumber, cwd, signal) {
-			const result = await runGh(
+			const result = await runGitHubMutation(
 				run,
 				[
 					"api",
@@ -544,7 +556,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			return readBranchSha(repo, branch, cwd, signal);
 		},
 		async markPrReady(repo, prNumber, cwd, signal) {
-			await runGh(run, ["pr", "ready", String(prNumber), "--repo", `${repo.owner}/${repo.repo}`], {
+			await runGitHubMutation(run, ["pr", "ready", String(prNumber), "--repo", `${repo.owner}/${repo.repo}`], {
 				cwd,
 				signal,
 			});
@@ -559,7 +571,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			if (preSha === undefined) return { kind: "already-gone" };
 			if (preSha !== input.expectedHeadSha) return { kind: "changed", actualHeadSha: preSha };
 
-			const repoResult = await runGh(
+			const repoResult = await runGitHubMutation(
 				run,
 				["api", `/repos/${input.repo.owner}/${input.repo.repo}`, "--jq", ".node_id"],
 				{ cwd: input.cwd, signal: input.signal },
@@ -583,7 +595,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 
 			let mutationResult: { stdout: string };
 			try {
-				mutationResult = await runGh(
+				mutationResult = await runGitHubMutation(
 					run,
 					[
 						"api",
@@ -626,7 +638,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			return { kind: "deleted" };
 		},
 		async createDraftPr(input) {
-			const created = await runGh(
+			const created = await runGitHubMutation(
 				run,
 				[
 					"pr",
@@ -647,7 +659,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			);
 			const prUrl = created.stdout.trim();
 			try {
-				const viewed = await runGh(
+				const viewed = await runGitHubMutation(
 					run,
 					["pr", "view", prUrl, "--json", "number,headRefName,headRefOid,baseRefName,title,isDraft,url"],
 					{ cwd: input.cwd, signal: input.signal },
@@ -663,7 +675,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 			);
 		},
 		async updatePrBase(input) {
-			await runGh(
+			await runGitHubMutation(
 				run,
 				[
 					"api",
@@ -695,7 +707,7 @@ export function createGitHubGateway(run: ExecFn): GitHubGateway {
 							"--field",
 							`body=${input.body}`,
 						];
-			const result = await runGh(run, args, { cwd: input.cwd, signal: input.signal });
+			const result = await runGitHubMutation(run, args, { cwd: input.cwd, signal: input.signal });
 			try {
 				const parsed: BoundaryValue = JSON.parse(result.stdout);
 				if (isObject(parsed) && parsed !== null && "id" in parsed && Number.isSafeInteger(parsed.id)) {
@@ -829,7 +841,7 @@ async function listPulls(
 	headRef?: string,
 ): Promise<OpenPullRequest[]> {
 	const headArgs = headRef === undefined ? [] : ["--raw-field", `head=${repo.owner}:${headRef}`];
-	const result = await runGh(
+	const result = await runGitHubMutation(
 		run,
 		[
 			"api",
@@ -942,28 +954,6 @@ function jsonValueEnd(text: string, start: number): number | undefined {
 		}
 	}
 	return undefined;
-}
-
-async function runGh(
-	exec: ExecFn,
-	args: string[],
-	options: { cwd: string; signal?: AbortSignal },
-): Promise<{ stdout: string }> {
-	let result: ExecFnResult;
-	try {
-		result = await exec("gh", args, { cwd: options.cwd, timeout: GATEWAY_MUTATION_MS, signal: options.signal });
-	} catch (error) {
-		if (error instanceof GitHubError) throw error;
-		throw new GitHubError(
-			`gh ${args[0]} ended without a conclusive result: ${error instanceof Error ? error.message : String(error)}`,
-			"indeterminate",
-		);
-	}
-	if (result.code !== 0)
-		throw new GitHubError(
-			`gh ${args[0]} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`,
-		);
-	return { stdout: result.stdout };
 }
 
 function isNotFound(error: BoundaryValue): boolean {

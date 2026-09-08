@@ -101,7 +101,7 @@ export interface StackLandFrontier {
 	url: string;
 	expectedHeadSha: string;
 	method: MergeMethod | "graphite";
-	state: "landed" | "queued" | "blocked" | "not-attempted" | "already-merged";
+	state: "landed" | "queued" | "blocked" | "not-attempted" | "already-merged" | "indeterminate";
 }
 
 export interface StackLandProgress {
