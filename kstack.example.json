@@ -21,9 +21,9 @@
         "thinking": "high"
       },
       {
-        "label": "laguna",
-        "model": "openrouter/poolside/laguna-s-2.1",
-        "thinking": "high"
+        "label": "hy4",
+        "model": "openrouter/tencent/hy4-preview",
+        "thinking": "low"
       },
       {
         "label": "luna",
