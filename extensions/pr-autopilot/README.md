@@ -165,6 +165,15 @@ A PR is merge-ready only when all of these conditions hold:
 - All observed checks are successful, skipped, or neutral, and no review
   threads remain unresolved. `UNSTABLE` with no observed checks is not ready.
 
+A PR with no CI checks is supported when `mergeStateStatus` is `CLEAN` or
+`HAS_HOOKS`. Because GitHub CLI returns a nonzero exit code for an empty checks
+collection, Autopilot accepts empty checks only when structured evidence from
+the same `gh pr view` response that supplied the head SHA includes an empty
+`statusCheckRollup` array. If rollup evidence is omitted, null, non-array, or
+nonempty, a failed checks read remains a required-read failure. Successful `gh
+pr checks` reads with malformed JSON, empty stdout, or non-array top-level data
+similarly fail closed rather than masquerading as an empty checks collection.
+
 Closed and merged PRs end as incomplete before Autopilot starts another child
 or mutation. `UNKNOWN` mergeability is also incomplete; it is never treated as
 a successful default.

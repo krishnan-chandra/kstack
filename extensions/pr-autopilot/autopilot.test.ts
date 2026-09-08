@@ -521,12 +521,14 @@ describe("pr-autopilot state machine", () => {
 				if (args[0] === "pr" && args[1] === "checks") {
 					return {
 						code: 0,
-						stdout: JSON.stringify({
-							name: "build",
-							state: "FAILURE",
-							bucket: "fail",
-							link: "https://github.com/owner/repo/actions/runs/123",
-						}),
+						stdout: JSON.stringify([
+							{
+								name: "build",
+								state: "FAILURE",
+								bucket: "fail",
+								link: "https://github.com/owner/repo/actions/runs/123",
+							},
+						]),
 						stderr: "",
 					};
 				}

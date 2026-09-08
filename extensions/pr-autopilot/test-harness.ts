@@ -47,6 +47,9 @@ interface Scenario {
 	branch?: string;
 	dirty?: boolean;
 	checks?: Array<{ name: string; state: string; bucket: string; link?: string }>;
+	checksResult?: ExecFnResult;
+	checksRawStdout?: string;
+	statusCheckRollup?: BoundaryValue;
 	thread?: { id: string; body: string };
 	issueComment?: { id: number; body: string };
 	triage?: string;
@@ -97,20 +100,20 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 					? observations[Math.min(prReads - 1, observations.length - 1)]
 					: undefined;
 			const headSha = observation?.headSha ?? SHA;
-			return ok(
-				JSON.stringify({
-					number: 42,
-					title: "Fix the thing",
-					state: observation?.state ?? scenario.state ?? "OPEN",
-					isDraft: observation?.isDraft ?? false,
-					mergeable: observation?.mergeable ?? scenario.mergeable ?? "true",
-					mergeStateStatus: observation?.mergeStateStatus ?? scenario.mergeStateStatus ?? "CLEAN",
-					headRefName: BRANCH,
-					baseRefName: "main",
-					headRefOid: headSha,
-					commits: [{ oid: headSha }],
-				}),
-			);
+			const viewData = {
+				number: 42,
+				title: "Fix the thing",
+				state: observation?.state ?? scenario.state ?? "OPEN",
+				isDraft: observation?.isDraft ?? false,
+				mergeable: observation?.mergeable ?? scenario.mergeable ?? "true",
+				mergeStateStatus: observation?.mergeStateStatus ?? scenario.mergeStateStatus ?? "CLEAN",
+				headRefName: BRANCH,
+				baseRefName: "main",
+				headRefOid: headSha,
+				commits: [{ oid: headSha }],
+				statusCheckRollup: scenario.statusCheckRollup,
+			};
+			return ok(JSON.stringify(viewData));
 		}
 		if (command === "gh" && args[0] === "pr" && args[1] === "ready") return ok();
 		if (command === "gh" && args[0] === "repo" && args[1] === "view") return ok("owner/repo\n");
@@ -185,6 +188,8 @@ export async function createHarness(scenario: Scenario = {}): Promise<Harness> {
 		}
 		if (command === "gh" && args[0] === "pr" && args[1] === "checks" && args.includes("--watch")) return ok();
 		if (command === "gh" && args[0] === "pr" && args[1] === "checks") {
+			if (scenario.checksResult) return scenario.checksResult;
+			if (scenario.checksRawStdout !== undefined) return ok(scenario.checksRawStdout);
 			return ok(JSON.stringify(scenario.checks ?? [{ name: "test", state: "SUCCESS", bucket: "pass" }]));
 		}
 		if (command === "gh" && args[0] === "run" && args[1] === "view") return ok("test failed\n");

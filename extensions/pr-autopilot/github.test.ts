@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
-import { getIssueComments, getReviewThreads, isForbiddenStagingPath, replyToReviewComment } from "./github.ts";
+import {
+	getCheckRuns,
+	getIssueComments,
+	getReviewThreads,
+	isForbiddenStagingPath,
+	replyToReviewComment,
+	viewPR,
+} from "./github.ts";
 
 describe("GitHub state boundaries", () => {
 	it("fails review-thread state when repository identity cannot be resolved", async () => {
@@ -380,6 +387,21 @@ describe("explicit repository API paths", () => {
 		assert.equal(capturedArgs[1], "repos/owner/repo/issues/42/comments");
 	});
 
+	it("resolves issue-comment repository identity outside a Git checkout", async () => {
+		const calls: string[][] = [];
+		const result = await getIssueComments(
+			async (_command, args) => {
+				calls.push(args);
+				if (args[0] === "repo" && args[1] === "view") return { code: 0, stdout: "owner/repo\n", stderr: "" };
+				return { code: 0, stdout: "[]", stderr: "" };
+			},
+			"/secondary-jj-workspace",
+			42,
+		);
+		assert.equal(result.code, 0);
+		assert.ok(calls.some((args) => args[1] === "repos/owner/repo/issues/42/comments"));
+	});
+
 	it("does not rely on checkout placeholders when replying to review comments", async () => {
 		let capturedArgs: string[] = [];
 		await replyToReviewComment(
@@ -466,5 +488,127 @@ describe("porcelain and forbidden paths", () => {
 		assert.equal(isForbiddenStagingPath("src/a.ts"), false);
 		assert.equal(isForbiddenStagingPath("new.ts"), false);
 		assert.equal(isForbiddenStagingPath("utils/untracked/nested.ts"), false);
+	});
+});
+
+describe("viewPR", () => {
+	it("includes statusCheckRollup in the requested fields", async () => {
+		let capturedArgs: string[] = [];
+		const result = await viewPR(
+			async (_command, args) => {
+				capturedArgs = args;
+				return {
+					code: 0,
+					stdout: JSON.stringify({
+						number: 42,
+						headRefOid: "abc",
+						statusCheckRollup: [],
+					}),
+					stderr: "",
+				};
+			},
+			"/repo",
+			42,
+		);
+
+		assert.equal(result.code, 0);
+		assert.ok(result.pr);
+		assert.deepEqual(result.pr.statusCheckRollup, { kind: "empty" });
+		const jsonIndex = capturedArgs.indexOf("--json");
+		assert.ok(jsonIndex >= 0);
+		const fields = capturedArgs[jsonIndex + 1]?.split(",") ?? [];
+		assert.ok(fields.includes("statusCheckRollup"));
+	});
+
+	it("fails closed on authentication or CLI error", async () => {
+		const result = await viewPR(async () => ({ code: 1, stdout: "", stderr: "authentication required" }), "/repo", 42);
+		assert.equal(result.code, 1);
+		assert.equal(result.pr, undefined);
+		assert.equal(result.stderr, "authentication required");
+	});
+
+	it("parses nonempty statusCheckRollup array", async () => {
+		const result = await viewPR(
+			async () => ({
+				code: 0,
+				stdout: JSON.stringify({
+					number: 42,
+					headRefOid: "abc",
+					statusCheckRollup: [{ __typename: "CheckRun" }],
+				}),
+				stderr: "",
+			}),
+			"/repo",
+			42,
+		);
+		assert.equal(result.code, 0);
+		assert.ok(result.pr);
+		assert.deepEqual(result.pr.statusCheckRollup, { kind: "present" });
+	});
+});
+
+describe("getCheckRuns", () => {
+	it("distinguishes the CLI's no-checks response from other failures", async () => {
+		const noChecks = await getCheckRuns(
+			async () => ({
+				code: 1,
+				stdout: "",
+				stderr: "no checks reported on the 'kstack/fix-thing' branch\n",
+			}),
+			"/repo",
+			42,
+		);
+		assert.deepEqual(noChecks, { kind: "no-checks" });
+
+		const authFailure = await getCheckRuns(
+			async () => ({ code: 1, stdout: "", stderr: "authentication required" }),
+			"/repo",
+			42,
+		);
+		assert.deepEqual(authFailure, { kind: "error", message: "authentication required" });
+	});
+
+	it("returns failure when CLI exits 0 with malformed JSON, empty stdout, or non-array", async () => {
+		const emptyResult = await getCheckRuns(async () => ({ code: 0, stdout: "", stderr: "" }), "/repo", 42);
+		assert.deepEqual(emptyResult, { kind: "error", message: "Could not parse checks: Checks output is empty." });
+
+		const malformedResult = await getCheckRuns(
+			async () => ({ code: 0, stdout: "invalid json", stderr: "" }),
+			"/repo",
+			42,
+		);
+		assert.deepEqual(malformedResult, {
+			kind: "error",
+			message: "Could not parse checks: Checks output is not valid JSON.",
+		});
+
+		const nonArrayResult = await getCheckRuns(async () => ({ code: 0, stdout: "{}", stderr: "" }), "/repo", 42);
+		assert.deepEqual(nonArrayResult, {
+			kind: "error",
+			message: "Could not parse checks: Checks output is not an array.",
+		});
+	});
+
+	it("parses valid check runs on exit 0", async () => {
+		const result = await getCheckRuns(
+			async () => ({
+				code: 0,
+				stdout: JSON.stringify([
+					{ name: "lint", state: "SUCCESS", bucket: "pass" },
+					{ name: "test", state: "FAILURE", bucket: "fail", link: "https://github.com/o/r/actions/runs/123" },
+				]),
+				stderr: "",
+			}),
+			"/repo",
+			42,
+		);
+		assert.equal(result.kind, "checks");
+		if (result.kind !== "checks") return;
+		assert.equal(result.checks.length, 2);
+		assert.equal(result.checks[0].name, "lint");
+		assert.equal(result.checks[0].conclusion, "success");
+		assert.equal(result.checks[1].name, "test");
+		assert.equal(result.checks[1].conclusion, "failure");
+		assert.equal(result.checks[1].runId, "123");
 	});
 });
