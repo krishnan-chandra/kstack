@@ -6,6 +6,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	archiveDestination,
 	canonicalizeActiveSource,
@@ -37,6 +38,10 @@ export type ArchiveResult =
 	| { status: "cancelled"; message: string }
 	| { status: "rejected"; message: string }
 	| { status: "failed"; message: string };
+
+function normalizeError(err: BoundaryValue): string {
+	return err instanceof Error ? err.message : String(err);
+}
 
 // In-process serialization for archive mutations. BEGIN IMMEDIATE,
 // busy_timeout, and uniqueness constraints serialize cross-process catalog
@@ -112,9 +117,7 @@ function stageSession(
 		return {
 			rejected: {
 				status: "rejected",
-				message: /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
-					err as Error
-				).message,
+				message: normalizeError(err),
 			},
 		};
 	}
@@ -127,7 +130,7 @@ function stageSession(
 		return {
 			rejected: {
 				status: "rejected",
-				message: `Refusing to archive a malformed session file: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
+				message: `Refusing to archive a malformed session file: ${normalizeError(err)}`,
 			},
 		};
 	}
@@ -223,7 +226,9 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 		}
 	});
 
+	let finalized = false;
 	let finalizationError: string | undefined;
+
 	const result = await options.startNewSession(async (fresh) => {
 		try {
 			await withMutationLock(async () => {
@@ -232,21 +237,33 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 				const db = openArchiveDb(deps.dbPath);
 				try {
 					finalizeArchived(db, sessionId, destPath, size, sha256);
+					finalized = true;
 				} finally {
 					db.close();
 				}
 			});
-			fresh.notify(`Session archived: ${destPath}`, "info");
+		} catch (err) {
+			const message = normalizeError(err);
+			if (!finalized) {
+				finalizationError = message;
+				fresh.notify(
+					`Archive finalization failed: ${message}. ` +
+						"The complete session file is preserved (check both the session directory and the archive); " +
+						"it is tracked as 'pending'. Pi will inspect it on startup; retry a remaining source with /session-archive-other.",
+					"error",
+				);
+				return;
+			}
+			fresh.notify(`Session was archived successfully, but database cleanup failed: ${message}.`, "warning");
+		}
+
+		fresh.notify(`Session archived: ${destPath}`, "info");
+		try {
 			await options.afterArchive?.(fresh);
 		} catch (err) {
-			finalizationError =
-				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error)
-					.message;
 			fresh.notify(
-				`Archive finalization failed: ${finalizationError}. ` +
-					"The complete session file is preserved (check both the session directory and the archive); " +
-					"it is tracked as 'pending'. Pi will inspect it on startup; retry a remaining source with /session-archive-other.",
-				"error",
+				`Session was archived successfully to ${destPath}, but post-archive continuation failed: ${normalizeError(err)}.`,
+				"warning",
 			);
 		}
 	});
@@ -267,12 +284,14 @@ export async function archiveCurrentSession(options: ArchiveCurrentOptions): Pro
 		options.notify(cancelled.message, "info");
 		return cancelled;
 	}
+
 	if (finalizationError) {
 		return {
 			status: "failed",
 			message: `Archive finalization failed: ${finalizationError}. The replacement session remains active and the archive is pending.`,
 		};
 	}
+
 	return { status: "archived", message: `Archived ${sessionId} to ${destPath}` };
 }
 

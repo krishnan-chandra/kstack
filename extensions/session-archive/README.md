@@ -115,7 +115,9 @@ filesystem and SQLite cannot commit atomically:
    only then unlink the source.
 3. The file is set `0444` and the row finalized in one transaction.
 
-Every step preserves at least one complete JSONL copy. On the next Pi start,
+Every step preserves at least one complete JSONL copy. If finalization fails before this transaction completes (such as a move failure or database error), the operation is aborted, the session is tracked as `pending`, and post-archive continuation is skipped. Once the database transaction commits, archival is complete. Later cleanup or caller-continuation errors are reported in the replacement session without changing the completed archive outcome or directing the user to pending-archive recovery.
+
+On the next Pi start,
 bounded reconciliation checks only interrupted `pending` operations before
 archive tools serve requests:
 

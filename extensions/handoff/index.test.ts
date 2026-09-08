@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { archiveDestination } from "../session-archive/archive-files.ts";
+import { archiveDestination, getArchiveDbPath } from "../session-archive/archive-files.ts";
+import { getSessionRow, openArchiveDb } from "../session-archive/archive-store.ts";
 import { makeTempTree, messageEntry, sessionJsonl, userMessage } from "../session-archive/test-helpers.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { createHandoffHandler as createHandler } from "./command.ts";
@@ -628,6 +629,47 @@ describe("archive-first handoff", () => {
 		assert.ok(fake.notifications.some(({ message }) => /Archive finalization failed/i.test(message)));
 		assert.deepEqual(fake.replacementCalls.setModel, []);
 		assert.deepEqual(fake.replacementCalls.setThinkingLevel, []);
+	});
+
+	it("preserves accepted send and does not report pending archive when sendUserMessage throws", async () => {
+		const tree = makeTempTree();
+		roots.push(tree.root);
+		const sessionFile = writeArchiveSource(tree);
+		const order: string[] = [];
+		const { api } = makeFakeApi(order);
+		const fake = makeFakeCtx(order, {
+			sessionFile,
+			sessionDir: tree.sessionDir,
+			expectedParentSession: undefined,
+			sendUserMessageError: new Error("simulated sendUserMessage failure"),
+		});
+
+		await withAgentDir(tree.agentDir, async () => {
+			await createHandler(api)(
+				"--archive continue after archiving",
+				/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ fake.ctx as never,
+			);
+		});
+
+		assert.equal(fake.calls.sendUserMessage.length, 1);
+		assert.equal(fake.calls.setEditorText.length, 0);
+		assert.equal(fake.calls.oldSetEditorText.length, 0);
+		assert.equal(fake.calls.newSession, 1);
+		assert.equal(existsSync(sessionFile), false);
+
+		const db = openArchiveDb(getArchiveDbPath(tree.archiveRoot));
+		try {
+			const row = getSessionRow(db, SESSION_ID);
+			assert.equal(row?.state, "archived");
+		} finally {
+			db.close();
+		}
+
+		for (const notification of fake.notifications) {
+			assert.doesNotMatch(notification.message, /pending/i);
+			assert.doesNotMatch(notification.message, /finalization failed/i);
+		}
+		assert.ok(fake.notifications.some(({ message }) => /inspect the replacement/i.test(message)));
 	});
 });
 
