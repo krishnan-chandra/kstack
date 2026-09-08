@@ -1,5 +1,6 @@
 /** Pin the jj working-copy revision and its base for a snapshot review. */
 
+import { pinnedGitArgs } from "./pinned-git.ts";
 import { type CommandExec, defaultCommandExec, type RepositorySource, tryCommand } from "./repository-source.ts";
 import type { BaseResolution, BaseStrategy } from "./types.ts";
 
@@ -99,7 +100,10 @@ export function resolveJjReviewTarget(
 	}
 	let mergeBaseSha = "";
 	try {
-		mergeBaseSha = source.git(["merge-base", base.sha, headSha], cwd).trim().toLowerCase();
+		mergeBaseSha = source
+			.git(pinnedGitArgs(["merge-base", base.sha, headSha]), cwd)
+			.trim()
+			.toLowerCase();
 	} catch {
 		/* reported below */
 	}

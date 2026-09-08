@@ -4,6 +4,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { isAbsolute } from "node:path";
 import type { Writable } from "node:stream";
 import type { ExecFn } from "../shared/git-exec.ts";
+import { pinnedGitArgs } from "./pinned-git.ts";
 
 const OBJECT_ID_RE = /^[0-9a-f]{40}$/;
 const DEFAULT_GIT_TIMEOUT_MS = 60_000;
@@ -105,7 +106,7 @@ function gitEnvironment(source: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEn
 }
 
 function gitArgs(gitDir: string, args: string[]): string[] {
-	return ["--no-replace-objects", `--git-dir=${gitDir}`, ...args];
+	return pinnedGitArgs([`--git-dir=${gitDir}`, ...args]);
 }
 
 class ManagedGitProcess {

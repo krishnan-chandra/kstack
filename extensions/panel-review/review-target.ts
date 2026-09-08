@@ -7,6 +7,7 @@
  */
 
 import { resolveJjReviewTarget } from "./jj-target.ts";
+import { pinnedGitExec } from "./pinned-git.ts";
 import { type PrTarget, resolvePrTarget } from "./pr-target.ts";
 import type { CommandExec, RepositorySource } from "./repository-source.ts";
 import { collectScope, type GitExec, resolveBase, type ScopeBundle } from "./review-scope.ts";
@@ -63,16 +64,18 @@ function gitSafe(exec: GitExec, args: string[], cwd: string): string {
 }
 
 export function buildIntentPrefill(target: ResolvedReviewTarget, gitExec: GitExec, repoRoot: string): string {
+	const pinnedHead = pinnedHeadSha(target);
+	const objectExec = pinnedHead === undefined ? gitExec : pinnedGitExec(gitExec);
 	if (target.kind === "pr") {
 		const subjects = gitSafe(
-			gitExec,
+			objectExec,
 			["log", "--format=%s", `${target.pr.mergeBaseSha}..${target.pr.headSha}`],
 			repoRoot,
 		);
 		return `Review PR #${target.pr.number}: ${target.pr.title}\n${subjects.trim() ? `\nCommits in PR:\n${subjects.trim()}\n` : ""}\nIntent: `;
 	}
-	const logHead = pinnedHeadSha(target) ?? "HEAD";
-	const subjects = gitSafe(gitExec, ["log", "--format=%s", `${target.base.mergeBaseSha}..${logHead}`], repoRoot);
+	const logArgs = ["log", "--format=%s", `${target.base.mergeBaseSha}..${pinnedHead ?? "HEAD"}`];
+	const subjects = gitSafe(objectExec, logArgs, repoRoot);
 	return subjects.trim() ? `Review these changes:\n${subjects.trim()}\n\nIntent: ` : "";
 }
 

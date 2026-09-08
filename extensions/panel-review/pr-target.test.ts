@@ -93,10 +93,10 @@ describe("resolvePrTarget", () => {
 		const exec: ExecFn = async (command, args, options) => {
 			calls.push({ command, args, timeout: options.timeout });
 			if (command === "gh") return result(0, mockGhResponse());
-			if (args[0] === "check-ref-format") return result(0);
-			if (args[0] === "fetch") return result(0);
-			if (args[0] === "cat-file") return result(0);
-			if (args[0] === "merge-base") return result(0, `${MERGE_BASE_SHA}\n`);
+			if (args.includes("check-ref-format")) return result(0);
+			if (args.includes("fetch")) return result(0);
+			if (args.includes("cat-file")) return result(0);
+			if (args.includes("merge-base")) return result(0, `${MERGE_BASE_SHA}\n`);
 			return result(1, "", `Unexpected command: ${command} ${args.join(" ")}`);
 		};
 
@@ -126,6 +126,12 @@ describe("resolvePrTarget", () => {
 				timeout: 60_000,
 			},
 		]);
+		const catFiles = calls.filter((call) => call.command === "git" && call.args.includes("cat-file"));
+		assert.equal(catFiles.length, 2);
+		assert.ok(catFiles.every((call) => call.args[0] === "--no-replace-objects"));
+		const mergeBases = calls.filter((call) => call.command === "git" && call.args.includes("merge-base"));
+		assert.equal(mergeBases.length, 1);
+		assert.equal(mergeBases[0].args[0], "--no-replace-objects");
 	});
 
 	it("rejects malformed or mismatched GitHub responses before fetching", async () => {
@@ -205,8 +211,8 @@ describe("resolvePrTarget", () => {
 	it("reports a missing pinned head after fetch", async () => {
 		const exec: ExecFn = async (command, args) => {
 			if (command === "gh") return result(0, mockGhResponse());
-			if (args[0] === "check-ref-format" || args[0] === "fetch") return result(0);
-			if (args[0] === "cat-file" && args[2] === `${HEAD_SHA}^{commit}`) return result(1);
+			if (args.includes("check-ref-format") || args.includes("fetch")) return result(0);
+			if (args.includes("cat-file") && args.includes(`${HEAD_SHA}^{commit}`)) return result(1);
 			return result(0, MERGE_BASE_SHA);
 		};
 		await assert.rejects(resolvePrTarget(exec, "/repo", 42), /head commit.*was not found after fetch/);

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequestReviewTarget, type PullRequestReviewTarget } from "../shared/github.ts";
+import { pinnedGitArgs } from "./pinned-git.ts";
 import { isPathInside } from "./review-scope.ts";
 import { materializeSnapshotFiles, planSnapshotFiles } from "./snapshot-files.ts";
 import {
@@ -126,18 +127,18 @@ export async function resolvePrTarget(
 		throw new Error(`Could not fetch PR #${pr.number}: ${diagnostic(fetched)}`);
 	}
 
-	const headExists = await git(exec, cwd, ["cat-file", "-e", `${pr.headOid}^{commit}`], signal, 10_000);
+	const headExists = await git(exec, cwd, pinnedGitArgs(["cat-file", "-e", `${pr.headOid}^{commit}`]), signal, 10_000);
 	if (headExists.code !== 0) {
 		throw new Error(
 			`PR #${pr.number} head commit ${pr.headOid} was not found after fetch. The PR may have been force-pushed.`,
 		);
 	}
-	const baseExists = await git(exec, cwd, ["cat-file", "-e", `${pr.baseOid}^{commit}`], signal, 10_000);
+	const baseExists = await git(exec, cwd, pinnedGitArgs(["cat-file", "-e", `${pr.baseOid}^{commit}`]), signal, 10_000);
 	if (baseExists.code !== 0) {
 		throw new Error(`PR #${pr.number} base commit ${pr.baseOid} was not found after fetch.`);
 	}
 
-	const mergeBase = await git(exec, cwd, ["merge-base", pr.baseOid, pr.headOid], signal, 10_000);
+	const mergeBase = await git(exec, cwd, pinnedGitArgs(["merge-base", pr.baseOid, pr.headOid]), signal, 10_000);
 	const mergeBaseSha = mergeBase.stdout.trim().toLowerCase();
 	if (mergeBase.code !== 0 || !SHA_RE.test(mergeBaseSha)) {
 		throw new Error(`Could not calculate merge base between ${pr.baseOid} and ${pr.headOid}: ${diagnostic(mergeBase)}`);

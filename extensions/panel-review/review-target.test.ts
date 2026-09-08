@@ -87,8 +87,10 @@ describe("review target helpers", () => {
 
 	it("pins the jj working copy in a jj workspace and surfaces base warnings", async () => {
 		const head = "3".repeat(40);
+		let gitArgsSeen: string[] | undefined;
 		const gitExec: GitExec = (args) => {
-			if (args[0] === "merge-base") return `${SHA}\n`;
+			gitArgsSeen = args;
+			if (args.includes("merge-base")) return `${SHA}\n`;
 			throw new Error(`unexpected git call: ${args.join(" ")}`);
 		};
 		const commandExec = (command: string, args: string[]) => {
@@ -106,6 +108,7 @@ describe("review target helpers", () => {
 			base: { ref: "main", mergeBaseSha: SHA, strategy: "main" },
 		});
 		assert.equal(resolution.warnings.length, 1);
+		assert.deepEqual(gitArgsSeen, ["--no-replace-objects", "merge-base", SHA, head]);
 	});
 
 	it("resolves a PR through gh -R and the source object store from any layout", async () => {
@@ -115,7 +118,7 @@ describe("review target helpers", () => {
 			exec: async (command, args) => {
 				seen.push([command, ...args]);
 				if (command === "gh") return { code: 0, stdout: JSON.stringify(prJson), stderr: "" };
-				if (args[0] === "merge-base") return { code: 0, stdout: `${SHA}\n`, stderr: "" };
+				if (args.includes("merge-base")) return { code: 0, stdout: `${SHA}\n`, stderr: "" };
 				return { code: 0, stdout: "", stderr: "" };
 			},
 		};
@@ -131,12 +134,31 @@ describe("review target helpers", () => {
 			"--json",
 			"number,url,title,state,baseRefName,headRefOid,baseRefOid",
 		]);
+		const mergeBases = seen.filter((call) => call[0] === "git" && call.includes("merge-base"));
+		assert.equal(mergeBases.length, 1);
+		assert.ok(mergeBases[0].includes("--no-replace-objects"));
 	});
 
 	it("builds mode-specific editor prefills", () => {
-		const gitExec: GitExec = (args) => (args.at(-1)?.endsWith("HEAD") ? "local change\n" : "PR change\n");
+		const calls: string[][] = [];
+		const gitExec: GitExec = (args) => {
+			calls.push(args);
+			return args.at(-1)?.endsWith("HEAD") ? "local change\n" : "pinned change\n";
+		};
 		assert.match(buildIntentPrefill(worktreeTarget, gitExec, "/repo"), /Review these changes:\nlocal change/);
-		assert.match(buildIntentPrefill(prTarget, gitExec, "/repo"), /Review PR #42: Change\n\nCommits in PR:\nPR change/);
+		assert.match(
+			buildIntentPrefill(prTarget, gitExec, "/repo"),
+			/Review PR #42: Change\n\nCommits in PR:\npinned change/,
+		);
+		const jjTarget: ResolvedReviewTarget = {
+			kind: "jj",
+			base: { ref: "main", mergeBaseSha: SHA, strategy: "main" },
+			headSha: "3".repeat(40),
+		};
+		assert.match(buildIntentPrefill(jjTarget, gitExec, "/repo"), /Review these changes:\npinned change/);
+		assert.ok(!calls[0].includes("--no-replace-objects"));
+		assert.ok(calls[1].includes("--no-replace-objects"));
+		assert.ok(calls[2].includes("--no-replace-objects"));
 	});
 
 	it("builds mode-specific no-change messages", () => {

@@ -78,7 +78,11 @@ ignores the outcome.
      (working-tree only). The exact merge-base SHA is recorded so every reviewer
      sees an immutable baseline.
    - jj and PR targets are materialized into private temporary source snapshots.
-     Reviewers inspect the pinned commit rather than the live workspace. The run
+     Reviewers inspect the pinned commit rather than the live workspace. PR and
+     jj commit snapshots use actual pinned Git objects consistently
+     (`--no-replace-objects`) from merge-base resolution and diffs through
+     snapshot extraction; ordinary Git working-tree review keeps ordinary
+     repository semantics. No user replacement refs or config are mutated. The run
      does not create, move, or reset Git worktrees, jj workspaces, branches, or
      bookmarks.
 3. Builds a bounded bundle in a mode-`0600` temp file outside the repository:
@@ -302,12 +306,15 @@ Review Limitations.
 - Temp cleanup failure: warned and the private path is reported. Bundle files
   remain mode `0600`; snapshot files remain contained by their owner-only temp
   directory.
-- Standard Git mode leaves the repository unchanged.
+- Standard Git mode leaves the repository unchanged and preserves ordinary
+  repository semantics.
 - jj mode performs jj's normal automatic working-copy snapshot, then reads the
-  pinned commit from the colocated Git object store. It does not move bookmarks,
-  create workspaces, or alter the working-copy commit.
-- PR mode fetches objects into the local object database. It leaves the current
-  working tree, refs, branches, Git worktrees, and jj workspaces unchanged.
+  pinned commit from the Git object store using immutable pinned Git objects.
+  It does not move bookmarks, create workspaces, or alter the working-copy commit.
+- PR mode fetches objects into the local object database and uses immutable
+  pinned Git objects consistently. It leaves the current working tree, refs,
+  branches, Git worktrees, jj workspaces, user replacement refs, and Git config
+  unchanged.
 - A pinned snapshot fails instead of omitting an unsupported path or overwriting
   a host filename collision. Partial files and the private root are removed.
 - jj and PR snapshots are created for the run and removed after completion,

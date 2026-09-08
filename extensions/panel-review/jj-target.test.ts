@@ -138,6 +138,55 @@ describe("jj panel-review target", () => {
 		});
 	}
 
+	it("pins @ in a non-colocated workspace despite replacement refs in the external Git store", {
+		skip: !hasJj,
+	}, async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-jj-noncolocate-replace-"));
+		const env = createVcsTestEnv(root);
+		const repo = join(root, "repo");
+		try {
+			run(root, "mkdir", [repo]);
+			seedJjRepo(repo, env, false);
+			writeFileSync(join(repo, "file.txt"), "unreplaced change\n");
+			run(repo, "jj", ["describe", "-m", "unreplaced change"], env);
+
+			const source = locate(repo, env);
+			assert.equal(source.layout, "jj-workspace");
+			assert.ok(source.gitDir);
+			assert.equal(existsSync(join(repo, ".git")), false);
+
+			const headSha = run(repo, "jj", ["log", "--no-graph", "-r", "@", "-T", "commit_id"], env);
+			const baseSha = run(repo, "jj", ["log", "--no-graph", "-r", "main", "-T", "commit_id"], env);
+
+			run(repo, "git", ["--git-dir", source.gitDir!, "replace", headSha, baseSha], env);
+			const replaceRefsBefore = run(repo, "git", [
+				"--git-dir",
+				source.gitDir!,
+				"for-each-ref",
+				"--format=%(refname):%(objectname)",
+				"refs/replace/*",
+			]);
+			assert.ok(replaceRefsBefore.length > 0);
+
+			const { target, bundle, file } = await reviewWorkingCopy(source, env, "main");
+			assert.equal(target.headSha, headSha);
+			assert.equal(target.base.mergeBaseSha, baseSha);
+			assert.match(bundle, /unreplaced change/);
+			assert.equal(file, "unreplaced change\n");
+
+			const replaceRefsAfter = run(repo, "git", [
+				"--git-dir",
+				source.gitDir!,
+				"for-each-ref",
+				"--format=%(refname):%(objectname)",
+				"refs/replace/*",
+			]);
+			assert.equal(replaceRefsAfter, replaceRefsBefore);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails clearly when trunk() is the root commit and no local main exists", { skip: !hasJj }, () => {
 		const root = mkdtempSync(join(tmpdir(), "panel-jj-notrunk-"));
 		const env = createVcsTestEnv(root);
