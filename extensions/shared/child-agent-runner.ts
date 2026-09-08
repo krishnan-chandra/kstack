@@ -1,4 +1,4 @@
-import { isObject, isString, type JsonObject } from "./validation.ts";
+import { isNumber, isObject, isString, type JsonObject } from "./validation.ts";
 /** Shared lifecycle for isolated Pi child agents.
  *
  * Callers choose idle and/or absolute runtime limits. This lets legacy callers
@@ -9,6 +9,11 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	createChildProcessStopCoordinator,
+	defaultProcessGroupSystem,
+	type ProcessGroupSystem,
+} from "./child-process-stop.ts";
 import { parsePositiveInteger } from "./config-validate.ts";
 import { JsonLineParser } from "./pi-json-lines.ts";
 import {
@@ -20,7 +25,7 @@ import {
 	validateSessionHeader,
 } from "./subagent-sessions.ts";
 
-export type { ChildSession, ChildSessionIdentity, SubagentSessionStore };
+export type { ChildSession, ChildSessionIdentity, ProcessGroupSystem, SubagentSessionStore };
 
 interface ChildStdinError extends Error {
 	code?: string;
@@ -56,12 +61,14 @@ export interface ChildRunnerDeps {
 	spawnImpl?: SpawnImpl;
 	piInvocation?: (args: string[]) => { command: string; args: string[] };
 	killGraceMs?: number;
+	postEscalationGraceMs?: number;
 	idleTimeoutMs?: number;
 	maxRuntimeMs?: number;
 	outputCapBytes?: number;
 	stderrCapBytes?: number;
 	stdoutLineCapBytes?: number;
 	sessionStore?: SubagentSessionStore;
+	processGroupSystem?: ProcessGroupSystem;
 }
 
 export type ChildEvent =
@@ -81,10 +88,11 @@ interface RunChildOptions {
 	onEvent?: (event: ChildEvent) => void;
 }
 
-type ChildProcessResult =
+type ChildProcessResult = (
 	| { status: "completed"; output: string; usage: ChildUsage }
 	| { status: "failed"; error: string; usage: ChildUsage; stderr: string; activity?: string }
-	| { status: "aborted"; usage: ChildUsage; activity?: string };
+	| { status: "aborted"; usage: ChildUsage; activity?: string }
+) & { cleanupError?: string };
 
 type ChildRunResult = ChildProcessResult & { session: ChildSession };
 
@@ -242,10 +250,8 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		let runtimeTimedOut = false;
 		let closed = false;
 		let settled = false;
-		let killStarted = false;
 		let idleTimer: ReturnType<typeof setTimeout> | undefined;
 		let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
-		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		let lastToolStartAt: number | undefined;
 		let observedHeader: ObservedSessionHeader | undefined;
 		let forcedMissingReason: "setup-failed" | "protocol-mismatch" | undefined;
@@ -255,40 +261,29 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		let stdinError: string | undefined;
 
 		const emit = () => options.onProgress?.({ turns: usage.turns, activity, ...(preview ? { preview } : undefined) });
-		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
-			try {
-				if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
-				else child.kill(signal);
-			} catch {
-				try {
-					child.kill(signal);
-				} catch {
-					/* already exited */
-				}
-			}
-		};
-		const escalate = () => {
-			if (graceTimer) return;
-			graceTimer = setTimeout(() => {
-				if (!closed) killTree("SIGKILL");
-			}, killGraceMs);
-		};
-		const stop = () => {
-			if (killStarted) return;
-			killStarted = true;
-			killTree("SIGTERM");
-			escalate();
-		};
-		const abort = () => {
-			aborting = true;
-			stop();
-		};
+
+		const isRealSpawn = deps.spawnImpl === undefined;
+		const groupId =
+			process.platform !== "win32" &&
+			isNumber(child.pid) &&
+			child.pid > 0 &&
+			(isRealSpawn || deps.processGroupSystem !== undefined)
+				? child.pid
+				: undefined;
+
+		const stopCoordinator = createChildProcessStopCoordinator({
+			child,
+			groupId,
+			killGraceMs,
+			postEscalationGraceMs: deps.postEscalationGraceMs,
+			system: deps.processGroupSystem ?? defaultProcessGroupSystem,
+		});
+
 		const finish = (result: ChildProcessResult) => {
 			if (settled) return;
 			settled = true;
 			if (idleTimer) clearTimeout(idleTimer);
 			if (runtimeTimer) clearTimeout(runtimeTimer);
-			if (graceTimer) clearTimeout(graceTimer);
 			options.signal?.removeEventListener("abort", abort);
 			const session = sessionStore.finish(prepared, {
 				header: observedHeader,
@@ -297,12 +292,70 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 			});
 			resolve({ ...result, session });
 		};
+
+		const computeResult = (code: number | null): ChildProcessResult => {
+			if (aborting) return { status: "aborted", usage, activity };
+			if (idleTimedOut)
+				return {
+					status: "failed",
+					error: `Timed out: child produced no output for ${formatDuration(deps.idleTimeoutMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					usage,
+					stderr,
+					activity,
+				};
+			if (runtimeTimedOut)
+				return {
+					status: "failed",
+					error: `Timed out: exceeded max runtime of ${formatDuration(deps.maxRuntimeMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					usage,
+					stderr,
+					activity,
+				};
+			if (protocolError) return { status: "failed", error: protocolError, usage, stderr };
+			if (spawnError) return { status: "failed", error: spawnError, usage, stderr };
+			if (stdinError) return { status: "failed", error: stdinError, usage, stderr };
+			const exitCode = code ?? 1;
+			if (exitCode !== 0 || stopReason === "error" || stopReason === "aborted" || errorMessage) {
+				const diagnosticStderr = stripFreshSessionWarning(stderr, prepared.id);
+				return {
+					status: "failed",
+					error:
+						errorMessage || diagnosticStderr || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`),
+					usage,
+					stderr,
+				};
+			}
+			const output = truncateHeadUtf8(finalText.trim(), outputCap);
+			if (!output)
+				return {
+					status: "failed",
+					error: `Child produced no output. (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
+					usage,
+					stderr,
+				};
+			return { status: "completed", output, usage };
+		};
+
+		const requestStop = () => {
+			const stopPromise = stopCoordinator.stop();
+			void stopPromise.then((outcome) => {
+				if (!outcome.ok && !closed) {
+					finish({ ...computeResult(null), cleanupError: outcome.cleanupError });
+				}
+			});
+			return stopPromise;
+		};
+
+		const abort = () => {
+			aborting = true;
+			requestStop();
+		};
 		const armIdle = () => {
 			if (settled || deps.idleTimeoutMs === undefined) return;
 			if (idleTimer) clearTimeout(idleTimer);
 			idleTimer = setTimeout(() => {
 				idleTimedOut = true;
-				stop();
+				requestStop();
 			}, deps.idleTimeoutMs);
 		};
 
@@ -310,7 +363,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		if (!spawned.ok) {
 			forcedMissingReason = "setup-failed";
 			protocolError = spawned.failure.error;
-			stop();
+			requestStop();
 		}
 
 		const parser = new JsonLineParser(
@@ -402,7 +455,7 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		child.stdout.on("data", (data) => {
 			armIdle();
 			parser.push(data);
-			if (protocolError) stop();
+			if (protocolError) requestStop();
 		});
 		child.stderr.on("data", (data) => {
 			armIdle();
@@ -412,59 +465,31 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		child.on("error", (error) => {
 			spawnFailed = true;
 			spawnError = `Spawn failed: ${error.message}`;
-			stop();
+			requestStop();
 		});
 		const handleStdinError = (error: ChildStdinError) => {
 			if (settled || closed) return;
 			const code = error.code ?? "UNKNOWN";
 			stdinError = `Child stdin failed (${code}).`;
-			stop();
+			requestStop();
 		};
 		child.stdin?.on("error", handleStdinError);
-		child.on("close", (code) => {
+		child.on("close", async (code) => {
 			closed = true;
+			stopCoordinator.notifyClosed();
 			parser.flush();
 			stderr = stripFreshSessionWarning(stderr, prepared.id);
-			if (aborting) return finish({ status: "aborted", usage, activity });
-			if (idleTimedOut)
-				return finish({
-					status: "failed",
-					error: `Timed out: child produced no output for ${formatDuration(deps.idleTimeoutMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
-					usage,
-					stderr,
-					activity,
-				});
-			if (runtimeTimedOut)
-				return finish({
-					status: "failed",
-					error: `Timed out: exceeded max runtime of ${formatDuration(deps.maxRuntimeMs!)} (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
-					usage,
-					stderr,
-					activity,
-				});
-			if (protocolError) return finish({ status: "failed", error: protocolError, usage, stderr });
-			if (spawnError) return finish({ status: "failed", error: spawnError, usage, stderr });
-			if (stdinError) return finish({ status: "failed", error: stdinError, usage, stderr });
-			const exitCode = code ?? 1;
-			if (exitCode !== 0 || stopReason === "error" || stopReason === "aborted" || errorMessage) {
-				const diagnosticStderr = stripFreshSessionWarning(stderr, prepared.id);
-				return finish({
-					status: "failed",
-					error:
-						errorMessage || diagnosticStderr || (stopReason ? `stop reason: ${stopReason}` : `exit code ${exitCode}`),
-					usage,
-					stderr,
-				});
+
+			const selectedResult = computeResult(code);
+			if (stopCoordinator.isStopStarted()) {
+				const stopOutcome = await stopCoordinator.stop();
+				if (!stopOutcome.ok) {
+					finish({ ...selectedResult, cleanupError: stopOutcome.cleanupError });
+					return;
+				}
 			}
-			const output = truncateHeadUtf8(finalText.trim(), outputCap);
-			if (!output)
-				return finish({
-					status: "failed",
-					error: `Child produced no output. (${usage.turns} turns completed${activity ? `, last: ${activity}` : ""})`,
-					usage,
-					stderr,
-				});
-			finish({ status: "completed", output, usage });
+
+			finish(selectedResult);
 		});
 
 		if (options.signal?.aborted) {
@@ -476,10 +501,10 @@ export function runChildAgent(options: RunChildOptions): Promise<ChildRunResult>
 		if (deps.maxRuntimeMs !== undefined) {
 			runtimeTimer = setTimeout(() => {
 				runtimeTimedOut = true;
-				stop();
+				requestStop();
 			}, deps.maxRuntimeMs);
 		}
-		if (options.stdin !== undefined && child.stdin && !killStarted) {
+		if (options.stdin !== undefined && child.stdin && !stopCoordinator.isStopStarted()) {
 			try {
 				child.stdin.write(options.stdin);
 				child.stdin.end();

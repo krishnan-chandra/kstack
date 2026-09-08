@@ -6,6 +6,7 @@
 | --- | --- |
 | `change-kind.ts` | Defines the change-kind taxonomy, labels, and proof-obligation playbook names. |
 | `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, persists native sessions, and parses their JSONL event streams. |
+| `child-process-stop.ts` | Coordinates bounded process-group termination, SIGTERM/SIGKILL escalation, and absence observation for cancelled child processes. |
 | `subagent-sessions.ts` | Owns native child-session identity, active leases, file resolution, and retention. |
 | `concurrency.ts` | Maps an item list with a bounded worker pool and preserves input order. |
 | `config-validate.ts` | Checks finite numbers against shared inclusive bounds. |
@@ -51,6 +52,17 @@ contract instead of extending the exception list.
 Every child launched through `runChildAgent` writes a native Pi session to the flat Kstack-managed directory `~/.pi/kstack/subagents/`. Active leases prevent pruning while children are running. Completed sessions are pruned oldest-first to a global cap of 500 files.
 
 The normal `/resume` list does not search this custom directory. Open a retained session directly with `pi --session <absolute-jsonl-path>`. The session-archive extension does not currently index this directory. References can therefore outlive their files after retention pruning.
+
+## Child process lifecycle and termination
+
+`runChildAgent` manages isolated child processes with bounded lifecycle guards:
+
+- **POSIX process groups**: On POSIX (`process.platform !== "win32"`), children spawn detached to lead their own process group. Stopping or cancellation signals the negative process group ID (`-groupId`), ensuring direct children and descendants sharing the group receive `SIGTERM` and `SIGKILL`.
+- **Bounded escalation**: Stopping sends `SIGTERM`, polls for group absence up to `killGraceMs`, and escalates to `SIGKILL` if processes survive. A bounded post-escalation observation window verifies absence (`ESRCH`) before concluding. If the group remains active after post-escalation observation or encounters signaling errors (such as `EPERM`), the runner returns an actionable failed result preserving the original stop reason rather than hanging or claiming successful cancellation.
+- **Direct-child vs. group settlement**: Direct-child close selects the process result (aborted, timed out, protocol error, or exit status), but final session finalization and promise resolution wait for process-group stop completion. A prompt exit by the direct child cannot cancel required escalation for surviving descendants.
+- **Absence observation**: Group absence is detected via injected process signaling (`kill(0)`). Once absence is observed, cleanup finishes immediately, pending timers are cancelled, and the group ID is never signaled again. Normal successful runs and non-stop errors settle immediately without grace-period delays.
+- **Windows fallback**: On Windows (`win32`) or for processes without a group PID, termination falls back to signaling the direct child process directly (`child.kill()`). This does not guarantee recursive process-tree termination on Windows without external job objects.
+- **Process group boundary limits**: Cleanup targets the owned process group. Descendants that deliberately detach or create their own new process group (e.g. via `setsid` or `setpgid`) escape the runner's owned process group boundary and cannot be tracked.
 
 ## Environment variables
 

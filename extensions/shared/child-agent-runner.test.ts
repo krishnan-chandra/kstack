@@ -8,12 +8,13 @@ import {
 	type ChildEvent,
 	childIsolationArgs,
 	KSTACK_ENTRY,
+	type ProcessGroupSystem,
 	runChildAgent,
 	type SpawnedProcess,
 	type SubagentSessionStore,
 	truncateHeadUtf8,
 } from "./child-agent-runner.ts";
-import { isObject, type JsonObject } from "./validation.ts";
+import { isNumber, isObject, type JsonObject } from "./validation.ts";
 
 it("bounds UTF-8 output with disclosure", () => {
 	const output = truncateHeadUtf8("🙂".repeat(20), 17);
@@ -65,6 +66,7 @@ class FakeProcess implements SpawnedProcess {
 	private events = new EventEmitter();
 	killed = false;
 	kills: string[] = [];
+	pid?: number;
 	on(event: "close", cb: (code: number | null) => void): void;
 	on(event: "error", cb: (error: Error) => void): void;
 	on(event: "close" | "error", cb: ((code: number | null) => void) | ((error: Error) => void)): void {
@@ -243,6 +245,124 @@ describe("runChildAgent", () => {
 		assert.ok("status" in result);
 		assert.equal(result.status, "failed");
 		assert.doesNotMatch(stdout + stderr, /private-prompt-marker/);
+	});
+
+	it("terminates surviving process-group descendants on abort", { skip: process.platform === "win32" }, async () => {
+		const sessionId = "00000000-0000-4000-8000-000000000001";
+		let directPid: number | undefined;
+		let descendantPid: number | undefined;
+		let resolveReady!: (pid: number) => void;
+		const readyPromise = new Promise<number>((resolve) => {
+			resolveReady = resolve;
+		});
+
+		const testSessionStore: SubagentSessionStore = {
+			...sessionStore,
+			markSpawned: (prepared, pid) => {
+				directPid = pid;
+				return sessionStore.markSpawned(prepared, pid);
+			},
+		};
+
+		const childScript = `
+			import { spawn } from "node:child_process";
+			const descendantScript = \`
+				process.on("SIGTERM", () => {});
+				process.send({ ready: true, pid: process.pid });
+				const timer = setInterval(() => {}, 1000);
+				process.on("exit", () => clearInterval(timer));
+			\`;
+			const descendant = spawn(process.execPath, ["--input-type=module", "-e", descendantScript], {
+				stdio: ["ignore", "ignore", "ignore", "ipc"],
+			});
+			descendant.on("message", (msg) => {
+				descendant.disconnect();
+				const header = {
+					type: "session",
+					version: 3,
+					id: ${JSON.stringify(sessionId)},
+					timestamp: new Date().toISOString(),
+					cwd: process.cwd(),
+				};
+				process.stdout.write(JSON.stringify(header) + "\\n");
+				const readyEvent = {
+					type: "message_update",
+					assistantMessageEvent: {
+						type: "text_delta",
+						delta: JSON.stringify({ descendantPid: msg.pid }),
+					},
+				};
+				process.stdout.write(JSON.stringify(readyEvent) + "\\n");
+			});
+			process.on("SIGTERM", () => {
+				process.exit(0);
+			});
+			const keepAlive = setInterval(() => {}, 1000);
+			process.on("exit", () => clearInterval(keepAlive));
+		`;
+
+		const controller = new AbortController();
+		const runnerPromise = runChildAgent({
+			args: [],
+			cwd: process.cwd(),
+			session: { owner: "test", label: "descendant" },
+			signal: controller.signal,
+			onEvent: (event) => {
+				if (event.kind === "text_delta") {
+					try {
+						const parsed = JSON.parse(event.delta);
+						if (isObject(parsed) && "descendantPid" in parsed && isNumber(parsed.descendantPid)) {
+							resolveReady(parsed.descendantPid);
+						}
+					} catch {}
+				}
+			},
+			deps: {
+				piInvocation: () => ({ command: process.execPath, args: ["--input-type=module", "-e", childScript] }),
+				sessionStore: testSessionStore,
+				killGraceMs: 50,
+			},
+		});
+
+		try {
+			descendantPid = await Promise.race([
+				readyPromise,
+				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("descendant ready timed out")), 5000)),
+			]);
+			controller.abort();
+			const result = await runnerPromise;
+			assert.equal(result.status, "aborted");
+
+			let descendantAlive = true;
+			const deadline = Date.now() + 500;
+			while (Date.now() < deadline) {
+				try {
+					process.kill(descendantPid, 0);
+					await new Promise((r) => setTimeout(r, 20));
+				} catch (error) {
+					if (isObject(error) && "code" in error && error.code === "ESRCH") {
+						descendantAlive = false;
+						break;
+					}
+					throw error;
+				}
+			}
+			assert.equal(descendantAlive, false, "Descendant process should have been terminated");
+		} finally {
+			if (descendantPid) {
+				try {
+					process.kill(descendantPid, "SIGKILL");
+				} catch {}
+			}
+			if (directPid) {
+				try {
+					process.kill(directPid, "SIGKILL");
+				} catch {}
+				try {
+					process.kill(-directPid, "SIGKILL");
+				} catch {}
+			}
+		}
 	});
 
 	it("completes with final output and accumulated usage", async () => {
@@ -537,5 +657,204 @@ describe("runChildAgent", () => {
 			assert.equal(events[4].usage.output, 20);
 			assert.equal(events[4].usage.cost, 0.05);
 		}
+	});
+
+	it("delays promise resolution and session finish until process-group escalation completes after direct child close", async () => {
+		const child = new FakeProcess();
+		child.pid = 4242;
+		let finishCalls = 0;
+		const countingStore: SubagentSessionStore = {
+			...sessionStore,
+			finish: (prepared, outcome) => {
+				finishCalls++;
+				return sessionStore.finish(prepared, outcome);
+			},
+		};
+
+		let sigkillSent = false;
+		const groupSystem: ProcessGroupSystem = {
+			killGroup: (_pgid, signal) => {
+				if (signal === "SIGKILL") {
+					sigkillSent = true;
+				} else if (signal === 0) {
+					if (!sigkillSent) {
+						// Alive before SIGKILL
+						return;
+					}
+					// Dead after SIGKILL
+					throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+				}
+			},
+		};
+
+		const controller = new AbortController();
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "escalate-delay" },
+			signal: controller.signal,
+			deps: {
+				spawnImpl: () => child,
+				piInvocation: (args) => ({ command: "pi", args }),
+				killGraceMs: 25,
+				postEscalationGraceMs: 25,
+				sessionStore: countingStore,
+				processGroupSystem: groupSystem,
+			},
+		});
+
+		controller.abort();
+		// Direct child closes immediately on SIGTERM
+		child.close(null);
+
+		// At this point, grace timer has NOT expired, so escalation hasn't completed
+		assert.equal(finishCalls, 0, "sessionStore.finish must not be called while process group is still alive");
+		assert.equal(sigkillSent, false, "SIGKILL should not be sent before grace expires");
+
+		const result = await promise;
+		assert.equal(result.status, "aborted");
+		assert.equal(sigkillSent, true, "SIGKILL should have been sent");
+		assert.equal(finishCalls, 1, "sessionStore.finish must be called exactly once");
+	});
+
+	it("reports actionable failure when process-group cleanup fails after abort, preserving abort reason", async () => {
+		const child = new FakeProcess();
+		child.pid = 4243;
+		let finishCalls = 0;
+		const countingStore: SubagentSessionStore = {
+			...sessionStore,
+			finish: (prepared, outcome) => {
+				finishCalls++;
+				return sessionStore.finish(prepared, outcome);
+			},
+		};
+
+		const groupSystem: ProcessGroupSystem = {
+			killGroup: () => {
+				throw Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
+			},
+		};
+
+		const controller = new AbortController();
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "cleanup-fail-abort" },
+			signal: controller.signal,
+			deps: {
+				spawnImpl: () => child,
+				piInvocation: (args) => ({ command: "pi", args }),
+				sessionStore: countingStore,
+				processGroupSystem: groupSystem,
+			},
+		});
+
+		controller.abort();
+
+		const result = await promise;
+		assert.equal(result.status, "aborted");
+		assert.match(result.cleanupError ?? "", /Operation not permitted/);
+		assert.equal(finishCalls, 1);
+
+		child.close(null);
+		assert.equal(finishCalls, 1, "a later close must not finalize the session twice");
+	});
+
+	it("reports actionable failure when process-group cleanup fails after timeout, preserving timeout reason", async () => {
+		const child = new FakeProcess();
+		child.pid = 4244;
+		const groupSystem: ProcessGroupSystem = {
+			killGroup: () => {
+				throw Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
+			},
+		};
+
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "cleanup-fail-timeout" },
+			deps: {
+				spawnImpl: () => child,
+				piInvocation: (args) => ({ command: "pi", args }),
+				idleTimeoutMs: 5,
+				sessionStore,
+				processGroupSystem: groupSystem,
+			},
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 15));
+		child.close(null);
+
+		const result = await promise;
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") {
+			assert.match(result.error, /Timed out/);
+			assert.match(result.cleanupError ?? "", /Operation not permitted/);
+		}
+	});
+
+	it("reports actionable failure when process-group cleanup fails after protocol error, preserving protocol error reason", async () => {
+		const child = new FakeProcess();
+		child.pid = 4245;
+		const groupSystem: ProcessGroupSystem = {
+			killGroup: () => {
+				throw Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
+			},
+		};
+
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "cleanup-fail-protocol" },
+			deps: {
+				spawnImpl: () => child,
+				piInvocation: (args) => ({ command: "pi", args }),
+				stdoutLineCapBytes: 8,
+				sessionStore,
+				processGroupSystem: groupSystem,
+			},
+		});
+
+		child.output("123456789\n");
+		child.close(null);
+
+		const result = await promise;
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") {
+			assert.match(result.error, /larger than 8 bytes/);
+			assert.match(result.cleanupError ?? "", /Operation not permitted/);
+		}
+	});
+
+	it("ignores repeated abort calls without duplicating stop or finish", async () => {
+		const child = new FakeProcess();
+		let finishCalls = 0;
+		const countingStore: SubagentSessionStore = {
+			...sessionStore,
+			finish: (prepared, outcome) => {
+				finishCalls++;
+				return sessionStore.finish(prepared, outcome);
+			},
+		};
+		const controller = new AbortController();
+		const promise = runChildAgent({
+			args: [],
+			cwd: "/repo",
+			session: { owner: "test", label: "repeated-abort" },
+			signal: controller.signal,
+			deps: {
+				spawnImpl: () => child,
+				piInvocation: (args) => ({ command: "pi", args }),
+				sessionStore: countingStore,
+			},
+		});
+
+		controller.abort();
+		controller.abort();
+		child.close(null);
+
+		const result = await promise;
+		assert.equal(result.status, "aborted");
+		assert.equal(finishCalls, 1);
 	});
 });
