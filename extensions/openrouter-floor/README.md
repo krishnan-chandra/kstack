@@ -97,6 +97,12 @@ attempts within a 1.5-second request deadline, does not follow redirects, and
 records lookup failures as `unknown`. A telemetry failure does not change the
 `:floor` request or the provider response.
 
+The rewrite handler does not wait for persistence; the append runs on the
+ledger queue and is drained by `flush()` at session shutdown. Completion
+telemetry (`message_end`) and the shutdown flush still await the ledger, so a
+stalled filesystem can delay those lifecycle boundaries. A crash before
+shutdown loses every queued record, not one line.
+
 Pi's catalog cost still uses the base model rate. The footer and session cost
 can overstate spend when OpenRouter serves a flex endpoint.
 ## Tests

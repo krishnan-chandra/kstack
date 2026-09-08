@@ -129,7 +129,9 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 		async rewrite(payload, model, scope) {
 			const replacement = applyFloor(payload, model);
 			if (replacement !== undefined) {
-				await append(scope, {
+				// Persistence runs on the ledger queue; flush() drains it at shutdown.
+				// Waiting here would put filesystem latency on every provider request.
+				void append(scope, {
 					kind: "rewrite",
 					eventId: nextEventId(),
 					at: clock.now().toISOString(),

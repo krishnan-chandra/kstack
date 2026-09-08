@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { createFloorLedger } from "./floor-ledger.ts";
+import { createFloorLedger, type FloorLedger } from "./floor-ledger.ts";
 import { createFloorRuntime, parseCompletedOpenRouterMessage } from "./floor-runtime.ts";
 
 const now = new Date("2026-09-07T12:00:00.000Z");
@@ -17,6 +17,31 @@ async function tempScope(): Promise<string> {
 	const scope = await mkdtemp(join(tmpdir(), "openrouter-floor-runtime-"));
 	scopes.push(scope);
 	return scope;
+}
+
+function deferredLedger() {
+	let release: () => void = () => {};
+	let reject: (error: Error) => void = () => {};
+	const pending = new Promise<void>((resolve, rejectPending) => {
+		release = resolve;
+		reject = rejectPending;
+	});
+	let queue = Promise.resolve();
+	const ledger: FloorLedger = {
+		processId: "p-test",
+		append() {
+			const result = queue.then(() => pending);
+			queue = result.catch(() => {});
+			return result;
+		},
+		async read() {
+			return [];
+		},
+		async flush() {
+			await queue;
+		},
+	};
+	return { ledger, release, reject };
 }
 
 describe("parseCompletedOpenRouterMessage", () => {
@@ -58,6 +83,73 @@ describe("parseCompletedOpenRouterMessage", () => {
 });
 
 describe("floor runtime", () => {
+	it("returns a rewrite before its ledger append settles", async () => {
+		const { ledger, release } = deferredLedger();
+		const runtime = createFloorRuntime({ ledger, clock: { now: () => now } });
+
+		const replacement = await runtime.rewrite(
+			{ model: "openai/gpt-5.6-sol", messages: [] },
+			{ provider: "openrouter", id: "openai/gpt-5.6-sol" },
+			"scope",
+		);
+
+		assert.equal(replacement?.model, "openai/gpt-5.6-sol:floor");
+		release();
+		await runtime.flush();
+	});
+
+	it("waits for a detached rewrite append during flush", async () => {
+		const { ledger, release } = deferredLedger();
+		const runtime = createFloorRuntime({ ledger, clock: { now: () => now } });
+		await runtime.rewrite(
+			{ model: "openai/gpt-5.6-sol", messages: [] },
+			{ provider: "openrouter", id: "openai/gpt-5.6-sol" },
+			"scope",
+		);
+
+		let settled = false;
+		const flushed = runtime.flush().then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		assert.equal(settled, false);
+
+		release();
+		await flushed;
+		assert.equal(settled, true);
+	});
+
+	it("handles a rejected detached rewrite append", async () => {
+		const { ledger, reject } = deferredLedger();
+		const diagnostics: string[] = [];
+		let unhandledRejections = 0;
+		const onUnhandledRejection = (): void => {
+			unhandledRejections += 1;
+		};
+		process.on("unhandledRejection", onUnhandledRejection);
+		try {
+			const runtime = createFloorRuntime({
+				ledger,
+				clock: { now: () => now },
+				onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			});
+			await runtime.rewrite(
+				{ model: "openai/gpt-5.6-sol", messages: [] },
+				{ provider: "openrouter", id: "openai/gpt-5.6-sol" },
+				"scope",
+			);
+
+			reject(new Error("disk"));
+			await runtime.flush();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			assert.deepEqual(diagnostics, ["ledger append failed: rewrite"]);
+			assert.equal(unhandledRejections, 0);
+		} finally {
+			process.off("unhandledRejection", onUnhandledRejection);
+		}
+	});
+
 	it("records rewrites separately from completion outcomes and resolves tiers", async () => {
 		const scope = await tempScope();
 		const ledger = createFloorLedger({ processId: "p-runtime", now: () => now });
