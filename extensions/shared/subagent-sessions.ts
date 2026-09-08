@@ -26,6 +26,14 @@ const MALFORMED_LEASE_STALE_MS = 60 * 60 * 1000;
 const HEADER_READ_BYTES = 16 * 1024;
 const DIAGNOSTIC_BYTES = 1024;
 
+export function getSubagentSessionsRoot(): string {
+	return resolve(join(homedir(), ".pi", "kstack", "subagents"));
+}
+
+type SubagentLeaseClassification =
+	| { kind: "active"; reason: "live-pid" | "recent-malformed" }
+	| { kind: "inactive"; reason: "dead-pid" | "stale-malformed" };
+
 export interface ChildSessionIdentity {
 	owner: string;
 	label: string;
@@ -141,6 +149,23 @@ function parseLease(raw: string): { state: "pending" | "spawned"; pid: number; c
 	}
 }
 
+/** Classify already-read lease bytes without changing the lease file. */
+export function classifySubagentLeaseReadOnly(options: {
+	raw: string;
+	mtimeMs: number;
+	nowMs: number;
+	isPidAlive?: (pid: number) => boolean;
+}): SubagentLeaseClassification {
+	const lease = parseLease(options.raw);
+	if (lease) {
+		const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+		return isPidAlive(lease.pid) ? { kind: "active", reason: "live-pid" } : { kind: "inactive", reason: "dead-pid" };
+	}
+	return options.nowMs - options.mtimeMs < MALFORMED_LEASE_STALE_MS
+		? { kind: "active", reason: "recent-malformed" }
+		: { kind: "inactive", reason: "stale-malformed" };
+}
+
 function canonicalPath(path: string): string {
 	try {
 		return realpathSync(path);
@@ -193,7 +218,7 @@ export function validateSessionHeader(
 }
 
 export function createSubagentSessionStore(options: StoreOptions = {}): SubagentSessionStore {
-	const root = resolve(options.root ?? join(homedir(), ".pi", "kstack", "subagents"));
+	const root = resolve(options.root ?? getSubagentSessionsRoot());
 	const pid = options.pid ?? process.pid;
 	const now = options.now ?? (() => new Date());
 	const uuid = options.uuid ?? randomUUID;
@@ -236,14 +261,19 @@ export function createSubagentSessionStore(options: StoreOptions = {}): Subagent
 				continue;
 			}
 			if (!stat.isFile() || stat.isSymbolicLink()) continue;
-			let lease: ReturnType<typeof parseLease>;
+			let raw = "";
 			try {
-				lease = parseLease(readFileSync(path, "utf8"));
+				raw = readFileSync(path, "utf8");
 			} catch {
-				lease = undefined;
+				// Preserve retention's existing treatment of unreadable leases as malformed.
 			}
-			if (lease && isPidAlive(lease.pid)) active.add(id);
-			else if (!lease && now().getTime() - stat.mtimeMs < MALFORMED_LEASE_STALE_MS) active.add(id);
+			const classification = classifySubagentLeaseReadOnly({
+				raw,
+				mtimeMs: stat.mtimeMs,
+				nowMs: now().getTime(),
+				isPidAlive,
+			});
+			if (classification.kind === "active") active.add(id);
 			else {
 				try {
 					unlinkSync(path);

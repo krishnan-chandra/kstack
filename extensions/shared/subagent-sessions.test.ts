@@ -3,7 +3,12 @@ import { existsSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { createSubagentSessionStore, validateSessionHeader } from "./subagent-sessions.ts";
+import {
+	classifySubagentLeaseReadOnly,
+	createSubagentSessionStore,
+	getSubagentSessionsRoot,
+	validateSessionHeader,
+} from "./subagent-sessions.ts";
 
 const ID = "00000000-0000-4000-8000-000000000001";
 
@@ -25,6 +30,37 @@ function prepare(store: ReturnType<typeof createSubagentSessionStore>) {
 	if (!result.ok) throw new Error("session preparation failed");
 	return result.prepared;
 }
+
+describe("read-only subagent session access", () => {
+	it("keeps the shared default root independent of PI_CODING_AGENT_DIR", () => {
+		const prior = process.env.PI_CODING_AGENT_DIR;
+		try {
+			process.env.PI_CODING_AGENT_DIR = "/tmp/unrelated-agent-dir";
+			assert.match(getSubagentSessionsRoot(), /\.pi\/kstack\/subagents$/);
+			assert.ok(!getSubagentSessionsRoot().includes("unrelated-agent-dir"));
+		} finally {
+			if (prior === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prior;
+		}
+	});
+
+	it("classifies live, dead, recent malformed, and stale malformed leases without mutation", () => {
+		const raw = JSON.stringify({ state: "spawned", pid: 42, createdAt: "2026-01-01T00:00:00.000Z" });
+		assert.deepEqual(classifySubagentLeaseReadOnly({ raw, mtimeMs: 0, nowMs: 1, isPidAlive: () => true }), {
+			kind: "active",
+			reason: "live-pid",
+		});
+		assert.deepEqual(classifySubagentLeaseReadOnly({ raw, mtimeMs: 0, nowMs: 1, isPidAlive: () => false }), {
+			kind: "inactive",
+			reason: "dead-pid",
+		});
+		assert.equal(classifySubagentLeaseReadOnly({ raw: "bad", mtimeMs: 0, nowMs: 100 }).kind, "active");
+		assert.deepEqual(classifySubagentLeaseReadOnly({ raw: "bad", mtimeMs: 0, nowMs: 60 * 60 * 1000 }), {
+			kind: "inactive",
+			reason: "stale-malformed",
+		});
+	});
+});
 
 describe("subagent session store", () => {
 	it("creates safe flat directories, lease, and exact CLI args", () => {

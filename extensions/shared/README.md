@@ -49,9 +49,9 @@ contract instead of extending the exception list.
 
 ## Subagent sessions
 
-Every child launched through `runChildAgent` writes a native Pi session to the flat Kstack-managed directory `~/.pi/kstack/subagents/`. Active leases prevent pruning while children are running. Completed sessions are pruned oldest-first to a global cap of 500 files.
+Every child launched through `runChildAgent` writes a native Pi session to the flat Kstack-managed directory `~/.pi/kstack/subagents/`. `getSubagentSessionsRoot()` is the shared path contract for writers and readers. Active leases prevent pruning while children run. Inactive sessions, including failed and aborted runs, are pruned oldest-first to a global cap of 500 files.
 
-The normal `/resume` list does not search this custom directory. Open a retained session directly with `pi --session <absolute-jsonl-path>`. The session-archive extension does not currently index this directory. References can therefore outlive their files after retention pruning.
+The normal `/resume` list does not search this directory. The session-archive extension provides `search_subagent_history` and `read_subagent_history` for retained inactive sessions. Its reader uses the shared non-mutating lease classifier, so discovery never deletes stale leases or changes retention. Tool results validate source identity and can expire when retention removes the JSONL file.
 
 ## Child process lifecycle and termination
 
