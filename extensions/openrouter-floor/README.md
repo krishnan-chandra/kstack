@@ -75,10 +75,15 @@ Each process writes an append-only shard under:
 
 `<agentDir>` is Pi's agent directory (`PI_CODING_AGENT_DIR`, default
 `~/.pi/agent`), so telemetry never lands in a project working tree and is never
-snapshotted by Git or jj. `<scope-key>` is the SHA-256 of the resolved
-`ctx.cwd`; reports read shards under the current scope only. Child worktrees
-therefore have separate scopes until a stable repository-scope resolver
-exists. The report labels this as the current working directory.
+snapshotted by Git or jj. `<scope-key>` is the repository identity derived
+from the canonical Git common directory. The resolver understands jj
+workspaces, and all worktrees and workspaces for one repository share a scope.
+Outside a repository, or when identity resolution fails, the key falls back to
+the canonical working directory. Reports state which scope is active.
+
+Adopting the repository key leaves the previous working-directory-keyed scope
+under `ledger-v1/` untouched and restarts reporting in the repository scope.
+The ledger does not prune that orphaned directory.
 
 Shards written by earlier versions under `<cwd>/.pi/openrouter-floor/` are
 not read or migrated; delete them by hand if they were committed.

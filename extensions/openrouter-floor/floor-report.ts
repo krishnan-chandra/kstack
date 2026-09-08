@@ -1,4 +1,4 @@
-import type { LedgerEvent, ServiceTier, StatsRange } from "./floor-ledger.ts";
+import type { FloorScopeLabel, LedgerEvent, ServiceTier, StatsRange } from "./floor-ledger.ts";
 
 export type { StatsRange } from "./floor-ledger.ts";
 
@@ -20,6 +20,7 @@ export function parseStatsRange(args: string): StatsRangeParseResult {
 
 export interface FloorReport {
 	range: StatsRange;
+	scopeLabel: FloorScopeLabel;
 	rewrites: number;
 	completedGenerations: number;
 	tiers: Readonly<{
@@ -34,6 +35,7 @@ export interface FloorReport {
 
 export interface AggregateFloorReportInput {
 	range: StatsRange;
+	scopeLabel: FloorScopeLabel;
 	now: Date;
 	processId?: string;
 	onDiagnostic?: (diagnostic: string) => void;
@@ -133,6 +135,7 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 	const known = tiers.flex + tiers.default + tiers.priority;
 	return {
 		range: input.range,
+		scopeLabel: input.scopeLabel,
 		rewrites: rewriteIds.size,
 		completedGenerations,
 		tiers,
@@ -144,7 +147,7 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 export function formatFloorReport(report: FloorReport): string {
 	const known = report.tiers.flex + report.tiers.default + report.tiers.priority;
 	const lines = [
-		`OpenRouter floor routing (scope: current working directory, range: ${report.range})`,
+		`OpenRouter floor routing (scope: ${report.scopeLabel}, range: ${report.range})`,
 		"",
 		`Floor rewrites observed       ${report.rewrites}`,
 		`Completed generations         ${report.completedGenerations}`,

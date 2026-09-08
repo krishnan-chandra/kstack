@@ -8,10 +8,11 @@ import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } fro
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecFn, ExecFnResult } from "./git-exec.ts";
+import type { ExecFn } from "./git-exec.ts";
 import { getAgentDir } from "./kstack-config.ts";
+import { resolveRepositoryIdentity } from "./repository-identity.ts";
 
 const DEFAULT_CORRUPT_STALE_AFTER_MS = 60 * 60 * 1000;
 
@@ -238,49 +239,19 @@ export async function acquireRepositoryPublicationLock(
 	cwd: string,
 	deps: RepositoryPublicationLockDeps = {},
 ): Promise<RepositoryPublicationLockAttempt> {
-	let common: ExecFnResult;
-	try {
-		const options = { cwd, timeout: 8_000, signal: deps.signal };
-		const args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
-		if (deps.backend === "jj") {
-			const root = await exec("jj", ["git", "root"], options);
-			const gitDir = root.stdout.trim();
-			if (root.code !== 0 || !gitDir) {
-				return {
-					ok: false,
-					kind: "failed",
-					error: `Could not resolve the repository publication identity with jj git root: ${root.stderr.trim() || "no Git directory returned"}`,
-				};
-			}
-			args.unshift(`--git-dir=${gitDir}`);
-		}
-		common = await exec("git", args, options);
-	} catch (error) {
+	const identity = await resolveRepositoryIdentity(exec, cwd, {
+		backend: deps.backend,
+		realpath: deps.realpath,
+		signal: deps.signal,
+	});
+	if (!identity.ok) {
 		return {
 			ok: false,
 			kind: "failed",
-			error: `Could not resolve the repository publication identity: ${error instanceof Error ? error.message : String(error)}`,
+			error: `Could not resolve the repository publication identity: ${identity.error}`,
 		};
 	}
-	const commonGitDir = common.stdout.trim();
-	if (common.code !== 0 || !commonGitDir) {
-		return {
-			ok: false,
-			kind: "failed",
-			error: `Could not resolve the repository publication identity: ${common.stderr.trim() || common.stdout.trim() || `exit ${common.code}`}`,
-		};
-	}
-
-	let repositoryPath: string;
-	try {
-		repositoryPath = (deps.realpath ?? realpathSync)(commonGitDir);
-	} catch (error) {
-		return {
-			ok: false,
-			kind: "failed",
-			error: `Could not canonicalize the repository publication identity: ${error instanceof Error ? error.message : String(error)}`,
-		};
-	}
+	const repositoryPath = identity.commonGitDir;
 
 	let acquired: LockAttempt;
 	try {
