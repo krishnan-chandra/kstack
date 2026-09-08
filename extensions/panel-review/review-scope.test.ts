@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import {
 	type CollectScopeOptions,
 	collectScope,
@@ -312,12 +314,15 @@ describe("collectScope", () => {
 				seenArgs.push(args);
 				const key = args.join(" ");
 				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
-				if (key.startsWith(`diff --find-renames --find-copies mbsha..${targetSha}`))
+				if (key.startsWith(`--no-replace-objects diff --find-renames --find-copies mbsha..${targetSha}`))
 					return "diff --git a/tracked.ts b/tracked.ts\n+line\n";
-				if (key.startsWith(`diff --name-status -z --find-renames --find-copies mbsha..${targetSha}`))
+				if (
+					key.startsWith(`--no-replace-objects diff --name-status -z --find-renames --find-copies mbsha..${targetSha}`)
+				)
 					return "M\0tracked.ts\0";
-				if (key.startsWith(`diff --name-status --find-renames mbsha..${targetSha}`)) return "M\ttracked.ts\n";
-				if (key.startsWith(`log --format=%s mbsha..${targetSha}`)) return "commit 1\n";
+				if (key.startsWith(`--no-replace-objects diff --name-status --find-renames mbsha..${targetSha}`))
+					return "M\ttracked.ts\n";
+				if (key.startsWith(`--no-replace-objects log --format=%s mbsha..${targetSha}`)) return "commit 1\n";
 				throw new Error(`unexpected: ${key}`);
 			};
 			const options: CollectScopeOptions = {
@@ -333,6 +338,9 @@ describe("collectScope", () => {
 			assert.equal(scope.untrackedCount, 0);
 			assert.ok(!seenArgs.some((a) => a[0] === "status"));
 			assert.ok(!seenArgs.some((a) => a[0] === "rev-parse" && a[1] === "HEAD"));
+			assert.ok(
+				seenArgs.filter((a) => a.includes("diff") || a.includes("log")).every((a) => a[0] === "--no-replace-objects"),
+			);
 			const content = readFileSync(scope.path, "utf8");
 			assert.match(content, new RegExp(`HEAD: ${targetSha}`));
 			assert.match(content, /commit 1/);
@@ -340,6 +348,74 @@ describe("collectScope", () => {
 		} finally {
 			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			cleanup();
+		}
+	});
+
+	it("honors ordinary Git replacement behavior in working-tree mode", () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-scope-wt-"));
+		const repo = join(root, "repo");
+		mkdirSync(repo);
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (args: string[]) => {
+			const res = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: vcsEnv });
+			assert.equal(res.status, 0, res.stderr || res.error?.message);
+			return res.stdout.trim();
+		};
+		let bundleDir: string | undefined;
+		try {
+			run(["init", "-q"]);
+			run(["config", "user.email", "test@example.com"]);
+			run(["config", "user.name", "Test"]);
+			writeFileSync(join(repo, "file.txt"), "base\n");
+			run(["add", "file.txt"]);
+			run(["commit", "-qm", "base"]);
+			const baseSha = run(["rev-parse", "HEAD"]);
+
+			writeFileSync(join(repo, "file.txt"), "committed\n");
+			run(["add", "file.txt"]);
+			run(["commit", "-qm", "committed"]);
+			const headSha = run(["rev-parse", "HEAD"]);
+
+			// Replace baseSha with headSha so ordinary Git sees no diff against base
+			run(["replace", baseSha, headSha]);
+
+			const seenArgs: string[][] = [];
+			const realExec: GitExec = (args, cwd) => {
+				seenArgs.push(args);
+				const res = spawnSync("git", args, { cwd, encoding: "utf8", env: vcsEnv });
+				assert.equal(res.status, 0, res.stderr || res.error?.message);
+				return res.stdout;
+			};
+
+			const wtScope = collectScope(repo, { ref: "main", mergeBaseSha: baseSha, strategy: "explicit" }, "wt review", {
+				exec: realExec,
+			});
+			bundleDir = wtScope.dir;
+
+			assert.ok(!seenArgs.some((a) => a[0] === "--no-replace-objects"));
+			assert.equal(wtScope.fileCount, 0);
+
+			seenArgs.length = 0;
+			let commitBundleDir: string | undefined;
+			try {
+				const commitScope = collectScope(
+					repo,
+					{ ref: "main", mergeBaseSha: baseSha, strategy: "explicit" },
+					"commit review",
+					{ exec: realExec, headSha },
+				);
+				commitBundleDir = commitScope.dir;
+				assert.ok(
+					seenArgs.filter((a) => a.includes("diff") || a.includes("log")).every((a) => a[0] === "--no-replace-objects"),
+				);
+				assert.equal(commitScope.fileCount, 1);
+				assert.deepEqual(commitScope.changedPaths, ["file.txt"]);
+			} finally {
+				if (commitBundleDir) rmSync(commitBundleDir, { recursive: true, force: true });
+			}
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 

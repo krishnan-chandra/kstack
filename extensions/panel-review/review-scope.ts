@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { pinnedGitExec } from "./pinned-git.ts";
 import { type BaseResolution, type BaseStrategy, LIMITS, type ScopeBundle } from "./types.ts";
 
 export type { ScopeBundle } from "./types.ts";
@@ -252,12 +253,15 @@ export function collectScope(
 	const isCommitTarget = options.headSha !== undefined;
 	const headSha = options.headSha ?? (tryGit(exec, ["rev-parse", "HEAD"], cwd) ?? "").trim();
 	if (!headSha) throw new Error("Cannot resolve HEAD.");
+	const objectExec = isCommitTarget ? pinnedGitExec(exec) : exec;
 
 	const diffRange = isCommitTarget ? `${base.mergeBaseSha}..${headSha}` : base.mergeBaseSha;
 	const diffArgs = ["diff", "--find-renames", "--find-copies", diffRange];
-	const diff = exec(diffArgs, cwd);
-	const nameStatus = tryGit(exec, ["diff", "--name-status", "--find-renames", diffRange], cwd) ?? "";
-	const changedNameStatus = exec(["diff", "--name-status", "-z", "--find-renames", "--find-copies", diffRange], cwd);
+	const diff = objectExec(diffArgs, cwd);
+	const nameStatusArgs = ["diff", "--name-status", "--find-renames", diffRange];
+	const nameStatus = tryGit(objectExec, nameStatusArgs, cwd) ?? "";
+	const changedNameStatusArgs = ["diff", "--name-status", "-z", "--find-renames", "--find-copies", diffRange];
+	const changedNameStatus = objectExec(changedNameStatusArgs, cwd);
 	const changedFields = changedNameStatus.split("\0");
 	const committedPaths: string[] = [];
 	for (let index = 0; index < changedFields.length; ) {
@@ -278,7 +282,8 @@ export function collectScope(
 		? []
 		: parsePorcelainZ(exec(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd));
 	const logRange = isCommitTarget ? `${base.mergeBaseSha}..${headSha}` : `${base.mergeBaseSha}..HEAD`;
-	const logRaw = tryGit(exec, ["log", "--format=%s", logRange], cwd) ?? "";
+	const logArgs = ["log", "--format=%s", logRange];
+	const logRaw = tryGit(objectExec, logArgs, cwd) ?? "";
 	const untracked = statusEntries.filter((e) => e.xy === "??");
 
 	const sections: string[] = [];
