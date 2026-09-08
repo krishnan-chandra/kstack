@@ -417,6 +417,73 @@ describe("materializePrSnapshot", () => {
 		}
 	});
 
+	it("resolves and materializes distinct ordinary and U+FEFF-prefixed filenames", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-pr-bom-"));
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => runOk(cwd, command, args, vcsEnv);
+		const remote = join(root, "remote.git");
+		const seed = join(root, "seed");
+		const checkout = join(root, "checkout");
+		const snapshots = join(root, "snapshots");
+		let snapshotRoot: string | undefined;
+		try {
+			mkdirSync(seed);
+			mkdirSync(snapshots);
+			await run(root, "git", ["init", "--bare", "-q", remote]);
+			await run(seed, "git", ["init", "-q"]);
+			await run(seed, "git", ["config", "user.email", "test@example.com"]);
+			await run(seed, "git", ["config", "user.name", "Test"]);
+			writeFileSync(join(seed, "base.txt"), "base\n");
+			await run(seed, "git", ["add", "base.txt"]);
+			await run(seed, "git", ["commit", "-qm", "base"]);
+			await run(seed, "git", ["branch", "-M", "main"]);
+			await run(seed, "git", ["remote", "add", "origin", remote]);
+			await run(seed, "git", ["push", "-q", "-u", "origin", "main"]);
+			await run(root, "git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
+			await run(root, "git", ["clone", "-q", remote, checkout]);
+
+			const ordinaryName = "file.txt";
+			const bomName = "\uFEFFfile.txt";
+			const lookalikeContextName = "\uFEFFAGENTS.md";
+			writeFileSync(join(seed, ordinaryName), "ordinary content\n");
+			writeFileSync(join(seed, bomName), "bom content\n");
+			writeFileSync(join(seed, lookalikeContextName), "lookalike context content\n");
+			await run(seed, "git", ["add", ordinaryName, bomName, lookalikeContextName]);
+			await run(seed, "git", ["commit", "-qm", "add distinct files"]);
+			const headSha = await run(seed, "git", ["rev-parse", "HEAD"]);
+			const baseSha = await run(seed, "git", ["rev-parse", "main"]);
+			await run(seed, "git", ["push", "-q", "origin", "HEAD:refs/pull/42/head"]);
+
+			const exec: ExecFn = (command, args, options) =>
+				command === "gh"
+					? Promise.resolve(result(0, mockGhResponse({ headRefOid: headSha, baseRefOid: baseSha })))
+					: createRealExec(vcsEnv)(command, args, options);
+
+			const target = await resolvePrTarget(exec, checkout, 42);
+			assert.equal(target.headSha, headSha);
+
+			const snapshot = await materializePrSnapshot(exec, checkout, target.headSha, {
+				tmpDir: snapshots,
+				objectProcess: { env: vcsEnv },
+			});
+			snapshotRoot = snapshot.root;
+
+			const materializedOrdinary = join(snapshot.directory, ordinaryName);
+			const materializedBom = join(snapshot.directory, bomName);
+			const materializedLookalike = join(snapshot.directory, lookalikeContextName);
+			assert.equal(existsSync(materializedOrdinary), true);
+			assert.equal(existsSync(materializedBom), true);
+			assert.equal(existsSync(materializedLookalike), true);
+			assert.equal(readFileSync(materializedOrdinary, "utf8"), "ordinary content\n");
+			assert.equal(readFileSync(materializedBom, "utf8"), "bom content\n");
+			assert.equal(readFileSync(materializedLookalike, "utf8"), "lookalike context content\n");
+			assert.equal(existsSync(join(snapshot.directory, "AGENTS.md")), false);
+		} finally {
+			if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("materializes repository-contained symlinks", async () => {
 		const root = mkdtempSync(join(tmpdir(), "panel-pr-contained-symlink-"));
 		const repo = join(root, "repo");

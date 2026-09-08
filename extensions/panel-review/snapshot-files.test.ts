@@ -62,6 +62,11 @@ describe("planSnapshotFiles", () => {
 		assert.throws(() => planSnapshotFiles([entry("same"), entry("same")]), /tracked path is duplicated/);
 	});
 
+	it("treats leading U+FEFF path and ordinary path with same suffix as distinct entries", () => {
+		const plan = planSnapshotFiles([entry("file.txt"), entry("\uFEFFfile.txt")]);
+		assert.equal(plan.files.length, 2);
+	});
+
 	it("rejects file-directory collisions in either tree order", () => {
 		assert.throws(() => planSnapshotFiles([entry("parent"), entry("parent/child")]), /tracked non-directory/);
 		assert.throws(
@@ -327,6 +332,27 @@ describe("materializeSnapshotFiles", () => {
 			assert.deepEqual(await materializeSnapshotFiles({ directory: root, plan: planSnapshotFiles([]) }), {
 				symlinkPaths: [],
 			});
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("materializes both ordinary and U+FEFF-prefixed files as distinct entries", async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-snapshot-bom-"));
+		try {
+			const objects = new Map([
+				[OID, Buffer.from("plain")],
+				[OTHER_OID, Buffer.from("bom")],
+			]);
+			const entries = [
+				entry("file.txt", { objectId: OID, size: 5 }),
+				entry("\uFEFFfile.txt", { objectId: OTHER_OID, size: 3 }),
+			];
+			const plan = planSnapshotFiles(entries);
+			const objectsReader = readerFor(objects);
+			await materializeSnapshotFiles({ directory: root, plan, objects: objectsReader });
+			assert.equal(readFileSync(join(root, "file.txt"), "utf8"), "plain");
+			assert.equal(readFileSync(join(root, "\uFEFFfile.txt"), "utf8"), "bom");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
