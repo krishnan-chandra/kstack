@@ -82,6 +82,8 @@ export function parseMergeStateStatus(raw: BoundaryValue): MergeStateStatus {
 	}
 }
 
+type StatusCheckRollupSummary = { kind: "empty" } | { kind: "present" };
+
 export interface GHPrJson {
 	number: number;
 	title: string;
@@ -93,6 +95,12 @@ export interface GHPrJson {
 	baseRefName: string;
 	headSha: string;
 	commits?: Array<{ oid: string }>;
+	statusCheckRollup?: StatusCheckRollupSummary;
+}
+
+function parseStatusCheckRollup(raw: BoundaryValue): StatusCheckRollupSummary | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	return raw.length === 0 ? { kind: "empty" } : { kind: "present" };
 }
 
 function parseGHPr(raw: BoundaryValue): GHPrJson | undefined {
@@ -117,6 +125,7 @@ function parseGHPr(raw: BoundaryValue): GHPrJson | undefined {
 					return oid ? [{ oid }] : [];
 				})
 			: [],
+		statusCheckRollup: parseStatusCheckRollup(raw.statusCheckRollup),
 	};
 }
 
@@ -375,18 +384,20 @@ function parseCheckState(state: string | undefined, bucket: string | undefined):
 	return "pending";
 }
 
-export function parsePrChecksJson(stdout: string): CheckRun[] {
+export function parsePrChecksJson(stdout: string): ParseResult<CheckRun[]> {
 	const trimmed = stdout.trim();
-	if (!trimmed) return [];
+	if (!trimmed) return { ok: false, error: "Checks output is empty." };
 	let parsed: BoundaryValue;
 	try {
 		parsed = JSON.parse(trimmed);
 	} catch {
-		return [];
+		return { ok: false, error: "Checks output is not valid JSON." };
 	}
-	const rows = Array.isArray(parsed) ? parsed : [parsed];
+	if (!Array.isArray(parsed)) {
+		return { ok: false, error: "Checks output is not an array." };
+	}
 	const checks: CheckRun[] = [];
-	for (const row of rows) {
+	for (const row of parsed) {
 		if (!isRecord(row)) continue;
 		const name = asString(row.name) ?? asString(row.workflow) ?? "unknown";
 		const status = parseCheckState(asString(row.state), asString(row.bucket));
@@ -399,7 +410,7 @@ export function parsePrChecksJson(stdout: string): CheckRun[] {
 			runId: extractRunId(detailsUrl),
 		});
 	}
-	return checks;
+	return { ok: true, value: checks };
 }
 
 export { autopilotReplyBody, parseGHPr, splitRepo };

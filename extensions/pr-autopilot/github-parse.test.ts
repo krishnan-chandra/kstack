@@ -6,6 +6,7 @@ import {
 	graphqlThreadToReviewThread,
 	issueCommentToThread,
 	type ParseResult,
+	parseGHPr,
 	parseIssueComments,
 	parseMergeStateStatus,
 	parsePrChecksJson,
@@ -73,12 +74,14 @@ describe("github parsers", () => {
 
 	describe("parsePrChecksJson", () => {
 		it("maps gh pr checks buckets", () => {
-			const checks = parsePrChecksJson(
-				JSON.stringify([
-					{ name: "lint", state: "SUCCESS", bucket: "pass", link: "https://github.com/o/r/actions/runs/99" },
-					{ name: "test", state: "FAILURE", bucket: "fail", link: "https://github.com/o/r/actions/runs/100" },
-					{ name: "build", state: "PENDING", bucket: "pending" },
-				]),
+			const checks = unwrap(
+				parsePrChecksJson(
+					JSON.stringify([
+						{ name: "lint", state: "SUCCESS", bucket: "pass", link: "https://github.com/o/r/actions/runs/99" },
+						{ name: "test", state: "FAILURE", bucket: "fail", link: "https://github.com/o/r/actions/runs/100" },
+						{ name: "build", state: "PENDING", bucket: "pending" },
+					]),
+				),
 			);
 			assert.equal(checks.length, 3);
 			assert.equal(checks[0].conclusion, "success");
@@ -90,15 +93,60 @@ describe("github parsers", () => {
 		});
 
 		it("keeps cancelled checks distinct from neutral checks", () => {
-			const checks = parsePrChecksJson(
-				JSON.stringify([
-					{ name: "cancelled", state: "CANCELLED", bucket: "cancel" },
-					{ name: "allowed-neutral", state: "NEUTRAL", bucket: "neutral" },
-				]),
+			const checks = unwrap(
+				parsePrChecksJson(
+					JSON.stringify([
+						{ name: "cancelled", state: "CANCELLED", bucket: "cancel" },
+						{ name: "allowed-neutral", state: "NEUTRAL", bucket: "neutral" },
+					]),
+				),
 			);
 			assert.equal(checks[0].status, "cancelled");
 			assert.equal(checks[0].conclusion, "cancelled");
 			assert.equal(checks[1].status, "neutral");
+		});
+
+		it("returns empty array for valid empty json array", () => {
+			const checks = unwrap(parsePrChecksJson("[]"));
+			assert.deepEqual(checks, []);
+		});
+
+		it("rejects empty text, malformed json, and non-array payloads", () => {
+			assert.deepEqual(parsePrChecksJson(""), { ok: false, error: "Checks output is empty." });
+			assert.deepEqual(parsePrChecksJson("   "), { ok: false, error: "Checks output is empty." });
+			assert.deepEqual(parsePrChecksJson("invalid json"), { ok: false, error: "Checks output is not valid JSON." });
+			assert.deepEqual(parsePrChecksJson("{}"), { ok: false, error: "Checks output is not an array." });
+			assert.deepEqual(parsePrChecksJson("null"), { ok: false, error: "Checks output is not an array." });
+		});
+	});
+
+	describe("parseGHPr statusCheckRollup", () => {
+		it("validates empty statusCheckRollup array into { kind: 'empty' }", () => {
+			const pr = parseGHPr({
+				number: 42,
+				headRefOid: "abc",
+				statusCheckRollup: [],
+			});
+			assert.ok(pr);
+			assert.deepEqual(pr.statusCheckRollup, { kind: "empty" });
+		});
+
+		it("validates nonempty statusCheckRollup array into { kind: 'present' }", () => {
+			const pr = parseGHPr({
+				number: 42,
+				headRefOid: "abc",
+				statusCheckRollup: [{ __typename: "CheckRun" }, { __typename: "StatusContext" }],
+			});
+			assert.ok(pr);
+			assert.deepEqual(pr.statusCheckRollup, { kind: "present" });
+		});
+
+		it("leaves statusCheckRollup undefined when omitted, null, or non-array", () => {
+			assert.equal(parseGHPr({ number: 42, headRefOid: "abc" })?.statusCheckRollup, undefined);
+			assert.equal(parseGHPr({ number: 42, headRefOid: "abc", statusCheckRollup: null })?.statusCheckRollup, undefined);
+			assert.equal(parseGHPr({ number: 42, headRefOid: "abc", statusCheckRollup: "[]" })?.statusCheckRollup, undefined);
+			assert.equal(parseGHPr({ number: 42, headRefOid: "abc", statusCheckRollup: {} })?.statusCheckRollup, undefined);
+			assert.equal(parseGHPr({ number: 42, headRefOid: "abc", statusCheckRollup: 42 })?.statusCheckRollup, undefined);
 		});
 	});
 

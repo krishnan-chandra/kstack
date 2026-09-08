@@ -182,6 +182,159 @@ test("check mode performs two fresh reads without fetching failed logs or mutati
 	assert.deepEqual(mutatingCalls(harness.calls), []);
 });
 
+test("check mode reaches readiness when statusCheckRollup is empty and gh pr checks returns nonzero", async (t) => {
+	const { harness, result } = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: [],
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported on the 'kstack/fix-thing' branch\n" },
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "merge-ready");
+	assert.deepEqual(harness.roles, []);
+	assert.deepEqual(mutatingCalls(harness.calls), []);
+});
+
+test("check mode fails closed when an unrelated checks error accompanies an empty status rollup", async (t) => {
+	const { harness, result } = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: [],
+		checksResult: { code: 1, stdout: "", stderr: "authentication required" },
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "failed");
+	assert.match(result.blockedReasons.join("; "), /Could not fetch checks for PR #42: authentication required/);
+});
+
+test("check mode fails required read when gh pr checks returns nonzero and statusCheckRollup is omitted or null", async (t) => {
+	const omitted = await run("check", {
+		mergeStateStatus: "CLEAN",
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => omitted.harness.cleanup());
+	assert.equal(omitted.result.status, "failed");
+	assert.match(omitted.result.blockedReasons.join("; "), /Could not fetch checks for PR #42/);
+
+	const nullRollup = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: null,
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => nullRollup.harness.cleanup());
+	assert.equal(nullRollup.result.status, "failed");
+	assert.match(nullRollup.result.blockedReasons.join("; "), /Could not fetch checks for PR #42/);
+});
+
+test("check mode fails required read when gh pr checks returns nonzero and statusCheckRollup is nonempty or non-array", async (t) => {
+	const nonempty = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: [{ name: "build" }],
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => nonempty.harness.cleanup());
+	assert.equal(nonempty.result.status, "failed");
+	assert.match(nonempty.result.blockedReasons.join("; "), /Could not fetch checks for PR #42/);
+
+	const nonArray = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: "invalid",
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => nonArray.harness.cleanup());
+	assert.equal(nonArray.result.status, "failed");
+	assert.match(nonArray.result.blockedReasons.join("; "), /Could not fetch checks for PR #42/);
+});
+
+test("check mode fails required read when gh pr checks returns exit code 0 but malformed, empty, or non-array output", async (t) => {
+	const malformed = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: [],
+		checksRawStdout: "not valid json",
+	});
+	t.after(() => malformed.harness.cleanup());
+	assert.equal(malformed.result.status, "failed");
+	assert.match(malformed.result.blockedReasons.join("; "), /Could not parse checks/);
+
+	const empty = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: [],
+		checksRawStdout: "   \n",
+	});
+	t.after(() => empty.harness.cleanup());
+	assert.equal(empty.result.status, "failed");
+	assert.match(empty.result.blockedReasons.join("; "), /Could not parse checks/);
+
+	const nonArray = await run("check", {
+		mergeStateStatus: "CLEAN",
+		statusCheckRollup: [],
+		checksRawStdout: "{}",
+	});
+	t.after(() => nonArray.harness.cleanup());
+	assert.equal(nonArray.result.status, "failed");
+	assert.match(nonArray.result.blockedReasons.join("; "), /Could not parse checks/);
+});
+
+test("check mode evaluates merge states with verified empty checks", async (t) => {
+	const hasHooks = await run("check", {
+		mergeStateStatus: "HAS_HOOKS",
+		statusCheckRollup: [],
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => hasHooks.harness.cleanup());
+	assert.equal(hasHooks.result.status, "merge-ready");
+
+	const unknown = await run("check", {
+		mergeStateStatus: "UNKNOWN",
+		statusCheckRollup: [],
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => unknown.harness.cleanup());
+	assert.equal(unknown.result.status, "incomplete");
+	assert.match(unknown.result.blockedReasons.join("; "), /mergeability pending/);
+
+	const blocked = await run("check", {
+		mergeStateStatus: "BLOCKED",
+		statusCheckRollup: [],
+		checksResult: { code: 1, stdout: "", stderr: "no checks reported\n" },
+	});
+	t.after(() => blocked.harness.cleanup());
+	assert.equal(blocked.result.status, "incomplete");
+	assert.match(blocked.result.blockedReasons.join("; "), /merge blocked/);
+});
+
+test("check mode handles valid pending, failing, and non-Actions checks with statusCheckRollup present", async (t) => {
+	const pending = await run("check", {
+		statusCheckRollup: [{ name: "build" }],
+		checks: [{ name: "build", state: "PENDING", bucket: "pending" }],
+	});
+	t.after(() => pending.harness.cleanup());
+	assert.equal(pending.result.status, "incomplete");
+	assert.match(pending.result.blockedReasons.join("; "), /checks pending/);
+
+	const failing = await run("check", {
+		statusCheckRollup: [{ name: "test" }],
+		checks: [{ name: "test", state: "FAILURE", bucket: "fail", link: "https://github.com/owner/repo/actions/runs/55" }],
+	});
+	t.after(() => failing.harness.cleanup());
+	assert.equal(failing.result.status, "incomplete");
+	assert.match(failing.result.blockedReasons.join("; "), /failing check/);
+
+	const externalPassing = await run("check", {
+		statusCheckRollup: [{ name: "external-ci" }],
+		checks: [{ name: "external-ci", state: "SUCCESS", bucket: "pass" }],
+	});
+	t.after(() => externalPassing.harness.cleanup());
+	assert.equal(externalPassing.result.status, "merge-ready");
+});
+
+test("check mode fails when gh pr view fails due to authentication", async (t) => {
+	const { harness, result } = await run("check", {
+		failPrReadAt: 1,
+	});
+	t.after(() => harness.cleanup());
+	assert.equal(result.status, "failed");
+	assert.match(result.blockedReasons.join("; "), /mergeability read failed/);
+});
+
 test("check mode reports pending mergeability after exactly two reads", async (t) => {
 	const { harness, result } = await run("check", {
 		mergeable: "UNKNOWN",

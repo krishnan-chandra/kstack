@@ -59,6 +59,7 @@ import {
 	type AutopilotMode,
 	type AutopilotPersistedState,
 	type AutopilotThinkingLevel,
+	type CheckRun,
 	type ExecFn,
 	type FailureClass,
 	type FlakeRunRetry,
@@ -348,18 +349,26 @@ export async function fetchPRState(
 
 	const [threadsResult, issueResult, checksResult] = await Promise.all([
 		getReviewThreads(exec, cwd, prNumber, repo, signal),
-		getIssueComments(exec, cwd, prNumber, repo),
+		getIssueComments(exec, cwd, prNumber, repo, signal),
 		getCheckRuns(exec, cwd, prNumber),
 	]);
 
-	const failures = [
-		["review threads", threadsResult],
-		["issue comments", issueResult],
-		["checks", checksResult],
-	] as const;
-	for (const [label, result] of failures) {
-		if (result.code !== 0)
-			return `Could not fetch ${label} for PR #${prNumber}: ${result.stderr.trim() || "unknown GitHub error"}`;
+	if (threadsResult.code !== 0) {
+		return `Could not fetch review threads for PR #${prNumber}: ${threadsResult.stderr.trim() || "unknown GitHub error"}`;
+	}
+	if (issueResult.code !== 0) {
+		return `Could not fetch issue comments for PR #${prNumber}: ${issueResult.stderr.trim() || "unknown GitHub error"}`;
+	}
+
+	let checks: CheckRun[];
+	if (checksResult.kind === "checks") {
+		checks = checksResult.checks;
+	} else if (checksResult.kind === "no-checks" && prResult.pr.statusCheckRollup?.kind === "empty") {
+		checks = [];
+	} else if (checksResult.kind === "no-checks") {
+		return `Could not fetch checks for PR #${prNumber}: empty checks were not corroborated by the PR status rollup`;
+	} else {
+		return `Could not fetch checks for PR #${prNumber}: ${checksResult.message}`;
 	}
 
 	const uncertainPending = new Set([
@@ -368,7 +377,7 @@ export async function fetchPRState(
 	]);
 	const suppressions = reviewHandling.handled.filter((record) => !uncertainPending.has(record.id));
 	const threads = filterHandledReviewItems([...threadsResult.threads, ...issueResult.threads], suppressions);
-	return buildPRState(prResult.pr, threads, checksResult.checks, existingVerifiedSha);
+	return buildPRState(prResult.pr, threads, checks, existingVerifiedSha);
 }
 
 export async function runChildRole(

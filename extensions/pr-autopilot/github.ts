@@ -105,7 +105,8 @@ export async function findLowestUnmergedPR(exec: ExecFn, cwd: string): Promise<E
  * head SHA, base ref, and commit SHAs.
  */
 export async function viewPR(exec: ExecFn, cwd: string, prNumber: number): Promise<ExecFnResult & { pr?: GHPrJson }> {
-	const fields = "number,title,state,isDraft,mergeable,mergeStateStatus,headRefName,baseRefName,headRefOid,commits";
+	const fields =
+		"number,title,state,isDraft,mergeable,mergeStateStatus,headRefName,baseRefName,headRefOid,commits,statusCheckRollup";
 	const result = await gh(exec, cwd, ["pr", "view", String(prNumber), "--json", fields, "-q", "."]);
 	if (result.code !== 0 || !result.stdout.trim()) {
 		return { ...result, pr: undefined };
@@ -391,14 +392,22 @@ export async function getIssueComments(
 	cwd: string,
 	prNumber: number,
 	repo?: string,
+	signal?: AbortSignal,
 ): Promise<ExecFnResult & { threads: ReviewThread[] }> {
-	const repository = repo ?? "{owner}/{repo}";
-	if (repo !== undefined && !splitRepo(repo)) {
-		return { code: 1, stdout: "", stderr: "Invalid explicit repository for issue comments.", threads: [] };
+	const repoResult =
+		repo !== undefined ? { code: 0, stdout: repo, stderr: "", repo } : await resolveRepoNameResult(exec, cwd, signal);
+	if (!repoResult.repo || !splitRepo(repoResult.repo)) {
+		const reason = repoResult.stderr.trim() || "GitHub CLI returned an invalid repository identity.";
+		return {
+			code: 1,
+			stdout: "",
+			stderr: `Could not resolve GitHub repository for issue comments: ${reason}`,
+			threads: [],
+		};
 	}
 	const result = await gh(exec, cwd, [
 		"api",
-		`repos/${repository}/issues/${prNumber}/comments`,
+		`repos/${repoResult.repo}/issues/${prNumber}/comments`,
 		"--method",
 		"GET",
 		"--paginate",
@@ -414,11 +423,16 @@ export async function getIssueComments(
  * Fetch check runs (CI status) for a PR. Uses `gh pr checks` as the source of
  * truth (includes non-Actions checks that `gh run list` misses).
  */
-export async function getCheckRuns(
-	exec: ExecFn,
-	cwd: string,
-	prNumber: number,
-): Promise<ExecFnResult & { checks: CheckRun[] }> {
+type CheckRunsResult =
+	| { kind: "checks"; checks: CheckRun[] }
+	| { kind: "no-checks" }
+	| { kind: "error"; message: string };
+
+function reportsNoChecks(stderr: string): boolean {
+	return /^no checks reported(?: on the .+ branch)?$/i.test(stderr.trim());
+}
+
+export async function getCheckRuns(exec: ExecFn, cwd: string, prNumber: number): Promise<CheckRunsResult> {
 	const result = await gh(
 		exec,
 		cwd,
@@ -426,9 +440,12 @@ export async function getCheckRuns(
 		20_000,
 	);
 	if (result.code !== 0) {
-		return { ...result, checks: [] };
+		if (reportsNoChecks(result.stderr)) return { kind: "no-checks" };
+		return { kind: "error", message: result.stderr.trim() || "unknown GitHub error" };
 	}
-	return { ...result, checks: parsePrChecksJson(result.stdout) };
+	const parsed = parsePrChecksJson(result.stdout);
+	if (!parsed.ok) return { kind: "error", message: `Could not parse checks: ${parsed.error}` };
+	return { kind: "checks", checks: parsed.value };
 }
 
 async function fetchFailedLog(exec: ExecFn, cwd: string, runId: string): Promise<string | undefined> {
