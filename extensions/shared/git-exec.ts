@@ -5,6 +5,7 @@ export interface ExecFnResult {
 	code: number;
 	stdout: string;
 	stderr: string;
+	killed?: boolean;
 }
 
 /** Options shared by Git workstream command runners. */
@@ -17,7 +18,7 @@ interface ExecFnOptions {
 /** Injected command runner shared by Git workstream policies. */
 export type ExecFn = (command: string, args: string[], options: ExecFnOptions) => Promise<ExecFnResult>;
 
-/** Run a bounded command and normalize spawn failures into an ordinary result. */
+/** Run a bounded command and normalize every inconclusive execution into failure. */
 export async function runCommand(
 	exec: ExecFn,
 	command: string,
@@ -27,7 +28,11 @@ export async function runCommand(
 	timeout = 15_000,
 ): Promise<ExecFnResult> {
 	try {
-		return await exec(command, args, { cwd, signal, timeout });
+		const result = await exec(command, args, { cwd, signal, timeout });
+		if (result.killed && result.code === 0) {
+			return { ...result, code: 1 };
+		}
+		return result;
 	} catch (error) {
 		return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
 	}
@@ -40,10 +45,17 @@ export function commandDiagnostic(result: ExecFnResult): string {
 
 /** Adapt pi.exec to the shared command-runner shape. */
 export function makeExec(pi: ExtensionAPI): ExecFn {
-	return (command, args, options) =>
-		pi.exec(command, args, {
+	return async (command, args, options) => {
+		const result = await pi.exec(command, args, {
 			cwd: options.cwd,
 			timeout: options.timeout,
 			signal: options.signal,
 		});
+		return {
+			code: result.code,
+			stdout: result.stdout,
+			stderr: result.stderr,
+			killed: result.killed,
+		};
+	};
 }

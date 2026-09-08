@@ -17,6 +17,8 @@ function outcomePhrase(item: FrontierResult): string {
 			return `#${item.prNumber} blocked`;
 		case "not-attempted":
 			return `#${item.prNumber} not attempted`;
+		case "indeterminate":
+			return `#${item.prNumber} acceptance indeterminate`;
 		default: {
 			const _exhaustive: never = item.state;
 			return _exhaustive;

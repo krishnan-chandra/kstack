@@ -117,7 +117,16 @@ describe("routeLand", () => {
 					outcome: {
 						status: "indeterminate",
 						inFlight: "merge acceptance unknown",
-						frontiers: [],
+						frontiers: [
+							{
+								ref: "feat1",
+								prNumber: 11,
+								url: "https://example/11",
+								expectedHeadSha: "aaa",
+								method: "squash",
+								state: "indeterminate",
+							},
+						],
 						remainingRefs: ["feat1"],
 						completedMutations: [],
 						warnings: [],
@@ -128,6 +137,7 @@ describe("routeLand", () => {
 			runSingle: async () => singleResult(),
 		});
 		assert.equal(result.status, "indeterminate");
+		assert.equal(result.frontiers[0]?.state, "indeterminate");
 		assert.equal(result.blockers[0], "merge acceptance unknown");
 		assert.deepEqual(result.recoveryOperationIds, ["op1", "op2", "op3"]);
 		assert.ok(!("autopilotRan" in result));

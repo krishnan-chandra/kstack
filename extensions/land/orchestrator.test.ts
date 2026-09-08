@@ -717,3 +717,181 @@ test("blocks early when GitHub only allows merge commits (no squash or rebase)",
 	assert.match(result.blockers.join("\n"), /only allows merge commits/i);
 	assert.match(result.blockers.join("\n"), /kstack does not support/i);
 });
+
+test("post-dispatch timeout returns indeterminate and preserves attempted frontier without accepted mutation", async () => {
+	const calls: string[][] = [];
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") {
+			return { code: 1, stdout: "", stderr: "", killed: true };
+		}
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec),
+	);
+	assert.equal(result.status, "indeterminate");
+	assert.equal(result.autopilotRan, true);
+	assert.equal(result.autopilotStatus, "merge-ready");
+	assert.equal(result.completedMutations.length, 0);
+	assert.equal(calls.filter((args) => args[0] === "pr" && args[1] === "merge").length, 1);
+	assert.equal(result.frontiers.length, 1);
+	assert.deepEqual(result.frontiers[0], {
+		prNumber: 7,
+		url: "https://github.com/o/r/pull/7",
+		expectedHeadSha: NEW,
+		method: "squash",
+		state: "indeterminate",
+	});
+	assert.match(result.blockers.join(" "), /indeterminate/i);
+});
+
+test("post-dispatch abort returns indeterminate and preserves attempted frontier without accepted mutation", async () => {
+	const calls: string[][] = [];
+	let views = 0;
+	const controller = new AbortController();
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") {
+			controller.abort();
+			return { code: 1, stdout: "", stderr: "", killed: true };
+		}
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		signal: controller.signal,
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		runDeps,
+	);
+	assert.equal(result.status, "indeterminate");
+	assert.equal(result.autopilotRan, true);
+	assert.equal(result.autopilotStatus, "merge-ready");
+	assert.equal(result.completedMutations.length, 0);
+	assert.equal(calls.filter((args) => args[0] === "pr" && args[1] === "merge").length, 1);
+	assert.equal(result.frontiers.length, 1);
+	assert.deepEqual(result.frontiers[0], {
+		prNumber: 7,
+		url: "https://github.com/o/r/pull/7",
+		expectedHeadSha: NEW,
+		method: "squash",
+		state: "indeterminate",
+	});
+	assert.match(result.blockers.join(" "), /indeterminate/i);
+});
+
+test("post-dispatch rejected promise returns indeterminate (models jj adapter)", async () => {
+	const calls: string[][] = [];
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") {
+			throw new Error("subprocess lost transport");
+		}
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			return { code: 0, stdout: current < 3 ? pr(NEW) : pr(NEW, "MERGED"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec),
+	);
+	assert.equal(result.status, "indeterminate");
+	assert.equal(result.autopilotRan, true);
+	assert.equal(result.autopilotStatus, "merge-ready");
+	assert.equal(result.completedMutations.length, 0);
+	assert.equal(calls.filter((args) => args[0] === "pr" && args[1] === "merge").length, 1);
+	assert.equal(result.frontiers.length, 1);
+	assert.deepEqual(result.frontiers[0], {
+		prNumber: 7,
+		url: "https://github.com/o/r/pull/7",
+		expectedHeadSha: NEW,
+		method: "squash",
+		state: "indeterminate",
+	});
+});
+
+test("control: pre-dispatch abort returns aborted with zero merge commands", async () => {
+	const calls: string[][] = [];
+	let views = 0;
+	const controller = new AbortController();
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") {
+			return { code: 0, stdout: "", stderr: "" };
+		}
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			if (current === 1) {
+				// Abort after readiness, before confirmation / merge
+				controller.abort();
+			}
+			return { code: 0, stdout: pr(NEW), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const runDeps = {
+		...deps(exec),
+		signal: controller.signal,
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		runDeps,
+	);
+	assert.equal(result.status, "aborted");
+	assert.equal(
+		calls.some((args) => args[0] === "pr" && args[1] === "merge"),
+		false,
+	);
+});
+
+test("control: genuine refusal returns failed with frontier preserved as blocked", async () => {
+	const calls: string[][] = [];
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") {
+			return { code: 1, stdout: "", stderr: "GraphQL: Pull Request is not mergeable", killed: false };
+		}
+		if (args[0] === "pr" && args[1] === "view") {
+			return { code: 0, stdout: pr(NEW), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec),
+	);
+	assert.equal(result.status, "failed");
+	assert.equal(result.autopilotRan, true);
+	assert.equal(result.autopilotStatus, "merge-ready");
+	assert.equal(result.completedMutations.length, 0);
+	assert.equal(calls.filter((args) => args[0] === "pr" && args[1] === "merge").length, 1);
+	assert.equal(result.frontiers.length, 1);
+	assert.deepEqual(result.frontiers[0], {
+		prNumber: 7,
+		url: "https://github.com/o/r/pull/7",
+		expectedHeadSha: NEW,
+		method: "squash",
+		state: "blocked",
+	});
+	assert.match(result.blockers.join(" "), /Pull Request is not mergeable/);
+});

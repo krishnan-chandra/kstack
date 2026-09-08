@@ -199,6 +199,82 @@ test("merge invocation pins the exact head and never bypasses protection", async
 	assert.equal(seen.includes("--admin"), false);
 });
 
+test("mergePullRequest rejects an already-aborted signal with zero exec calls", async () => {
+	let calls = 0;
+	const controller = new AbortController();
+	controller.abort();
+	const exec: ExecFn = async () => {
+		calls++;
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	await assert.rejects(
+		mergePullRequest(exec, "/repo", 3, "squash", SHA, controller.signal),
+		(error) => error instanceof GitHubError && error.kind === "failed" && /aborted before dispatch/.test(error.message),
+	);
+	assert.equal(calls, 0);
+});
+
+test("mergePullRequest classifies a killed result as indeterminate", async () => {
+	const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "signal: killed", killed: true });
+	await assert.rejects(
+		mergePullRequest(exec, "/repo", 3, "squash", SHA),
+		(error) => error instanceof GitHubError && error.kind === "indeterminate",
+	);
+});
+
+test("mergePullRequest classifies a rejected exec promise as indeterminate", async () => {
+	const exec: ExecFn = async () => {
+		throw new Error("subprocess disconnected");
+	};
+	await assert.rejects(
+		mergePullRequest(exec, "/repo", 3, "squash", SHA),
+		(error) => error instanceof GitHubError && error.kind === "indeterminate",
+	);
+});
+
+test("mergePullRequest classifies an un-killed nonzero exit as failed with its diagnostic", async () => {
+	const exec: ExecFn = async () => ({
+		code: 1,
+		stdout: "",
+		stderr: "GraphQL: Pull Request is not mergeable",
+		killed: false,
+	});
+	await assert.rejects(
+		mergePullRequest(exec, "/repo", 3, "squash", SHA),
+		(error) =>
+			error instanceof GitHubError &&
+			error.kind === "failed" &&
+			/GraphQL: Pull Request is not mergeable/.test(error.message),
+	);
+});
+
+test("runGh classifies mutations according to the evidence table", async () => {
+	let calls = 0;
+	const controller = new AbortController();
+	controller.abort();
+	const gatewayAborted = createGitHubGateway(async () => {
+		calls++;
+		return { code: 0, stdout: "", stderr: "" };
+	});
+	await assert.rejects(
+		gatewayAborted.markPrReady({ owner: "o", repo: "r" }, 3, "/repo", controller.signal),
+		(error) => error instanceof GitHubError && error.kind === "failed",
+	);
+	assert.equal(calls, 0);
+
+	const gatewayKilled = createGitHubGateway(async () => ({ code: 1, stdout: "", stderr: "timeout", killed: true }));
+	await assert.rejects(
+		gatewayKilled.markPrReady({ owner: "o", repo: "r" }, 3, "/repo"),
+		(error) => error instanceof GitHubError && error.kind === "indeterminate",
+	);
+
+	const gatewayRefusal = createGitHubGateway(async () => ({ code: 1, stdout: "", stderr: "not found", killed: false }));
+	await assert.rejects(
+		gatewayRefusal.markPrReady({ owner: "o", repo: "r" }, 3, "/repo"),
+		(error) => error instanceof GitHubError && error.kind === "failed" && /not found/.test(error.message),
+	);
+});
+
 test("head gateway sends the exact owner and ref as a paginated server filter", async () => {
 	const head = "feature/slash;$HOME&literal";
 	const signal = new AbortController().signal;
