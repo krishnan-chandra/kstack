@@ -53,6 +53,7 @@ test("dispatches interactive and delegated frontier requests", async () => {
 			{
 				options: { target: { kind: "single", prNumber: 4 }, readiness: "watch", method: "squash" },
 				expectedHeadSha: SHA,
+				expectedBaseRef: "main",
 				repository: "acme/widgets",
 				ctx,
 			},
@@ -63,7 +64,7 @@ test("dispatches interactive and delegated frontier requests", async () => {
 });
 
 function envelope(payload: BoundaryValue): BoundaryValue {
-	return { schemaVersion: 1, payload, claimed: false };
+	return { schemaVersion: 2, payload, claimed: false };
 }
 
 test("validates request variants and exact delegated heads", () => {
@@ -75,6 +76,7 @@ test("validates request variants and exact delegated heads", () => {
 				kind: "stack-frontier",
 				options,
 				expectedHeadSha: SHA,
+				expectedBaseRef: "main",
 				signal: new AbortController().signal,
 				ctx: {},
 			}),
@@ -82,15 +84,26 @@ test("validates request variants and exact delegated heads", () => {
 		true,
 	);
 	for (const expectedHeadSha of ["a".repeat(39), "A".repeat(40), "z".repeat(40)]) {
-		assert.equal(isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha, ctx: {} })), false);
+		assert.equal(
+			isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha, expectedBaseRef: "main", ctx: {} })),
+			false,
+		);
 	}
-	assert.equal(isLandRequest(envelope({ kind: "stack-frontier", options, ctx: {} })), false);
+	assert.equal(isLandRequest(envelope({ kind: "stack-frontier", options, expectedBaseRef: "main", ctx: {} })), false);
+	assert.equal(isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha: SHA, ctx: {} })), false);
+	for (const expectedBaseRef of ["", "main\n", "main\0", "a".repeat(257)]) {
+		assert.equal(
+			isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha: SHA, expectedBaseRef, ctx: {} })),
+			false,
+		);
+	}
 	assert.equal(
 		isLandRequest(
 			envelope({
 				kind: "stack-frontier",
 				options: { target: { kind: "single", prNumber: 3 }, readiness: "check" },
 				expectedHeadSha: SHA,
+				expectedBaseRef: "main",
 				ctx: {},
 			}),
 		),
@@ -103,6 +116,24 @@ test("validates request variants and exact delegated heads", () => {
 	);
 });
 
+test("rejects old-schema envelopes", () => {
+	const options = { target: { kind: "single", prNumber: 3 }, readiness: "check", method: "squash" };
+	assert.equal(
+		isLandRequest({
+			schemaVersion: 1,
+			payload: {
+				kind: "stack-frontier",
+				options,
+				expectedHeadSha: SHA,
+				expectedBaseRef: "main",
+				ctx: {},
+			},
+			claimed: false,
+		}),
+		false,
+	);
+});
+
 test("rejects malformed delegated repository identities", () => {
 	for (const repository of ["a/b/c", "--repo", null]) {
 		assert.equal(
@@ -110,6 +141,7 @@ test("rejects malformed delegated repository identities", () => {
 				envelope({
 					kind: "stack-frontier",
 					expectedHeadSha: SHA,
+					expectedBaseRef: "main",
 					repository,
 					ctx: {},
 					options: { target: { kind: "single", prNumber: 4 }, readiness: "check", method: "squash" },

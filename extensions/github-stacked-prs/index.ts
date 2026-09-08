@@ -179,10 +179,11 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 								const selected = await ctx.ui.select("Select an allowed merge method", [...allowed]);
 								return isMergeMethod(selected) ? selected : undefined;
 							},
-							landFrontier: ({ prNumber, expectedHeadSha, readiness, method }) =>
+							landFrontier: ({ prNumber, expectedHeadSha, expectedBaseRef, readiness, method }) =>
 								requestStackFrontierLand(pi, {
 									options: { target: { kind: "single", prNumber }, readiness, method, cwd: input.repositoryPath },
 									expectedHeadSha,
+									expectedBaseRef,
 									signal: combined,
 									ctx,
 								}),

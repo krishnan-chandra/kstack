@@ -24,6 +24,7 @@ interface StackFrontierLandRequest {
 	kind: "stack-frontier";
 	options: LandOptions & { method: MergeMethod };
 	expectedHeadSha: string;
+	expectedBaseRef: string;
 	repository?: string;
 	signal?: AbortSignal;
 	ctx: ExtensionContext;
@@ -32,7 +33,7 @@ interface StackFrontierLandRequest {
 export type LandRequestPayload = InteractiveLandRequest | StackFrontierLandRequest;
 
 /* exported: request-channel contract */
-export interface LandRequest extends RequestEnvelope<LandRequestPayload, LandResult, 1> {}
+export interface LandRequest extends RequestEnvelope<LandRequestPayload, LandResult, 2> {}
 
 function isOptions(value: BoundaryValue, methodRequired: boolean): value is LandOptions & { method?: MergeMethod } {
 	if (
@@ -60,9 +61,18 @@ function isOptions(value: BoundaryValue, methodRequired: boolean): value is Land
 	);
 }
 
-const channel = createRequestChannel<LandRequestPayload, LandResult, 1>({
+function isValidBaseRef(value: BoundaryValue): value is string {
+	if (!isString(value) || value.length === 0 || value.length > 256) return false;
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i);
+		if (code < 32 || code === 127) return false;
+	}
+	return true;
+}
+
+const channel = createRequestChannel<LandRequestPayload, LandResult, 2>({
 	event: LAND_REQUEST_EVENT,
-	schemaVersion: 1,
+	schemaVersion: 2,
 	isPayload: (value): value is LandRequestPayload => {
 		if (!isObject(value) || value === null || !("kind" in value) || !("options" in value) || !("ctx" in value)) {
 			return false;
@@ -81,6 +91,7 @@ const channel = createRequestChannel<LandRequestPayload, LandResult, 1>({
 						key === "kind" ||
 						key === "options" ||
 						key === "expectedHeadSha" ||
+						key === "expectedBaseRef" ||
 						key === "repository" ||
 						key === "signal" ||
 						key === "ctx",
@@ -89,6 +100,8 @@ const channel = createRequestChannel<LandRequestPayload, LandResult, 1>({
 				"expectedHeadSha" in value &&
 				isString(value.expectedHeadSha) &&
 				HEAD_SHA.test(value.expectedHeadSha) &&
+				"expectedBaseRef" in value &&
+				isValidBaseRef(value.expectedBaseRef) &&
 				(!("repository" in value) || value.repository === undefined || isRepositoryName(value.repository)) &&
 				(!("signal" in value) || value.signal === undefined || value.signal instanceof AbortSignal)
 			);

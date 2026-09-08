@@ -645,6 +645,7 @@ async function runSingleLand(
 					repository: `${prepared.repository.owner}/${prepared.repository.repo}`,
 					prNumber: current.prNumber,
 					expectedHeadSha: current.headCommitId,
+					expectedBaseRef: current.baseRef,
 					readiness: options.readiness,
 					method,
 				})

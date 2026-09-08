@@ -258,6 +258,7 @@ describe("land registration", () => {
 			await requestStackFrontierLand(/* SAFETY: This fixture implements the request event bus. */ pi as never, {
 				options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash", cwd: "/repo" },
 				expectedHeadSha: SHA,
+				expectedBaseRef: "main",
 				ctx,
 			});
 			assert.deepEqual(

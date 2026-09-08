@@ -1929,8 +1929,8 @@ describe("landStack", () => {
 				jj,
 				nativeStack: fakeNativeStack(),
 				github,
-				landFrontier: async ({ prNumber }) => {
-					calls.push(`land:${prNumber}`);
+				landFrontier: async ({ prNumber, expectedBaseRef }) => {
+					calls.push(`land:${prNumber}:${expectedBaseRef}`);
 					return {
 						handled: true,
 						outcome: landed(prNumber, prNumber === 11 ? "aaa-commit" : "bbb-commit"),
@@ -1941,7 +1941,7 @@ describe("landStack", () => {
 		assert.equal(result.status, "completed");
 		assert.deepEqual(
 			calls.filter((item) => item.startsWith("land:") || item.startsWith("abandon:") || item.startsWith("delete:")),
-			["land:11", "abandon:trunk..feat1", "delete:feat1"],
+			["land:11:main", "abandon:trunk..feat1", "delete:feat1"],
 		);
 	});
 

@@ -110,9 +110,15 @@ Land never passes `--admin`, `--auto`, or `--delete-branch` to `gh`. Its
 single-PR merge module does not force-push or delete a branch or bookmark. A
 stack provider may advance and republish its remainder after Land verifies a
 frontier merge; the GitHub provider uses exact force-with-lease pins and deletes
-only verified merged branches. Immediately before the merge command, Land
-checks that GitHub still reports the confirmed head ref and SHA. The merge
-command also passes `--match-head-commit`.
+only verified merged branches. Immediately before the merge command, Land checks that GitHub still reports the
+confirmed head ref, head SHA, and approved base branch name. If the PR was retargeted
+during readiness checks, confirmation, or the pre-merge read, Land blocks with a
+retargeting diagnostic and issues zero merge commands. Note the practical limit:
+while GitHub's `--match-head-commit` option atomically pins the head commit at the
+remote mutation, GitHub provides no atomic base-branch precondition; the final read
+bounds the window of undetected retargeting, but cannot atomically eliminate the
+remote read-to-mutation race on the service side. The merge command passes
+`--match-head-commit`.
 
 A successful `gh pr merge` command is not proof that the PR merged. Land polls
 GitHub until the pinned PR reports `MERGED`. If GitHub accepts the request but
@@ -142,11 +148,12 @@ accepts `LandOptions`, performs stack-prefix discovery in jj and Graphite
 repositories, and uses the same confirmation rules as `/land`.
 
 A `stack-frontier` request is trusted in-process authority for one frontier. It
-requires a positive PR number, a concrete squash or rebase method, and an exact
-40-character lowercase head SHA. Land bypasses stack routing for this mode, so
-a provider cannot recurse into its own stack channel. Land checks the pinned
-head before readiness, against pr-autopilot's evidence, after readiness, and
-immediately before merge submission. It also passes the SHA to GitHub through
+requires a positive PR number, a concrete squash or rebase method, an exact
+40-character lowercase head SHA, and an approved `expectedBaseRef` branch name
+(schema version 2). Land bypasses stack routing for this mode, so a provider
+cannot recurse into its own stack channel. Land checks the pinned head and
+approved base before readiness, against pr-autopilot's evidence, after readiness,
+and immediately before merge submission. It also passes the SHA to GitHub through
 `--match-head-commit`.
 
 A stack caller may also supply `repository` (`owner/name`). Land scopes its

@@ -44,6 +44,7 @@ interface GitHubLandingDeps {
 	landFrontier(input: {
 		prNumber: number;
 		expectedHeadSha: string;
+		expectedBaseRef: string;
 		readiness: "check" | "watch";
 		method: MergeMethod;
 	}): Promise<DelegatedFrontierResponse>;
@@ -746,6 +747,7 @@ async function runLandingLoop(input: {
 				const landed = await input.deps.landFrontier({
 					prNumber: current.entry.prNumber,
 					expectedHeadSha,
+					expectedBaseRef: current.pr.baseRef,
 					readiness: input.readiness,
 					method: input.method,
 				});
