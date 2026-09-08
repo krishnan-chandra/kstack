@@ -341,7 +341,7 @@ export async function fetchPRState(
 	prNumber: number,
 	existingVerifiedSha: string | null,
 	reviewHandling: Pick<AutopilotPersistedState, "handled" | "pendingReviewReplies" | "legacyPendingReplyIds">,
-	repo?: string,
+	repo: string,
 	signal?: AbortSignal,
 ): Promise<PRState | string> {
 	const prResult = await viewPR(exec, cwd, prNumber);
@@ -607,7 +607,7 @@ export async function applyThreadReplies(
 		pendingReviewReplies: readonly PendingReviewReply[];
 		legacyPendingReplyIds: readonly string[];
 		reviewMutationBlocker?: string;
-		repo?: string;
+		repo: string;
 	},
 	notify: (msg: string, level: "info" | "warning" | "error") => void,
 	signal?: AbortSignal,

@@ -1438,7 +1438,7 @@ function parseThreads(json: string) {
 }
 
 function replyOptions(resolveFix: boolean, pendingReviewReplies: Array<{ id: string; version: string }> = []) {
-	return { resolveFix, pendingReviewReplies, legacyPendingReplyIds: [] };
+	return { resolveFix, pendingReviewReplies, legacyPendingReplyIds: [], repo: "owner/repo" };
 }
 
 test("fix decision replies and resolves a review thread", async () => {
@@ -1479,7 +1479,7 @@ test("fix decision replies and resolves a review thread", async () => {
 		pendingReviewReplies: [],
 	});
 	assert.deepEqual(pendingReviewReplies, []);
-	assert.ok(calls.some((call) => call.startsWith("gh api repos/{owner}/{repo}/pulls/42/comments")));
+	assert.ok(calls.some((call) => call.startsWith("gh api repos/owner/repo/pulls/42/comments")));
 	assert.ok(calls.some((call) => call.startsWith("gh api graphql") && call.includes("id=thread-1")));
 });
 

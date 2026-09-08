@@ -272,6 +272,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 					renderLandOutcome(landOutcome),
 					landOutcome.status === "completed" ||
 						landOutcome.status === "queued" ||
+						landOutcome.status === "waiting" ||
 						landOutcome.status === "declined" ||
 						landOutcome.status === "busy"
 						? "info"

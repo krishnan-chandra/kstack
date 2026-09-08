@@ -97,7 +97,9 @@ workspaces.
   fetches once, verifies refreshed trunk, and deletes only branches still at
   their pinned heads using atomic GraphQL `updateRefs` compare-and-delete. A merge-queue submission returns `queued` and preserves
   all local history and bookmarks; `--readiness watch` polls for bounded queue
-  settlement, while `check` returns after enqueue. Because the queue controls
+  settlement, while `check` returns after enqueue. A bounded Autopilot watch
+  that still sees pending CI returns `waiting`; an Autopilot infrastructure
+  failure remains a distinct partial error. Because the queue controls
   its merge method, queued landing also requires `land.repos["owner/repo"]` as
   an explicit squash or rebase policy assertion. The same empty working-copy
   child is then rebased onto refreshed trunk with its change ID preserved.

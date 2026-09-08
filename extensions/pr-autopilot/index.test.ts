@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { requestPrAutopilot } from "./api.ts";
+import { issueAutopilotConfirmation, requestPrAutopilot } from "./api.ts";
 import prAutopilotExtension from "./index.ts";
 import { config, createHarness, deferred } from "./test-harness.ts";
 
@@ -76,6 +76,83 @@ test("standalone check scopes GitHub commands from a non-colocated jj origin", a
 	assert.ok(harness.calls.some((call) => call.includes("api repos/owner/repo/issues/42/comments")));
 	assert.deepEqual(harness.unexpected, []);
 	assert.ok(notices.some((message) => /looks merge-ready/i.test(message)));
+});
+
+test("delegated check uses its explicit repository from a .git-less jj workspace", async (t) => {
+	const harness = await createHarness();
+	t.after(() => harness.cleanup());
+	const agentDir = join(harness.cwd, "agent");
+	await mkdir(agentDir);
+	await writeFile(
+		join(agentDir, "kstack.json"),
+		JSON.stringify({
+			"pr-autopilot": config,
+			vcs: { backend: "jj" },
+		}),
+	);
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	});
+
+	const listeners = new Map<string, Array<(value: never) => void>>();
+	const host: Partial<ExtensionAPI> = {
+		on() {},
+		registerCommand() {},
+		registerShortcut() {},
+		registerMessageRenderer() {},
+		sendMessage() {},
+		events: {
+			on: (name, listener) => {
+				const current = listeners.get(name) ?? [];
+				current.push(listener);
+				listeners.set(name, current);
+				return () => {};
+			},
+			emit: (name, value) => {
+				for (const listener of listeners.get(name) ?? []) {
+					/* SAFETY: The test bus forwards the exact request emitted by the typed helper. */
+					listener(value as never);
+				}
+			},
+		},
+		exec: async (program, args, options) => {
+			assert.notEqual(program, "jj", "an explicit repository must skip cwd-based repository discovery");
+			const result = await harness.exec(program, args, { ...options, cwd: harness.cwd });
+			return { ...result, killed: false };
+		},
+	};
+	prAutopilotExtension(
+		/* SAFETY: This host supplies every Pi capability used by the delegated check path. */ host as ExtensionAPI,
+	);
+	const ctx = {
+		cwd: harness.cwd,
+		hasUI: true,
+		ui: { notify() {}, setStatus() {} },
+	};
+	const result = await requestPrAutopilot(
+		/* SAFETY: This host implements the typed request event bus. */ host as ExtensionAPI,
+		"check",
+		42,
+		/* SAFETY: This context supplies every capability used by check mode. */ ctx as never,
+		harness.cwd,
+		issueAutopilotConfirmation(),
+		undefined,
+		"owner/repo",
+	);
+
+	assert.equal(result.handled, true);
+	if (result.handled) assert.equal(result.outcome.status, "merge-ready");
+	const repositoryCalls = harness.calls.filter((call) => /^gh (?:pr|run) /.test(call));
+	assert.ok(
+		repositoryCalls.every((call) => call.endsWith(" --repo owner/repo")),
+		repositoryCalls.join("\n"),
+	);
+	assert.ok(harness.calls.some((call) => call.includes("api repos/owner/repo/issues/42/comments")));
+	assert.ok(!harness.calls.some((call) => call.includes("{owner}")), harness.calls.join("\n"));
+	assert.deepEqual(harness.unexpected, []);
 });
 
 test("delegated repository-resolution cancellation returns aborted without an error notification", async (t) => {

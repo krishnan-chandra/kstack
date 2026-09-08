@@ -224,7 +224,6 @@ export async function runAutopilot(
 	}
 	const prNumber = target.prNumber;
 	const repoKey = repoPersistKey(cwd);
-	const repoName = params.repository;
 	const selected = params.selectedModel ?? pickModel(config.models);
 	const terminalPrReason = (snapshot: PRState): string | undefined =>
 		snapshot.state === "open" ? undefined : describeBlockers(snapshot);
@@ -238,6 +237,8 @@ export async function runAutopilot(
 		return finish(ok ? "cleaned" : "blocked", ok ? [] : ["cleanup not confirmed"]);
 	}
 
+	const repoName = params.repository;
+	if (repoName === undefined) return finish("failed", ["resolved GitHub repository was not forwarded"]);
 	const loaded = await ops.loadPersistedState(repoKey, prNumber);
 	let persisted = loaded.state;
 	const migrationNote = loaded.kind === "ready" ? loaded.migrationNote : undefined;

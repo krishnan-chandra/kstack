@@ -121,6 +121,7 @@ export function emptyStackLandProgress(): StackLandProgress {
 export type StackLandOutcome =
 	| ({ status: "completed" } & StackLandProgress)
 	| ({ status: "queued"; nativeStackNumber: number; submittedAt: string } & StackLandProgress)
+	| ({ status: "waiting"; reason: string } & StackLandProgress)
 	| ({ status: "partial"; error: string } & StackLandProgress)
 	| { status: "blocked"; blockers: readonly StackBlocker[] }
 	| { status: "declined" }

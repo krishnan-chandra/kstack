@@ -11,31 +11,12 @@ import {
 } from "./github.ts";
 
 describe("GitHub state boundaries", () => {
-	it("fails review-thread state when repository identity cannot be resolved", async () => {
-		const result = await getReviewThreads(
-			async () => ({ code: 1, stdout: "", stderr: "not authenticated" }),
-			"/repo",
-			7,
-		);
+	it("fails review-thread state when the explicit repository identity is malformed", async () => {
+		const result = await getReviewThreads(async () => ({ code: 0, stdout: "", stderr: "" }), "/repo", 7, "bad");
 		assert.deepEqual(result, {
 			code: 1,
 			stdout: "",
-			stderr: "Could not resolve GitHub repository for review threads: not authenticated",
-			threads: [],
-		});
-	});
-
-	it("fails review-thread state when repository identity is malformed", async () => {
-		const result = await getReviewThreads(
-			async () => ({ code: 0, stdout: "not-a-repository", stderr: "" }),
-			"/repo",
-			7,
-		);
-		assert.deepEqual(result, {
-			code: 1,
-			stdout: "",
-			stderr:
-				"Could not resolve GitHub repository for review threads: GitHub CLI returned an invalid repository identity.",
+			stderr: "Invalid GitHub repository for review threads.",
 			threads: [],
 		});
 	});
@@ -113,6 +94,7 @@ describe("GitHub state boundaries", () => {
 			},
 			"/repo",
 			7,
+			"owner/repo",
 		);
 
 		assert.equal(result.code, 0);
@@ -387,19 +369,19 @@ describe("explicit repository API paths", () => {
 		assert.equal(capturedArgs[1], "repos/owner/repo/issues/42/comments");
 	});
 
-	it("resolves issue-comment repository identity outside a Git checkout", async () => {
-		const calls: string[][] = [];
+	it("rejects a malformed explicit repository for issue comments", async () => {
 		const result = await getIssueComments(
-			async (_command, args) => {
-				calls.push(args);
-				if (args[0] === "repo" && args[1] === "view") return { code: 0, stdout: "owner/repo\n", stderr: "" };
-				return { code: 0, stdout: "[]", stderr: "" };
-			},
+			async () => ({ code: 0, stdout: "[]", stderr: "" }),
 			"/secondary-jj-workspace",
 			42,
+			"bad",
 		);
-		assert.equal(result.code, 0);
-		assert.ok(calls.some((args) => args[1] === "repos/owner/repo/issues/42/comments"));
+		assert.deepEqual(result, {
+			code: 1,
+			stdout: "",
+			stderr: "Invalid GitHub repository for issue comments.",
+			threads: [],
+		});
 	});
 
 	it("does not rely on checkout placeholders when replying to review comments", async () => {

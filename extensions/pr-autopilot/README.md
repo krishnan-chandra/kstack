@@ -317,8 +317,9 @@ collects a missing mode or PR through deterministic prompts; it does not merge.
 When Land selects an upper PR in a local jj stack, `jj-stacked-prs` invokes PR
 Autopilot for each frontier in bottom-up order. Autopilot still handles one
 frontier at a time and returns exact-head readiness evidence. The stack caller
-passes an optional `repository` (`owner/name`) through `requestPrAutopilot`.
-When supplied, parent-side GitHub queries and mutations use that repository.
-Standalone calls resolve the same coordinates from the configured backend
-before they query GitHub. The stack workflow, not Autopilot, performs each
+passes its resolved `repository` (`owner/name`) through `requestPrAutopilot`. Standalone calls resolve the same coordinates from the
+configured backend before entering the driver. Repository-dependent review and
+issue-comment reads require that resolved identity and never fall back to GitHub
+CLI checkout placeholders, so `.git`-less jj workspaces do not depend on cwd
+discovery. The stack workflow, not Autopilot, performs each
 merge and continues through the selected PR.
