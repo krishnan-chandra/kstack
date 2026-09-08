@@ -80,6 +80,7 @@ export interface OrchestratorDeps {
 		repository: string;
 		prNumber: number;
 		expectedHeadSha: string;
+		expectedBaseRef: string;
 		readiness: StackReadinessMode;
 		method: StackMergeMethod;
 	}) => Promise<DelegatedFrontierResponse>;

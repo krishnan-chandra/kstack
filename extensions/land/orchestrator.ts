@@ -4,7 +4,12 @@ import type { ExecFn, FrontierResult, LandOptions, LandResult, MergeMethod } fro
 
 type LandExecution =
 	| { kind: "interactive"; options: LandOptions }
-	| { kind: "stack-frontier"; options: LandOptions & { method: MergeMethod }; expectedHeadSha: string };
+	| {
+			kind: "stack-frontier";
+			options: LandOptions & { method: MergeMethod };
+			expectedHeadSha: string;
+			expectedBaseRef: string;
+	  };
 
 interface LandDeps {
 	exec: ExecFn;
@@ -49,6 +54,7 @@ function empty(status: LandResult["status"], blocker: string): LandResult {
 export async function runLand(execution: LandExecution, deps: LandDeps): Promise<LandResult> {
 	const options = execution.options;
 	const expectedHeadSha = execution.kind === "stack-frontier" ? execution.expectedHeadSha : undefined;
+	const expectedBaseRef = execution.kind === "stack-frontier" ? execution.expectedBaseRef : undefined;
 	let acceptedMutation = false;
 	let frontier: FrontierResult | undefined;
 	let autopilotStatus: AutopilotResult["status"] | undefined;
@@ -60,6 +66,10 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 		if (expectedHeadSha !== undefined && initial.headOid !== expectedHeadSha) {
 			return empty("blocked", `PR #${initial.number} head no longer matches the delegated frontier.`);
 		}
+		if (expectedBaseRef !== undefined && initial.baseRef !== expectedBaseRef) {
+			return empty("blocked", `PR #${initial.number} base branch no longer matches the delegated frontier.`);
+		}
+		const targetBase = expectedBaseRef ?? initial.baseRef;
 
 		// Reject impossible repository/method combinations before readiness work,
 		// because autopilot may itself perform confirmed mutations.
@@ -96,14 +106,19 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 			!autopilot.mergeReady ||
 			!autopilot.prState ||
 			autopilot.prState.verifiedHeadSha !== autopilot.prState.headSha ||
-			(expectedHeadSha !== undefined && autopilot.prState.headSha !== expectedHeadSha)
+			(expectedHeadSha !== undefined && autopilot.prState.headSha !== expectedHeadSha) ||
+			autopilot.prState.baseRef !== targetBase
 		) {
 			return {
 				...base,
 				status: "blocked",
 				blockers: autopilot.blockedReasons.length
 					? readinessBlockers({ readiness: options.readiness, prNumber: initial.number }, autopilot)
-					: ["Autopilot did not produce exact-head merge-ready evidence."],
+					: autopilot.prState && autopilot.prState.baseRef !== targetBase
+						? [
+								`PR #${initial.number} was retargeted to ${autopilot.prState.baseRef}; readiness evidence is no longer valid.`,
+							]
+						: ["Autopilot did not produce exact-head merge-ready evidence."],
 			};
 		}
 
@@ -112,12 +127,17 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 			ready.state !== "OPEN" ||
 			ready.isDraft ||
 			ready.headOid !== autopilot.prState.headSha ||
-			ready.headRef !== autopilot.prState.headRef
+			ready.headRef !== autopilot.prState.headRef ||
+			ready.baseRef !== targetBase
 		) {
 			return {
 				...base,
 				status: "blocked",
-				blockers: ["GitHub no longer matches autopilot's exact-head readiness evidence."],
+				blockers: [
+					ready.baseRef !== targetBase
+						? `PR #${initial.number} was retargeted to ${ready.baseRef}; merge was not attempted.`
+						: "GitHub no longer matches autopilot's exact-head readiness evidence.",
+				],
 			};
 		}
 		// Priority: CLI --method > per-repo config > only allowed method > prompt
@@ -156,13 +176,18 @@ export async function runLand(execution: LandExecution, deps: LandDeps): Promise
 			revalidated.state !== "OPEN" ||
 			revalidated.isDraft ||
 			revalidated.headOid !== frontier.expectedHeadSha ||
-			revalidated.headRef !== ready.headRef
+			revalidated.headRef !== ready.headRef ||
+			revalidated.baseRef !== ready.baseRef
 		) {
 			return {
 				...base,
 				status: "blocked",
 				frontiers: [frontier],
-				blockers: ["PR changed after confirmation; merge was not attempted."],
+				blockers: [
+					revalidated.baseRef !== ready.baseRef
+						? `PR #${ready.number} was retargeted to ${revalidated.baseRef}; merge was not attempted.`
+						: "PR changed after confirmation; merge was not attempted.",
+				],
 			};
 		}
 		await mergePullRequest(deps.exec, deps.cwd, ready.number, method, ready.headOid, deps.signal);

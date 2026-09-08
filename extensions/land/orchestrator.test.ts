@@ -17,7 +17,7 @@ const repo = JSON.stringify({
 	squashMergeAllowed: true,
 	rebaseMergeAllowed: false,
 });
-function pr(sha: string, state = "OPEN", isDraft = false, headRefName = "feature"): string {
+function pr(sha: string, state = "OPEN", isDraft = false, headRefName = "feature", baseRefName = "main"): string {
 	return JSON.stringify({
 		number: 7,
 		url: "https://github.com/o/r/pull/7",
@@ -25,7 +25,7 @@ function pr(sha: string, state = "OPEN", isDraft = false, headRefName = "feature
 		state,
 		isDraft,
 		headRefName,
-		baseRefName: "main",
+		baseRefName,
 		headRefOid: sha,
 		mergeable: "MERGEABLE",
 		mergeStateStatus: "CLEAN",
@@ -33,7 +33,7 @@ function pr(sha: string, state = "OPEN", isDraft = false, headRefName = "feature
 		mergeCommit: state === "MERGED" ? { oid: "c".repeat(40) } : null,
 	});
 }
-function ready(sha: string): AutopilotResult {
+function ready(sha: string, baseRef = "main"): AutopilotResult {
 	return {
 		status: "merge-ready",
 		mergeReady: true,
@@ -47,7 +47,7 @@ function ready(sha: string): AutopilotResult {
 			isDraft: false,
 			headSha: sha,
 			verifiedHeadSha: sha,
-			baseRef: "main",
+			baseRef,
 			headRef: "feature",
 			mergeable: "mergeable",
 			mergeStateStatus: "CLEAN",
@@ -349,6 +349,7 @@ test("delegated frontier skips the prompt and still revalidates", async () => {
 			kind: "stack-frontier",
 			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
 			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
 		},
 		runDeps,
 	);
@@ -372,6 +373,7 @@ test("delegated frontier blocks a stale initial head before readiness", async ()
 			kind: "stack-frontier",
 			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
 			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
 		},
 		runDeps,
 	);
@@ -390,6 +392,7 @@ test("delegated frontier rejects readiness evidence for a different head", async
 			kind: "stack-frontier",
 			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
 			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
 		},
 		runDeps,
 	);
@@ -411,6 +414,7 @@ test("delegated frontier blocks a head change after readiness", async () => {
 			kind: "stack-frontier",
 			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
 			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
 		},
 		deps(exec),
 	);
@@ -435,6 +439,7 @@ test("delegated frontier blocks a head change immediately before merge", async (
 			kind: "stack-frontier",
 			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
 			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
 		},
 		deps(exec),
 	);
@@ -444,6 +449,60 @@ test("delegated frontier blocks a head change immediately before merge", async (
 		calls.some((args) => args[0] === "pr" && args[1] === "merge"),
 		false,
 	);
+});
+
+test("delegated frontier blocks a base branch mismatch before readiness", async () => {
+	let autopilotCalled = false;
+	const runDeps = {
+		...deps(async (_command, args) =>
+			args[0] === "repo"
+				? { code: 0, stdout: repo, stderr: "" }
+				: { code: 0, stdout: pr(NEW, "OPEN", false, "feature", "other-base"), stderr: "" },
+		),
+		runAutopilot: async () => {
+			autopilotCalled = true;
+			return { handled: true as const, outcome: ready(NEW, "main") };
+		},
+	};
+	const result = await executeLand(
+		{
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
+		},
+		runDeps,
+	);
+	assert.equal(result.status, "blocked");
+	assert.equal(autopilotCalled, false);
+	assert.match(result.blockers.join(" "), /base branch no longer matches/i);
+});
+
+test("delegated frontier blocks a base branch change after readiness", async () => {
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			return {
+				code: 0,
+				stdout:
+					views++ === 0 ? pr(NEW, "OPEN", false, "feature", "main") : pr(NEW, "OPEN", false, "feature", "other-base"),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await executeLand(
+		{
+			kind: "stack-frontier",
+			options: { target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+			expectedHeadSha: NEW,
+			expectedBaseRef: "main",
+		},
+		deps(exec),
+	);
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockers.join(" "), /retargeted to other-base/i);
 });
 
 test("unconfigured repo auto-selects its only allowed method without another confirmation", async () => {
@@ -551,6 +610,92 @@ for (const item of PR_CHANGE_CASES) {
 		);
 	});
 }
+
+test("blocks merge when the PR base branch changes between initial read and autopilot readiness", async () => {
+	const calls: string[][] = [];
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			return { code: 0, stdout: pr(NEW, "OPEN", false, "feature", "main"), stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec, ready(NEW, "other-base")),
+	);
+	assert.equal(result.status, "blocked");
+	assert.match(result.blockers.join(" "), /retargeted to other-base/i);
+	assert.equal(
+		calls.some((args) => args[0] === "pr" && args[1] === "merge"),
+		false,
+		"Must not issue merge when base branch changed in autopilot",
+	);
+});
+
+test("blocks merge when the PR base branch changes between autopilot readiness and readiness re-read", async () => {
+	const calls: string[][] = [];
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			// 0: initial ("main"), 1: readiness re-read ("other-base"), 2: revalidate, 3: waitForMerge
+			return {
+				code: 0,
+				stdout:
+					current === 0 ? pr(NEW, "OPEN", false, "feature", "main") : pr(NEW, "OPEN", false, "feature", "other-base"),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec, ready(NEW, "main")),
+	);
+	assert.equal(result.status, "blocked");
+	assert.equal(
+		calls.some((args) => args[0] === "pr" && args[1] === "merge"),
+		false,
+		"Must not issue merge when base branch changed after autopilot",
+	);
+});
+
+test("blocks merge when the PR base branch changes between confirmation and final re-read", async () => {
+	const calls: string[][] = [];
+	let views = 0;
+	const exec: ExecFn = async (_command, args) => {
+		calls.push(args);
+		if (args[0] === "repo") return { code: 0, stdout: repo, stderr: "" };
+		if (args[0] === "pr" && args[1] === "merge") return { code: 0, stdout: "", stderr: "" };
+		if (args[0] === "pr" && args[1] === "view") {
+			const current = views++;
+			// 0: initial ("main"), 1: ready ("main"), 2: revalidate ("other-base")
+			return {
+				code: 0,
+				stdout:
+					current < 2 ? pr(NEW, "OPEN", false, "feature", "main") : pr(NEW, "OPEN", false, "feature", "other-base"),
+				stderr: "",
+			};
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+	const result = await runLand(
+		{ target: { kind: "single", prNumber: 7 }, readiness: "check", method: "squash" },
+		deps(exec, ready(NEW, "main")),
+	);
+	assert.equal(result.status, "blocked");
+	assert.equal(
+		calls.some((args) => args[0] === "pr" && args[1] === "merge"),
+		false,
+		"Must not issue merge when base branch changed after confirmation",
+	);
+});
 
 test("blocks early when GitHub only allows merge commits (no squash or rebase)", async () => {
 	const mergeOnly = JSON.stringify({

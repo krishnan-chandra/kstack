@@ -97,7 +97,12 @@ export default function landExtension(pi: ExtensionAPI): void {
 		try {
 			return await runLand(
 				request.kind === "stack-frontier"
-					? { kind: "stack-frontier", options: request.options, expectedHeadSha: request.expectedHeadSha }
+					? {
+							kind: "stack-frontier",
+							options: request.options,
+							expectedHeadSha: request.expectedHeadSha,
+							expectedBaseRef: request.expectedBaseRef,
+						}
 					: { kind: "interactive", options: request.options },
 				{
 					exec: repository === undefined ? exec : scopeGitHubExec(exec, repository),

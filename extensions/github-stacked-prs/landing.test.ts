@@ -1259,8 +1259,9 @@ describe("GitHub stack landing", () => {
 		assert.equal(deletedBranch, "kstack/one");
 	});
 
-	it("delegates the exact pinned head and blocks cleanly when Land refuses it", async () => {
+	it("delegates the exact pinned head and approved base and blocks cleanly when Land refuses it", async () => {
 		let pinned = "";
+		let pinnedBase = "";
 		const result = await requestGitHubStackLanding(
 			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "watch", method: "squash" },
 			{
@@ -1270,6 +1271,7 @@ describe("GitHub stack landing", () => {
 				selectMethod: async () => "squash",
 				landFrontier: async (input) => {
 					pinned = input.expectedHeadSha;
+					pinnedBase = input.expectedBaseRef;
 					return {
 						handled: true,
 						outcome: {
@@ -1296,8 +1298,125 @@ describe("GitHub stack landing", () => {
 			},
 		);
 		assert.equal(pinned, one);
+		assert.equal(pinnedBase, "main");
 		assert.ok(result.status === "stack");
 		assert.ok(result.outcome.status === "partial");
 		assert.equal(result.outcome.frontiers[0]?.expectedHeadSha, three);
+	});
+
+	it("delegates the approved base for a first frontier and a later frontier after base repair", async () => {
+		const firstMerge = "d".repeat(40);
+		const secondMerge = "a".repeat(40);
+		const rebasedTwo = "f".repeat(40);
+		let fetches = 0;
+		let rebased = false;
+		let pushed = false;
+		const delegatedCalls: Array<{ prNumber: number; expectedHeadSha: string; expectedBaseRef: string }> = [];
+		const baseExec = exec(true, {
+			"git symbolic-ref refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
+		});
+		const finalExec: ExecFn = async (command, args, options) => {
+			const key = `${command} ${args.join(" ")}`;
+			if (key.startsWith("git rebase --onto ")) {
+				rebased = true;
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (key.startsWith("git push ")) {
+				pushed = true;
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (key === "git fetch origin") {
+				fetches++;
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (key === "git rev-parse --verify refs/remotes/origin/main^{commit}") {
+				return { code: 0, stdout: `${fetches > 1 ? secondMerge : firstMerge}\n`, stderr: "" };
+			}
+			if (key === "git worktree list --porcelain -z") {
+				return {
+					code: 0,
+					stdout: worktreeRecord("/repo", "kstack/two", rebased ? rebasedTwo : two),
+					stderr: "",
+				};
+			}
+			if (key === "git rev-parse --verify refs/heads/kstack/two^{commit}") {
+				return { code: 0, stdout: `${rebased ? rebasedTwo : two}\n`, stderr: "" };
+			}
+			if (key === "git for-each-ref --format=%(refname)%09%(objectname) refs/heads") {
+				return {
+					code: 0,
+					stdout: rebased
+						? `refs/heads/kstack/one\t${one}\nrefs/heads/kstack/two\t${rebasedTwo}\n`
+						: `refs/heads/kstack/one\t${one}\nrefs/heads/kstack/two\t${two}\n`,
+					stderr: "",
+				};
+			}
+			if (key === `git merge-base --is-ancestor ${firstMerge} ${firstMerge}`)
+				return { code: 0, stdout: "", stderr: "" };
+			if (key === `git merge-base --is-ancestor ${secondMerge} ${secondMerge}`)
+				return { code: 0, stdout: "", stderr: "" };
+			if (key === `git rev-list --reverse ${one}..${two}`) return { code: 0, stdout: `${two}\n`, stderr: "" };
+			if (key === `git rev-list --reverse ${firstMerge}..${rebasedTwo}`)
+				return { code: 0, stdout: `${rebasedTwo}\n`, stderr: "" };
+			return baseExec(command, args, options);
+		};
+		const base = gateway();
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 2, headRef: "kstack/two", readiness: "check", method: "squash" },
+			{
+				exec: finalExec,
+				gateway: {
+					...base,
+					getPrStatus: async () => "open",
+					getMergeCommit: async (_repo, prNumber) => ({
+						merged: true,
+						mergeCommitOid: prNumber === 1 ? firstMerge : secondMerge,
+						headCommitId: prNumber === 1 ? one : rebasedTwo,
+						headRef: prNumber === 1 ? "kstack/one" : "kstack/two",
+					}),
+					getRemoteBranchSha: async (_repo, branch) => {
+						if (branch === "kstack/one") return one;
+						if (branch === "kstack/two") return pushed ? rebasedTwo : two;
+						return undefined;
+					},
+					deleteRemoteBranch: async () => ({ kind: "deleted" as const }),
+				},
+				confirm: async () => true,
+				selectMethod: async () => "squash",
+				landFrontier: async (input) => {
+					delegatedCalls.push({
+						prNumber: input.prNumber,
+						expectedHeadSha: input.expectedHeadSha,
+						expectedBaseRef: input.expectedBaseRef,
+					});
+					return {
+						handled: true,
+						outcome: {
+							status: "landed",
+							frontiers: [
+								{
+									prNumber: input.prNumber,
+									url: `https://github.com/o/r/pull/${input.prNumber}`,
+									expectedHeadSha: input.expectedHeadSha,
+									method: "squash",
+									state: "landed",
+								},
+							],
+							autopilotRan: true,
+							remainingRefs: [],
+							completedMutations: [`merged #${input.prNumber}`],
+							blockers: [],
+						},
+					};
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "completed");
+		assert.deepEqual(delegatedCalls, [
+			{ prNumber: 1, expectedHeadSha: one, expectedBaseRef: "main" },
+			{ prNumber: 2, expectedHeadSha: rebasedTwo, expectedBaseRef: "main" },
+		]);
 	});
 });
