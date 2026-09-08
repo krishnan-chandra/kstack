@@ -24,7 +24,7 @@ Preflight requires `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, `HERDR_PANE_ID`, a reach
 
 `openAgentHost` creates one no-focus tab in the caller's workspace. Pane allocation is serialized, while startup and prompting may run concurrently. Each pane uses its assigned agent cwd. If the first agent's cwd differs from the tab cwd, the host allocates another pane rather than reusing the root shell. A new pane may not have reached its shell prompt when startup begins. The host retries Herdr's pre-launch `agent_pane_busy` rejection up to three times, one second apart. It does not retry blocked or ambiguous launches. Startup failures consume their reserved pane. The host validates Herdr's reported cwd at startup and before each new request, and refuses a new request while the agent is still working on a human turn. It never focuses, splits, or closes the caller's pane.
 
-`attachHostedAgent` attaches the request lifecycle to an existing named agent without creating a tab. It refuses the caller's pane. The caller is responsible for selecting an agent with the intended model, tools, and cwd.
+Use `openAgentHost` when Kstack creates and owns the agents. Use `attachHostedAgent` only for an existing named agent in a user- or skill-owned pane. It attaches the request lifecycle without creating a tab. For these attached agents, cancellation sends Escape but never sends Ctrl+C or closes the pane. `attachHostedAgent` refuses the caller's pane. The caller is responsible for selecting an agent with the intended model, tools, and cwd.
 
 Hosted Pi processes load Kstack and the Herdr integration explicitly, not the user's other extensions. Tool allowlists remain the capability boundary. Sessions persist in Pi's normal session directory and remain available through `/resume` and session-archive.
 
@@ -40,7 +40,11 @@ If Herdr rejects a prompt before delivery with `agent_blocked`, resume waits for
 
 ## Cancellation and retention
 
-Cancellation stays connected across blocked returns and takes precedence over completion. Cancellation and timeout drain through Escape, then Ctrl+C twice, then pane close if the preceding steps do not settle. A settled agent in the unseen host tab reports `done` rather than `idle`; both count as settled. Abort is idempotent within one request and resets for the next request. A pane closed during escalation cannot be reused.
+Cancellation stays connected across blocked returns and takes precedence over completion. Cancellation and timeout for host-owned agents drain through Escape, then both Ctrl+C presses in one `send-keys` call (Pi exits only when the presses arrive within 500 ms), then pane close if the preceding steps do not settle. Agents reached through `attachHostedAgent` — panes a skill or the user owns, such as an adversary — use the `attached` policy: Escape only, then a `failed` result naming the pane. The host never sends Ctrl+C to attached agents or closes their panes.
+
+`herdr agent send-keys <TARGET> <KEY>...` accepts multiple keys.
+
+A settled agent in the unseen host tab reports `done` rather than `idle`; both count as settled. Abort is idempotent within one request and resets for the next request. A pane closed during escalation cannot be reused.
 
 Disposal cancels pending work. Idle panes and tabs are retained unless `closePane` or `closeTab` is requested. An owned exchange directory is removed when no request is outstanding; a concurrent outstanding request keeps its files available. Retained panes are not permission to leave cancelled tasks running.
 

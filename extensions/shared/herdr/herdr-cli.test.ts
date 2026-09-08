@@ -175,17 +175,19 @@ describe("createHerdrCli", () => {
 		if (outcome.ok) assert.deepEqual(outcome.value, { widthColumns: 213, heightRows: 60 });
 	});
 
-	it("builds agent send-keys and wait commands with repeated --until flags", async () => {
+	it("builds multi-key agent send-keys and wait commands with repeated --until flags", async () => {
 		const { exec, calls } = scriptExec(() => ({
 			code: 0,
 			stdout: '{"id":"x","result":{"type":"ok"}}',
 			stderr: "",
 		}));
 		const cli = createHerdrCli(exec);
-		await cli.agentSendKeys({ name: "a", key: "esc" }, { timeoutMs: 1000 });
+		await cli.agentSendKeys({ name: "a", keys: ["esc"] }, { timeoutMs: 1000 });
+		await cli.agentSendKeys({ name: "a", keys: ["ctrl+c", "ctrl+c"] }, { timeoutMs: 1000 });
 		await cli.agentWait({ name: "a", timeoutMs: 2000, until: ["idle", "done"] }, { timeoutMs: 3000 });
 		assert.deepEqual(calls[0]?.args, ["agent", "send-keys", "a", "esc"]);
-		assert.deepEqual(calls[1]?.args, ["agent", "wait", "a", "--until", "idle", "--until", "done", "--timeout", "2000"]);
+		assert.deepEqual(calls[1]?.args, ["agent", "send-keys", "a", "ctrl+c", "ctrl+c"]);
+		assert.deepEqual(calls[2]?.args, ["agent", "wait", "a", "--until", "idle", "--until", "done", "--timeout", "2000"]);
 	});
 });
 

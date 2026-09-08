@@ -636,8 +636,8 @@ describe("agent-host: ask protocol", () => {
 		);
 		await agent.abort();
 		await agent.abort();
-		const keys = harness.fake.callsMatching("agent send-keys").map((call) => call.args[3]);
-		assert.deepEqual(keys, ["esc", "ctrl+c", "ctrl+c"]);
+		const keys = harness.fake.callsMatching("agent send-keys").map((call) => call.args.slice(3));
+		assert.deepEqual(keys, [["esc"], ["ctrl+c", "ctrl+c"]]);
 		const closes = harness.fake.callsMatching("pane close");
 		assert.equal(closes.length, 1);
 		assert.equal(closes[0]?.args[2], harness.fake.rootPaneId);
@@ -780,6 +780,50 @@ describe("agent-host review regressions", () => {
 		assert.equal((await attached.agent.ask(askOptions(h))).status, "completed");
 		assert.equal(h.fake.callsMatching("tab create").length, 0);
 		await attached.agent.dispose();
+	});
+
+	it("attached agents send only esc and never close the pane", async () => {
+		const h = makeHarness("attach-abort");
+		h.fake.on(
+			(args) => args.join(" ").startsWith("agent wait"),
+			() => ({
+				code: 1,
+				stdout: "",
+				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out" } }),
+			}),
+		);
+		const attached = await attachHostedAgent("adversary-test", h.fake.deps());
+		assert.ok(attached.ok);
+		await attached.agent.abort();
+		await attached.agent.abort();
+		const keys = h.fake.callsMatching("agent send-keys").map((call) => call.args.slice(3));
+		assert.deepEqual(keys, [["esc"]]);
+		assert.equal(h.fake.callsMatching("pane close").length, 0);
+	});
+
+	it("attached ask timeout reports the pane and keeps it open", async () => {
+		const h = makeHarness("attach-timeout");
+		h.fake.promptResponses = [
+			{
+				code: 1,
+				stdout: "",
+				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out after 60000 ms" } }),
+			},
+		];
+		h.fake.on(
+			(args) => args.join(" ").startsWith("agent wait"),
+			() => ({
+				code: 1,
+				stdout: "",
+				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out" } }),
+			}),
+		);
+		const attached = await attachHostedAgent("adversary-test", h.fake.deps());
+		assert.ok(attached.ok);
+		const result = await attached.agent.ask(askOptions(h));
+		assert.equal(result.status, "failed");
+		if (result.status === "failed") assert.match(result.error, /Inspect pane .*not closed/);
+		assert.equal(h.fake.callsMatching("pane close").length, 0);
 	});
 
 	it("collects a read-only response through real Pi read and native session persistence", async () => {
