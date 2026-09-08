@@ -152,7 +152,11 @@ describe("floor runtime", () => {
 
 	it("records rewrites separately from completion outcomes and resolves tiers", async () => {
 		const scope = await tempScope();
-		const ledger = createFloorLedger({ processId: "p-runtime", now: () => now });
+		const ledger = createFloorLedger({
+			rootDirectory: join(scope, "ledger-root"),
+			processId: "p-runtime",
+			now: () => now,
+		});
 		const seenResponseIds: string[] = [];
 		const runtime = createFloorRuntime({
 			ledger,
@@ -194,7 +198,11 @@ describe("floor runtime", () => {
 
 	it("keeps an unavailable lookup as visible unknown data", async () => {
 		const scope = await tempScope();
-		const ledger = createFloorLedger({ processId: "p-runtime-failure", now: () => now });
+		const ledger = createFloorLedger({
+			rootDirectory: join(scope, "ledger-root"),
+			processId: "p-runtime-failure",
+			now: () => now,
+		});
 		const runtime = createFloorRuntime({
 			ledger,
 			clock: { now: () => now },

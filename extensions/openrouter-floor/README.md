@@ -70,13 +70,18 @@ Metadata coverage and flex usage among known tiers are shown separately.
 Each process writes an append-only shard under:
 
 ```text
-<ctx.cwd>/<CONFIG_DIR_NAME>/openrouter-floor/ledger-v1/<process-id>.<UTC-date>.jsonl
+<agentDir>/openrouter-floor/ledger-v1/<scope-key>/<process-id>.<UTC-date>.jsonl
 ```
 
-The path uses Pi's `CONFIG_DIR_NAME`, so the config-directory name follows the
-Pi distribution in use. Reports read shards under the current `ctx.cwd` only.
-Child worktrees therefore have separate scopes until a stable repository-scope
-resolver exists. The report labels this as the current working directory.
+`<agentDir>` is Pi's agent directory (`PI_CODING_AGENT_DIR`, default
+`~/.pi/agent`), so telemetry never lands in a project working tree and is never
+snapshotted by Git or jj. `<scope-key>` is the SHA-256 of the resolved
+`ctx.cwd`; reports read shards under the current scope only. Child worktrees
+therefore have separate scopes until a stable repository-scope resolver
+exists. The report labels this as the current working directory.
+
+Shards written by earlier versions under `<cwd>/.pi/openrouter-floor/` are
+not read or migrated; delete them by hand if they were committed.
 
 The ledger rotates each process into daily shards and keeps at most 30 days of
 events, 10,000 lines per process-day shard, and 5 MiB across a scope. It accounts

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "../shared/kstack-config.ts";
 import { isRecord } from "../shared/narrow.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
 
@@ -63,6 +63,8 @@ interface LedgerFileSystem {
 }
 
 interface FloorLedgerOptions {
+	/** Parent of all scope directories; defaults to <agentDir>/openrouter-floor/ledger-v1. */
+	rootDirectory?: string;
 	fileSystem?: LedgerFileSystem;
 	processId?: string;
 	now?: () => Date;
@@ -227,8 +229,12 @@ function scopeKeyFor(cwd: string): string {
 	return createHash("sha256").update(resolve(cwd)).digest("hex");
 }
 
-export function ledgerDirectoryFor(cwd: string): string {
-	return join(resolve(cwd), CONFIG_DIR_NAME, "openrouter-floor", "ledger-v1");
+export function defaultLedgerRoot(env: NodeJS.ProcessEnv = process.env): string {
+	return join(getAgentDir(env), "openrouter-floor", "ledger-v1");
+}
+
+export function ledgerDirectoryFor(rootDirectory: string, cwd: string): string {
+	return join(rootDirectory, scopeKeyFor(cwd));
 }
 
 export function hashGenerationId(responseId: string): GenerationKeyHash {
@@ -278,6 +284,7 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 	if (!Number.isInteger(maxLinesPerShard) || maxLinesPerShard < 1) throw new Error("Invalid floor ledger line limit");
 	if (!Number.isInteger(maxTotalBytes) || maxTotalBytes < 1) throw new Error("Invalid floor ledger byte limit");
 	const onDiagnostic = options.onDiagnostic ?? (() => {});
+	const rootDirectory = options.rootDirectory ?? defaultLedgerRoot();
 	let queue = Promise.resolve();
 	const lineCounts = new Map<string, number>();
 
@@ -338,7 +345,7 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 			diagnostic(onDiagnostic, "ledger append rejected: invalid event id");
 			return;
 		}
-		const directory = ledgerDirectoryFor(scope);
+		const directory = ledgerDirectoryFor(rootDirectory, scope);
 		const path = join(directory, fileNameFor(processId, now()));
 
 		const scopeKey = scopeKeyFor(scope);
@@ -380,7 +387,7 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 	}
 
 	async function read(scope: string): Promise<LedgerEvent[]> {
-		const directory = ledgerDirectoryFor(scope);
+		const directory = ledgerDirectoryFor(rootDirectory, scope);
 		let names: string[];
 		try {
 			names = await fileSystem.readdir(directory);
