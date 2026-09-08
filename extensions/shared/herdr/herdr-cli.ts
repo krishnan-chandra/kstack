@@ -183,7 +183,10 @@ export interface HerdrCli {
 	): Promise<HerdrOutcome<HerdrAgentInfo>>;
 	agentGet(options: { name: string }, run: HerdrRunOptions): Promise<HerdrOutcome<HerdrAgentInfo>>;
 	agentRead(options: { name: string; lines: number }, run: HerdrRunOptions): Promise<HerdrOutcome<string>>;
-	agentSendKeys(options: { name: string; key: "esc" | "ctrl+c" }, run: HerdrRunOptions): Promise<HerdrOutcome<null>>;
+	agentSendKeys(
+		options: { name: string; keys: readonly ("esc" | "ctrl+c")[] },
+		run: HerdrRunOptions,
+	): Promise<HerdrOutcome<null>>;
 	paneLayout(
 		options: { paneId: string },
 		run: HerdrRunOptions,
@@ -371,7 +374,7 @@ export function createHerdrCli(exec: HerdrExec): HerdrCli {
 			),
 		agentSendKeys: (options, runOptions) =>
 			run(
-				["agent", "send-keys", options.name, options.key],
+				["agent", "send-keys", options.name, ...options.keys],
 				expectType("ok", () => null),
 				runOptions,
 			),

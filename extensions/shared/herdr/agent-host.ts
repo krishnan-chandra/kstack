@@ -82,7 +82,7 @@ export interface HostedAgent {
 	ask(options: AskOptions): Promise<AskResult>;
 	/** Resume the stored blocked request, delivering it if it was rejected before send. */
 	resume(): Promise<AskResult>;
-	/** esc, then ctrl+c twice, then pane close; each step only when the previous one does not settle the agent. */
+	/** Cancel by ownership policy: owned agents escalate through Ctrl+C and pane close; attached agents receive Escape only. */
 	abort(): Promise<void>;
 	dispose(options?: { closePane?: boolean }): Promise<void>;
 }
@@ -249,6 +249,9 @@ function errorText(error: BoundaryValue): string {
 
 type SendOutcome = { settled: true } | AskResult;
 
+/** `owned`: the host started the agent and may close its pane. `attached`: a skill or the user owns the pane. */
+type AbortPolicy = "owned" | "attached";
+
 interface PendingRequest {
 	id: string;
 	options: AskOptions;
@@ -270,13 +273,22 @@ class HostedAgentImpl implements HostedAgent {
 	private readonly cli: HerdrCli;
 	private readonly deps: HostDeps;
 	private readonly cwd: string;
+	private readonly abortPolicy: AbortPolicy;
 	private askBusy = false;
 	private abortPromise: Promise<void> | undefined;
 	private pending: PendingRequest | undefined;
 	private closed = false;
 
 	constructor(
-		init: { name: string; role: string; cwd: string; paneId: string; tabId: string; sessionFile?: string },
+		init: {
+			name: string;
+			role: string;
+			cwd: string;
+			paneId: string;
+			tabId: string;
+			sessionFile?: string;
+			abortPolicy?: AbortPolicy;
+		},
 		cli: HerdrCli,
 		deps: HostDeps,
 	) {
@@ -286,6 +298,7 @@ class HostedAgentImpl implements HostedAgent {
 		this.paneId = init.paneId;
 		this.tabId = init.tabId;
 		this.sessionFile = init.sessionFile;
+		this.abortPolicy = init.abortPolicy ?? "owned";
 		this.cli = cli;
 		this.deps = deps;
 	}
@@ -422,9 +435,12 @@ class HostedAgentImpl implements HostedAgent {
 		} catch (error) {
 			const cancelled = request.cancelled || request.options.signal?.aborted;
 			await this.abort();
-			return cancelled
-				? { status: "aborted", usage: this.usage() }
-				: { status: "failed", error: `${this.role}: ${errorText(error)}`, usage: this.usage() };
+			if (cancelled) return { status: "aborted", usage: this.usage() };
+			let message = `${this.role}: ${errorText(error)}`;
+			if (this.abortPolicy === "attached") {
+				message += ` Inspect pane ${this.paneId}; the agent was not closed.`;
+			}
+			return { status: "failed", error: message, usage: this.usage() };
 		} finally {
 			if (!blocked) {
 				request.options.signal?.removeEventListener("abort", request.onAbort);
@@ -465,11 +481,11 @@ class HostedAgentImpl implements HostedAgent {
 			if (outcome.code === "agent_blocked") return { status: "blocked", paneId: this.paneId, usage: this.usage() };
 			if (outcome.code === "agent_prompt_stalled") continue;
 			if (isTimeoutError(outcome)) {
-				return {
-					status: "failed",
-					error: `Timed out after ${Math.round(options.timeoutMs / 1000)}s.`,
-					usage: this.usage(),
-				};
+				let error = `Timed out after ${Math.round(options.timeoutMs / 1000)}s.`;
+				if (this.abortPolicy === "attached") {
+					error += ` Inspect pane ${this.paneId}; the agent was not closed.`;
+				}
+				return { status: "failed", error, usage: this.usage() };
 			}
 			return { status: "failed", error: `${outcome.code}: ${outcome.message}`, usage: this.usage() };
 		}
@@ -493,11 +509,11 @@ class HostedAgentImpl implements HostedAgent {
 			return { status: "aborted", usage: this.usage() };
 		}
 		if (isTimeoutError(outcome)) {
-			return {
-				status: "failed",
-				error: `Timed out after ${Math.round(options.timeoutMs / 1000)}s.`,
-				usage: this.usage(),
-			};
+			let error = `Timed out after ${Math.round(options.timeoutMs / 1000)}s.`;
+			if (this.abortPolicy === "attached") {
+				error += ` Inspect pane ${this.paneId}; the agent was not closed.`;
+			}
+			return { status: "failed", error, usage: this.usage() };
 		}
 		if (outcome.code === "agent_blocked") return { status: "blocked", paneId: this.paneId, usage: this.usage() };
 		return { status: "failed", error: `${outcome.code}: ${outcome.message}`, usage: this.usage() };
@@ -524,11 +540,14 @@ class HostedAgentImpl implements HostedAgent {
 	}
 
 	private async runAbort(): Promise<void> {
-		await this.sendKey("esc");
+		await this.sendKeys(["esc"]);
 		if (await this.settles(2_000)) return;
-		await this.sendKey("ctrl+c");
-		await this.sleep(1_000);
-		await this.sendKey("ctrl+c");
+		if (this.abortPolicy === "attached") {
+			// The pane belongs to a skill or the user; report instead of killing Pi.
+			return;
+		}
+		// Pi exits only when both presses arrive within 500 ms; one call keeps them together.
+		await this.sendKeys(["ctrl+c", "ctrl+c"]);
 		if (await this.settles(2_000)) return;
 		this.closed = true;
 		try {
@@ -538,9 +557,9 @@ class HostedAgentImpl implements HostedAgent {
 		}
 	}
 
-	private async sendKey(key: "esc" | "ctrl+c"): Promise<void> {
+	private async sendKeys(keys: readonly ("esc" | "ctrl+c")[]): Promise<void> {
 		try {
-			await this.cli.agentSendKeys({ name: this.name, key }, { timeoutMs: CONTROL_TIMEOUT_MS });
+			await this.cli.agentSendKeys({ name: this.name, keys }, { timeoutMs: CONTROL_TIMEOUT_MS });
 		} catch {
 			/* abort is best effort */
 		}
@@ -592,7 +611,11 @@ export async function attachHostedAgent(
 	if (!found.value.cwd) return { ok: false, error: "Herdr did not report the agent cwd." };
 	return {
 		ok: true,
-		agent: new HostedAgentImpl({ ...found.value, name, role: name, cwd: found.value.cwd }, cli, deps),
+		agent: new HostedAgentImpl(
+			{ ...found.value, name, role: name, cwd: found.value.cwd, abortPolicy: "attached" },
+			cli,
+			deps,
+		),
 	};
 }
 
