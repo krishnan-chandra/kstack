@@ -106,6 +106,30 @@ describe("snapshot tree metadata", () => {
 		});
 	});
 
+	it("preserves leading U+FEFF and distinct path names without BOM stripping", () => {
+		const bomPathBytes = Buffer.from("\uFEFFfile.txt", "utf8");
+		const plainPathBytes = Buffer.from("file.txt", "utf8");
+		const nestedBomPathBytes = Buffer.from("dir/\uFEFFnested.txt", "utf8");
+		const multiBytePathBytes = Buffer.from("docs/日本語-café.txt", "utf8");
+		const metadata = Buffer.concat([
+			treeRecord("100644", "blob", OID, 4, bomPathBytes),
+			treeRecord("100644", "blob", OTHER_OID, 4, plainPathBytes),
+			treeRecord("100644", "blob", OID, 4, nestedBomPathBytes),
+			treeRecord("100644", "blob", OID, 4, multiBytePathBytes),
+		]);
+		const parsed = parseSnapshotTreeMetadata(metadata);
+		assert.equal(parsed.entries.length, 4);
+		assert.equal(parsed.entries[0].path, "\uFEFFfile.txt");
+		assert.equal(parsed.entries[1].path, "file.txt");
+		assert.equal(parsed.entries[2].path, "dir/\uFEFFnested.txt");
+		assert.equal(parsed.entries[3].path, "docs/日本語-café.txt");
+		assert.notEqual(parsed.entries[0].path, parsed.entries[1].path);
+		assert.deepEqual(Buffer.from(parsed.entries[0].path, "utf8"), bomPathBytes);
+		assert.deepEqual(Buffer.from(parsed.entries[1].path, "utf8"), plainPathBytes);
+		assert.deepEqual(Buffer.from(parsed.entries[2].path, "utf8"), nestedBomPathBytes);
+		assert.deepEqual(Buffer.from(parsed.entries[3].path, "utf8"), multiBytePathBytes);
+	});
+
 	it("rejects invalid UTF-8 names instead of replacement-decoding them", () => {
 		const metadata = treeRecord("100644", "blob", OID, 1, Buffer.from([0xff]));
 		assert.throws(() => parseSnapshotTreeMetadata(metadata), /not valid UTF-8.*unsupported/);

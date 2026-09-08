@@ -273,7 +273,9 @@ the `"panel-review"` section:
 | Console transcript cap | 2 MiB / 5,000 entries per child (oldest evicted with notice) |
 | Console entry text cap | 256 KiB per entry (UTF-8 safe head/tail truncation) |
 
-PR and jj snapshot materialization stops before reading blobs when the pinned
+Supported UTF-8 filenames preserve their encoded identity, including a leading
+U+FEFF, while invalid UTF-8 remains unsupported. PR and jj snapshot
+materialization stops before reading blobs when the pinned
 tree exceeds the metadata, tracked-payload, entry, or symbolic-link-target
 limit. It rejects paths
 that are not valid UTF-8, absolute or traversing paths, duplicate paths,

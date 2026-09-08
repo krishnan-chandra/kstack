@@ -11,7 +11,7 @@ const DEFAULT_KILL_GRACE_MS = 5_000;
 const DEFAULT_TREE_METADATA_BYTES = 64 * 1024 * 1024;
 const STDERR_BYTES = 8 * 1024;
 const BATCH_HEADER_BYTES = 1024;
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const EMPTY_BUFFER = Buffer.alloc(0);
 
 interface BinaryReadable extends AsyncIterable<Buffer> {
@@ -390,9 +390,13 @@ function parseTreeRecord(record: Buffer): SnapshotTreeEntry {
 	const metadata = parseAscii(record.subarray(0, tab), "PR tree metadata");
 	const match = /^([0-7]{6}) ([a-z]+) ([0-9a-f]{40}) +(\d+|-)$/.exec(metadata);
 	if (!match) throw new Error("Git returned invalid PR tree metadata.");
+	const pathBytes = record.subarray(tab + 1);
 	let path: string;
 	try {
-		path = UTF8_DECODER.decode(record.subarray(tab + 1));
+		path = UTF8_DECODER.decode(pathBytes);
+		if (!Buffer.from(path, "utf-8").equals(pathBytes)) {
+			throw new Error("Git returned a PR tree path that is not valid UTF-8; this commit snapshot is unsupported.");
+		}
 	} catch {
 		throw new Error("Git returned a PR tree path that is not valid UTF-8; this commit snapshot is unsupported.");
 	}

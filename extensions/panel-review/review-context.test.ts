@@ -37,6 +37,17 @@ describe("installed Pi context loader", () => {
 			fixture.cleanup();
 		}
 	});
+
+	it("does not load a U+FEFF-prefixed lookalike context filename", () => {
+		const fixture = tree();
+		try {
+			writeFileSync(join(fixture.repo, "\uFEFFAGENTS.md"), "lookalike guidance");
+			const loaded = loadProjectContextFiles({ cwd: fixture.repo, agentDir: fixture.agentDir });
+			assert.equal(loaded.length, 0);
+		} finally {
+			fixture.cleanup();
+		}
+	});
 });
 
 describe("contextFilesTouchChangedContent", () => {
@@ -48,6 +59,32 @@ describe("contextFilesTouchChangedContent", () => {
 			assert.equal(
 				contextFilesTouchChangedContent({ ...fixture, reviewRoot: fixture.repo, changedPaths: ["src.ts"] }),
 				false,
+			);
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("treats a U+FEFF-prefixed lookalike as a distinct path while suppressing genuinely changed context", () => {
+		const fixture = tree();
+		try {
+			writeFileSync(join(fixture.repo, "AGENTS.md"), "trusted safe guidance");
+			writeFileSync(join(fixture.repo, "\uFEFFAGENTS.md"), "lookalike content");
+			assert.equal(
+				contextFilesTouchChangedContent({
+					...fixture,
+					reviewRoot: fixture.repo,
+					changedPaths: ["\uFEFFAGENTS.md"],
+				}),
+				false,
+			);
+			assert.equal(
+				contextFilesTouchChangedContent({
+					...fixture,
+					reviewRoot: fixture.repo,
+					changedPaths: ["AGENTS.md"],
+				}),
+				true,
 			);
 		} finally {
 			fixture.cleanup();
