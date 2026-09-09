@@ -8,12 +8,11 @@ import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import type { GitHubGateway } from "../shared/github.ts";
 import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
 import type {
-	CompletedPublicationAction,
 	FailedPublicationAction,
-	StackPublicationMap,
 	StackPublishedPullRequest,
 	StackPublishOutcome,
 } from "../shared/stack/outcome.ts";
+import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
@@ -559,7 +558,6 @@ async function applyPublication(
 			return { status: "stale", providedPlanId: plan.planId, recomputedPlanId: fresh.plan.planId };
 		}
 	}
-	const completed: CompletedPublicationAction[] = [];
 	const published = plan.slices.map((slice) => ({
 		bookmark: slice.bookmark,
 		baseBookmark: slice.baseBookmark,
@@ -570,37 +568,29 @@ async function applyPublication(
 		targetBase: slice.targetBase,
 		createPr: slice.existingPr === undefined,
 	}));
-	const knownPublication = (): StackPublicationMap | undefined => {
-		const pullRequests = provenPullRequests(published);
-		if (pullRequests.length === 0) return undefined;
-		return {
-			repository: plan.repository,
-			remote: plan.remote.name,
-			topRef: pullRequests.at(-1)?.ref ?? plan.slices[0].bookmark,
-			pullRequests,
-		};
-	};
+	const progress = createPublicationProgress({
+		planId: plan.planId,
+		topRef: plan.slices.at(-1)?.bookmark ?? "",
+		remote: plan.remote.name,
+		repository: plan.repository,
+		pullRequests: () => provenPullRequests(published),
+	});
 
 	for (const [index, slice] of plan.slices.entries()) {
 		for (const action of slice.actions) {
 			if (deps.signal?.aborted) {
-				if (completed.length === 0) return { status: "cancelled" };
-				return {
-					status: "partial",
-					planId: plan.planId,
-					completedActions: completed,
-					publication: knownPublication(),
-					failedAction: toFailedAction(
+				return progress.cancelled(
+					toFailedAction(
 						action.kind,
 						new Error("Publication was cancelled before this action started."),
 						slice.bookmark,
 					),
-				};
+				);
 			}
 			try {
 				if (action.kind === "push-bookmark") {
 					await jj.pushBookmark(options.cwd, options.remote, action.bookmark, deps.signal);
-					completed.push({ kind: "push-bookmark", ref: action.bookmark });
+					progress.completed({ kind: "push-bookmark", ref: action.bookmark });
 				} else if (action.kind === "create-draft-pr") {
 					const metadata = metadataByBookmark.get(action.bookmark);
 					if (!metadata) throw new Error(`No PR metadata was prepared for ${JSON.stringify(action.bookmark)}.`);
@@ -616,7 +606,7 @@ async function applyPublication(
 					published[index].prNumber = created.number;
 					published[index].url = created.url;
 					published[index].draft = created.draft;
-					completed.push({
+					progress.completed({
 						kind: "create-draft-pr",
 						ref: action.bookmark,
 						prNumber: created.number,
@@ -630,7 +620,7 @@ async function applyPublication(
 						cwd: options.cwd,
 						signal: deps.signal,
 					});
-					completed.push({
+					progress.completed({
 						kind: "repair-pr-base",
 						ref: action.bookmark,
 						prNumber: action.prNumber,
@@ -640,25 +630,9 @@ async function applyPublication(
 			} catch (error) {
 				const failed = toFailedAction(action.kind, error, slice.bookmark);
 				if (isIndeterminate(error)) {
-					return {
-						status: "indeterminate",
-						planId: plan.planId,
-						inFlight: failed,
-						completedActions: completed,
-						publication: knownPublication(),
-						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
-					};
+					return progress.indeterminate(failed, "Re-run /jj-stack plan and inspect remote state before retrying.");
 				}
-				if (completed.length === 0) {
-					return { status: "failed", error: failed.error, completedActions: [] };
-				}
-				return {
-					status: "partial",
-					planId: plan.planId,
-					completedActions: completed,
-					publication: knownPublication(),
-					failedAction: failed,
-				};
+				return progress.failed(failed);
 			}
 		}
 	}
@@ -668,13 +642,10 @@ async function applyPublication(
 	if (published.length >= 2) {
 		const prNumbers = published.map((slice) => slice.prNumber);
 		if (prNumbers.some((number) => number === undefined)) {
-			return {
-				status: "partial",
-				planId: plan.planId,
-				completedActions: completed,
-				publication: knownPublication(),
-				failedAction: { kind: "link-native-stack", error: "Not every stack slice has a proven PR number." },
-			};
+			return progress.partial({
+				kind: "link-native-stack",
+				error: "Not every stack slice has a proven PR number.",
+			});
 		}
 		try {
 			const stack = await nativeGateway.link({
@@ -685,7 +656,7 @@ async function applyPublication(
 				signal: deps.signal,
 			});
 			nativeStackNumber = stack.stackNumber;
-			completed.push({
+			progress.completed({
 				kind: "link-native-stack",
 				stackNumber: stack.stackNumber,
 				prNumbers: stack.pullRequests.map((pr) => pr.number),
@@ -693,22 +664,9 @@ async function applyPublication(
 		} catch (error) {
 			const failed = { kind: "link-native-stack" as const, error: errorMessage(error) };
 			if (error instanceof NativeStackError && error.kind === "indeterminate") {
-				return {
-					status: "indeterminate",
-					planId: plan.planId,
-					inFlight: failed,
-					completedActions: completed,
-					publication: knownPublication(),
-					recovery: "Inspect native stack membership before retrying publication.",
-				};
+				return progress.indeterminate(failed, "Inspect native stack membership before retrying publication.");
 			}
-			return {
-				status: "partial",
-				planId: plan.planId,
-				completedActions: completed,
-				publication: knownPublication(),
-				failedAction: failed,
-			};
+			return progress.partial(failed);
 		}
 	}
 
@@ -716,24 +674,17 @@ async function applyPublication(
 		for (const slice of published) {
 			if (slice.prNumber === undefined || !slice.draft) continue;
 			if (deps.signal?.aborted) {
-				if (completed.length === 0) return { status: "cancelled" };
-				return {
-					status: "partial",
-					planId: plan.planId,
-					completedActions: completed,
-					publication: knownPublication(),
-					failedAction: {
-						kind: "mark-pr-ready",
-						ref: slice.bookmark,
-						prNumber: slice.prNumber,
-						error: "Publication was cancelled before this action started.",
-					},
-				};
+				return progress.cancelled({
+					kind: "mark-pr-ready",
+					ref: slice.bookmark,
+					prNumber: slice.prNumber,
+					error: "Publication was cancelled before this action started.",
+				});
 			}
 			try {
 				await github.markPrReady(plan.repository, slice.prNumber, options.cwd, deps.signal);
 				slice.draft = false;
-				completed.push({ kind: "mark-pr-ready", ref: slice.bookmark, prNumber: slice.prNumber });
+				progress.completed({ kind: "mark-pr-ready", ref: slice.bookmark, prNumber: slice.prNumber });
 			} catch (error) {
 				const failed = {
 					kind: "mark-pr-ready" as const,
@@ -742,25 +693,9 @@ async function applyPublication(
 					error: errorMessage(error),
 				};
 				if (isIndeterminate(error)) {
-					return {
-						status: "indeterminate",
-						planId: plan.planId,
-						inFlight: failed,
-						completedActions: completed,
-						publication: knownPublication(),
-						recovery: "Re-run /jj-stack plan and inspect remote state before retrying.",
-					};
+					return progress.indeterminate(failed, "Re-run /jj-stack plan and inspect remote state before retrying.");
 				}
-				if (completed.length === 0) {
-					return { status: "failed", error: failed.error, completedActions: [] };
-				}
-				return {
-					status: "partial",
-					planId: plan.planId,
-					completedActions: completed,
-					publication: knownPublication(),
-					failedAction: failed,
-				};
+				return progress.failed(failed);
 			}
 		}
 	}
@@ -779,8 +714,8 @@ async function applyPublication(
 		return {
 			status: "partial",
 			planId: plan.planId,
-			completedActions: [...completed, ...comments.completed],
-			publication: knownPublication(),
+			completedActions: [...progress.completedActions(), ...comments.completed],
+			publication: progress.publication(),
 			failedAction: { kind: "create-draft-pr", error: "A created PR could not be proven by a fresh identity." },
 			commentErrors,
 		};
@@ -795,7 +730,7 @@ async function applyPublication(
 			pullRequests,
 			...(nativeStackNumber !== undefined ? { nativeStackNumber } : undefined),
 		},
-		completedActions: [...completed, ...comments.completed],
+		completedActions: [...progress.completedActions(), ...comments.completed],
 		...(commentErrors.length > 0 ? { commentErrors } : undefined),
 	};
 }
