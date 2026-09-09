@@ -372,6 +372,24 @@ describe("inspect_worktrees CLI", () => {
 		}
 	});
 
+	it("counts a rename as one status entry", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
+		const vcsEnv = createVcsTestEnv(root);
+		try {
+			const repo = await initRepo(root, "main", vcsEnv);
+			const managed = join(root, "managed");
+			const candidate = await addManagedWorktree(repo, managed, "rename", vcsEnv);
+			assert.equal((await git(candidate.path, ["mv", "file.txt", "renamed file.txt"], vcsEnv)).code, 0);
+			const payload = parseInspection(await runNode(INSPECTOR, ["--root", managed], vcsEnv));
+			assert.deepEqual(payload.orphans, []);
+			assert.equal(payload.worktrees[0]?.dirty, true);
+			assert.equal(payload.worktrees[0]?.status_entries, 1);
+			assert.equal(payload.worktrees[0]?.untracked_entries, 0);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("uses resolveIsolationBase when a worktree has no remote", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
 		const vcsEnv = createVcsTestEnv(root);

@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { parseGitStatus } from "../shared/vcs/git-status.ts";
 import { pinnedGitExec } from "./pinned-git.ts";
 import { type BaseResolution, type BaseStrategy, LIMITS, type ScopeBundle } from "./types.ts";
 
@@ -91,34 +92,6 @@ export function resolveBase(exec: GitExec, cwd: string, explicitBase?: string): 
 	const head = resolveRef(exec, cwd, "HEAD");
 	if (!head) throw new Error("Cannot resolve HEAD; is this a repository with no commits?");
 	return { ref: "HEAD", mergeBaseSha: head, strategy: "head" };
-}
-
-interface StatusEntry {
-	/** Two-character porcelain status, e.g. "M ", " M", "??", "R ". */
-	xy: string;
-	path: string;
-	origPath?: string;
-}
-
-/** Parse `git status --porcelain=v1 -z` output without shell interpolation. */
-export function parsePorcelainZ(raw: string): StatusEntry[] {
-	const entries: StatusEntry[] = [];
-	const fields = raw.split("\0");
-	for (let i = 0; i < fields.length; i++) {
-		const field = fields[i];
-		if (!field) continue;
-		const xy = field.slice(0, 2);
-		const path = field.slice(3);
-		if (!path) continue;
-		if (xy[0] === "R" || xy[0] === "C") {
-			const origPath = fields[i + 1] || undefined;
-			if (origPath !== undefined) i++;
-			entries.push({ xy, path, origPath });
-		} else {
-			entries.push({ xy, path });
-		}
-	}
-	return entries;
 }
 
 /** Context files Pi injects into child system prompts (characterized in review-context.test.ts). */
@@ -280,7 +253,7 @@ export function collectScope(
 	// are excluded so git status is not invoked.
 	const statusEntries = isCommitTarget
 		? []
-		: parsePorcelainZ(exec(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd));
+		: parseGitStatus(exec(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd));
 	const logRange = isCommitTarget ? `${base.mergeBaseSha}..${headSha}` : `${base.mergeBaseSha}..HEAD`;
 	const logArgs = ["log", "--format=%s", logRange];
 	const logRaw = tryGit(objectExec, logArgs, cwd) ?? "";
