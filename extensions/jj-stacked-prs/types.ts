@@ -1,8 +1,10 @@
 /** Public domain types and result unions for stacked-PR inspection and publication. */
 
 import type { GitHubRepository, MergeMethod, OpenPullRequest } from "../shared/github.ts";
+import type { StackBlocker } from "../shared/stack/blocker.ts";
 import type { NavigationEntry } from "../shared/stack/topology.ts";
 
+export type { StackBlocker } from "../shared/stack/blocker.ts";
 export { KSTACK_COMMENT_MARKER } from "../shared/stack/topology.ts";
 export type { GitHubRepository, NavigationEntry, OpenPullRequest };
 
@@ -51,39 +53,6 @@ export type NativeMembership =
 	| { kind: "exact"; stackNumber: number; prNumbers: readonly number[] }
 	| { kind: "remote-prefix"; stackNumber: number; prNumbers: readonly number[] }
 	| { kind: "diverged"; stackNumber?: number; prNumbers: readonly number[]; message: string };
-
-export type StackBlocker =
-	| {
-			code: "missing-top" | "empty-stack" | "top-not-final-boundary" | "not-rooted-at-trunk" | "unbookmarked-tail";
-			message: string;
-	  }
-	| {
-			code: "conflict" | "divergence" | "merge" | "empty-boundary" | "empty-description";
-			message: string;
-			changeId: string;
-	  }
-	| {
-			code:
-				| "multiple-bookmarks"
-				| "ambiguous-local-bookmark"
-				| "remote-bookmark-conflict"
-				| "ambiguous-pr"
-				| "ambiguous-pr-history"
-				| "ambiguous-top"
-				| "base-chain-mismatch"
-				| "head-mismatch"
-				| "out-of-order-merge"
-				| "publish-required"
-				| "land-unavailable"
-				| "native-stack-unavailable"
-				| "native-stack-diverged";
-			message: string;
-			ref?: string;
-	  }
-	| {
-			code: "truncated" | "missing-remote" | "ambiguous-remote" | "non-github-remote" | "publication-locked";
-			message: string;
-	  };
 
 export interface BookmarkTarget {
 	name: string;

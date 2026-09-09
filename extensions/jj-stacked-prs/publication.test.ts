@@ -233,6 +233,16 @@ describe("publication planning", () => {
 		assert.notEqual(plan.planId, movedHead.planId);
 	});
 
+	it("includes remote-prefix native identity in the plan ID", () => {
+		const first = buildPublicationPlan(
+			snapshot({ nativeMembership: { kind: "remote-prefix", stackNumber: 9, prNumbers: [11] } }),
+		);
+		const second = buildPublicationPlan(
+			snapshot({ nativeMembership: { kind: "remote-prefix", stackNumber: 10, prNumbers: [12] } }),
+		);
+		assert.notEqual(first.planId, second.planId);
+	});
+
 	it("blocks diverged native topology and unsafe base repair with rewritten heads", () => {
 		const diverged = buildPublicationPlan(
 			snapshot({

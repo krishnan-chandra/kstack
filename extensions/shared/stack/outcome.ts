@@ -1,14 +1,7 @@
 /** Cross-provider stack mutation outcomes. */
 
 import type { MergeMethod } from "../github.ts";
-
-interface StackBlocker {
-	/** Provider-defined. Render across the seam; do not switch on it. */
-	code: string;
-	message: string;
-	/** Slice ref the blocker concerns, when known. */
-	ref?: string;
-}
+import type { StackBlocker } from "./blocker.ts";
 
 export interface StackPublishedPullRequest {
 	ref: string;

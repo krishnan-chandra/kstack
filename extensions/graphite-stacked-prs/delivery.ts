@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 /** Validated local Graphite stack evidence and parent-owned publication. */
 
-import { createHash } from "node:crypto";
 import { commandDiagnostic, type ExecFn, type ExecFnResult, runCommand } from "../shared/git-exec.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import type { StackPreflight } from "../shared/stack/channel.ts";
@@ -13,6 +12,7 @@ import {
 	verifyStackManifestGitFacts,
 } from "../shared/stack/manifest.ts";
 import type { CompletedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
+import { planIdFor } from "../shared/stack/plan-id.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -52,7 +52,7 @@ function graphiteCreatedActions(
 }
 
 function blockedPublish(message: string): StackPublishOutcome {
-	return { status: "blocked", blockers: [{ code: "graphite-publish", message }] };
+	return { status: "blocked", blockers: [{ code: "provider-contract", message }] };
 }
 
 function graphiteSubmitFailure(
@@ -242,7 +242,7 @@ export async function planGraphitePublication(
 	const facts = {
 		repositoryRoot: stack.repositoryRoot,
 		trunkSha: stack.manifest.trunkSha,
-		slices: stack.manifest.slices,
+		slices: stack.manifest.slices.map((slice) => ({ ...slice })),
 		existing: existing.map((pr) => ({
 			ref: pr.ref,
 			baseRef: pr.baseRef,
@@ -251,7 +251,7 @@ export async function planGraphitePublication(
 			draft: pr.draft,
 		})),
 	};
-	const planId = createHash("sha256").update(JSON.stringify(facts)).digest("hex");
+	const planId = planIdFor(1, facts);
 	const existingByRef = new Map(existing.map((pr) => [pr.ref, pr]));
 	const preview = [
 		`Graphite stack publication ${planId.slice(0, 16)}`,
@@ -336,19 +336,19 @@ export async function publishGraphiteStack(
 			status: "blocked",
 			blockers: [
 				{
-					code: "graphite-publish",
+					code: "provider-contract",
 					message: `Could not read the Graphite stack manifest: ${error instanceof Error ? error.message : String(error)}`,
 				},
 			],
 		};
 	}
 	const parsed = parseStackManifest(raw);
-	if (!parsed.ok) return { status: "blocked", blockers: [{ code: "graphite-publish", message: parsed.error }] };
+	if (!parsed.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: parsed.error }] };
 	const verified = await verifyGraphiteStack(cwd, parsed.manifest, exec, signal);
 	if (signal?.aborted) return { status: "cancelled" };
-	if (!verified.ok) return { status: "blocked", blockers: [{ code: "graphite-publish", message: verified.error }] };
+	if (!verified.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: verified.error }] };
 	const planned = await planGraphitePublication(verified.stack, exec);
-	if (!planned.ok) return { status: "blocked", blockers: [{ code: "graphite-publish", message: planned.error }] };
+	if (!planned.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: planned.error }] };
 	if (!(await confirm("Publish this Graphite stack?", planned.plan.preview))) return { status: "declined" };
 	return submitGraphiteStack(planned.plan, exec, { signal });
 }

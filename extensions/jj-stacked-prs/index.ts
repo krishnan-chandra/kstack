@@ -152,7 +152,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 			if (!ctx.hasUI) {
 				return {
 					status: "blocked",
-					blockers: [{ code: "missing-remote", message: "Publication requires interactive TUI/RPC mode." }],
+					blockers: [{ code: "missing-ui", message: "Publication requires interactive TUI/RPC mode." }],
 				};
 			}
 			return withRun(
@@ -181,7 +181,7 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 					status: "stack",
 					outcome: {
 						status: "blocked",
-						blockers: [{ code: "land-unavailable", message: "Stack landing requires interactive TUI/RPC mode." }],
+						blockers: [{ code: "missing-ui", message: "Stack landing requires interactive TUI/RPC mode." }],
 					},
 				};
 			}

@@ -204,7 +204,7 @@ async function landStackWithAuthorization(
 	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
 		return {
 			status: "blocked",
-			blockers: [{ code: "missing-remote", message: "Stack landing requires interactive TUI/RPC mode." }],
+			blockers: [{ code: "missing-ui", message: "Stack landing requires interactive TUI/RPC mode." }],
 		};
 	}
 	if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
@@ -251,13 +251,8 @@ async function landStackWithAuthorization(
 				};
 			}
 			return {
-				status: "blocked",
-				blockers: [
-					{
-						code: "publication-locked",
-						message: "Another stack publication or landing is active for this repository.",
-					},
-				],
+				status: "busy",
+				message: "Another stack publication or landing is active for this repository.",
 			};
 		}
 		try {

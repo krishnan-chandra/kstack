@@ -1,0 +1,56 @@
+/** Stable, cross-provider reasons a stack operation refuses to mutate remote state. */
+type StackBlockerCode =
+	| "ambiguous-local-bookmark"
+	| "ambiguous-local-ref"
+	| "ambiguous-pr"
+	| "ambiguous-pr-history"
+	| "ambiguous-remote"
+	| "ambiguous-top"
+	| "base-chain-mismatch"
+	| "conflict"
+	| "dirty-worktree"
+	| "divergence"
+	| "empty-boundary"
+	| "empty-description"
+	| "empty-stack"
+	| "facts-changed"
+	| "github-discovery"
+	| "head-mismatch"
+	| "invalid-config"
+	| "invalid-manifest"
+	| "land-unavailable"
+	| "local-ref-missing"
+	| "merge"
+	| "merge-commit"
+	| "merge-method-unavailable"
+	| "missing-pr"
+	| "missing-remote"
+	| "missing-top"
+	| "missing-ui"
+	| "multiple-bookmarks"
+	| "native-stack-diverged"
+	| "native-stack-unavailable"
+	| "non-github-remote"
+	| "not-merge-ready"
+	| "not-rooted-at-trunk"
+	| "out-of-order-merge"
+	| "pr-closed"
+	| "preview-too-large"
+	| "provider-contract"
+	| "publish-required"
+	| "readiness-unavailable"
+	| "rebase-scope-changed"
+	| "remote-bookmark-conflict"
+	| "remote-ref-conflict"
+	| "tool-version"
+	| "top-not-final-boundary"
+	| "truncated"
+	| "unbookmarked-tail"
+	| "unsupported-option";
+
+export interface StackBlocker {
+	code: StackBlockerCode;
+	message: string;
+	ref?: string;
+	changeId?: string;
+}
