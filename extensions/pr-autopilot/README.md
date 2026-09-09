@@ -331,3 +331,13 @@ issue-comment reads require that resolved identity and never fall back to GitHub
 CLI checkout placeholders, so `.git`-less jj workspaces do not depend on cwd
 discovery. The stack workflow, not Autopilot, performs each
 merge and continues through the selected PR.
+
+## Development
+
+```bash
+node --test extensions/pr-autopilot/
+```
+
+Observation handling, head verification, reconciliation, and the run-wide
+settling budget live in `observation.ts`. The driver keeps confirmation,
+mutations, user messaging for mode policy, and durable Autopilot state.
