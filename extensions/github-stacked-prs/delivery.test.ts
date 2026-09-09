@@ -433,6 +433,44 @@ describe("GitHub stack publication", () => {
 		assert.equal(lock.releaseCount, 1);
 	});
 
+	it("reports readiness failure after creation as partial readiness progress", async () => {
+		const result = await publishGitHubStack({
+			cwd: "/repo",
+			manifest,
+			remote: "origin",
+			ready: true,
+			authorization: "model-tool",
+			deps: {
+				exec: execFixture().exec,
+				gateway: gateway({
+					markPrReady: async () => {
+						throw new Error("readiness rejected");
+					},
+				}),
+				confirm: async () => true,
+				realpath: (path) => path,
+			},
+		});
+		assert.equal(result.status, "partial");
+		if (result.status === "partial") {
+			assert.deepEqual(result.completedActions, [
+				{ kind: "push-bookmark", ref: "kstack/one" },
+				{
+					kind: "create-draft-pr",
+					ref: "kstack/one",
+					prNumber: existingPr.number,
+					url: existingPr.url,
+				},
+			]);
+			assert.deepEqual(result.failedAction, {
+				kind: "mark-pr-ready",
+				ref: "kstack/one",
+				prNumber: existingPr.number,
+				error: "readiness rejected",
+			});
+		}
+	});
+
 	it("releases the publication lock after cancellation preserves completed progress", async () => {
 		const controller = new AbortController();
 		const fixture = execFixture();

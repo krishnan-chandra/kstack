@@ -18,12 +18,8 @@ import {
 	type VerifiedStackManifest,
 	verifyStackManifestGitFacts,
 } from "../shared/stack/manifest.ts";
-import type {
-	CompletedPublicationAction,
-	FailedPublicationAction,
-	StackPublicationMap,
-	StackPublishOutcome,
-} from "../shared/stack/outcome.ts";
+import type { FailedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
+import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
@@ -333,7 +329,6 @@ async function applyPublication(
 	ready: boolean,
 	deps: GitHubPublicationDeps,
 ): Promise<StackPublishOutcome> {
-	const completed: CompletedPublicationAction[] = [];
 	const published = plan.slices.map((slice) => ({
 		ref: slice.branch,
 		baseRef: slice.targetBase,
@@ -344,28 +339,26 @@ async function applyPublication(
 		draft: slice.existingPr?.draft ?? true,
 		createPr: !slice.existingPr,
 	}));
-	const knownPublication = (): StackPublicationMap | undefined => {
-		const pullRequests = published
-			.filter(
-				(slice): slice is typeof slice & { prNumber: number; url: string } =>
-					slice.prNumber !== undefined && slice.url !== undefined,
-			)
-			.map((slice) => ({
-				ref: slice.ref,
-				baseRef: slice.baseRef,
-				headSha: slice.headSha,
-				prNumber: slice.prNumber,
-				url: slice.url,
-				draft: slice.draft,
-			}));
-		if (pullRequests.length === 0) return undefined;
-		return {
-			topRef: pullRequests.at(-1)?.ref ?? "",
-			remote: plan.remote,
-			repository: plan.repository,
-			pullRequests,
-		};
-	};
+	const progress = createPublicationProgress({
+		planId: plan.planId,
+		topRef: plan.slices.at(-1)?.branch ?? "",
+		remote: plan.remote,
+		repository: plan.repository,
+		pullRequests: () =>
+			published
+				.filter(
+					(slice): slice is typeof slice & { prNumber: number; url: string } =>
+						slice.prNumber !== undefined && slice.url !== undefined,
+				)
+				.map((slice) => ({
+					ref: slice.ref,
+					baseRef: slice.baseRef,
+					headSha: slice.headSha,
+					prNumber: slice.prNumber,
+					url: slice.url,
+					draft: slice.draft,
+				})),
+	});
 	const plannedActions = plan.slices.flatMap((slice, index) => slice.actions.map((action) => ({ action, index })));
 	const orderedActions = [
 		...plannedActions.filter(({ action }) => action.kind === "push-bookmark"),
@@ -373,15 +366,11 @@ async function applyPublication(
 	];
 	for (const { action, index } of orderedActions) {
 		if (deps.signal?.aborted) {
-			if (completed.length === 0) return { status: "cancelled" };
-			return {
-				status: "partial",
-				planId: plan.planId,
-				completedActions: completed,
-				publication: knownPublication(),
-				failedAction: failedAction(action, new Error("Publication was cancelled before this action started.")),
-			};
+			return progress.cancelled(
+				failedAction(action, new Error("Publication was cancelled before this action started.")),
+			);
 		}
+		let attemptedAction = action;
 		try {
 			if (action.kind === "push-bookmark") {
 				const lease = action.expectedRemoteSha
@@ -400,7 +389,7 @@ async function applyPublication(
 				if (pushed.code !== 0) {
 					throw new GitHubError(`git push failed: ${commandDiagnostic(pushed)}`);
 				}
-				completed.push({ kind: "push-bookmark", ref: action.ref });
+				progress.completed({ kind: "push-bookmark", ref: action.ref });
 			} else if (action.kind === "create-draft-pr") {
 				const created = await deps.gateway.createDraftPr({
 					repo: plan.repository,
@@ -414,11 +403,12 @@ async function applyPublication(
 				published[index].prNumber = created.number;
 				published[index].url = created.url;
 				published[index].draft = created.draft;
-				completed.push({ kind: "create-draft-pr", ref: action.ref, prNumber: created.number, url: created.url });
+				progress.completed({ kind: "create-draft-pr", ref: action.ref, prNumber: created.number, url: created.url });
 				if (ready && created.draft) {
+					attemptedAction = { kind: "mark-pr-ready", ref: action.ref, prNumber: created.number };
 					await deps.gateway.markPrReady(plan.repository, created.number, plan.repositoryRoot, deps.signal);
 					published[index].draft = false;
-					completed.push({ kind: "mark-pr-ready", ref: action.ref, prNumber: created.number });
+					progress.completed({ kind: "mark-pr-ready", ref: action.ref, prNumber: created.number });
 				}
 			} else if (action.kind === "repair-pr-base") {
 				await deps.gateway.updatePrBase({
@@ -428,7 +418,7 @@ async function applyPublication(
 					cwd: plan.repositoryRoot,
 					signal: deps.signal,
 				});
-				completed.push({
+				progress.completed({
 					kind: "repair-pr-base",
 					ref: action.ref,
 					prNumber: action.prNumber,
@@ -437,28 +427,14 @@ async function applyPublication(
 			} else {
 				await deps.gateway.markPrReady(plan.repository, action.prNumber, plan.repositoryRoot, deps.signal);
 				published[index].draft = false;
-				completed.push({ kind: "mark-pr-ready", ref: action.ref, prNumber: action.prNumber });
+				progress.completed({ kind: "mark-pr-ready", ref: action.ref, prNumber: action.prNumber });
 			}
 		} catch (error) {
-			const failed = failedAction(action, error);
+			const failed = failedAction(attemptedAction, error);
 			if (isGitHubIndeterminate(error)) {
-				return {
-					status: "indeterminate",
-					planId: plan.planId,
-					inFlight: failed,
-					completedActions: completed,
-					publication: knownPublication(),
-					recovery: "Inspect remote branches and PRs, then publish again from a fresh plan.",
-				};
+				return progress.indeterminate(failed, "Inspect remote branches and PRs, then publish again from a fresh plan.");
 			}
-			if (completed.length === 0) return { status: "failed", error: failed.error, completedActions: [] };
-			return {
-				status: "partial",
-				planId: plan.planId,
-				completedActions: completed,
-				publication: knownPublication(),
-				failedAction: failed,
-			};
+			return progress.failed(failed);
 		}
 	}
 	const proven = published.filter(
@@ -466,13 +442,7 @@ async function applyPublication(
 			slice.prNumber !== undefined && slice.url !== undefined,
 	);
 	if (proven.length !== published.length) {
-		return {
-			status: "partial",
-			planId: plan.planId,
-			completedActions: completed,
-			publication: knownPublication(),
-			failedAction: { kind: "create-draft-pr", error: "A published PR could not be proven." },
-		};
+		return progress.partial({ kind: "create-draft-pr", error: "A published PR could not be proven." });
 	}
 	const comments = await createNavigationCommentStore(deps.gateway).reconcile({
 		repo: plan.repository,
@@ -500,7 +470,7 @@ async function applyPublication(
 		status: "completed",
 		planId: plan.planId,
 		publication,
-		completedActions: [...completed, ...comments.completed],
+		completedActions: [...progress.completedActions(), ...comments.completed],
 		...(commentErrors.length > 0 ? { commentErrors } : undefined),
 	};
 }
