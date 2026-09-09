@@ -12,6 +12,7 @@ const EXPECTED_EXTENSIONS = [
 	"kstack-router",
 	"land",
 	"openrouter-floor",
+	"parallel-agents",
 	"panel-review",
 	"plan-implement",
 	"pr-autopilot",

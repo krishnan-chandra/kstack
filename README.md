@@ -17,6 +17,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
 | [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools for normalized, on-demand access to the linked history. |
+| [`parallel-agents`](extensions/parallel-agents/) | Runs bounded isolated read-only child agents for Simplify through the same shared live TUI pane, cancellation path, and persisted subagent sessions used by panel review. |
 | [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset, a pinned jj working-copy snapshot (including secondary workspaces), or a GitHub PR snapshot, then synthesizes a lead-review verdict with a live multi-agent TUI dashboard. |
 | [`plan-implement`](extensions/plan-implement/) | Runs a planner and optional adversary in visible Herdr panes, gates the final plan, implements on a dedicated Git/Graphite branch or jj bookmark, runs panel review, fixes findings, and publishes a draft PR with reviewer recommendations. Supports local stacks, managed worktrees, `--plan-only`, and a hosted `--fast` implementer. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
@@ -186,7 +187,7 @@ rows stay unnamed.
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
-- Herdr 0.8.2 or newer, with `herdr integration install pi`, for plan-implement, adversarial planning, Arena, Swarm, and Simplify
+- Herdr 0.8.2 or newer, with `herdr integration install pi`, for plan-implement, adversarial planning, Arena, and Swarm
 
 Pi loads one TypeScript entry, `kstack.ts`, from the package. The installer
 links each directory in `skills/` into the shared `~/.agents/skills` directory.
