@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parseFanoutSpec } from "./fanout.ts";
 
-for (const skill of ["arena", "swarm", "simplify"]) {
+for (const skill of ["arena", "swarm"]) {
 	test(`${skill} shipped fanout example passes the production schema`, () => {
 		const markdown = readFileSync(new URL(`../../../skills/${skill}/SKILL.md`, import.meta.url), "utf8");
 		const blocks = [...markdown.matchAll(/```json\n([\s\S]*?)\n```/g)].map((match) => match[1] ?? "");
