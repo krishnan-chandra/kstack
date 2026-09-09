@@ -21,6 +21,7 @@ import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { resolveGitHubRepository, scopeGitHubExec } from "../shared/github-repository.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
+import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
@@ -30,7 +31,6 @@ import { getArgumentCompletions } from "./completion.ts";
 import { loadConfig, modelCliId, resolveModels } from "./config.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import { type LifecyclePhase, runAutopilot } from "./driver.ts";
-import { AutopilotLifecycle } from "./lifecycle.ts";
 import { pickModel } from "./pr-state.ts";
 import type { AutopilotMode, AutopilotResult } from "./types.ts";
 
@@ -47,7 +47,7 @@ interface PhaseDetails {
 
 export default function prAutopilotExtension(pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "pr-autopilot");
-	const lifecycle = new AutopilotLifecycle();
+	const lifecycle = new SessionRunLifecycle();
 	// Extensions normally load before session_start; eager activation also keeps
 	// commands usable when an extension is loaded into an existing session.
 	lifecycle.startSession();

@@ -3,6 +3,7 @@ import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import test from "node:test";
+import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import { runCleanup } from "./autopilot-operations.ts";
 import { runAutopilot } from "./driver.ts";
@@ -271,12 +272,10 @@ test("cleanup confirmation after abort cannot remove worktree", async (t) => {
 	assert.equal(removed, 0);
 });
 
-import { AutopilotLifecycle } from "./lifecycle.ts";
-
 test("shutdown during first refresh stops before base update", async (t) => {
 	const harness = await createHarness({ mergeStateStatus: "BEHIND" });
 	t.after(() => harness.cleanup());
-	const lifecycle = new AutopilotLifecycle();
+	const lifecycle = new SessionRunLifecycle();
 	lifecycle.startSession();
 	const token = lifecycle.beginRun(lifecycle.currentSessionToken()!);
 	const signal = lifecycle.runSignal(token!)!;

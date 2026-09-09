@@ -9,10 +9,10 @@ import { getAgentPaneHost } from "../shared/agent-pane.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
+import { SessionRunLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
-import { PanelLifecycle, type PanelToken } from "./lifecycle.ts";
 import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
 import { locateRepositorySource, type RepositorySource } from "./repository-source.ts";
 import { contextFilesTouchChangedContent } from "./review-context.ts";
@@ -30,7 +30,7 @@ import type { PanelArgs, PanelReviewOutcome, ReviewerSpec } from "./types.ts";
 
 export default function (pi: ExtensionAPI): void {
 	guardCommandFallthrough(pi, "panel-review");
-	const lifecycle = new PanelLifecycle();
+	const lifecycle = new SessionRunLifecycle();
 	const paneHost = getAgentPaneHost(pi);
 	const exec = makeExec(pi);
 	// Extensions normally load before session_start; eager activation also keeps
@@ -68,7 +68,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	const runPanelReview = async (options: PanelArgs, ctx: ExtensionCommandContext): Promise<PanelReviewOutcome> => {
-		let runToken: PanelToken | undefined;
+		let runToken: SessionToken | undefined;
 		const session = lifecycle.currentSessionToken();
 		const isLive = () =>
 			runToken ? lifecycle.isCurrent(runToken) : Boolean(session && lifecycle.isSessionCurrent(session));

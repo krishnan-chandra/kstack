@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionRunLifecycle } from "./session-lifecycle.ts";
 
+test("has no session or run before startSession", () => {
+	const lifecycle = new SessionRunLifecycle();
+	assert.equal(lifecycle.isRunning(), false);
+	assert.equal(lifecycle.currentSessionToken(), undefined);
+});
+
 test("invalidates tokens when a session shuts down", () => {
 	const lifecycle = new SessionRunLifecycle();
 	lifecycle.startSession();
@@ -36,6 +42,12 @@ test("rejects stale session tokens", () => {
 	lifecycle.startSession();
 
 	assert.equal(lifecycle.beginRun(stale), undefined);
+});
+
+test("rejects a token that was never issued", () => {
+	const lifecycle = new SessionRunLifecycle();
+	lifecycle.startSession();
+	assert.equal(lifecycle.beginRun({ generation: 999 }), undefined);
 });
 
 test("ends only the run from the current generation", () => {
@@ -132,6 +144,23 @@ test("shutdown aborts the newest phase signal", () => {
 	lifecycle.shutdownSession();
 
 	assert.equal(signal.aborted, true);
+});
+
+test("aborting the run aborts a composed AbortSignal.any", () => {
+	const lifecycle = new SessionRunLifecycle();
+	lifecycle.startSession();
+	const session = lifecycle.currentSessionToken();
+	assert.ok(session);
+	const run = lifecycle.beginRun(session);
+	assert.ok(run);
+	const lifecycleSignal = lifecycle.runSignal(run);
+	assert.ok(lifecycleSignal);
+	const caller = new AbortController();
+	const composed = AbortSignal.any([lifecycleSignal, caller.signal]);
+
+	assert.equal(composed.aborted, false);
+	assert.equal(lifecycle.abortRun(), true);
+	assert.equal(composed.aborted, true);
 });
 
 test("aborts the active run at most once", () => {
