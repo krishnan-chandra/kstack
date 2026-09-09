@@ -16,6 +16,7 @@ import type {
 	WorkstreamSnapshot,
 } from "./backend.ts";
 import { removeManagedGitWorktree } from "./git-backend.ts";
+import { gitStatusChangedPaths } from "./git-status.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "./graphite-dry-run.ts";
 import { preflightVcs } from "./preflight.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
@@ -42,30 +43,6 @@ function diagnostic(result: ExecFnResult): string {
 
 function output(result: ExecFnResult): string {
 	return result.stdout.trim();
-}
-
-function parsePorcelainPaths(stdout: string): string[] {
-	const paths: string[] = [];
-	const seen = new Set<string>();
-	const fields = stdout.split("\0");
-	for (let index = 0; index < fields.length; index++) {
-		const field = fields[index];
-		if (field.length < 4) continue;
-		const xy = field.slice(0, 2);
-		const path = field.slice(3);
-		if (path && !seen.has(path)) {
-			seen.add(path);
-			paths.push(path);
-		}
-		if (xy.includes("R") || xy.includes("C")) {
-			const source = fields[++index];
-			if (source && !seen.has(source)) {
-				seen.add(source);
-				paths.push(source);
-			}
-		}
-	}
-	return paths;
 }
 
 function isSafeRelativePath(path: string): boolean {
@@ -151,7 +128,7 @@ export class GraphiteBackend implements VcsBackend {
 		const status = await this.git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], 5_000);
 		if (status.code !== 0)
 			return { ok: false, error: `Could not inspect Graphite working-copy changes: ${diagnostic(status)}` };
-		return { ok: true, paths: parsePorcelainPaths(status.stdout) };
+		return { ok: true, paths: gitStatusChangedPaths(status.stdout) };
 	}
 
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {

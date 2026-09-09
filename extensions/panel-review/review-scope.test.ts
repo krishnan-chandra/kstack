@@ -9,7 +9,6 @@ import {
 	type CollectScopeOptions,
 	collectScope,
 	type GitExec,
-	parsePorcelainZ,
 	readUntracked,
 	resolveBase,
 	touchesContextFile,
@@ -69,23 +68,6 @@ describe("resolveBase", () => {
 		const base = resolveBase(headOnly, "/repo");
 		assert.equal(base.strategy, "head");
 		assert.equal(base.mergeBaseSha, "headsha");
-	});
-});
-
-describe("parsePorcelainZ", () => {
-	it("parses plain, untracked, renamed, and spaced entries", () => {
-		const raw = "M  src/a.ts\0 M src/b b.ts\0?? new-file.ts\0R  new-name.ts\0old-name.ts\0";
-		const entries = parsePorcelainZ(raw);
-		assert.deepEqual(entries, [
-			{ xy: "M ", path: "src/a.ts" },
-			{ xy: " M", path: "src/b b.ts" },
-			{ xy: "??", path: "new-file.ts" },
-			{ xy: "R ", path: "new-name.ts", origPath: "old-name.ts" },
-		]);
-	});
-	it("handles newlines in filenames", () => {
-		const entries = parsePorcelainZ("?? weird\nname.ts\0");
-		assert.equal(entries[0].path, "weird\nname.ts");
 	});
 });
 
@@ -217,6 +199,32 @@ describe("collectScope", () => {
 			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", { exec });
 			bundleDir = scope.dir;
 			assert.equal(scope.contextFilesTouched, true);
+		} finally {
+			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
+			cleanup();
+		}
+	});
+
+	it("flags a rename whose source is a context file", () => {
+		const { root, cleanup } = makeRepo();
+		let bundleDir: string | undefined;
+		try {
+			const exec: GitExec = (args) => {
+				const key = args.join(" ");
+				if (key.startsWith("rev-parse --show-toplevel")) return `${root}\n`;
+				if (key.startsWith("rev-parse HEAD")) return "headsha\n";
+				if (key.startsWith("diff --find-renames --find-copies")) return "diff\n";
+				if (key.startsWith("diff --name-status -z")) return "";
+				if (key.startsWith("diff --name-status")) return "";
+				if (key.startsWith("status --porcelain")) return "R  notes.md\0AGENTS.md\0";
+				if (key.startsWith("log --format=%s")) return "subject\n";
+				throw new Error(`unexpected: ${key}`);
+			};
+			const scope = collectScope(root, { ref: "main", mergeBaseSha: "mbsha", strategy: "explicit" }, "i", { exec });
+			bundleDir = scope.dir;
+			assert.equal(scope.contextFilesTouched, true);
+			assert.ok(scope.changedPaths.includes("AGENTS.md"));
+			assert.ok(scope.changedPaths.includes("notes.md"));
 		} finally {
 			if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
 			cleanup();

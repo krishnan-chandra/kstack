@@ -7,6 +7,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExecFn, ExecFnResult } from "../../../extensions/shared/git-exec.ts";
 import { type BoundaryValue, isObject } from "../../../extensions/shared/validation.ts";
+import { parseGitStatus } from "../../../extensions/shared/vcs/git-status.ts";
 import { parseWorktreeInventory } from "../../../extensions/shared/vcs/worktree-inventory.ts";
 import { resolveIsolationBase } from "../../../extensions/shared/vcs/worktree-plan.ts";
 import { createSkillExec } from "./git-exec.ts";
@@ -246,8 +247,8 @@ async function inspectCandidate(exec: ExecFn, path: string, timeoutMs: number): 
 		timeout: timeoutMs,
 	});
 	requireCommandSuccess(statusCommand, status);
-	const entries = status.stdout.split("\0").filter(Boolean);
-	const untracked = entries.filter((entry) => entry.startsWith("??")).length;
+	const entries = parseGitStatus(status.stdout);
+	const untracked = entries.filter((entry) => entry.xy === "??").length;
 
 	const listingCommand = "git worktree list --porcelain -z";
 	const listing = await exec("git", ["worktree", "list", "--porcelain", "-z"], {
