@@ -39,6 +39,11 @@ export const IMPORT_EXCEPTIONS = [
 		target: "session-archive/tool-output.ts",
 		reason: "handoff uses the archive output bounds",
 	},
+	{
+		importer: "handoff/history-reader.ts",
+		target: "session-archive/history-page.ts",
+		reason: "handoff pages previous-session history with the shared history-page protocol",
+	},
 ];
 
 export function isTestFile(path) {

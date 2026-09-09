@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { getSubagentSessionsRoot } from "../shared/subagent-sessions.ts";
+import { formatHistoryEntries, selectHistoryPage } from "./history-page.ts";
 import { MAX_TEXT_CONTENT_CHARS } from "./session-jsonl.ts";
 import {
 	discoverSubagentHistory,
@@ -29,7 +30,6 @@ import {
 	type SubagentHistorySearchHit,
 	searchIndexedSubagentHistory,
 } from "./subagent-history-store.ts";
-import { splitUtf8Chunks } from "./tool-output.ts";
 
 const SUBAGENT_HISTORY_REFRESH_BYTES = 64 * 1024 * 1024;
 const SUBAGENT_HISTORY_REFRESH_SESSIONS = 32;
@@ -190,18 +190,6 @@ function classifyRefreshFailure(
 			retryable: failure.kind === "unavailable",
 		},
 	};
-}
-
-function normalizedBody(entries: ReturnType<typeof readIndexedSubagentEntries>): string {
-	return entries
-		.map((entry) => {
-			const role = entry.role ? `/${entry.role}` : "";
-			const header =
-				`#${entry.ordinal} [${entry.entryType}${role}] ${entry.timestamp} ` +
-				`(id ${entry.entryId}, parent ${entry.parentId ?? "none"})`;
-			return entry.textContent ? `${header}\n${entry.textContent}` : header;
-		})
-		.join("\n\n");
 }
 
 function checkFailureResult(
@@ -474,25 +462,24 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 				}
 				body = rangeRead.ranges.join("\n");
 			} else {
-				body = normalizedBody(entries);
+				body = formatHistoryEntries(entries);
 			}
-			const chunks = splitUtf8Chunks(body, readBodyBytes);
-			const chunk = params.chunk ?? 0;
-			if (chunk >= chunks.length) {
-				return {
-					kind: "invalid",
-					sessionId: params.sessionId,
-					message: `Chunk ${chunk} is out of range; this page has ${chunks.length} chunk(s).`,
-				};
+			const page = selectHistoryPage({
+				body,
+				offset,
+				pageEntries: entries.length,
+				totalEntries: session.entryCount,
+				chunk: params.chunk ?? 0,
+				maxBytes: readBodyBytes,
+			});
+			if (!page.ok) {
+				return { kind: "invalid", sessionId: params.sessionId, message: page.reason };
 			}
 			const check = await revalidate(file, fileOptions(signal));
 			if (check.kind !== "eligible") {
 				deleteIndexedSubagentSessions(db, [params.sessionId]);
 				return checkFailureResult(params.sessionId, check);
 			}
-			let next: SubagentHistoryReadPage["next"] = null;
-			if (chunk + 1 < chunks.length) next = { offset, chunk: chunk + 1 };
-			else if (offset + entries.length < session.entryCount) next = { offset: offset + entries.length, chunk: 0 };
 			return {
 				kind: "page",
 				sessionId: session.sessionId,
@@ -508,10 +495,10 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 				pageEntries: entries.length,
 				firstOrdinal: entries.at(0)?.ordinal ?? null,
 				lastOrdinal: entries.at(-1)?.ordinal ?? null,
-				chunk,
-				chunks: chunks.length,
-				body: chunks[chunk],
-				next,
+				chunk: page.chunk,
+				chunks: page.chunks,
+				body: page.body,
+				next: page.next,
 				textContentLimitChars: MAX_TEXT_CONTENT_CHARS,
 			};
 		} finally {

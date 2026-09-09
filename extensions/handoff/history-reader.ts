@@ -9,6 +9,12 @@ import {
 	readEntries,
 	searchArchive,
 } from "../session-archive/archive-store.ts";
+import {
+	formatHistoryEntries,
+	type HistoryEntry,
+	historyPageNextLabel,
+	selectHistoryPage,
+} from "../session-archive/history-page.ts";
 import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/session-jsonl.ts";
 import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
@@ -230,78 +236,33 @@ export function preflightHandoffHistory(
 	}
 }
 
-interface HistoryEntryView {
-	ordinal: number;
-	entryType: string;
-	role?: string | null;
-	timestamp: string;
-	entryId: string;
-	parentId: string | null;
-	textContent?: string | null;
-}
-
-function formatEntry(entry: HistoryEntryView): string {
-	return [
-		`#${entry.ordinal} [${entry.entryType}${entry.role ? `/${entry.role}` : ""}] ${entry.timestamp} (id ${entry.entryId}, parent ${entry.parentId ?? "none"})`,
-		entry.textContent ?? "",
-	]
-		.filter(Boolean)
-		.join("\n");
-}
-
-function parsedEntryView(entry: ParsedEntry): HistoryEntryView {
-	return {
-		ordinal: entry.ordinal,
-		entryType: entry.entryType,
-		role: entry.role,
-		timestamp: entry.timestamp,
-		entryId: entry.entryId,
-		parentId: entry.parentId,
-		textContent: entry.textContent,
-	};
-}
-
-function archiveEntryView(entry: ReturnType<typeof readEntries>[number]): HistoryEntryView {
-	return {
-		ordinal: entry.ordinal,
-		entryType: entry.entry_type,
-		role: entry.role,
-		timestamp: entry.timestamp,
-		entryId: entry.entry_id,
-		parentId: entry.parent_id,
-		textContent: entry.text_content,
-	};
-}
-
 function pageOutput(
 	source: HandoffSource,
 	sourceKind: "active" | "archived",
 	cwd: string,
 	total: number,
-	views: HistoryEntryView[],
+	views: readonly HistoryEntry[],
 	offset: number,
 	limit: number,
 	chunkIndex: number,
 ): string {
-	const body = views.map(formatEntry).join("\n\n");
-	const chunks = splitUtf8Chunks(body, BODY_CHUNK_BYTES);
-	if (chunkIndex >= chunks.length) {
-		throw new Error(`Chunk ${chunkIndex} is out of range; this page has ${chunks.length} chunk(s).`);
-	}
-	const range = views.length === 0 ? "no entries" : `entries ${offset + 1}–${offset + views.length} of ${total}`;
-	const next =
-		chunkIndex + 1 < chunks.length
-			? `continue with the same offset/limit and chunk ${chunkIndex + 1}`
-			: offset + views.length < total
-				? `continue with offset ${offset + views.length}, from=start, and chunk 0`
-				: "end of session";
+	const page = selectHistoryPage({
+		body: formatHistoryEntries(views),
+		offset,
+		pageEntries: views.length,
+		totalEntries: total,
+		chunk: chunkIndex,
+		maxBytes: BODY_CHUNK_BYTES,
+	});
+	if (!page.ok) throw new Error(page.reason);
+	const next = historyPageNextLabel(page.next, { end: "end of session", fromStart: true });
 	const earlier =
 		offset > 0
 			? ` Earlier entries are available; use offset ${Math.max(0, offset - limit)}, from=start, and chunk 0.`
 			: "";
 	return (
 		`Previous session ${source.sessionId} — ${cwd} — source: ${sourceKind}\n` +
-		`${range} — chunk ${chunkIndex + 1} of ${chunks.length} — ${next}.${earlier}\n\n${chunks[chunkIndex]}`
+		`${page.range} — chunk ${page.chunk + 1} of ${page.chunks} — ${next}.${earlier}\n\n${page.body}`
 	);
 }
 
@@ -340,7 +301,7 @@ export function readHandoffHistory(
 			options.offset === undefined && options.from !== "start"
 				? Math.max(0, total - limit)
 				: boundedInteger(options.offset, 0, 0, 2_147_483_647);
-		const views = active.entries.slice(offset, offset + limit).map(parsedEntryView);
+		const views = active.entries.slice(offset, offset + limit);
 		return pageOutput(source, "active", active.cwd, total, views, offset, limit, chunk);
 	}
 
@@ -350,7 +311,15 @@ export function readHandoffHistory(
 			options.offset === undefined && options.from !== "start"
 				? Math.max(0, total - limit)
 				: boundedInteger(options.offset, 0, 0, 2_147_483_647);
-		const views = readEntries(db, source.sessionId, offset, limit).map(archiveEntryView);
+		const views = readEntries(db, source.sessionId, offset, limit).map((entry) => ({
+			ordinal: entry.ordinal,
+			entryType: entry.entry_type,
+			role: entry.role,
+			timestamp: entry.timestamp,
+			entryId: entry.entry_id,
+			parentId: entry.parent_id,
+			textContent: entry.text_content,
+		}));
 		return pageOutput(source, "archived", session.cwd, total, views, offset, limit, chunk);
 	});
 }
@@ -388,12 +357,11 @@ export function searchHandoffHistory(
 				const haystack = (entry.textContent ?? "").toLowerCase();
 				return normalizedTerms.every((term) => haystack.includes(term));
 			})
-			.slice(-limit)
-			.map(parsedEntryView);
+			.slice(-limit);
 		output =
 			hits.length === 0
 				? `No matches in active previous session ${source.sessionId}.`
-				: `Matches in active previous session ${source.sessionId}:\n\n${hits.map(formatEntry).join("\n\n")}`;
+				: `Matches in active previous session ${source.sessionId}:\n\n${formatHistoryEntries(hits)}`;
 	} else {
 		output = withArchivedSession(source, env, (db) => {
 			const hits = searchArchive(db, {
