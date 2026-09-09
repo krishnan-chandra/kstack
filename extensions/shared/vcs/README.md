@@ -37,6 +37,9 @@ backing Git directory.
 `worktree-plan.ts` owns read-only managed-worktree allocation: base-ref
 resolution and collision-safe `kstack/<task-slug>` paths. Git and Graphite
 delegate planning to it and still return only the `IsolationPlan`.
+`worktree-inventory.ts` owns decoding Git's porcelain worktree listing.
+Cleanup, rebase scope, and the skill inspector consume that inventory and
+keep their own safety decisions.
 
 The Git backend creates a clean `kstack/<task-slug>` branch and can create a
 managed linked worktree. Graphite uses that Git isolation seam, then tracks and

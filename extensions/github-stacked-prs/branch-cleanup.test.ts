@@ -226,17 +226,31 @@ describe("cleanupLocalBranch", () => {
 				}
 				return fixture.exec(command, args, options);
 			};
+			const malformedExec: ExecFn = async (command, args, options) => {
+				if (args[0] === "worktree" && args[1] === "list") {
+					return {
+						code: 0,
+						stdout: "worktree /repo\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0",
+						stderr: "",
+					};
+				}
+				return fixture.exec(command, args, options);
+			};
 
-			const result = await cleanupLocalBranch({
-				branch: "kstack/one",
-				expectedHeadSha: sha,
-				cwd: fixture.repo,
-				exec: failingExec,
-			});
-
-			assert.deepEqual(result.completedMutations, []);
-			assert.equal(result.warnings.length, 1);
-			assert.match(result.warnings[0], /Could not inspect Git worktrees/);
+			for (const [exec, warning] of [
+				[failingExec, /Could not inspect Git worktrees/],
+				[malformedExec, /Could not parse Git worktrees/],
+			] as const) {
+				const result = await cleanupLocalBranch({
+					branch: "kstack/one",
+					expectedHeadSha: sha,
+					cwd: fixture.repo,
+					exec,
+				});
+				assert.deepEqual(result.completedMutations, []);
+				assert.equal(result.warnings.length, 1);
+				assert.match(result.warnings[0], warning);
+			}
 			const head = runGit(fixture, ["rev-parse", "refs/heads/kstack/one"]);
 			assert.equal(head, sha);
 		} finally {

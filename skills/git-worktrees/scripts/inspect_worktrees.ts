@@ -6,7 +6,8 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExecFn, ExecFnResult } from "../../../extensions/shared/git-exec.ts";
-import { type BoundaryValue, isObject, isString } from "../../../extensions/shared/validation.ts";
+import { type BoundaryValue, isObject } from "../../../extensions/shared/validation.ts";
+import { parseWorktreeInventory } from "../../../extensions/shared/vcs/worktree-inventory.ts";
 import { resolveIsolationBase } from "../../../extensions/shared/vcs/worktree-plan.ts";
 import { createSkillExec } from "./git-exec.ts";
 
@@ -16,9 +17,6 @@ const DEFAULT_MAX = 200;
 const DEFAULT_TIMEOUT_SECONDS = 10;
 const INSPECTION_REASON_CAP = 512;
 const OBJECT_ID_RE = /^[0-9a-f]{40,64}$/;
-
-type PorcelainValue = string | true;
-type PorcelainRecord = Record<string, PorcelainValue>;
 
 interface InspectedWorktree {
 	repository_id: string;
@@ -30,8 +28,8 @@ interface InspectedWorktree {
 	dirty: boolean;
 	status_entries: number;
 	untracked_entries: number;
-	locked: PorcelainValue | false;
-	prunable: PorcelainValue | false;
+	locked: false | true | string;
+	prunable: false | true | string;
 	base_ref: string | null;
 	base_sha: string | null;
 	head_reachable_from_base: boolean | null;
@@ -94,36 +92,6 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
 		return { error: `unknown flag ${arg}` };
 	}
 	return { root, maximum, timeoutSeconds };
-}
-
-export function parseWorktreePorcelainZ(data: Buffer): PorcelainRecord[] {
-	const records: PorcelainRecord[] = [];
-	let current: PorcelainRecord = {};
-	for (const raw of data.toString("utf8").split("\0")) {
-		if (!raw) {
-			if (Object.keys(current).length > 0) {
-				records.push(current);
-				current = {};
-			}
-			continue;
-		}
-		const space = raw.indexOf(" ");
-		const key = space === -1 ? raw : raw.slice(0, space);
-		const value = space === -1 ? "" : raw.slice(space + 1);
-		if (key === "worktree" && Object.keys(current).length > 0) {
-			records.push(current);
-			current = {};
-		}
-		if (key === "bare" || key === "detached") {
-			current[key] = true;
-		} else if (key === "locked" || key === "prunable") {
-			current[key] = value || true;
-		} else {
-			current[key] = value;
-		}
-	}
-	if (Object.keys(current).length > 0) records.push(current);
-	return records;
 }
 
 function sortKeys(value: BoundaryValue): BoundaryValue {
@@ -287,11 +255,11 @@ async function inspectCandidate(exec: ExecFn, path: string, timeoutMs: number): 
 		timeout: timeoutMs,
 	});
 	requireCommandSuccess(listingCommand, listing);
-	const authoritativeMatches = parseWorktreePorcelainZ(Buffer.from(listing.stdout)).filter((record) => {
-		const worktree = record.worktree;
-		if (!isString(worktree) || !worktree) return false;
+	const inventory = parseWorktreeInventory(listing.stdout);
+	if (!inventory.ok) throw new Error(`${listingCommand}: ${inventory.error}`);
+	const authoritativeMatches = inventory.value.filter((record) => {
 		try {
-			return realpathSync(worktree) === canonical;
+			return realpathSync(record.path) === canonical;
 		} catch {
 			return false;
 		}
@@ -331,8 +299,8 @@ async function inspectCandidate(exec: ExecFn, path: string, timeoutMs: number): 
 		dirty: entries.length > 0,
 		status_entries: entries.length,
 		untracked_entries: untracked,
-		locked: authoritative.locked ?? false,
-		prunable: authoritative.prunable ?? false,
+		locked: authoritative.locked,
+		prunable: authoritative.prunable,
 		base_ref: base?.ref ?? null,
 		base_sha: base?.sha ?? null,
 		head_reachable_from_base: reachable,

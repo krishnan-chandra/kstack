@@ -16,7 +16,7 @@ import { delimiter, dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createVcsTestEnv } from "../../../extensions/shared/vcs-test-env.ts";
-import { encodeInspectionOutput, OUTPUT_CAP, parseWorktreePorcelainZ } from "./inspect_worktrees.ts";
+import { encodeInspectionOutput, OUTPUT_CAP } from "./inspect_worktrees.ts";
 
 const INSPECTOR = fileURLToPath(new URL("./inspect_worktrees.ts", import.meta.url));
 const PLANNER = fileURLToPath(new URL("./plan_worktree.ts", import.meta.url));
@@ -196,11 +196,15 @@ if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
 			;;
 		ambiguous)
 			printf 'worktree %s\\000HEAD 0000000000000000000000000000000000000000\\000branch refs/heads/kstack/fake\\000\\000' "$PWD"
-			printf 'worktree %s\\000HEAD 0000000000000000000000000000000000000000\\000branch refs/heads/kstack/fake\\000\\000' "$PWD"
+			printf 'worktree %s\\000HEAD 0000000000000000000000000000000000000000\\000branch refs/heads/kstack/alias\\000\\000' "$KSTACK_INSPECT_TEST_ALIAS_WORKTREE"
 			exit 0
 			;;
 		prunable)
 			printf 'worktree %s\\000HEAD 0000000000000000000000000000000000000000\\000branch refs/heads/kstack/fake\\000prunable fixture reason\\000\\000' "$PWD"
+			exit 0
+			;;
+		unterminated)
+			printf 'worktree %s\\000HEAD 0000000000000000000000000000000000000000\\000branch refs/heads/kstack/fake\\000' "$PWD"
 			exit 0
 			;;
 	esac
@@ -265,18 +269,6 @@ exec "$KSTACK_INSPECT_TEST_REAL_GIT" "$@"
 		PATH: `${wrapperDir}${delimiter}${env.PATH ?? ""}`,
 	};
 }
-
-describe("parseWorktreePorcelainZ", () => {
-	it("parses a synthetic NUL record", () => {
-		const data = Buffer.from(
-			"worktree /repo\0HEAD abc\0branch refs/heads/main\0\0worktree /managed/x\0HEAD def\0branch refs/heads/kstack/x\0locked build\0\0",
-		);
-		assert.deepEqual(parseWorktreePorcelainZ(data), [
-			{ worktree: "/repo", HEAD: "abc", branch: "refs/heads/main" },
-			{ worktree: "/managed/x", HEAD: "def", branch: "refs/heads/kstack/x", locked: "build" },
-		]);
-	});
-});
 
 describe("inspect_worktrees CLI", () => {
 	it("rejects out-of-range --max and --timeout", async () => {
@@ -459,24 +451,31 @@ describe("inspect_worktrees CLI", () => {
 		}
 	});
 
-	it("reports missing and ambiguous authoritative listing matches as inspection failures", async () => {
+	it("reports missing, ambiguous, and malformed authoritative listings as inspection failures", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kstack-inspect-"));
 		const vcsEnv = createVcsTestEnv(root);
 		try {
 			const repo = await initRepo(root, "main", vcsEnv);
 			const managed = join(root, "managed");
 			const candidate = await addManagedWorktree(repo, managed, "listing", vcsEnv);
-			for (const mode of ["missing", "ambiguous"]) {
+			const alias = join(root, "alias");
+			symlinkSync(candidate.path, alias);
+			for (const mode of ["missing", "ambiguous", "unterminated"]) {
 				const env = createGitWrapperEnv(root, vcsEnv, {
 					KSTACK_INSPECT_TEST_TARGET: candidate.path,
 					KSTACK_INSPECT_TEST_LISTING: mode,
 					KSTACK_INSPECT_TEST_OTHER_WORKTREE: repo,
+					KSTACK_INSPECT_TEST_ALIAS_WORKTREE: alias,
 				});
 				const payload = parseInspection(await runNode(INSPECTOR, ["--root", managed], env));
 				assert.deepEqual(payload.worktrees, [], mode);
 				const orphan = onlyOrphan(payload, mode);
 				assert.match(orphan.reason, /^inspection failed:.*worktree list/, mode);
-				assert.match(orphan.reason, new RegExp(mode), mode);
+				if (mode === "unterminated") {
+					assert.match(orphan.reason, /unterminated/, mode);
+				} else {
+					assert.match(orphan.reason, new RegExp(mode), mode);
+				}
 			}
 		} finally {
 			rmSync(root, { recursive: true, force: true });
