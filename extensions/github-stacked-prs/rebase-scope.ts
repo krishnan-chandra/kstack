@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { commandDiagnostic, type ExecFn, runCommand } from "../shared/git-exec.ts";
 import { isSafeStackRef, STACK_SHA_RE } from "../shared/stack/manifest.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
+import { parseWorktreeInventory, type WorktreeRecord } from "../shared/vcs/worktree-inventory.ts";
 
 const LOCAL_REF_PREFIX = "refs/heads/";
 const LOCAL_REF_ROOT = "refs/heads";
@@ -13,12 +14,6 @@ const REF_FORMAT = "%(refname)%09%(objectname)";
 export interface RebaseScopeBranch {
 	branch: string;
 	sha: string;
-}
-
-export interface WorktreeRecord {
-	path: string;
-	head: string | undefined;
-	branch: string | undefined;
 }
 
 interface RepositoryInventory {
@@ -292,7 +287,7 @@ async function readRepositoryInventory(cwd: string, deps: RebaseScopeDeps): Prom
 	if (worktreesResult.code !== 0) {
 		return { ok: false, error: `Could not inventory Git worktrees: ${commandDiagnostic(worktreesResult)}` };
 	}
-	const worktrees = parseWorktrees(worktreesResult.stdout);
+	const worktrees = parseWorktreeInventory(worktreesResult.stdout);
 	if (!worktrees.ok) return worktrees;
 	for (const worktree of worktrees.value) {
 		if (!worktree.branch) continue;
@@ -330,55 +325,6 @@ function parseRefs(stdout: string): ScopeResult<ReadonlyMap<string, string>> {
 		refs.set(branch, sha);
 	}
 	return { ok: true, value: refs };
-}
-
-export function parseWorktrees(stdout: string): ScopeResult<readonly WorktreeRecord[]> {
-	if (!stdout?.endsWith("\0\0")) {
-		return { ok: false, error: "Git returned an empty or unterminated worktree inventory." };
-	}
-	const chunks = stdout.slice(0, -2).split("\0\0");
-	const records: WorktreeRecord[] = [];
-	const paths = new Set<string>();
-	for (const chunk of chunks) {
-		const fields = chunk.split("\0");
-		const first = fields.shift();
-		if (!first?.startsWith("worktree ") || first.length === "worktree ".length) {
-			return { ok: false, error: "Git returned an invalid worktree record." };
-		}
-		const path = first.slice("worktree ".length);
-		if (paths.has(path)) return { ok: false, error: "Git returned duplicate worktree records." };
-		paths.add(path);
-		let head: string | undefined;
-		let branch: string | undefined;
-		let bare = false;
-		let detached = false;
-		for (const field of fields) {
-			if (field.startsWith("HEAD ") && head === undefined) {
-				head = field.slice("HEAD ".length);
-			} else if (field.startsWith("branch ") && branch === undefined) {
-				const ref = field.slice("branch ".length);
-				if (!ref.startsWith(LOCAL_REF_PREFIX) || ref.length === LOCAL_REF_PREFIX.length) {
-					return { ok: false, error: "Git returned an invalid worktree branch record." };
-				}
-				branch = ref.slice(LOCAL_REF_PREFIX.length);
-			} else if (field === "bare" && !bare) {
-				bare = true;
-			} else if (field === "detached" && !detached) {
-				detached = true;
-			} else {
-				const optionalAttribute =
-					field === "locked" || field.startsWith("locked ") || field === "prunable" || field.startsWith("prunable ");
-				if (!optionalAttribute) return { ok: false, error: "Git returned an invalid worktree record." };
-			}
-		}
-		const stateCount = Number(branch !== undefined) + Number(bare) + Number(detached);
-		if (stateCount !== 1 || (bare ? head !== undefined : !head || !STACK_SHA_RE.test(head))) {
-			return { ok: false, error: "Git returned an incomplete worktree record." };
-		}
-		records.push({ path, head, branch });
-	}
-	if (records.length === 0) return { ok: false, error: "Git returned an empty worktree inventory." };
-	return { ok: true, value: records };
 }
 
 function validateRemainderWorktrees(input: {

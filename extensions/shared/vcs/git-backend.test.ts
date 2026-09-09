@@ -110,14 +110,29 @@ describe("GitBackend isolation.remove", () => {
 	});
 
 	it("rejects a path that is not registered as a Git worktree", async () => {
+		const other = `worktree /other\0HEAD ${HEAD}\0branch refs/heads/main\0\0`;
 		const exec = scriptedExec([
 			preflight[0],
-			{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: "" } },
+			{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout: other } },
 		]);
 		assert.deepEqual(await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task"), {
 			ok: false,
 			error: `Git does not list ${cwd} as an authoritative worktree.`,
 		});
+	});
+
+	it("rejects a malformed worktree inventory before matching paths", async () => {
+		for (const stdout of ["", `worktree ${cwd}\0HEAD ${HEAD}\0branch refs/heads/kstack/task\0`]) {
+			const exec = scriptedExec([
+				preflight[0],
+				{ command: "git", args: ["worktree", "list", "--porcelain", "-z"], result: { stdout } },
+			]);
+			const result = await new GitBackend(exec, deps).isolation.remove(cwd, "kstack/task");
+			assert.equal(result.ok, false);
+			if (!result.ok) {
+				assert.match(result.error, /Could not inspect Git worktrees: Git returned an empty or unterminated/);
+			}
+		}
 	});
 
 	it("rejects a worktree whose branch no longer matches", async () => {

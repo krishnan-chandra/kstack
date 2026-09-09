@@ -1,5 +1,5 @@
 import { commandDiagnostic, type ExecFn, runCommand } from "../shared/git-exec.ts";
-import { parseWorktrees, type WorktreeRecord } from "./rebase-scope.ts";
+import { parseWorktreeInventory, type WorktreeRecord } from "../shared/vcs/worktree-inventory.ts";
 
 /**
  * Local branch cleanup for landed stack entries.
@@ -46,7 +46,7 @@ export async function cleanupLocalBranch(input: CleanupLocalBranchInput): Promis
 		);
 		return { completedMutations, warnings };
 	}
-	const worktrees = parseWorktrees(worktreesResult.stdout);
+	const worktrees = parseWorktreeInventory(worktreesResult.stdout);
 	if (!worktrees.ok) {
 		warnings.push(
 			`Could not parse Git worktrees before deleting local branch ${branch}: ${worktrees.error}. Retaining branch.`,

@@ -16,6 +16,7 @@ import type {
 	WorkstreamSnapshot,
 } from "./backend.ts";
 import { preflightVcs } from "./preflight.ts";
+import { parseWorktreeInventory } from "./worktree-inventory.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
@@ -39,29 +40,6 @@ function output(result: ExecFnResult): string {
 function oneLine(result: ExecFnResult): string | undefined {
 	if (result.code !== 0) return undefined;
 	return output(result) || undefined;
-}
-
-interface WorktreeRecord {
-	path: string;
-	branch?: string;
-	locked: boolean;
-}
-
-function parseWorktreeRecords(stdout: string): WorktreeRecord[] {
-	const records: WorktreeRecord[] = [];
-	let current: WorktreeRecord | undefined;
-	for (const field of stdout.split("\0")) {
-		if (field.startsWith("worktree ")) {
-			if (current) records.push(current);
-			current = { path: field.slice("worktree ".length), locked: false };
-		} else if (current && field.startsWith("branch refs/heads/")) {
-			current.branch = field.slice("branch refs/heads/".length);
-		} else if (current && (field === "locked" || field.startsWith("locked "))) {
-			current.locked = true;
-		}
-	}
-	if (current) records.push(current);
-	return records;
 }
 
 function isContained(root: string, path: string): boolean {
@@ -96,7 +74,9 @@ export async function removeManagedGitWorktree(input: {
 	const ownerRoot = join(commonDir, "..");
 	const listed = await input.git(ownerRoot, ["worktree", "list", "--porcelain", "-z"], 5_000);
 	if (listed.code !== 0) return { ok: false, error: `Could not inspect Git worktrees: ${listed.stderr.trim()}` };
-	const record = parseWorktreeRecords(listed.stdout).find((item) => {
+	const inventory = parseWorktreeInventory(listed.stdout);
+	if (!inventory.ok) return { ok: false, error: `Could not inspect Git worktrees: ${inventory.error}` };
+	const record = inventory.value.find((item) => {
 		try {
 			return realpath(item.path) === canonicalCwd;
 		} catch {
@@ -110,7 +90,9 @@ export async function removeManagedGitWorktree(input: {
 			error: `Worktree branch changed: expected ${input.ref}, found ${record.branch ?? "detached HEAD"}.`,
 		};
 	}
-	if (record.locked) return { ok: false, error: `Worktree ${canonicalCwd} is locked; unlock it before cleanup.` };
+	if (record.locked !== false) {
+		return { ok: false, error: `Worktree ${canonicalCwd} is locked; unlock it before cleanup.` };
+	}
 	const status = await input.git(canonicalCwd, ["status", "--porcelain=v1", "--untracked-files=all"], 5_000);
 	if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
 	if (output(status)) {
