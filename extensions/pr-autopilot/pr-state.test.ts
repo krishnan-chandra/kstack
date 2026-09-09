@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildFixerTask, buildTriagerTask, describeBlockers, isCodeReady, isMergeReady } from "./pr-state.ts";
+import {
+	buildFixerTask,
+	buildTriagerTask,
+	describeBlockers,
+	isCodeReady,
+	isMergeReady,
+	terminalPrReason,
+} from "./pr-state.ts";
 import type { CheckRun, MergeStateStatus, PRState, ReviewThread } from "./types.ts";
 
 const BEGIN = "-----BEGIN UNTRUSTED PR DATA-----";
@@ -234,6 +241,8 @@ describe("PR readiness matrix", () => {
 	it("describes terminal PR states and pending mergeability", () => {
 		assert.match(describeBlockers(readinessState({ state: "closed" })), /closed/);
 		assert.match(describeBlockers(readinessState({ state: "merged" })), /merged/);
+		assert.equal(terminalPrReason(readinessState({ state: "closed" })), "PR is closed");
+		assert.equal(terminalPrReason(readinessState()), undefined);
 		assert.match(describeBlockers(readinessState({ mergeable: "unknown" })), /mergeability pending/);
 		assert.match(describeBlockers(readinessState({ mergeStateStatus: "UNKNOWN" })), /mergeability pending/);
 	});

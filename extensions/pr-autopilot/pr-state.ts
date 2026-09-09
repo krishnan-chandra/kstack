@@ -129,6 +129,11 @@ export function describeBlockers(state: PRState): string {
 	return issues.length > 0 ? issues.join(", ") : "unknown blocker";
 }
 
+/** Closed and merged PRs end the run before another child or mutation. */
+export function terminalPrReason(state: PRState): string | undefined {
+	return state.state === "open" ? undefined : describeBlockers(state);
+}
+
 function clipBody(body: string): string {
 	if (body.length <= LIMITS.threadBodyChars) return body;
 	return `${body.slice(0, LIMITS.threadBodyChars)}…`;
