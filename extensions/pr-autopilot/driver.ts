@@ -49,7 +49,7 @@ import {
 import { appendFlakeRunRetry, groupFlakeRuns, pendingFlakeRunGroups } from "./ci-retries.ts";
 import { attachFailedLogs, isForbiddenStagingPath, markPrReady, rerunFailedRun, watchChecks } from "./github.ts";
 /** Lifecycle phases surfaced to the parent UI for status display. */
-import { checkObservation, createPrObservation, refreshObservation, settleObservation } from "./observation.ts";
+import { createPrObservation } from "./observation.ts";
 import {
 	buildFixerTask,
 	buildTriagerTask,
@@ -69,7 +69,6 @@ import { checkForTriageKey, threadForTriageKey } from "./triage-keys.ts";
 import {
 	type AutopilotMode,
 	type AutopilotModelSpec,
-	type AutopilotPersistedState,
 	type AutopilotResult,
 	type ExecFn,
 	LIMITS,
@@ -225,35 +224,73 @@ export async function runAutopilot(
 	}
 	if (reviewMutationBlocker) notify(reviewMutationBlocker, "warning");
 	const observation = createPrObservation({
-		read: (verifiedHeadSha, current) => fetchPRState(exec, cwd, prNumber, verifiedHeadSha, current, repoName, signal),
+		read: (verifiedHeadSha) => fetchPRState(exec, cwd, prNumber, verifiedHeadSha, persisted, repoName, signal),
 		sleep: ops.sleep,
-		save: ops.savePersistedState,
-		notify,
+		persistedState: {
+			current: () => persisted,
+			apply: async (next) => {
+				if (!reviewMutationBlocker) await ops.savePersistedState(next);
+				persisted = next;
+			},
+		},
+		report: (event) => {
+			switch (event.kind) {
+				case "error":
+					notify(event.reason, "error");
+					break;
+				case "head-moved": {
+					const suffixes = {
+						verification: "during verification; rechecking.",
+						readiness: "while readiness was settling; verifying the new head.",
+						mergeability: "while mergeability was settling; verifying the new head.",
+					} satisfies Record<typeof event.phase, string>;
+					notify(
+						`PR #${prNumber} advanced from ${event.previousHeadSha.slice(0, 8)} to ${event.nextHeadSha.slice(0, 8)} ${suffixes[event.phase]}`,
+						"warning",
+					);
+					break;
+				}
+				case "readiness-regressed":
+					notify(`PR #${prNumber} looked ready, then the settle re-read showed: ${event.reason}.`, "warning");
+					break;
+				case "mergeability-regressed":
+					notify(`PR #${prNumber} changed while mergeability was settling: ${event.reason}.`, "warning");
+					break;
+				case "not-ready":
+					notify(`PR #${prNumber} is not ready: ${event.reason}.`, "warning");
+					break;
+				case "merge-ready": {
+					const messages = {
+						check: `PR #${prNumber} looks merge-ready after a fresh status read.`,
+						"fresh-status": `PR #${prNumber} looks merge-ready after a fresh status read. Not merging.`,
+						mergeability: `PR #${prNumber} looks merge-ready after mergeability settled. Not merging.`,
+					} satisfies Record<typeof event.phase, string>;
+					notify(messages[event.phase], "info");
+					break;
+				}
+				default: {
+					const _exhaustive: never = event;
+					throw new Error(`Unhandled observation event: ${_exhaustive}`);
+				}
+			}
+		},
 		signal,
 		persistWritesBlocked: reviewMutationBlocker !== undefined,
-		prNumber,
 	});
-	const applyObserved = <T extends { persisted: AutopilotPersistedState }>(result: T): T => {
-		persisted = result.persisted;
-		return result;
-	};
 
 	if (mode === "check") {
 		setPhase("checking");
 		if (signal.aborted) return finish("aborted");
-		const checked = applyObserved(await checkObservation(observation, persisted));
-		if (checked.snapshot) state = checked.snapshot;
+		const checked = await observation.check();
+		if (checked.snapshot !== null) state = checked.snapshot;
 		switch (checked.kind) {
 			case "aborted":
 				return finish("aborted");
 			case "failed":
-				if (checked.announce) notify(checked.reason, "error");
 				return finish("failed", [checked.reason]);
 			case "incomplete":
-				notify(`PR #${prNumber} is not ready: ${checked.reason}.`, "warning");
 				return finish("incomplete", [checked.reason]);
 			case "merge-ready":
-				notify(`PR #${prNumber} looks merge-ready after a fresh status read.`, "info");
 				return finish("merge-ready");
 			default: {
 				const _exhaustive: never = checked;
@@ -266,7 +303,7 @@ export async function runAutopilot(
 
 	const refresh = async () => {
 		setPhase("checking", cycle);
-		return applyObserved(await refreshObservation(observation, persisted));
+		return observation.refresh();
 	};
 
 	const runChild = async (
@@ -319,10 +356,8 @@ export async function runAutopilot(
 			if (signal.aborted) return { status: "aborted", blockedReasons };
 		}
 		setPhase("settling", cycle);
-		const settled = applyObserved(
-			await settleObservation(observation, snapshot, persisted, { poll: mode !== "threads" }),
-		);
-		if (settled.snapshot) state = settled.snapshot;
+		const settled = await observation.settle(snapshot, mode !== "threads");
+		state = settled.snapshot;
 		switch (settled.kind) {
 			case "aborted":
 				return { status: "aborted", blockedReasons };

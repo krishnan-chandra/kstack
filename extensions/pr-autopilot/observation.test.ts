@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { checkObservation, createPrObservation, refreshObservation, settleObservation } from "./observation.ts";
+import { createPrObservation } from "./observation.ts";
 import type { AutopilotPersistedState, PRState, ReviewThread } from "./types.ts";
 
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
@@ -80,17 +80,20 @@ function readySnapshot(headSha: string): PRState {
 
 function createHarness(options: {
 	queue: Array<PRState | string>;
+	initialPersisted?: AutopilotPersistedState;
 	persistWritesBlocked?: boolean;
 	sleepError?: Error;
 }) {
-	const reads: Array<{ verifiedHeadSha: string | null; persisted: AutopilotPersistedState }> = [];
+	const reads: Array<string | null> = [];
 	const saves: AutopilotPersistedState[] = [];
 	const waits: number[] = [];
-	const controller = new AbortController();
+	const reports: string[] = [];
+	const signal = new AbortController().signal;
 	const queue = [...options.queue];
+	let currentPersisted = structuredClone(options.initialPersisted ?? persistedState());
 	const observation = createPrObservation({
-		read: async (verifiedHeadSha, persisted) => {
-			reads.push({ verifiedHeadSha, persisted: structuredClone(persisted) });
+		read: async (verifiedHeadSha) => {
+			reads.push(verifiedHeadSha);
 			if (queue.length === 0) throw new Error("unexpected PR read");
 			const next = queue.shift();
 			if (next === undefined) throw new Error("unexpected PR read");
@@ -101,15 +104,25 @@ function createHarness(options: {
 			if (options.sleepError) throw options.sleepError;
 			signal.throwIfAborted();
 		},
-		save: async (state) => {
-			saves.push(structuredClone(state));
+		persistedState: {
+			current: () => currentPersisted,
+			apply: async (state) => {
+				if (!options.persistWritesBlocked) saves.push(structuredClone(state));
+				currentPersisted = structuredClone(state);
+			},
 		},
-		notify: () => {},
-		signal: controller.signal,
+		report: (event) => reports.push(JSON.stringify(event)),
+		signal,
 		persistWritesBlocked: options.persistWritesBlocked === true,
-		prNumber: 42,
 	});
-	return { reads, saves, waits, observation, controller };
+	return {
+		reads,
+		saves,
+		waits,
+		reports,
+		observation,
+		currentPersisted: () => structuredClone(currentPersisted),
+	};
 }
 
 describe("PR observation protocol", () => {
@@ -122,21 +135,23 @@ describe("PR observation protocol", () => {
 				{ ...withFailure, verifiedHeadSha: HEAD },
 				{ ...withFailure, verifiedHeadSha: HEAD },
 			],
+			initialPersisted: legacy,
 		});
 
-		const checked = await checkObservation(harness.observation, legacy);
+		const checked = await harness.observation.check();
 		assert.equal(checked.kind, "incomplete");
 		assert.deepEqual(harness.saves[0]?.flakeRunRetries, [{ runId: "123", headSha: HEAD }]);
 
-		const refresh = await refreshObservation(harness.observation, checked.persisted);
+		const refresh = await harness.observation.refresh();
 		assert.equal(refresh.kind, "ok");
 		assert.equal(harness.saves.length, 1, "already-converted retries do not save again");
 
 		const settleHarness = createHarness({
 			queue: [{ ...withFailure, verifiedHeadSha: HEAD }],
+			initialPersisted: legacy,
 		});
-		const settled = await settleObservation(settleHarness.observation, snapshot(), legacy, { poll: false });
-		assert.ok(settled.kind === "continue" || settled.kind === "incomplete");
+		const settled = await settleHarness.observation.settle(snapshot(), false);
+		assert.equal(settled.kind, "continue");
 		assert.deepEqual(settleHarness.saves[0]?.flakeRunRetries, [{ runId: "123", headSha: HEAD }]);
 	});
 
@@ -153,33 +168,25 @@ describe("PR observation protocol", () => {
 			hasUnresolvedThreads: true,
 			verifiedHeadSha: HEAD,
 		});
-		const harness = createHarness({ queue: [first, second, second] });
+		const harness = createHarness({ queue: [first, second], initialPersisted: starting });
 
-		const checked = await checkObservation(harness.observation, starting);
+		const checked = await harness.observation.check();
 		assert.equal(checked.kind, "incomplete");
-		assert.deepEqual(checked.persisted.legacyPendingReplyIds, ["thread-live"]);
+		assert.deepEqual(harness.currentPersisted().legacyPendingReplyIds, ["thread-live"]);
 		assert.equal(harness.saves.length, 1);
 
-		const refresh = await refreshObservation(
-			harness.observation,
-			persistedState({ legacyPendingReplyIds: ["thread-live", "thread-gone"] }),
-		);
+		const refreshHarness = createHarness({ queue: [second], initialPersisted: starting });
+		const refresh = await refreshHarness.observation.refresh();
 		assert.equal(refresh.kind, "ok");
-		assert.deepEqual(refresh.persisted.legacyPendingReplyIds, ["thread-live"]);
+		assert.deepEqual(refreshHarness.currentPersisted().legacyPendingReplyIds, ["thread-live"]);
 
 		const settleHarness = createHarness({
 			queue: [pendingSnapshot({ verifiedHeadSha: HEAD })],
+			initialPersisted: starting,
 		});
-		const settled = await settleObservation(
-			settleHarness.observation,
-			pendingSnapshot({ verifiedHeadSha: null }),
-			starting,
-			{
-				poll: false,
-			},
-		);
+		const settled = await settleHarness.observation.settle(pendingSnapshot({ verifiedHeadSha: null }), false);
 		assert.equal(settled.kind, "incomplete");
-		assert.deepEqual(settled.persisted.legacyPendingReplyIds, ["thread-live", "thread-gone"]);
+		assert.deepEqual(settleHarness.currentPersisted().legacyPendingReplyIds, ["thread-live", "thread-gone"]);
 		assert.deepEqual(settleHarness.saves, []);
 	});
 
@@ -194,13 +201,14 @@ describe("PR observation protocol", () => {
 		});
 		const harness = createHarness({
 			queue: [observed, { ...observed, verifiedHeadSha: HEAD }],
+			initialPersisted: starting,
 			persistWritesBlocked: true,
 		});
 
-		const checked = await checkObservation(harness.observation, starting);
+		const checked = await harness.observation.check();
 		assert.equal(checked.kind, "incomplete");
-		assert.deepEqual(checked.persisted.flakeRunRetries, [{ runId: "99", headSha: HEAD }]);
-		assert.deepEqual(checked.persisted.legacyPendingReplyIds, ["thread-gone"]);
+		assert.deepEqual(harness.currentPersisted().flakeRunRetries, [{ runId: "99", headSha: HEAD }]);
+		assert.deepEqual(harness.currentPersisted().legacyPendingReplyIds, ["thread-gone"]);
 		assert.deepEqual(harness.saves, []);
 	});
 
@@ -208,15 +216,12 @@ describe("PR observation protocol", () => {
 		const harness = createHarness({
 			queue: [snapshot({ state: "closed", verifiedHeadSha: HEAD }), readySnapshot(HEAD)],
 		});
-		const checked = await checkObservation(harness.observation, persistedState());
+		const checked = await harness.observation.check();
 		assert.equal(checked.kind, "incomplete");
 		if (checked.kind !== "incomplete") return;
 		assert.equal(checked.reason, "PR is closed");
 		assert.equal(checked.snapshot.state, "open");
-		assert.deepEqual(
-			harness.reads.map((read) => read.verifiedHeadSha),
-			[null, HEAD],
-		);
+		assert.deepEqual(harness.reads, [null, HEAD]);
 	});
 
 	it("does not reset the settling budget when the head keeps moving", async () => {
@@ -226,18 +231,37 @@ describe("PR observation protocol", () => {
 			...Array.from({ length: SETTLE_POLL_LIMIT }, (_, index) => pending(`${index + 1}`.repeat(40))),
 		];
 		const harness = createHarness({ queue });
-		const settled = await settleObservation(
-			harness.observation,
-			pendingSnapshot({ verifiedHeadSha: null }),
-			persistedState(),
-			{
-				poll: true,
-			},
-		);
+		const settled = await harness.observation.settle(pendingSnapshot({ verifiedHeadSha: null }), true);
 		assert.equal(settled.kind, "incomplete");
 		if (settled.kind !== "incomplete") return;
 		assert.equal(settled.reason, `mergeability pending after ${SETTLE_POLL_LIMIT} additional observations`);
 		assert.equal(harness.reads.length, 1 + SETTLE_POLL_LIMIT);
+		assert.equal(harness.waits.length, SETTLE_POLL_LIMIT);
+		assert.equal(
+			harness.reports.filter(
+				(report) => report.includes('"kind":"head-moved"') && report.includes('"phase":"mergeability"'),
+			).length,
+			SETTLE_POLL_LIMIT,
+		);
+	});
+
+	it("shares one settling budget across separate settle calls", async () => {
+		const pending = pendingSnapshot({ verifiedHeadSha: HEAD });
+		const harness = createHarness({
+			queue: [
+				pending,
+				snapshot({ mergeStateStatus: "BLOCKED", verifiedHeadSha: HEAD }),
+				...Array.from({ length: SETTLE_POLL_LIMIT }, () => pending),
+			],
+		});
+
+		const first = await harness.observation.settle(pendingSnapshot({ verifiedHeadSha: null }), true);
+		assert.equal(first.kind, "continue");
+		const second = await harness.observation.settle(pendingSnapshot({ verifiedHeadSha: null }), true);
+		assert.equal(second.kind, "incomplete");
+		if (second.kind !== "incomplete") return;
+		assert.equal(second.reason, `mergeability pending after ${SETTLE_POLL_LIMIT} additional observations`);
+		assert.equal(harness.reads.length, 2 + SETTLE_POLL_LIMIT);
 		assert.equal(harness.waits.length, SETTLE_POLL_LIMIT);
 	});
 
@@ -245,33 +269,26 @@ describe("PR observation protocol", () => {
 		const harness = createHarness({
 			queue: [pendingSnapshot({ verifiedHeadSha: HEAD })],
 		});
-		const settled = await settleObservation(
-			harness.observation,
-			pendingSnapshot({ verifiedHeadSha: null }),
-			persistedState(),
-			{
-				poll: false,
-			},
-		);
+		const settled = await harness.observation.settle(pendingSnapshot({ verifiedHeadSha: null }), false);
 		assert.equal(settled.kind, "incomplete");
+		assert.deepEqual(harness.reports, ['{"kind":"not-ready","reason":"mergeability pending"}']);
 		assert.deepEqual(harness.waits, []);
 		assert.equal(harness.reads.length, 1);
 	});
 
-	it("announces a failed first check read and stays silent on a failed second read", async () => {
+	it("reports a failed first check read and stays silent on a failed verification read", async () => {
 		const first = createHarness({ queue: ["mergeability read failed"] });
-		const firstResult = await checkObservation(first.observation, persistedState());
+		const firstResult = await first.observation.check();
 		assert.equal(firstResult.kind, "failed");
-		if (firstResult.kind !== "failed") return;
-		assert.equal(firstResult.announce, true);
+		assert.deepEqual(first.reports, ['{"kind":"error","reason":"mergeability read failed"}']);
 
 		const second = createHarness({
 			queue: [snapshot({ verifiedHeadSha: null }), "mergeability read failed"],
 		});
-		const secondResult = await checkObservation(second.observation, persistedState());
+		const secondResult = await second.observation.check();
 		assert.equal(secondResult.kind, "failed");
 		if (secondResult.kind !== "failed") return;
-		assert.equal(secondResult.announce, false);
 		assert.equal(secondResult.snapshot?.headSha, HEAD);
+		assert.deepEqual(second.reports, []);
 	});
 });

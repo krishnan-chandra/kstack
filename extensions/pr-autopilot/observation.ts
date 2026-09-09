@@ -2,9 +2,9 @@
  * PR observation and readiness: fetch handling, head verification,
  * reconciliation, and the run-wide settling budget.
  *
- * The driver remains the durable Autopilot-state owner. It applies returned
- * persisted state and supplies the save/notify/sleep ports. This module does
- * not own publication results, CI rerun attempts, or reply mutations.
+ * The driver owns durable Autopilot state and renders user messages.
+ * Observation computes reconciliation, emits typed facts, and owns only
+ * temporary head-verification state and the settling budget.
  */
 import { isString } from "../shared/validation.ts";
 import { reconcileLegacyFlakeRetries } from "./ci-retries.ts";
@@ -21,315 +21,223 @@ import type { AutopilotPersistedState, PRState } from "./types.ts";
 const MERGEABILITY_POLL_LIMIT = 5;
 const MERGEABILITY_POLL_DELAY_MS = 1000;
 
-type ReadPrSnapshot = (verifiedHeadSha: string | null, persisted: AutopilotPersistedState) => Promise<PRState | string>;
+type HeadMovePhase = "verification" | "readiness" | "mergeability";
+type ReadyPhase = "check" | "fresh-status" | "mergeability";
 
-interface PrObservation {
-	read: ReadPrSnapshot;
+interface PersistedStateOwner {
+	current: () => AutopilotPersistedState;
+	apply: (state: AutopilotPersistedState) => Promise<void>;
+}
+
+type ObservationEvent =
+	| {
+			kind: "error" | "readiness-regressed" | "mergeability-regressed" | "not-ready";
+			reason: string;
+	  }
+	| { kind: "head-moved"; previousHeadSha: string; nextHeadSha: string; phase: HeadMovePhase }
+	| { kind: "merge-ready"; phase: ReadyPhase };
+
+interface PrObservationOptions {
+	read: (verifiedHeadSha: string | null) => Promise<PRState | string>;
 	sleep: (delayMs: number, signal: AbortSignal) => Promise<void>;
-	save: (state: AutopilotPersistedState) => Promise<void>;
-	notify: (msg: string, level: "info" | "warning" | "error") => void;
+	persistedState: PersistedStateOwner;
+	report: (event: ObservationEvent) => void;
 	signal: AbortSignal;
 	persistWritesBlocked: boolean;
-	prNumber: number;
+}
+
+interface PrObservation extends PrObservationOptions {
 	mergeabilityPolls: number;
 }
 
-type Observed =
-	| { kind: "aborted"; persisted: AutopilotPersistedState }
-	| { kind: "failed"; reason: string; persisted: AutopilotPersistedState }
-	| { kind: "ok"; snapshot: PRState; persisted: AutopilotPersistedState };
+type Observed = { kind: "aborted" } | { kind: "failed"; reason: string } | { kind: "ok"; snapshot: PRState };
 
 type CheckResult =
-	| { kind: "aborted"; snapshot?: PRState; persisted: AutopilotPersistedState }
-	| {
-			kind: "failed";
-			reason: string;
-			snapshot?: PRState;
-			persisted: AutopilotPersistedState;
-			announce: boolean;
-	  }
-	| { kind: "incomplete"; snapshot: PRState; reason: string; persisted: AutopilotPersistedState }
-	| { kind: "merge-ready"; snapshot: PRState; persisted: AutopilotPersistedState };
+	| { kind: "aborted"; snapshot: PRState | null }
+	| { kind: "failed"; reason: string; snapshot: PRState | null }
+	| { kind: "incomplete"; snapshot: PRState; reason: string }
+	| { kind: "merge-ready"; snapshot: PRState };
 
 type SettleResult =
-	| { kind: "aborted"; snapshot?: PRState; persisted: AutopilotPersistedState }
-	| { kind: "failed"; reason: string; snapshot?: PRState; persisted: AutopilotPersistedState }
-	| { kind: "incomplete"; snapshot: PRState; reason: string; persisted: AutopilotPersistedState }
-	| { kind: "merge-ready"; snapshot: PRState; persisted: AutopilotPersistedState }
-	| { kind: "continue"; snapshot: PRState; persisted: AutopilotPersistedState };
+	| { kind: "aborted"; snapshot: PRState }
+	| { kind: "failed"; reason: string; snapshot: PRState }
+	| { kind: "incomplete"; reason: string; snapshot: PRState }
+	| { kind: "merge-ready"; snapshot: PRState }
+	| { kind: "continue"; snapshot: PRState };
 
-type HeadMovePhase = "verification" | "readiness" | "mergeability";
-
-function failedObserved(reason: string, persisted: AutopilotPersistedState): Observed {
-	return { kind: "failed", reason, persisted };
-}
-
-function abortedObserved(persisted: AutopilotPersistedState): Observed {
-	return { kind: "aborted", persisted };
+interface PrObservationSession {
+	check: () => Promise<CheckResult>;
+	refresh: () => Promise<Observed>;
+	settle: (snapshot: PRState, poll: boolean) => Promise<SettleResult>;
 }
 
 function onlyHeadVerificationPending(snapshot: PRState): boolean {
 	return snapshot.verifiedHeadSha !== snapshot.headSha && isMergeReadyIgnoringHeadVerification(snapshot);
 }
 
-function headMovedNotice(prNumber: number, previousHeadSha: string, nextHeadSha: string, phase: HeadMovePhase): string {
-	const from = previousHeadSha.slice(0, 8);
-	const to = nextHeadSha.slice(0, 8);
-	switch (phase) {
-		case "verification":
-			return `PR #${prNumber} advanced from ${from} to ${to} during verification; rechecking.`;
-		case "readiness":
-			return `PR #${prNumber} advanced from ${from} to ${to} while readiness was settling; verifying the new head.`;
-		case "mergeability":
-			return `PR #${prNumber} advanced from ${from} to ${to} while mergeability was settling; verifying the new head.`;
-		default: {
-			const _exhaustive: never = phase;
-			return _exhaustive;
-		}
-	}
-}
-
 async function reconcileSnapshot(
 	observation: PrObservation,
-	input: {
-		snapshot: PRState;
-		persisted: AutopilotPersistedState;
-		reconcilePendingReplies: boolean;
-	},
-): Promise<AutopilotPersistedState> {
+	snapshot: PRState,
+	reconcilePendingReplies: boolean,
+): Promise<void> {
+	let persisted = observation.persistedState.current();
 	const retries = reconcileLegacyFlakeRetries({
-		checks: input.snapshot.checks,
-		headSha: input.snapshot.headSha,
-		legacyRetryKeys: input.persisted.flakeRetried,
-		runRetries: input.persisted.flakeRunRetries,
+		checks: snapshot.checks,
+		headSha: snapshot.headSha,
+		legacyRetryKeys: persisted.flakeRetried,
+		runRetries: persisted.flakeRunRetries,
 	});
-	let persisted = input.persisted;
 	if (retries.changed) {
 		persisted = {
 			...persisted,
 			flakeRetried: retries.legacyRetryKeys,
 			flakeRunRetries: retries.runRetries,
 		};
-		if (!observation.persistWritesBlocked) await observation.save(persisted);
+		await observation.persistedState.apply(persisted);
 	}
-	if (observation.persistWritesBlocked || !input.reconcilePendingReplies) return persisted;
-	const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, input.snapshot.threads);
-	if (reconciled.length === persisted.legacyPendingReplyIds.length) return persisted;
-	persisted = { ...persisted, legacyPendingReplyIds: reconciled };
-	await observation.save(persisted);
-	return persisted;
+	if (observation.persistWritesBlocked || !reconcilePendingReplies) return;
+	const reconciled = reconcileLegacyPendingReplyIds(persisted.legacyPendingReplyIds, snapshot.threads);
+	if (reconciled.length === persisted.legacyPendingReplyIds.length) return;
+	await observation.persistedState.apply({ ...persisted, legacyPendingReplyIds: reconciled });
 }
 
 async function observe(
 	observation: PrObservation,
-	input: {
-		verifiedHeadSha: string | null;
-		persisted: AutopilotPersistedState;
-		reconcilePendingReplies: boolean;
-	},
+	verifiedHeadSha: string | null,
+	reconcilePendingReplies: boolean,
 ): Promise<Observed> {
-	const fetched = await observation.read(input.verifiedHeadSha, input.persisted);
-	if (observation.signal.aborted) return abortedObserved(input.persisted);
-	if (isString(fetched)) return failedObserved(fetched, input.persisted);
-	return {
-		kind: "ok",
-		snapshot: fetched,
-		persisted: await reconcileSnapshot(observation, {
-			snapshot: fetched,
-			persisted: input.persisted,
-			reconcilePendingReplies: input.reconcilePendingReplies,
-		}),
-	};
+	const fetched = await observation.read(verifiedHeadSha);
+	if (observation.signal.aborted) return { kind: "aborted" };
+	if (isString(fetched)) return { kind: "failed", reason: fetched };
+	await reconcileSnapshot(observation, fetched, reconcilePendingReplies);
+	return { kind: "ok", snapshot: fetched };
 }
 
-export function createPrObservation(options: Omit<PrObservation, "mergeabilityPolls">): PrObservation {
-	return { ...options, mergeabilityPolls: 0 };
-}
-
-export async function checkObservation(
-	observation: PrObservation,
-	persisted: AutopilotPersistedState,
-): Promise<CheckResult> {
-	const first = await observe(observation, {
-		verifiedHeadSha: null,
-		persisted,
-		reconcilePendingReplies: true,
-	});
-	if (first.kind === "aborted") return { kind: "aborted", persisted: first.persisted };
+async function checkObservation(observation: PrObservation): Promise<CheckResult> {
+	const first = await observe(observation, null, true);
+	if (first.kind === "aborted") return { kind: "aborted", snapshot: null };
 	if (first.kind === "failed") {
-		return { kind: "failed", reason: first.reason, persisted: first.persisted, announce: true };
+		observation.report({ kind: "error", reason: first.reason });
+		return { kind: "failed", reason: first.reason, snapshot: null };
 	}
-	if (observation.signal.aborted) {
-		return { kind: "aborted", snapshot: first.snapshot, persisted: first.persisted };
-	}
+	if (observation.signal.aborted) return { kind: "aborted", snapshot: first.snapshot };
 	const firstTerminalReason = terminalPrReason(first.snapshot);
-	const second = await observe(observation, {
-		verifiedHeadSha: first.snapshot.headSha,
-		persisted: first.persisted,
-		reconcilePendingReplies: false,
-	});
-	if (second.kind === "aborted") {
-		return { kind: "aborted", snapshot: first.snapshot, persisted: second.persisted };
-	}
-	if (second.kind === "failed") {
-		return {
-			kind: "failed",
-			reason: second.reason,
-			snapshot: first.snapshot,
-			persisted: second.persisted,
-			announce: false,
-		};
-	}
-	const snapshot = second.snapshot;
-	const terminalReason = firstTerminalReason ?? terminalPrReason(snapshot);
+	const second = await observe(observation, first.snapshot.headSha, false);
+	if (second.kind === "aborted") return { kind: "aborted", snapshot: first.snapshot };
+	if (second.kind === "failed") return { kind: "failed", reason: second.reason, snapshot: first.snapshot };
+	const terminalReason = firstTerminalReason ?? terminalPrReason(second.snapshot);
 	if (terminalReason) {
-		return { kind: "incomplete", snapshot, reason: terminalReason, persisted: second.persisted };
+		observation.report({ kind: "not-ready", reason: terminalReason });
+		return { kind: "incomplete", snapshot: second.snapshot, reason: terminalReason };
 	}
-	if (isMergeReady(snapshot)) {
-		return { kind: "merge-ready", snapshot, persisted: second.persisted };
+	if (isMergeReady(second.snapshot)) {
+		observation.report({ kind: "merge-ready", phase: "check" });
+		return { kind: "merge-ready", snapshot: second.snapshot };
 	}
-	return {
-		kind: "incomplete",
-		snapshot,
-		reason: describeBlockers(snapshot),
-		persisted: second.persisted,
-	};
+	const reason = describeBlockers(second.snapshot);
+	observation.report({ kind: "not-ready", reason });
+	return { kind: "incomplete", snapshot: second.snapshot, reason };
 }
 
-export function refreshObservation(observation: PrObservation, persisted: AutopilotPersistedState): Promise<Observed> {
-	return observe(observation, {
-		verifiedHeadSha: null,
-		persisted,
-		reconcilePendingReplies: true,
-	});
-}
-
-export async function settleObservation(
-	observation: PrObservation,
-	snapshot: PRState,
-	persisted: AutopilotPersistedState,
-	settleOptions: { poll: boolean },
-): Promise<SettleResult> {
-	const settled = await observe(observation, {
-		verifiedHeadSha: snapshot.headSha,
-		persisted,
-		reconcilePendingReplies: false,
-	});
-	if (settled.kind === "aborted") return { kind: "aborted", persisted: settled.persisted };
+async function settleObservation(observation: PrObservation, snapshot: PRState, poll: boolean): Promise<SettleResult> {
+	const settled = await observe(observation, snapshot.headSha, false);
+	if (settled.kind === "aborted") return { kind: "aborted", snapshot };
 	if (settled.kind === "failed") {
-		observation.notify(settled.reason, "error");
-		return { kind: "failed", reason: settled.reason, persisted: settled.persisted };
+		observation.report({ kind: "error", reason: settled.reason });
+		return { kind: "failed", reason: settled.reason, snapshot };
 	}
-	if (observation.signal.aborted) {
-		return { kind: "aborted", snapshot: settled.snapshot, persisted: settled.persisted };
-	}
+	if (observation.signal.aborted) return { kind: "aborted", snapshot: settled.snapshot };
 	const settledTerminalReason = terminalPrReason(settled.snapshot);
 	if (settledTerminalReason) {
-		return {
-			kind: "incomplete",
-			snapshot: settled.snapshot,
-			reason: settledTerminalReason,
-			persisted: settled.persisted,
-		};
+		return { kind: "incomplete", snapshot: settled.snapshot, reason: settledTerminalReason };
 	}
 	const headMoved = settled.snapshot.headSha !== snapshot.headSha;
 	if (!headMoved && isMergeReady(settled.snapshot)) {
-		observation.notify(`PR #${observation.prNumber} looks merge-ready after a fresh status read. Not merging.`, "info");
-		return { kind: "merge-ready", snapshot: settled.snapshot, persisted: settled.persisted };
+		observation.report({ kind: "merge-ready", phase: "fresh-status" });
+		return { kind: "merge-ready", snapshot: settled.snapshot };
 	}
 	if (!isMergeabilityPending(settled.snapshot) && !onlyHeadVerificationPending(settled.snapshot)) {
 		if (headMoved) {
-			observation.notify(
-				headMovedNotice(observation.prNumber, snapshot.headSha, settled.snapshot.headSha, "verification"),
-				"warning",
-			);
+			observation.report({
+				kind: "head-moved",
+				previousHeadSha: snapshot.headSha,
+				nextHeadSha: settled.snapshot.headSha,
+				phase: "verification",
+			});
 		} else {
-			observation.notify(
-				`PR #${observation.prNumber} looked ready, then the settle re-read showed: ${describeBlockers(settled.snapshot)}.`,
-				"warning",
-			);
+			observation.report({ kind: "readiness-regressed", reason: describeBlockers(settled.snapshot) });
 		}
-		return { kind: "continue", snapshot: settled.snapshot, persisted: settled.persisted };
+		return { kind: "continue", snapshot: settled.snapshot };
 	}
 	if (headMoved) {
-		observation.notify(
-			headMovedNotice(observation.prNumber, snapshot.headSha, settled.snapshot.headSha, "readiness"),
-			"warning",
-		);
+		observation.report({
+			kind: "head-moved",
+			previousHeadSha: snapshot.headSha,
+			nextHeadSha: settled.snapshot.headSha,
+			phase: "readiness",
+		});
 	}
-	if (!settleOptions.poll) {
+	if (!poll) {
 		const reason = describeBlockers(settled.snapshot);
-		observation.notify(`PR #${observation.prNumber} is not ready: ${reason}.`, "warning");
-		return { kind: "incomplete", snapshot: settled.snapshot, reason, persisted: settled.persisted };
+		observation.report({ kind: "not-ready", reason });
+		return { kind: "incomplete", snapshot: settled.snapshot, reason };
 	}
 
 	let previousHeadSha = settled.snapshot.headSha;
-	let latest = settled;
+	let latest = settled.snapshot;
 	while (observation.mergeabilityPolls < MERGEABILITY_POLL_LIMIT) {
 		try {
 			await observation.sleep(MERGEABILITY_POLL_DELAY_MS, observation.signal);
 		} catch (error) {
-			if (observation.signal.aborted) {
-				return { kind: "aborted", snapshot: latest.snapshot, persisted: latest.persisted };
-			}
+			if (observation.signal.aborted) return { kind: "aborted", snapshot: latest };
 			const reason = `Could not wait for mergeability: ${error instanceof Error ? error.message : String(error)}`;
-			observation.notify(reason, "error");
-			return { kind: "failed", reason, snapshot: latest.snapshot, persisted: latest.persisted };
+			observation.report({ kind: "error", reason });
+			return { kind: "failed", reason, snapshot: latest };
 		}
-		if (observation.signal.aborted) {
-			return { kind: "aborted", snapshot: latest.snapshot, persisted: latest.persisted };
-		}
+		if (observation.signal.aborted) return { kind: "aborted", snapshot: latest };
 		observation.mergeabilityPolls++;
-		const next = await observe(observation, {
-			verifiedHeadSha: previousHeadSha,
-			persisted: latest.persisted,
-			reconcilePendingReplies: false,
-		});
-		if (next.kind === "aborted") {
-			return { kind: "aborted", snapshot: latest.snapshot, persisted: next.persisted };
-		}
+		const next = await observe(observation, previousHeadSha, false);
+		if (next.kind === "aborted") return { kind: "aborted", snapshot: latest };
 		if (next.kind === "failed") {
-			observation.notify(next.reason, "error");
-			return { kind: "failed", reason: next.reason, snapshot: latest.snapshot, persisted: next.persisted };
+			observation.report({ kind: "error", reason: next.reason });
+			return { kind: "failed", reason: next.reason, snapshot: latest };
 		}
-		if (observation.signal.aborted) {
-			return { kind: "aborted", snapshot: next.snapshot, persisted: next.persisted };
-		}
+		if (observation.signal.aborted) return { kind: "aborted", snapshot: next.snapshot };
 		const polledTerminalReason = terminalPrReason(next.snapshot);
 		if (polledTerminalReason) {
-			observation.notify(`PR #${observation.prNumber} is not ready: ${polledTerminalReason}.`, "warning");
-			return {
-				kind: "incomplete",
-				snapshot: next.snapshot,
-				reason: polledTerminalReason,
-				persisted: next.persisted,
-			};
+			observation.report({ kind: "not-ready", reason: polledTerminalReason });
+			return { kind: "incomplete", snapshot: next.snapshot, reason: polledTerminalReason };
 		}
 		if (next.snapshot.headSha !== previousHeadSha) {
-			observation.notify(
-				headMovedNotice(observation.prNumber, previousHeadSha, next.snapshot.headSha, "mergeability"),
-				"warning",
-			);
+			observation.report({
+				kind: "head-moved",
+				previousHeadSha,
+				nextHeadSha: next.snapshot.headSha,
+				phase: "mergeability",
+			});
 		}
 		if (isMergeReady(next.snapshot)) {
-			observation.notify(
-				`PR #${observation.prNumber} looks merge-ready after mergeability settled. Not merging.`,
-				"info",
-			);
-			return { kind: "merge-ready", snapshot: next.snapshot, persisted: next.persisted };
+			observation.report({ kind: "merge-ready", phase: "mergeability" });
+			return { kind: "merge-ready", snapshot: next.snapshot };
 		}
 		if (!isMergeabilityPending(next.snapshot) && !onlyHeadVerificationPending(next.snapshot)) {
-			observation.notify(
-				`PR #${observation.prNumber} changed while mergeability was settling: ${describeBlockers(next.snapshot)}.`,
-				"warning",
-			);
-			return { kind: "continue", snapshot: next.snapshot, persisted: next.persisted };
+			observation.report({ kind: "mergeability-regressed", reason: describeBlockers(next.snapshot) });
+			return { kind: "continue", snapshot: next.snapshot };
 		}
 		previousHeadSha = next.snapshot.headSha;
-		latest = next;
+		latest = next.snapshot;
 	}
 
 	const reason = `mergeability pending after ${MERGEABILITY_POLL_LIMIT} additional observations`;
-	observation.notify(`PR #${observation.prNumber} is not ready: ${reason}.`, "warning");
-	return { kind: "incomplete", snapshot: latest.snapshot, reason, persisted: latest.persisted };
+	observation.report({ kind: "not-ready", reason });
+	return { kind: "incomplete", snapshot: latest, reason };
+}
+
+export function createPrObservation(options: PrObservationOptions): PrObservationSession {
+	const observation: PrObservation = { ...options, mergeabilityPolls: 0 };
+	return {
+		check: () => checkObservation(observation),
+		refresh: () => observe(observation, null, true),
+		settle: (snapshot, poll) => settleObservation(observation, snapshot, poll),
+	};
 }
