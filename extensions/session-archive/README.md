@@ -218,5 +218,6 @@ Structure:
 - `reconcile.ts` — startup pending-operation recovery and explicit integrity checks
 - `rebuild.ts` — additive JSONL artifact scanning, classification, and confirmed index rebuilds
 - `sessions-command.ts` — testable unified-browser orchestration and exact-selection integrity gating
+- `history-page.ts` — normalized history entry text, chunk selection, and continuation
 - `tool-output.ts` — UTF-8-safe bounded output chunking
 - `*.test.ts` — Node test files beside the modules they cover

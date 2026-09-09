@@ -3,10 +3,10 @@ import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works
 import { type BoundaryValue, isString } from "../shared/validation.ts";
 import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
 import type { BulkArchiveOutcome } from "./archive-ops.ts";
+import { formatHistoryEntries, historyPageNextLabel, selectHistoryPage } from "./history-page.ts";
 import { buildSessionChoices } from "./session-choices.ts";
 import { selectSessionChoices } from "./session-picker.ts";
 import { createSessionsCommand } from "./sessions-command.ts";
-import { splitUtf8Chunks } from "./tool-output.ts";
 
 type Notify = (message: string, level: "info" | "warning" | "error") => void;
 export type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
@@ -245,34 +245,32 @@ export function createArchiveTools(deps: {
 							session.archive_path!,
 							entries.map((e) => ({ offset: e.raw_offset, length: e.raw_length })),
 						).join("\n")
-					: entries
-							.map((e) =>
-								[
-									`#${e.ordinal} [${e.entry_type}${e.role ? `/${e.role}` : ""}] ${e.timestamp} (id ${e.entry_id}, parent ${e.parent_id ?? "none"})`,
-									e.text_content ?? "",
-								]
-									.filter(Boolean)
-									.join("\n"),
-							)
-							.join("\n\n");
-			const chunks = splitUtf8Chunks(body, READ_BODY_CHUNK_BYTES);
-			const chunk = params.chunk ?? 0;
-			if (chunk >= chunks.length) {
-				throw new Error(`Chunk ${chunk} is out of range; this page has ${chunks.length} chunk(s).`);
-			}
-			const range =
-				entries.length === 0 ? "no entries" : `entries ${offset + 1}–${offset + entries.length} of ${total}`;
-			const next =
-				chunk + 1 < chunks.length
-					? `continue with the same offset/limit and chunk ${chunk + 1}`
-					: offset + entries.length < total
-						? `continue with offset ${offset + entries.length} and chunk 0`
-						: "end of session";
+					: formatHistoryEntries(
+							entries.map((entry) => ({
+								ordinal: entry.ordinal,
+								entryType: entry.entry_type,
+								role: entry.role,
+								timestamp: entry.timestamp,
+								entryId: entry.entry_id,
+								parentId: entry.parent_id,
+								textContent: entry.text_content,
+							})),
+						);
+			const page = selectHistoryPage({
+				body,
+				offset,
+				pageEntries: entries.length,
+				totalEntries: total,
+				chunk: params.chunk ?? 0,
+				maxBytes: READ_BODY_CHUNK_BYTES,
+			});
+			if (!page.ok) throw new Error(page.reason);
+			const next = historyPageNextLabel(page.next, { end: "end of session" });
 			const rawHeader =
 				`Session ${session.session_id} (${session.state}) — ${session.name ?? "(unnamed)"} — ${session.cwd}\n` +
-				`${range} — chunk ${chunk + 1} of ${chunks.length} — ${next}`;
+				`${page.range} — chunk ${page.chunk + 1} of ${page.chunks} — ${next}`;
 			const header = truncateHead(rawHeader, { maxBytes: 4096, maxLines: 10 }).content;
-			return { content: [{ type: "text" as const, text: `${header}\n\n${chunks[chunk]}` }], details: {} };
+			return { content: [{ type: "text" as const, text: `${header}\n\n${page.body}` }], details: {} };
 		} finally {
 			db.close();
 		}
