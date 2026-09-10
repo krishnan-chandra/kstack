@@ -1,6 +1,5 @@
 /** GitHub-native stack preflight and publication orchestration. */
 
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { commandDiagnostic, type ExecFn, type ExecFnResult, runCommand } from "../shared/git-exec.ts";
 import {
@@ -19,6 +18,7 @@ import {
 	verifyStackManifestGitFacts,
 } from "../shared/stack/manifest.ts";
 import type { FailedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
+import { planIdFor } from "../shared/stack/plan-id.ts";
 import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
@@ -191,10 +191,15 @@ export async function planGitHubPublication(input: {
 	const facts = {
 		version: 1,
 		repositoryRoot: input.stack.repositoryRoot,
-		repository: resolved.remote.repository,
+		repository: { owner: resolved.remote.repository.owner, repo: resolved.remote.repository.repo },
 		remote: input.remote,
 		defaultBranch,
-		manifest: input.stack.manifest,
+		manifest: {
+			schemaVersion: input.stack.manifest.schemaVersion,
+			trunkRef: input.stack.manifest.trunkRef,
+			trunkSha: input.stack.manifest.trunkSha,
+			slices: input.stack.manifest.slices.map((slice) => ({ ...slice })),
+		},
 		slices: slices.map((slice) => ({
 			branch: slice.branch,
 			remoteSha: slice.remoteSha ?? null,
@@ -205,7 +210,7 @@ export async function planGitHubPublication(input: {
 		})),
 		actions,
 	};
-	const planId = createHash("sha256").update(JSON.stringify(facts)).digest("hex");
+	const planId = planIdFor(1, facts);
 	const preview = [
 		`GitHub stack publication ${planId.slice(0, 16)}`,
 		...slices.map(
@@ -476,7 +481,11 @@ async function applyPublication(
 }
 
 function blocked(message: string, planId?: string): StackPublishOutcome {
-	return { status: "blocked", blockers: [{ code: "github-publish", message }], ...(planId ? { planId } : undefined) };
+	return {
+		status: "blocked",
+		blockers: [{ code: "provider-contract", message }],
+		...(planId ? { planId } : undefined),
+	};
 }
 
 function failedAction(action: PublicationAction, error: BoundaryValue): FailedPublicationAction {

@@ -1,12 +1,12 @@
 import { type BoundaryValue, isString } from "../shared/validation.ts";
 /** Verified, parent-owned native Graphite stack landing. */
 
-import { createHash } from "node:crypto";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequest, type MergeMethod, waitForMerge } from "../shared/github.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
+import { planIdFor } from "../shared/stack/plan-id.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { type GraphiteOpenPullRequest, queryOpenPullRequests } from "./pull-requests.ts";
 
@@ -41,7 +41,7 @@ export interface GraphiteLandingDeps {
 function blocked(message: string): StackLandOutcome {
 	return {
 		status: "blocked",
-		blockers: [{ code: "graphite-land", message }],
+		blockers: [{ code: "provider-contract", message }],
 	};
 }
 
@@ -188,7 +188,7 @@ async function inspectPlan(
 		headSha: pr.headSha,
 		draft: pr.draft,
 	}));
-	const planId = createHash("sha256").update(JSON.stringify({ repositoryRoot, trunkRef, facts })).digest("hex");
+	const planId = planIdFor(1, { repositoryRoot, trunkRef, facts });
 	const preview = [
 		`Graphite stack landing ${planId.slice(0, 16)}`,
 		...prefix.map((pr) => `- PR #${pr.number}: ${pr.ref} -> ${pr.baseRef} @ ${pr.headSha.slice(0, 12)}`),

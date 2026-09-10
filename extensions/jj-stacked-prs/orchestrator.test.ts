@@ -820,7 +820,7 @@ describe("publishStack", () => {
 });
 
 describe("publication lock", () => {
-	it("blocks publication when the lock is held and reports the holder pid", async () => {
+	it("reports publication as busy when the lock is held", async () => {
 		const jj = fakeJj();
 		const github = fakeGithub();
 		const result = await publishStackFromTool(
@@ -837,11 +837,8 @@ describe("publication lock", () => {
 				}),
 			},
 		);
-		assert.equal(result.status, "blocked");
-		if (result.status === "blocked") {
-			assert.ok(result.blockers.some((blocker) => blocker.code === "publication-locked"));
-			assert.ok(result.blockers.some((blocker) => /pid 42/.test(blocker.message)));
-		}
+		assert.equal(result.status, "busy");
+		if (result.status === "busy") assert.match(result.message, /pid 42/);
 		// No remote mutation ran
 		assert.deepEqual(jj.calls, []);
 		assert.equal(github.comments.length, 0);

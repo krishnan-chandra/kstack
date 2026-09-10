@@ -1,7 +1,6 @@
-import { type BoundaryValue, isObject, type JsonObject } from "../shared/validation.ts";
 /** Pure snapshot identity and publication-action planning. */
 
-import { createHash } from "node:crypto";
+import { planIdFor } from "../shared/stack/plan-id.ts";
 import { deriveSlices } from "./stack.ts";
 import type {
 	BookmarkTarget,
@@ -176,7 +175,17 @@ function computePlanId(
 			urlFingerprint: snapshot.remote.redactedUrl,
 		},
 		defaultBranch: snapshot.defaultBranch,
-		nativeMembership: snapshot.nativeMembership,
+		nativeMembership:
+			snapshot.nativeMembership.kind === "none"
+				? { kind: snapshot.nativeMembership.kind }
+				: {
+						kind: snapshot.nativeMembership.kind,
+						stackNumber: snapshot.nativeMembership.stackNumber ?? null,
+						prNumbers: snapshot.nativeMembership.prNumbers,
+						...(snapshot.nativeMembership.kind === "diverged"
+							? { message: snapshot.nativeMembership.message }
+							: undefined),
+					},
 		localBookmarks: snapshot.localBookmarks.map((bookmark) => ({
 			name: bookmark.name,
 			commitId: bookmark.commitId,
@@ -205,16 +214,7 @@ function computePlanId(
 			existingPrBase: slice.existingPr?.baseRef ?? null,
 			existingPrDraft: slice.existingPr?.draft ?? null,
 		})),
-		actions,
+		actions: actions.map((action) => ({ ...action })),
 	};
-	return createHash("sha256").update(stableStringify(canonical)).digest("hex");
-}
-
-function stableStringify(value: BoundaryValue): string {
-	if (value === null || !isObject(value)) return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-	const record =
-		/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ value as JsonObject;
-	const keys = Object.keys(record).sort();
-	return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
+	return planIdFor(1, canonical);
 }

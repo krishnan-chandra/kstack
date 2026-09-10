@@ -671,7 +671,7 @@ async function runLandingLoop(input: {
 			input.cwd,
 			input.deps,
 		);
-		if (!fresh.ok) return { status: "blocked", blockers: [{ code: "github-land", message: fresh.error }] };
+		if (!fresh.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: fresh.error }] };
 		const changed = fresh.entries.some((item, index) => {
 			const prior = input.entries[index];
 			return (
@@ -686,7 +686,7 @@ async function runLandingLoop(input: {
 				status: "blocked",
 				blockers: [
 					{
-						code: "github-land",
+						code: "provider-contract",
 						message: "The local or remote stack changed after confirmation; retry from a fresh plan.",
 					},
 				],
@@ -699,7 +699,7 @@ async function runLandingLoop(input: {
 			deps: input.deps,
 		});
 		if (!lockedScope.ok) {
-			return { status: "blocked", blockers: [{ code: "github-land", message: lockedScope.error }] };
+			return { status: "blocked", blockers: [{ code: "provider-contract", message: lockedScope.error }] };
 		}
 		if (
 			(input.confirmedScope === undefined) !== (lockedScope.scope === undefined) ||
@@ -709,7 +709,7 @@ async function runLandingLoop(input: {
 		) {
 			return {
 				status: "blocked",
-				blockers: [{ code: "github-land", message: "The local rebase scope changed after confirmation; retry." }],
+				blockers: [{ code: "provider-contract", message: "The local rebase scope changed after confirmation; retry." }],
 			};
 		}
 		const entries = fresh.entries;
@@ -731,7 +731,7 @@ async function runLandingLoop(input: {
 				});
 				if (!freshScope.ok) {
 					return frontiers.length === 0 && completedMutations.length === 0
-						? { status: "blocked", blockers: [{ code: "github-land", message: freshScope.error }] }
+						? { status: "blocked", blockers: [{ code: "provider-contract", message: freshScope.error }] }
 						: { status: "partial", error: freshScope.error, ...progress() };
 				}
 			}
@@ -827,7 +827,7 @@ async function runLandingLoop(input: {
 }
 
 function stackBlocked(message: string): StackPrefixLandOutcome {
-	return { status: "stack", outcome: { status: "blocked", blockers: [{ code: "github-land", message }] } };
+	return { status: "stack", outcome: { status: "blocked", blockers: [{ code: "provider-contract", message }] } };
 }
 
 function errorMessage(error: BoundaryValue): string {

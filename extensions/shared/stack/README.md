@@ -63,16 +63,14 @@ their own vocabularies. The one remaining conversion is `mapStackOutcome` at
 land's command edge, where a stack land outcome becomes the user-facing
 `LandResult`.
 
-## Open blocker codes
+## Blocker codes
 
-A shared `StackBlocker` is `{ code, message, ref? }`. `code` is a
-provider-defined string. Cross-seam consumers render `message`; they do not
-switch on `code`.
-
-A closed union of codes would force this module to grow every time a provider
-adds a reason, and no consumer across the seam matches codes exhaustively.
-Each provider may keep a closed internal union that is structurally assignable
-to `StackBlocker`, and documents its own codes.
+A shared `StackBlocker` is `{ code, message, ref?, changeId? }`. `code` uses the
+closed `StackBlockerCode` union so every provider reports the same reason for
+the same cross-provider condition. Provider-specific failures use
+`provider-contract`; the message carries the provider-specific diagnostic.
+Cross-seam consumers render `message` and may use stable codes for routing or
+presentation.
 
 ## `ref`, not bookmark or branch
 

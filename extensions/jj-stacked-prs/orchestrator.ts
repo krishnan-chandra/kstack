@@ -216,7 +216,7 @@ async function publishStackWithAuthorization(
 	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
 		return {
 			status: "blocked",
-			blockers: [{ code: "missing-remote", message: "Publication requires interactive TUI/RPC mode." }],
+			blockers: [{ code: "missing-ui", message: "Publication requires interactive TUI/RPC mode." }],
 		};
 	}
 	if (deps.signal?.aborted) return { status: "cancelled" };
@@ -248,13 +248,8 @@ async function publishStackWithAuthorization(
 		}
 		const detail = lockAttempt.holder ? ` (pid ${lockAttempt.holder.pid}, since ${lockAttempt.holder.startedAt})` : "";
 		return {
-			status: "blocked",
-			blockers: [
-				{
-					code: "publication-locked",
-					message: `Another kstack publication is in progress for this repository${detail}. Retry after it finishes.`,
-				},
-			],
+			status: "busy",
+			message: `Another kstack publication is in progress for this repository${detail}. Retry after it finishes.`,
 		};
 	}
 	try {
