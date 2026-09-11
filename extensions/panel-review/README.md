@@ -9,13 +9,14 @@ independent findings into one lead-review verdict.
 /panel-review Add safe bulk session archival without moving the live session
 /panel-review --base main Implement handoff
 /panel-review --base origin/main "Implement handoff and panel review extensions"
+/panel-review --repo /path/to/another-jj-workspace "Review that workspace"
 /panel-review --pr 42
 /panel-review --pr 42 "Review the auth refactor"
 ```
 
-Typing `/panel-review --` in the TUI offers `--base`, `--base=`, `--pr`, and
-`--pr=` as completions; flag values and the free-form review intent are not
-completed. `--base` and `--pr` are mutually exclusive.
+Typing `/panel-review --` in the TUI offers `--base`, `--base=`, `--pr`,
+`--pr=`, `--repo`, and `--repo=` as completions. Flag values and the free-form
+review intent are not completed. `--base` and `--pr` are mutually exclusive.
 
 Every reviewer independently runs the full
 [`thermo-nuclear-code-quality-review`](../../skills/thermo-nuclear-code-quality-review/)
@@ -30,9 +31,14 @@ caller's current `ExtensionCommandContext`. `PanelWorktreeArgs` and
 `PanelPrArgs` expose the two mutually exclusive target shapes. `repositoryPath`
 (`--repo <path>` on the command line) selects another Git worktree or jj
 workspace; the repository is otherwise inferred from the current directory.
-Panel-review claims the request
-synchronously on
-Pi's event bus and exposes a completion promise that resolves a structured
+For a local review in a jj repository with several live workspaces, omitting
+`--repo` opens a workspace selector before panel-review resolves `@`. The
+selector shows each workspace's name, root, change ID, and bookmark or
+description. Pass `--repo` to bypass the selector. PR review does not ask
+because the PR already supplies an immutable target.
+
+Panel-review claims the request synchronously on Pi's event bus and exposes a
+completion promise that resolves a structured
 `PanelReviewOutcome`: `completed` (with the verdict text, synthesis flag, and
 base/head SHAs), `no-changes`, `aborted`, or `failed`. The normal
 cancellation and verdict path still runs; the slash command
@@ -47,7 +53,11 @@ ignores the outcome.
    workspace. Otherwise the path must be inside a Git worktree. Every later Git
    call runs with that store (`--git-dir`), and `gh` receives the `origin`
    repository through `-R`, so PR review and jj review both work from a
-   directory that has no `.git` entry of its own.
+   directory that has no `.git` entry of its own. For a local jj review without
+   `--repo`, `jj-workspaces.ts` lists recorded workspace roots without
+   snapshotting sibling working copies. It drops entries without a live root,
+   asks the user to choose when several live roots remain, and verifies that
+   the selected root still uses the same Git object store.
 2. Resolves the review target:
    - In a jj workspace, snapshots the working copy through jj and pins
      revision `@`. An explicit `--base` is resolved as a jj revision; otherwise
@@ -266,6 +276,8 @@ the `"panel-review"` section:
 | What | Cap |
 | --- | --- |
 | Total bundle | 2 MiB |
+| `jj workspace list` output | 1 MiB / 200 records |
+| jj workspace selector label | 240 display columns |
 | Per untracked text file | 256 KiB |
 | Untracked files included | 200 (overflow disclosed, not named) |
 | Pinned commit snapshot tracked blob payload | 512 MiB |
@@ -303,7 +315,9 @@ Review Limitations.
 
 ## Failure policy
 
-- Config, Git, or intent problems: nothing is launched.
+- Config, Git, workspace discovery, or intent problems: nothing is launched.
+- Cancelling the jj workspace selector stops the run before target resolution
+  or child launch.
 - Reviewer failure: siblings continue; the failure appears in the report.
 - All reviewers failed: no synthesis, concise diagnostics.
 - Synthesis failure: raw bounded reports are preserved and displayed.
@@ -344,8 +358,10 @@ For PR mode, also compare refs and
 and export-subst attributes, binary and executable blobs, and contained,
 escaping, dangling, and cyclic symbolic links in the fixture. For jj mode, test
 both its primary workspace and a secondary `jj workspace add` workspace without
-a `.git` entry. Confirm that reviewers read the pinned `@` snapshot rather than
-later changes in the live workspace.
+a `.git` entry. Confirm that a bare local review asks when both workspace roots
+are live, explicit `--repo` bypasses the selector, and reviewers read the
+selected workspace's pinned `@` snapshot rather than the primary or later
+changes in the live workspace.
 
 `extensions/panel-review/prompts/thermo-nuclear.md` is the canonical lens.
 The explicit skill points to that resource, and panel-review loads it directly

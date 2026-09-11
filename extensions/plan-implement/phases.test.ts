@@ -209,6 +209,23 @@ describe("plan-implement phases", () => {
 		assert.match(notifications.join("\n"), /modified the approved plan/);
 	});
 
+	it("pins an orchestrated panel review to the implementation workspace", async () => {
+		let repositoryPath: string | undefined;
+		let reviewBase: string | undefined;
+		const { fx } = effects({
+			requestPanelReview: async (review) => {
+				repositoryPath = review.repositoryPath;
+				reviewBase = review.base;
+				return { handled: false };
+			},
+		});
+
+		await runApprovedWorkflow(options(), fx);
+
+		assert.equal(repositoryPath, "/repo");
+		assert.equal(reviewBase, "a".repeat(40));
+	});
+
 	it("does not offer review or publish after implementer failure", async () => {
 		let requestedReview = false;
 		const runAgent = async (input: RunAgentOptions): Promise<AgentRunResult> =>

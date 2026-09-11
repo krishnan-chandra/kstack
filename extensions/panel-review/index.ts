@@ -10,9 +10,11 @@ import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import { SessionRunLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
+import { sanitizeDisplayText } from "../shared/terminal-text.ts";
 import { claimPanelReviewRequest, PANEL_REVIEW_REQUEST_EVENT } from "./api.ts";
 import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
+import { discoverJjWorkspaces, formatJjWorkspaceChoice } from "./jj-workspaces.ts";
 import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
 import { locateRepositorySource, type RepositorySource } from "./repository-source.ts";
 import { contextFilesTouchChangedContent } from "./review-context.ts";
@@ -96,11 +98,48 @@ export default function (pi: ExtensionAPI): void {
 		const requestedPath = options.repositoryPath === undefined ? ctx.cwd : resolve(ctx.cwd, options.repositoryPath);
 		let source: RepositorySource;
 		let target: ResolvedReviewTarget;
+		let workspaceName: string | undefined;
 		try {
 			source = locateRepositorySource(requestedPath, exec);
+			if (options.repositoryPath === undefined && options.pr === undefined && source.layout !== "git-worktree") {
+				const workspaces = discoverJjWorkspaces({ currentRoot: source.root });
+				let selectedWorkspace = workspaces[0];
+				if (workspaces.length > 1) {
+					const choices = workspaces.map((workspace, index) => ({
+						workspace,
+						label: formatJjWorkspaceChoice({ workspace, index }),
+					}));
+					const selectedLabel = await ctx.ui.select(
+						"Review which jj workspace?",
+						choices.map((choice) => choice.label),
+					);
+					if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
+					if (selectedLabel === undefined) return { status: "aborted" };
+					const selectedChoice = choices.find((choice) => choice.label === selectedLabel);
+					if (!selectedChoice) throw new Error("panel-review received an invalid jj workspace selection.");
+					selectedWorkspace = selectedChoice.workspace;
+				}
+				workspaceName = selectedWorkspace.name;
+				if (selectedWorkspace.root !== source.root) {
+					const selectedSource = locateRepositorySource(selectedWorkspace.root, exec);
+					if (selectedSource.layout === "git-worktree" || selectedSource.gitDir !== source.gitDir) {
+						throw new Error("The selected jj workspace no longer belongs to the current repository.");
+					}
+					source = selectedSource;
+				}
+			}
 			const resolution = await resolveReviewTarget(source, options);
 			target = resolution.target;
 			for (const warning of resolution.warnings) notify(warning, "warning");
+			if (target.kind === "jj") {
+				const workspace = workspaceName ? `${workspaceName} (${source.root})` : source.root;
+				notify(
+					sanitizeDisplayText(
+						`Reviewing jj workspace ${workspace}: @ ${target.headSha.slice(0, 8)} against ${target.base.ref} (${target.base.mergeBaseSha.slice(0, 8)}).`,
+					),
+					"info",
+				);
+			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			notify(message, "error");
