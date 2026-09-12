@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -10,6 +10,7 @@ import { PANEL_REVIEW_REQUEST_EVENT, requestPanelReview } from "./api.ts";
 import panelReviewPlugin from "./index.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+const hasJj = spawnSync("jj", ["--version"], { stdio: "ignore" }).status === 0;
 
 describe("panel review context wiring", () => {
 	it("checks provenance after assigning the snapshot review root and passes a synthesis recheck", () => {
@@ -18,6 +19,115 @@ describe("panel review context wiring", () => {
 		assert.ok(snapshotAssignment >= 0);
 		assert.ok(provenanceCheck > snapshotAssignment);
 		assert.match(source, /checkContextProvenance,\n\s+waitForIdle/);
+	});
+
+	it("selects one live jj workspace before resolving local @ and lets --repo bypass the selector", {
+		skip: !hasJj,
+	}, async () => {
+		const root = mkdtempSync(join(tmpdir(), "panel-index-workspaces-"));
+		const repo = join(root, "repo");
+		const secondary = join(root, "secondary");
+		const agentDir = join(root, "agent");
+		mkdirSync(repo);
+		mkdirSync(agentDir);
+		const vcsEnv = createVcsTestEnv(root);
+		const run = (cwd: string, command: string, args: string[]) => {
+			const result = spawnSync(command, args, { cwd, env: vcsEnv, encoding: "utf8" });
+			assert.equal(result.status, 0, result.stderr || result.error?.message);
+			return result.stdout.trim();
+		};
+		let requestListener: ((data: BoundaryValue) => void) | undefined;
+		const pi = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			events: {
+				on: (event: string, listener: (data: BoundaryValue) => void) => {
+					if (event === PANEL_REVIEW_REQUEST_EVENT) requestListener = listener;
+				},
+				emit: (event: string, data: BoundaryValue) => {
+					if (event === PANEL_REVIEW_REQUEST_EVENT) requestListener?.(data);
+				},
+			},
+			registerCommand: () => {},
+			registerShortcut: () => {},
+			registerMessageRenderer: () => {},
+			sendMessage: () => {},
+			on: () => {},
+			exec: async () => ({ code: 1, stdout: "", stderr: "not used" }),
+		} as never;
+		const selections: Array<{ title: string; options: string[] }> = [];
+		const notifications: string[] = [];
+		let chooseSecondary = true;
+		const ctx = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
+			cwd: repo,
+			hasUI: true,
+			mode: "tui",
+			sessionManager: { getSessionId: () => "test-session" },
+			waitForIdle: async () => {},
+			modelRegistry: {
+				find: (provider: string, id: string) => ({ provider, id }),
+				hasConfiguredAuth: () => true,
+				getRegisteredProviderIds: () => [],
+				getProviderAuthStatus: () => ({ configured: true }),
+			},
+			scopedModels: [],
+			model: { provider: "anthropic", id: "claude-sonnet-5" },
+			ui: {
+				select: async (title: string, options: string[]) => {
+					selections.push({ title, options });
+					return chooseSecondary ? options[1] : undefined;
+				},
+				editor: async () => "intent",
+				notify: (message: string) => notifications.push(message),
+				setStatus: () => {},
+			},
+		} as never;
+		const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+
+		try {
+			run(repo, "jj", ["git", "init", "--colocate"]);
+			writeFileSync(join(repo, "file.txt"), "base\n");
+			run(repo, "jj", ["describe", "-m", "base"]);
+			run(repo, "jj", ["bookmark", "create", "main", "-r", "@"]);
+			run(repo, "jj", ["new"]);
+			run(repo, "jj", ["workspace", "add", secondary]);
+			run(secondary, "jj", ["describe", "-m", "secondary change"]);
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			panelReviewPlugin(pi);
+
+			const explicit = await requestPanelReview(
+				pi,
+				{
+					intent: "review secondary",
+					repositoryPath: secondary,
+				},
+				ctx,
+			);
+			assert.equal(explicit.handled, true);
+			assert.equal(explicit.outcome?.status, "no-changes");
+			assert.equal(selections.length, 0);
+
+			const selected = await requestPanelReview(pi, { intent: "review local changes" }, ctx);
+			assert.equal(selected.handled, true);
+			assert.equal(selected.outcome?.status, "no-changes");
+			assert.equal(selections.length, 1);
+			assert.equal(selections[0]?.title, "Review which jj workspace?");
+			assert.equal(selections[0]?.options.length, 2);
+			assert.match(selections[0]?.options[0] ?? "", /default \(current\)/);
+			assert.match(selections[0]?.options[1] ?? "", /secondary change/);
+			assert.ok(
+				notifications.some((message) => message.includes(`secondary (${realpathSync(secondary)})`)),
+				notifications.join("\n"),
+			);
+
+			chooseSecondary = false;
+			const cancelled = await requestPanelReview(pi, { intent: "cancel this review" }, ctx);
+			assert.equal(cancelled.handled, true);
+			assert.equal(cancelled.outcome?.status, "aborted");
+			assert.equal(selections.length, 2);
+		} finally {
+			if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("ensures a changed pinned scope reaches review setup instead of taking the no-changes return", async () => {

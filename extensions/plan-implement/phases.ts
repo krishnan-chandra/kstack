@@ -703,15 +703,19 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 				else
 					reviewOptions =
 						mode === "stack" && trunkSha
-							? buildStackPanelReviewOptions(
-									task,
-									trunkSha,
-									outcome.planner.output,
-									outcome.implementer.executionLedger,
-								)
+							? {
+									...buildStackPanelReviewOptions(
+										task,
+										trunkSha,
+										outcome.planner.output,
+										outcome.implementer.executionLedger,
+									),
+									repositoryPath: state.workflowCwd,
+								}
 							: {
 									...buildPanelReviewOptions(task, outcome.planner.output, outcome.implementer.executionLedger),
-									...(worktreePlan ? { base: worktreePlan.baseSha, repositoryPath: state.workflowCwd } : undefined),
+									repositoryPath: state.workflowCwd,
+									...(worktreePlan ? { base: worktreePlan.baseSha } : undefined),
 								};
 			}
 		} finally {
