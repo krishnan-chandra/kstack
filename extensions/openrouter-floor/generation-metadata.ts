@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { AuthResult } from "@earendil-works/pi-ai";
 import { isRecord } from "../shared/narrow.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
@@ -23,19 +24,21 @@ interface MetadataRequestInit {
 export type MetadataFetch = (url: string, init: MetadataRequestInit) => Promise<MetadataResponse>;
 export type AuthResolver = () => Promise<AuthResult | undefined>;
 
-export interface MetadataLookupOptions {
+interface MetadataLookupOptions {
 	fetch?: MetadataFetch;
 	timeoutMs?: number;
 	maxAttempts?: number;
+	initialDelayMs?: number;
 	retryDelayMs?: number;
 	signal?: AbortSignal;
-	sleep?: (milliseconds: number) => Promise<void>;
+	sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 	onDiagnostic?: (diagnostic: string) => void;
 }
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_TIMEOUT_MS = 1_500;
 const DEFAULT_MAX_ATTEMPTS = 2;
+const DEFAULT_INITIAL_DELAY_MS = 0;
 const DEFAULT_RETRY_DELAY_MS = 100;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
@@ -59,8 +62,13 @@ function diagnostic(onDiagnostic: (diagnostic: string) => void, message: string)
 	}
 }
 
-function sleepFor(milliseconds: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, milliseconds));
+async function sleepFor(milliseconds: number, signal: AbortSignal): Promise<void> {
+	if (milliseconds <= 0 || signal.aborted) return;
+	try {
+		await delay(milliseconds, undefined, { signal, ref: false });
+	} catch (error) {
+		if (!signal.aborted) throw error;
+	}
 }
 
 function hasAuthorizationHeader(headers: Readonly<Record<string, string>>): boolean {
@@ -127,7 +135,9 @@ async function responseTier(response: MetadataResponse): Promise<MetadataTierRes
 }
 
 function isRetryableStatus(status: number): boolean {
-	return status === 408 || status === 429 || status >= 500;
+	// OpenRouter's generation endpoint is eventually consistent and returns 404
+	// until metadata for a completed stream has propagated.
+	return status === 404 || status === 408 || status === 429 || status >= 500;
 }
 
 export async function lookupGenerationTier(
@@ -136,52 +146,59 @@ export async function lookupGenerationTier(
 	options: MetadataLookupOptions = {},
 ): Promise<MetadataTierResult> {
 	const onDiagnostic = options.onDiagnostic ?? (() => {});
-	let auth: AuthResult | undefined;
-	try {
-		auth = await authResolver();
-	} catch {
-		diagnostic(onDiagnostic, "generation lookup failed: auth resolution");
-		return { kind: "unknown", reason: "lookup-failed" };
-	}
-	if (auth === undefined) return { kind: "unknown", reason: "lookup-failed" };
-	const headers = requestHeaders(auth);
-	const url = generationUrl(auth, responseId);
-	if (headers === undefined || url === undefined) {
-		diagnostic(onDiagnostic, "generation lookup failed: incomplete auth or origin");
-		return { kind: "unknown", reason: "lookup-failed" };
-	}
-
 	const fetcher = options.fetch ?? defaultFetch;
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+	const initialDelayMs = options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
 	const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
 	const sleep = options.sleep ?? sleepFor;
-	const controller = new AbortController();
-	const abortFromParent = () => controller.abort();
-	options.signal?.addEventListener("abort", abortFromParent, { once: true });
-	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	const deadlineController = new AbortController();
+	const timeout = setTimeout(() => deadlineController.abort(), timeoutMs);
+	timeout.unref();
+	const signal =
+		options.signal === undefined
+			? deadlineController.signal
+			: AbortSignal.any([options.signal, deadlineController.signal]);
 
 	try {
+		if (initialDelayMs > 0) await sleep(initialDelayMs, signal);
+		if (signal.aborted) return { kind: "unknown", reason: "lookup-failed" };
+
+		let auth: AuthResult | undefined;
+		try {
+			auth = await authResolver();
+		} catch {
+			diagnostic(onDiagnostic, "generation lookup failed: auth resolution");
+			return { kind: "unknown", reason: "lookup-failed" };
+		}
+		if (signal.aborted) return { kind: "unknown", reason: "lookup-failed" };
+		if (auth === undefined) return { kind: "unknown", reason: "lookup-failed" };
+		const headers = requestHeaders(auth);
+		const url = generationUrl(auth, responseId);
+		if (headers === undefined || url === undefined) {
+			diagnostic(onDiagnostic, "generation lookup failed: incomplete auth or origin");
+			return { kind: "unknown", reason: "lookup-failed" };
+		}
+
 		for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-			if (controller.signal.aborted) return { kind: "unknown", reason: "lookup-failed" };
+			if (signal.aborted) return { kind: "unknown", reason: "lookup-failed" };
 			try {
-				const response = await fetcher(url, { headers, redirect: "error", signal: controller.signal });
+				const response = await fetcher(url, { headers, redirect: "error", signal });
 				if (response.ok) return await responseTier(response);
 				if (!isRetryableStatus(response.status) || attempt === maxAttempts) {
 					diagnostic(onDiagnostic, `generation lookup failed: HTTP ${response.status}`);
 					return { kind: "unknown", reason: "lookup-failed" };
 				}
 			} catch {
-				if (controller.signal.aborted || attempt === maxAttempts) {
+				if (signal.aborted || attempt === maxAttempts) {
 					diagnostic(onDiagnostic, "generation lookup failed: request");
 					return { kind: "unknown", reason: "lookup-failed" };
 				}
 			}
-			if (attempt < maxAttempts) await sleep(retryDelayMs);
+			if (attempt < maxAttempts) await sleep(retryDelayMs, signal);
 		}
 		return { kind: "unknown", reason: "lookup-failed" };
 	} finally {
 		clearTimeout(timeout);
-		options.signal?.removeEventListener("abort", abortFromParent);
 	}
 }

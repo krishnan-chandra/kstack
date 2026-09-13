@@ -1,4 +1,4 @@
-import type { FloorScopeLabel, LedgerEvent, ServiceTier, StatsRange } from "./floor-ledger.ts";
+import type { FloorScopeLabel, LedgerEvent, ServiceTier, StatsRange, UnknownReason } from "./floor-ledger.ts";
 
 export type { StatsRange } from "./floor-ledger.ts";
 
@@ -29,6 +29,7 @@ export interface FloorReport {
 		priority: number;
 		unknown: number;
 	}>;
+	unknownReasons: Readonly<Record<UnknownReason, number>>;
 	metadataCoverage: number;
 	flexAmongKnownTiers: number | undefined;
 }
@@ -46,9 +47,7 @@ type GenerationGroup = {
 	events: GenerationEvent[];
 };
 
-type GenerationOutcome = {
-	tier: ServiceTier;
-};
+type GenerationOutcome = { tier: Exclude<ServiceTier, "unknown"> } | { tier: "unknown"; reason: UnknownReason };
 
 function rangeStart(range: StatsRange, now: Date): number {
 	if (range === "process") return Number.NEGATIVE_INFINITY;
@@ -89,10 +88,11 @@ function generationOutcome(
 	const knownTiers = new Set(knownResolutions.map((event) => event.tier));
 	if (knownTiers.size > 1) onDiagnostic("conflicting generation tier resolutions");
 	const known = latestEvent(knownResolutions);
-	if (known !== undefined) return { tier: known.tier };
+	if (known !== undefined && known.tier !== "unknown") return { tier: known.tier };
 	const unknown = latestEvent(resolutions);
-	if (unknown !== undefined) return { tier: "unknown" };
-	return { tier: "unknown" };
+	if (unknown !== undefined) return { tier: "unknown", reason: unknown.reason ?? "lookup-failed" };
+	const observed = latestEvent(events);
+	return { tier: "unknown", reason: observed?.reason ?? "pending" };
 }
 
 function percentage(part: number, total: number): string {
@@ -120,6 +120,13 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 	}
 
 	const tiers = { flex: 0, default: 0, priority: 0, unknown: 0 };
+	const unknownReasons = {
+		pending: 0,
+		"no-response-id": 0,
+		"lookup-failed": 0,
+		"null-or-unrecognized-tier": 0,
+		"invalid-response": 0,
+	} satisfies Record<UnknownReason, number>;
 	const onDiagnostic = (message: string): void => {
 		try {
 			input.onDiagnostic?.(message);
@@ -130,6 +137,7 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 	for (const group of groups.values()) {
 		const outcome = generationOutcome(group.events, onDiagnostic);
 		tiers[outcome.tier] += 1;
+		if (outcome.tier === "unknown") unknownReasons[outcome.reason] += 1;
 	}
 	const completedGenerations = tiers.flex + tiers.default + tiers.priority + tiers.unknown;
 	const known = tiers.flex + tiers.default + tiers.priority;
@@ -139,6 +147,7 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 		rewrites: rewriteIds.size,
 		completedGenerations,
 		tiers,
+		unknownReasons,
 		metadataCoverage: completedGenerations === 0 ? 0 : known / completedGenerations,
 		flexAmongKnownTiers: known === 0 ? undefined : tiers.flex / known,
 	};
@@ -146,6 +155,16 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 
 export function formatFloorReport(report: FloorReport): string {
 	const known = report.tiers.flex + report.tiers.default + report.tiers.priority;
+	const unknownReasonLabels: readonly (readonly [UnknownReason, string])[] = [
+		["pending", "pending"],
+		["no-response-id", "no response ID"],
+		["lookup-failed", "lookup failed"],
+		["null-or-unrecognized-tier", "unrecognized/null tier"],
+		["invalid-response", "invalid response"],
+	];
+	const unknownReasonLines = unknownReasonLabels
+		.filter(([reason]) => report.unknownReasons[reason] > 0)
+		.map(([reason, label]) => `    ${label.padEnd(24)}${report.unknownReasons[reason].toString().padStart(4)}`);
 	const lines = [
 		`OpenRouter floor routing (scope: ${report.scopeLabel}, range: ${report.range})`,
 		"",
@@ -155,6 +174,7 @@ export function formatFloorReport(report: FloorReport): string {
 		`  default                    ${report.tiers.default.toString().padStart(4)}  ${percentage(report.tiers.default, report.completedGenerations)}`,
 		`  priority                   ${report.tiers.priority.toString().padStart(4)}  ${percentage(report.tiers.priority, report.completedGenerations)}`,
 		`  unknown                    ${report.tiers.unknown.toString().padStart(4)}  ${percentage(report.tiers.unknown, report.completedGenerations)}`,
+		...unknownReasonLines,
 		"",
 		`Tier metadata coverage        ${percentage(known, report.completedGenerations)} (${known}/${report.completedGenerations})`,
 		`Flex among known tiers        ${report.flexAmongKnownTiers === undefined ? "n/a" : percentage(report.tiers.flex, known)} (${report.tiers.flex}/${known})`,

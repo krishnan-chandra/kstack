@@ -58,8 +58,10 @@ two separate populations:
 - **Completed generations** counts finalized OpenRouter assistant messages.
   For messages with a `responseId`, the extension queries the authenticated
   OpenRouter `/api/v1/generation?id=...` endpoint and records `flex`,
-  `default`, or `priority`. Missing IDs and failed or unavailable lookups stay
-  in `unknown`.
+  `default`, or `priority`. OpenRouter publishes generation metadata after the
+  stream completes, so the lookup starts after a 15-second delay and retries a
+  still-missing record. Missing IDs and failed or unavailable lookups stay in
+  `unknown`. The report breaks unknown results down by reason.
 
 The command does not claim that a particular rewrite produced a particular
 generation. Pi does not expose a request identity shared by those two events.
@@ -102,16 +104,35 @@ responses, payloads, headers, API keys, raw generation IDs, or provider response
 bodies.
 
 The metadata lookup uses the provider auth resolved by
-`ctx.modelRegistry.getProviderAuth("openrouter")`. It allows at most two
-attempts within a 1.5-second request deadline, does not follow redirects, and
-records lookup failures as `unknown`. A telemetry failure does not change the
-`:floor` request or the provider response.
+`ctx.modelRegistry.getProviderAuth("openrouter")`. It starts 15 seconds after a
+completed message and allows three attempts, five seconds apart, within a
+30-second deadline. HTTP 404 is retryable because OpenRouter returns it while a
+new generation record is still propagating; a record typically becomes
+queryable about eight seconds after the stream ends. The lookup does not follow
+redirects. Failed lookups stay in `unknown`, and telemetry failures do not
+change the `:floor` request or the provider response.
 
-The rewrite handler does not wait for persistence; the append runs on the
-ledger queue and is drained by `flush()` at session shutdown. Completion
-telemetry (`message_end`) and the shutdown flush still await the ledger, so a
-stalled filesystem can delay those lifecycle boundaries. A crash before
-shutdown loses every queued record, not one line.
+`message_end` waits only for the initial ledger append. The network lookup runs
+in the background, so metadata propagation does not delay tools or the next
+model turn. The lookup ignores the agent turn's abort signal: it is a single
+bounded GET, and cancelling it when the user interrupts a turn would discard
+exactly the coverage this extension measures. Session shutdown is the only
+cancellation source. It aborts and drains pending lookups before flushing the
+ledger, so a replacement session never uses a stale model registry. A tier that
+arrives while shutdown is racing is still recorded; an unresolved lookup stays
+`pending`. A short-lived process can exit before its final generations become
+queryable, and a crash can lose records still queued for persistence.
+
+### Pending records are terminal
+
+A `pending` generation is never retried later, and that is a deliberate
+consequence of redaction. The ledger keeps only `hashGenerationId(responseId)`,
+so once the process that saw the raw generation ID is gone, nothing can query
+`/api/v1/generation` for it again. Backfilling pending records at report time
+would require storing raw generation IDs, which the threat model rejects.
+Sessions shorter than the propagation delay therefore report `pending`
+permanently, and that undercount is the intended trade for not persisting
+provider-side identifiers.
 
 Pi's catalog cost still uses the base model rate. The footer and session cost
 can overstate spend when OpenRouter serves a flex endpoint.
@@ -122,5 +143,6 @@ node --test extensions/openrouter-floor/
 ```
 
 The tests cover the rewrite policy, response validation, authenticated metadata
-lookup, retry and failure behavior, redacted persistence, retention and size
-limits, aggregation, and command formatting. They do not call OpenRouter.
+lookup, propagation delay, eventual-consistency retries, background lifetime
+and shutdown cancellation, redacted persistence, retention and size limits, aggregation, and
+command formatting. They do not call OpenRouter.
