@@ -70,6 +70,44 @@ describe("lookupGenerationTier", () => {
 		assert.equal(calls, 2);
 	});
 
+	it("retries a not-found response while generation metadata is still propagating", async () => {
+		let calls = 0;
+		const fetcher: MetadataFetch = async () => {
+			calls += 1;
+			return calls === 1 ? response("not ready", 404) : response('{"data":{"service_tier":"flex"}}');
+		};
+		const result = await lookupGenerationTier("gen-123", async () => auth(), {
+			fetch: fetcher,
+			maxAttempts: 2,
+			retryDelayMs: 0,
+		});
+		assert.deepEqual(result, { kind: "known", tier: "flex" });
+		assert.equal(calls, 2);
+	});
+
+	it("waits for the configured propagation delay before resolving auth", async () => {
+		const events: string[] = [];
+		const result = await lookupGenerationTier(
+			"gen-123",
+			async () => {
+				events.push("auth");
+				return auth();
+			},
+			{
+				fetch: async () => {
+					events.push("fetch");
+					return response('{"data":{"service_tier":"flex"}}');
+				},
+				initialDelayMs: 15_000,
+				sleep: async (milliseconds) => {
+					events.push(`sleep:${milliseconds}`);
+				},
+			},
+		);
+		assert.deepEqual(result, { kind: "known", tier: "flex" });
+		assert.deepEqual(events, ["sleep:15000", "auth", "fetch"]);
+	});
+
 	it("does not make a request without an authenticated header", async () => {
 		let calls = 0;
 		const fetcher: MetadataFetch = async () => {

@@ -12,16 +12,11 @@ export default function openrouterFloor(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => runtime.rewrite(event.payload, ctx.model, ctx.cwd));
 
 	pi.on("message_end", async (event, ctx) => {
-		await runtime.observeCompletion(
-			event.message,
-			() => ctx.modelRegistry.getProviderAuth("openrouter"),
-			ctx.cwd,
-			ctx.signal,
-		);
+		await runtime.observeCompletion(event.message, () => ctx.modelRegistry.getProviderAuth("openrouter"), ctx.cwd);
 	});
 
 	pi.on("session_shutdown", async () => {
-		await runtime.flush();
+		await runtime.shutdown();
 	});
 
 	pi.registerCommand("openrouter-floor-stats", {

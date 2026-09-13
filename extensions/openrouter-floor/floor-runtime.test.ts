@@ -197,6 +197,133 @@ describe("floor runtime", () => {
 		assert.deepEqual(report.tiers, { flex: 1, default: 0, priority: 0, unknown: 1 });
 	});
 
+	it("does not delay completion handling while generation metadata propagates", async () => {
+		const scope = await tempScope();
+		const ledger = createFloorLedger({
+			rootDirectory: join(scope, "ledger-root"),
+			resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
+			processId: "p-runtime-background",
+			now: () => now,
+		});
+		let markLookupStarted: () => void = () => {};
+		const lookupStarted = new Promise<void>((resolve) => {
+			markLookupStarted = resolve;
+		});
+		let releaseLookup: () => void = () => {};
+		const pendingLookup = new Promise<{ kind: "known"; tier: "flex" }>((resolve) => {
+			releaseLookup = () => resolve({ kind: "known", tier: "flex" });
+		});
+		const runtime = createFloorRuntime({
+			ledger,
+			clock: { now: () => now },
+			lookup: async () => {
+				markLookupStarted();
+				return pendingLookup;
+			},
+		});
+
+		let completionSettled = false;
+		const completion = runtime
+			.observeCompletion(
+				{ role: "assistant", provider: "openrouter", stopReason: "stop", responseId: "gen-delayed" },
+				async () => undefined,
+				scope,
+			)
+			.then(() => {
+				completionSettled = true;
+			});
+		await lookupStarted;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const settledBeforeLookup = completionSettled;
+		releaseLookup();
+		await completion;
+
+		assert.equal(settledBeforeLookup, true);
+	});
+
+	it("keeps a background lookup alive until shutdown so a turn abort cannot discard it", async () => {
+		const scope = await tempScope();
+		const ledger = createFloorLedger({
+			rootDirectory: join(scope, "ledger-root"),
+			resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
+			processId: "p-runtime-turn-abort",
+			now: () => now,
+		});
+		let lookupSignal: AbortSignal | undefined;
+		let releaseLookup: () => void = () => {};
+		const pendingLookup = new Promise<{ kind: "known"; tier: "flex" }>((resolve) => {
+			releaseLookup = () => resolve({ kind: "known", tier: "flex" });
+		});
+		const runtime = createFloorRuntime({
+			ledger,
+			clock: { now: () => now },
+			lookup: async (_responseId, _authResolver, options) => {
+				lookupSignal = options.signal;
+				return await pendingLookup;
+			},
+		});
+
+		await runtime.observeCompletion(
+			{ role: "assistant", provider: "openrouter", stopReason: "toolUse", responseId: "gen-turn-abort" },
+			async () => undefined,
+			scope,
+		);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		// The runtime owns the only abort source, so an aborted agent turn cannot
+		// cancel telemetry that has already been handed to the lookup.
+		assert.equal(lookupSignal?.aborted, false);
+		releaseLookup();
+		await runtime.shutdown();
+		const report = await runtime.report({ range: "process", scope });
+
+		assert.equal(lookupSignal?.aborted, true);
+		assert.deepEqual(report.tiers, { flex: 1, default: 0, priority: 0, unknown: 0 });
+	});
+
+	it("aborts pending metadata work during shutdown without recording a failed resolution", async () => {
+		const scope = await tempScope();
+		const ledger = createFloorLedger({
+			rootDirectory: join(scope, "ledger-root"),
+			resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
+			processId: "p-runtime-shutdown",
+			now: () => now,
+		});
+		let markLookupStarted: () => void = () => {};
+		const lookupStarted = new Promise<void>((resolve) => {
+			markLookupStarted = resolve;
+		});
+		let lookupAborted = false;
+		const runtime = createFloorRuntime({
+			ledger,
+			clock: { now: () => now },
+			lookup: async (_responseId, _authResolver, options) => {
+				markLookupStarted();
+				return await new Promise((resolve) => {
+					const finish = (): void => {
+						lookupAborted = true;
+						resolve({ kind: "unknown", reason: "lookup-failed" });
+					};
+					if (options.signal.aborted) finish();
+					else options.signal.addEventListener("abort", finish, { once: true });
+				});
+			},
+		});
+
+		await runtime.observeCompletion(
+			{ role: "assistant", provider: "openrouter", stopReason: "stop", responseId: "gen-shutdown" },
+			async () => undefined,
+			scope,
+		);
+		await lookupStarted;
+		await runtime.shutdown();
+		const report = await runtime.report({ range: "process", scope });
+
+		assert.equal(lookupAborted, true);
+		assert.equal(report.unknownReasons.pending, 1);
+		assert.equal(report.unknownReasons["lookup-failed"], 0);
+	});
+
 	it("keeps an unavailable lookup as visible unknown data", async () => {
 		const scope = await tempScope();
 		const ledger = createFloorLedger({

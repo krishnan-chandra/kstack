@@ -51,6 +51,13 @@ describe("aggregateFloorReport", () => {
 		assert.equal(report.rewrites, 2);
 		assert.equal(report.completedGenerations, 3);
 		assert.deepEqual(report.tiers, { flex: 1, default: 1, priority: 0, unknown: 1 });
+		assert.deepEqual(report.unknownReasons, {
+			pending: 0,
+			"no-response-id": 1,
+			"lookup-failed": 0,
+			"null-or-unrecognized-tier": 0,
+			"invalid-response": 0,
+		});
 		assert.equal(report.metadataCoverage, 2 / 3);
 		assert.equal(report.flexAmongKnownTiers, 1 / 2);
 	});
@@ -105,11 +112,19 @@ describe("stats command helpers", () => {
 			rewrites: 2,
 			completedGenerations: 3,
 			tiers: { flex: 1, default: 1, priority: 0, unknown: 1 },
+			unknownReasons: {
+				pending: 0,
+				"no-response-id": 0,
+				"lookup-failed": 1,
+				"null-or-unrecognized-tier": 0,
+				"invalid-response": 0,
+			},
 			metadataCoverage: 2 / 3,
 			flexAmongKnownTiers: 1 / 2,
 		});
 		assert.match(text, /scope: repository/);
 		assert.match(text, /Floor rewrites observed\s+2/);
+		assert.match(text, /lookup failed\s+1/);
 		assert.match(text, /Unknown includes missing response IDs/);
 		assert.doesNotMatch(text, /generation-id|Authorization|prompt/i);
 	});

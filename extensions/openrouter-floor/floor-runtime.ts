@@ -14,25 +14,21 @@ import {
 	type StatsRange,
 } from "./floor-report.ts";
 import { applyFloor, type CurrentModel } from "./floor-rewrite.ts";
-import {
-	type AuthResolver,
-	lookupGenerationTier,
-	type MetadataLookupOptions,
-	type MetadataTierResult,
-} from "./generation-metadata.ts";
+import { type AuthResolver, lookupGenerationTier, type MetadataTierResult } from "./generation-metadata.ts";
 
 interface CompletedOpenRouterMessage {
 	readonly responseId: string | undefined;
 }
 
+interface TierLookupOptions {
+	signal: AbortSignal;
+	onDiagnostic: (diagnostic: string) => void;
+}
+
 interface FloorRuntimeDependencies {
 	ledger: FloorLedger;
 	clock?: { now(): Date };
-	lookup?: (
-		responseId: string,
-		authResolver: AuthResolver,
-		options: Pick<MetadataLookupOptions, "signal"> & { onDiagnostic?: (diagnostic: string) => void },
-	) => Promise<MetadataTierResult>;
+	lookup?: (responseId: string, authResolver: AuthResolver, options: TierLookupOptions) => Promise<MetadataTierResult>;
 	onDiagnostic?: (diagnostic: string) => void;
 }
 
@@ -42,18 +38,18 @@ interface FloorRuntime {
 		model: CurrentModel | undefined,
 		scope: string,
 	): Promise<ReturnType<typeof applyFloor>>;
-	observeCompletion(
-		message: BoundaryValue,
-		authResolver: AuthResolver,
-		scope: string,
-		signal?: AbortSignal,
-	): Promise<void>;
+	observeCompletion(message: BoundaryValue, authResolver: AuthResolver, scope: string): Promise<void>;
 	report(input: { range: StatsRange; scope: string }): Promise<FloorReport>;
 	flush(): Promise<void>;
+	shutdown(): Promise<void>;
 }
 
 const COMPLETED_STOP_REASONS = new Set(["stop", "length", "toolUse"]);
 const MAX_RESPONSE_ID_LENGTH = 512;
+const METADATA_INITIAL_DELAY_MS = 15_000;
+const METADATA_RETRY_DELAY_MS = 5_000;
+const METADATA_MAX_ATTEMPTS = 3;
+const METADATA_TIMEOUT_MS = 30_000;
 
 function diagnostic(onDiagnostic: (diagnostic: string) => void, message: string): void {
 	try {
@@ -109,7 +105,16 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 	const onDiagnostic = dependencies.onDiagnostic ?? (() => {});
 	const lookup =
 		dependencies.lookup ??
-		((responseId, authResolver, options) => lookupGenerationTier(responseId, authResolver, options));
+		((responseId, authResolver, options) =>
+			lookupGenerationTier(responseId, authResolver, {
+				...options,
+				initialDelayMs: METADATA_INITIAL_DELAY_MS,
+				retryDelayMs: METADATA_RETRY_DELAY_MS,
+				maxAttempts: METADATA_MAX_ATTEMPTS,
+				timeoutMs: METADATA_TIMEOUT_MS,
+			}));
+	const shutdownController = new AbortController();
+	const pendingLookups = new Set<Promise<void>>();
 	let sequence = 0;
 
 	function nextEventId(): string {
@@ -123,6 +128,44 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 		} catch {
 			diagnostic(onDiagnostic, `ledger append failed: ${input.kind}`);
 		}
+	}
+
+	async function flushLedger(): Promise<void> {
+		try {
+			await dependencies.ledger.flush();
+		} catch {
+			diagnostic(onDiagnostic, "ledger flush failed");
+		}
+	}
+
+	function trackLookup(task: Promise<void>): void {
+		pendingLookups.add(task);
+		const untrack = (): void => {
+			pendingLookups.delete(task);
+		};
+		void task.then(untrack, untrack);
+	}
+
+	async function resolveTier(
+		responseId: string,
+		responseIdHash: GenerationKeyHash,
+		eventId: string,
+		authResolver: AuthResolver,
+		scope: string,
+		signal: AbortSignal,
+	): Promise<void> {
+		let result: MetadataTierResult;
+		try {
+			result = await lookup(responseId, authResolver, { signal, onDiagnostic });
+		} catch {
+			result = { kind: "unknown", reason: "lookup-failed" };
+			diagnostic(onDiagnostic, "generation lookup failed: adapter error");
+		}
+		// A known tier is real data even if shutdown raced the response. An unknown
+		// result during abort is indistinguishable from cancellation, so leave the
+		// generation pending instead of recording a failure the lookup never saw.
+		if (signal.aborted && result.kind !== "known") return;
+		await append(scope, tierInput(result, responseIdHash, eventId, clock.now().toISOString()));
 	}
 
 	return {
@@ -140,7 +183,7 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 			return replacement;
 		},
 
-		async observeCompletion(message, authResolver, scope, signal) {
+		async observeCompletion(message, authResolver, scope) {
 			const completion = parseCompletedOpenRouterMessage(message);
 			if (completion === undefined) return;
 			const at = clock.now().toISOString();
@@ -156,16 +199,12 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 				tier: "unknown",
 				reason: responseId === undefined ? "no-response-id" : "pending",
 			});
-			if (responseId === undefined || responseIdHash === undefined) return;
+			if (responseId === undefined || responseIdHash === undefined || shutdownController.signal.aborted) return;
 
-			let result: MetadataTierResult;
-			try {
-				result = await lookup(responseId, authResolver, { signal, onDiagnostic });
-			} catch {
-				result = { kind: "unknown", reason: "lookup-failed" };
-				diagnostic(onDiagnostic, "generation lookup failed: adapter error");
-			}
-			await append(scope, tierInput(result, responseIdHash, eventId, clock.now().toISOString()));
+			// The lookup deliberately ignores the turn abort signal. It is background
+			// telemetry with its own deadline, and cancelling it when the user presses
+			// Esc would discard exactly the coverage this extension exists to measure.
+			trackLookup(resolveTier(responseId, responseIdHash, eventId, authResolver, scope, shutdownController.signal));
 		},
 
 		async report(input) {
@@ -181,12 +220,12 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 			return aggregateFloorReport(readResult.events, aggregateInput);
 		},
 
-		async flush() {
-			try {
-				await dependencies.ledger.flush();
-			} catch {
-				diagnostic(onDiagnostic, "ledger flush failed");
-			}
+		flush: flushLedger,
+
+		async shutdown() {
+			shutdownController.abort();
+			await Promise.allSettled(pendingLookups);
+			await flushLedger();
 		},
 	};
 }
