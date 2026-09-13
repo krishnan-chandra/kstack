@@ -2,7 +2,6 @@
 
 import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { getAgentPaneHost } from "../shared/agent-pane.ts";
@@ -16,7 +15,7 @@ import { getArgumentCompletions, parseArgs } from "./args.ts";
 import { loadConfig, modelCliId } from "./config.ts";
 import { discoverJjWorkspaces, formatJjWorkspaceChoice } from "./jj-workspaces.ts";
 import { materializePrSnapshot, type PrSnapshot } from "./pr-target.ts";
-import { locateRepositorySource, type RepositorySource } from "./repository-source.ts";
+import { locateRepositorySource, type RepositorySource, resolveRepositoryPath } from "./repository-source.ts";
 import { contextFilesTouchChangedContent } from "./review-context.ts";
 import type { ScopeBundle } from "./review-scope.ts";
 import {
@@ -95,7 +94,8 @@ export default function (pi: ExtensionAPI): void {
 		await ctx.waitForIdle();
 		if (!lifecycle.isSessionCurrent(session)) return { status: "aborted" };
 
-		const requestedPath = options.repositoryPath === undefined ? ctx.cwd : resolve(ctx.cwd, options.repositoryPath);
+		const requestedPath =
+			options.repositoryPath === undefined ? ctx.cwd : resolveRepositoryPath(ctx.cwd, options.repositoryPath);
 		let source: RepositorySource;
 		let target: ResolvedReviewTarget;
 		let workspaceName: string | undefined;
