@@ -10,8 +10,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { parseGithubUrl } from "../shared/github.ts";
 import type { GitExec } from "./review-scope.ts";
@@ -73,6 +74,25 @@ function resolveGithubRepository(git: GitExec, root: string): string | undefined
 }
 
 /**
+ * Turn a `--repo` argument into an absolute path. Slash-command arguments never
+ * pass through a shell, so a leading `~` is expanded here; everything else is
+ * resolved against the session cwd.
+ */
+export function resolveRepositoryPath(cwd: string, requested: string, home: string = homedir()): string {
+	if (requested === "~") return home;
+	if (requested.startsWith("~/")) return join(home, requested.slice(2));
+	return resolve(cwd, requested);
+}
+
+function isDirectory(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Resolve the repository at `path`. A jj workspace wins over a plain Git
  * worktree because colocated repositories satisfy both checks and jj owns the
  * working copy there.
@@ -82,6 +102,8 @@ export function locateRepositorySource(
 	exec: ExecFn,
 	commandExec: CommandExec = defaultCommandExec,
 ): RepositorySource {
+	if (!isDirectory(path))
+		throw new Error(`${path} is not a directory. Pass --repo <path> to an existing Git worktree or jj workspace.`);
 	const workspace = tryCommand(commandExec, "jj", ["workspace", "root"], path)?.trim();
 	let root: string;
 	let gitDir: string | undefined;

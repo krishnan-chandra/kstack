@@ -213,6 +213,10 @@ test("a partially aborted panel advances to synthesis with a fresh signal", asyn
 			}
 			assert.equal(input.signal, panelController.signal);
 			assert.match(input.task, /complete independent thermo-nuclear review of the entire bundle/);
+			assert.match(input.task, /review root is your current working directory/);
+			assert.match(input.task, /resolve every repository path relative to it/);
+			assert.match(input.task, /do not access the live source workspace/);
+			assert.ok(!input.task.includes(testScope.repoRoot));
 			assert.match(input.task, /every relevant rubric dimension and the full Approval Bar/);
 			panelController.abort();
 			assert.equal(input.signal.aborted, true);

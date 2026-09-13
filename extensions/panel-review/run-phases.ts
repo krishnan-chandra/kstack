@@ -174,7 +174,7 @@ export async function runReviewPipeline(
 					spec,
 					model: modelCliId(spec),
 					promptFile: reviewerPromptFile,
-					task: `Run a complete independent thermo-nuclear review of the entire bundle at ${scope.path}. Apply every relevant rubric dimension and the full Approval Bar.`,
+					task: `Run a complete independent thermo-nuclear review of the entire bundle at ${scope.path}. The review root is your current working directory; resolve every repository path relative to it, and do not access the live source workspace. Apply every relevant rubric dimension and the full Approval Bar.`,
 					cwd: scope.reviewRoot,
 					noContextFiles: contextFilesDisabled,
 					signal: fx.runSignal,

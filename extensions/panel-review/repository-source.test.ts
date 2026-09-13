@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { createVcsTestEnv } from "../shared/vcs-test-env.ts";
 import { materializePrSnapshot } from "./pr-target.ts";
-import { type CommandExec, gitStoreArgs, locateRepositorySource } from "./repository-source.ts";
+import { type CommandExec, gitStoreArgs, locateRepositorySource, resolveRepositoryPath } from "./repository-source.ts";
 
 interface Call {
 	command: string;
@@ -20,6 +20,7 @@ function fixture() {
 	const real = realpathSync(root);
 	mkdirSync(join(real, "store"), { recursive: true });
 	mkdirSync(join(real, "ws", ".git"), { recursive: true });
+	mkdirSync(join(real, "ws", "sub"));
 	return { root: real, dispose: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -178,13 +179,37 @@ describe("locateRepositorySource", () => {
 	});
 
 	it("rejects paths outside any repository", () => {
-		const commandExec: CommandExec = () => {
-			throw new Error("nothing here");
+		const fx = fixture();
+		try {
+			const commandExec: CommandExec = () => {
+				throw new Error("nothing here");
+			};
+			assert.throws(
+				() => locateRepositorySource(join(fx.root, "ws"), failingExec, commandExec),
+				/not inside a Git worktree or jj workspace/,
+			);
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("reports a missing directory before probing jj or git", () => {
+		const calls: Call[] = [];
+		const commandExec: CommandExec = (command, args, cwd) => {
+			calls.push({ command, args, cwd });
+			throw new Error("should not run");
 		};
-		assert.throws(
-			() => locateRepositorySource("/nowhere", failingExec, commandExec),
-			/not inside a Git worktree or jj workspace/,
-		);
+		assert.throws(() => locateRepositorySource("/nowhere", failingExec, commandExec), /\/nowhere is not a directory/);
+		assert.deepEqual(calls, []);
+	});
+
+	it("resolveRepositoryPath expands ~ and resolves relative paths against the cwd", () => {
+		assert.equal(resolveRepositoryPath("/cwd", "~", "/home/me"), "/home/me");
+		assert.equal(resolveRepositoryPath("/cwd", "~/.pi/jj-workspaces/ws", "/home/me"), "/home/me/.pi/jj-workspaces/ws");
+		assert.equal(resolveRepositoryPath("/cwd", "../ws", "/home/me"), "/ws");
+		assert.equal(resolveRepositoryPath("/cwd", "/abs/ws", "/home/me"), "/abs/ws");
+		// A literal "~user" or "~x" spelling is not a home reference; leave it to the filesystem.
+		assert.equal(resolveRepositoryPath("/cwd", "~other/ws", "/home/me"), "/cwd/~other/ws");
 	});
 
 	it("gitStoreArgs leaves arguments alone without a store", () => {

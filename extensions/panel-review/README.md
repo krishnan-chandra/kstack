@@ -31,6 +31,10 @@ caller's current `ExtensionCommandContext`. `PanelWorktreeArgs` and
 `PanelPrArgs` expose the two mutually exclusive target shapes. `repositoryPath`
 (`--repo <path>` on the command line) selects another Git worktree or jj
 workspace; the repository is otherwise inferred from the current directory.
+Relative `--repo` values resolve against the session cwd and a leading `~`
+expands to the home directory, since slash-command arguments never pass
+through a shell. A path that is not an existing directory is rejected before
+any jj or Git probe runs.
 For a local review in a jj repository with several live workspaces, omitting
 `--repo` opens a workspace selector before panel-review resolves `@`. The
 selector shows each workspace's name, root, change ID, and bookmark or
@@ -100,7 +104,10 @@ ignores the outcome.
    unstaged together), porcelain status, bounded contents of untracked text
    files (`--untracked-files=all`, so new directories are expanded into their
    files; symlinks, binaries, and path escapes skipped), and commit subjects.
-   The diff is never passed on a command line.
+   Reviewer-facing metadata identifies the review root as the child process's
+   current directory and keeps repository paths relative to it; it never exposes
+   the live jj workspace path when the reviewer is running against a pinned
+   snapshot. The diff is never passed on a command line.
 4. Obtains the review intent (from positional arguments or an editor prefilled
    with commit subjects) and launches reviewers immediately without confirmation prompts.
 5. Spawns 2–5 reviewers concurrently. Each is an isolated child process with a retained native session:

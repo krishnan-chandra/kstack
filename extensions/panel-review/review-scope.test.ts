@@ -167,6 +167,10 @@ describe("collectScope", () => {
 			bundleDir = scope.dir;
 			const content = readFileSync(scope.path, "utf8");
 			assert.match(content, /Test intent/);
+			assert.match(content, /Review root: current working directory \(`\.`\)/);
+			assert.match(content, /All repository paths in this bundle are relative to that review root/);
+			assert.match(content, /The live source workspace is not part of the reviewer-visible tree/);
+			assert.ok(!content.includes(root));
 			assert.match(content, /diff --git/);
 			assert.match(content, /export const a = 1/);
 			assert.match(content, /blob\.bin[\s\S]*skipped: binary/);
