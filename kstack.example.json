@@ -2,12 +2,12 @@
   "aliases": [
     {
       "label": "sol",
-      "model": "openai/gpt-5.6-sol",
+      "model": "openai/gpt-6-sol",
       "thinking": "high"
     },
     {
-      "label": "fable",
-      "model": "anthropic/claude-fable-5-1",
+      "label": "opus",
+      "model": "anthropic/claude-opus-5-5",
       "thinking": "high"
     }
   ],
@@ -37,7 +37,7 @@
       }
     ],
     "synthesis": {
-      "model": "openrouter/openai/gpt-5.6-sol",
+      "model": "openai/gpt-6-sol",
       "thinking": "low"
     },
     "timeoutMinutes": 10
@@ -55,7 +55,7 @@
   },
   "plan-adversary": {
     "adversary": {
-      "model": "anthropic/claude-fable-5-1",
+      "model": "anthropic/claude-opus-5-5",
       "thinking": "medium"
     },
     "maxRounds": 3,
@@ -72,7 +72,7 @@
     "runners": [
       {
         "label": "sol",
-        "model": "openai/gpt-5.6-sol",
+        "model": "openai/gpt-6-sol",
         "thinking": "low"
       },
       {
