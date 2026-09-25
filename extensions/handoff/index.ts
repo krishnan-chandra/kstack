@@ -25,7 +25,9 @@ import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { createHandoffHandler, requireHandoffSource } from "./command.ts";
-import { readHandoffHistory, searchHandoffHistory } from "./history-reader.ts";
+import { HANDOFF_HISTORY_TOOLS } from "./history-access.ts";
+import { readHandoffHistory } from "./history-reader.ts";
+import { searchHandoffHistory } from "./history-search.ts";
 import { completeHandoffArgs } from "./model-selection.ts";
 import {
 	bindReplacementSelectionApi,
@@ -58,17 +60,25 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "read_handoff_history",
+		name: HANDOFF_HISTORY_TOOLS.read,
 		label: "Read Handoff History",
 		description:
-			"Read normalized entries from the previous session linked by /handoff. Resolves the active JSONL first " +
-			"and transparently falls back to the read-only archive by exact session ID. Defaults to the latest 50 " +
-			"entries. Output is paginated and chunked. Read-only; accepts no filesystem path.",
-		promptSnippet: "Read relevant entries from the previous session linked by /handoff",
+			"Read the previous session linked by /handoff. The default outline maps the whole session with entry " +
+			"numbers: requests, conclusions, tool activity, edit targets, and errors. view entries pages full " +
+			"entries with tool output clipped to 800 bytes; full removes clipping. Resolves active or archived " +
+			"storage by exact session ID. Read-only; accepts no filesystem path.",
+		promptSnippet: "Outline the previous /handoff session, then expand only the entries you need",
 		promptGuidelines: [
-			"Use read_handoff_history before continuing work in a session created by /handoff; inspect the prior decisions and resume point without rereading unrelated history.",
+			'Use read_handoff_history with no arguments first in a session created by /handoff; expand only the entries you need with view: "entries" instead of paging through the whole history.',
 		],
 		parameters: Type.Object({
+			view: Type.Optional(
+				StringEnum(["outline", "entries"] as const, { description: "outline (default) or paged entries" }),
+			),
+			before: Type.Optional(
+				Type.Integer({ minimum: 0, maximum: 2_147_483_647, description: "Outline only entries before this number" }),
+			),
+			full: Type.Optional(Type.Boolean({ description: "Entries view: do not clip tool output" })),
 			offset: Type.Optional(
 				Type.Integer({ minimum: 0, maximum: 2_147_483_647, description: "Entry offset; overrides from" }),
 			),
@@ -78,7 +88,7 @@ export default async function (pi: ExtensionAPI) {
 			),
 			from: Type.Optional(
 				StringEnum(["start", "tail"] as const, {
-					description: "Read from the start or latest entries (default tail); ignored when offset is provided",
+					description: "Page from the start or latest entries (default tail); ignored when offset is provided",
 				}),
 			),
 		}),
@@ -90,11 +100,11 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "search_handoff_history",
+		name: HANDOFF_HISTORY_TOOLS.search,
 		label: "Search Handoff History",
 		description:
-			"Search normalized text only within the previous session linked by /handoff. Searches the active JSONL " +
-			"or transparently falls back to its archived FTS index. Read-only; accepts no filesystem path.",
+			"Search only the previous session linked by /handoff, including tool-call paths and commands. Returns " +
+			"short snippets with entry numbers to expand with read_handoff_history. Read-only; accepts no filesystem path.",
 		promptSnippet: "Search the previous /handoff session for a decision, file, error, or topic",
 		promptGuidelines: [
 			"Use search_handoff_history for targeted lookup when read_handoff_history would retrieve unrelated prior entries.",

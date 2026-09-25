@@ -1,4 +1,5 @@
 import { type BoundaryValue, isString } from "../shared/validation.ts";
+
 /**
  * Build the command handler separately so lifecycle behavior is easy to test.
  *
@@ -15,13 +16,19 @@ import { type BoundaryValue, isString } from "../shared/validation.ts";
  */
 
 import type { ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
+import { archiveDestination, getArchiveDbPath, getArchiveRoot } from "../session-archive/archive-files.ts";
 import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
 import { loadKstackRoot } from "../shared/kstack-config.ts";
 import { collectCatalogueNameAliases, collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { isRecord } from "../shared/narrow.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
+import {
+	availableHistoryTools,
+	describeHistoryAccess,
+	type HistoryAccess,
+	selectHistoryAccess,
+} from "./history-access.ts";
 import {
 	findHandoffSource,
 	type HandoffBranchEntry,
@@ -40,7 +47,11 @@ import {
 } from "./model-selection.ts";
 import { getReplacementSelectionApi, type ReplacementSelectionApi } from "./replacement-selection-api.ts";
 
-type HandoffApi = { getThinkingLevel(): string };
+type HandoffApi = {
+	getThinkingLevel(): string;
+	getAllTools(): readonly { name: string }[];
+	getActiveTools(): readonly string[];
+};
 
 interface HandoffSessionResult {
 	cancelled: boolean;
@@ -94,8 +105,12 @@ export function createHandoffHandler(
 		const source = prepareHandoffSource(ctx, parsed.archive, preflightHistory);
 		if (source === undefined) return;
 
-		const historyRef = buildHandoffHistoryRef(parsed.archive, source);
-		const edited = await promptHandoffEditor(ctx, goal, historyRef);
+		const access = selectHistoryAccess(availableHistoryTools(api), transcriptPath(ctx, parsed.archive, source));
+		const { notice } = describeHistoryAccess(access);
+		if (notice) ctx.ui.notify(notice.message, notice.level);
+		if (access.kind === "unavailable") return;
+		const historyRef = buildHandoffHistoryRef(parsed.archive, source, access);
+		const edited = await promptHandoffEditor(ctx, goal, historyRef, access);
 		if (edited === undefined) return;
 
 		const plan = buildHandoffPlan({
@@ -179,18 +194,25 @@ function prepareHandoffSource(
 	return source;
 }
 
-function buildHandoffHistoryRef(archive: boolean, source: HandoffSource): string {
-	const baseHistoryRef = formatHistoryReference(source.sessionFile, source.sessionId, source.cwd);
+/** The transcript file the replacement reads without handoff tools; `--archive` moves it to a deterministic path. */
+function transcriptPath(ctx: ExtensionCommandContext, archive: boolean, source: HandoffSource): string {
+	if (!archive) return source.sessionFile;
+	return archiveDestination(getArchiveRoot(), source.sessionId, ctx.sessionManager.getHeader()?.timestamp ?? "");
+}
+
+function buildHandoffHistoryRef(archive: boolean, source: HandoffSource, access: HistoryAccess): string {
+	const baseHistoryRef = formatHistoryReference(source.sessionFile, source.sessionId, source.cwd, access);
 	if (!archive) return baseHistoryRef;
-	return `${baseHistoryRef}\nStorage: archived before this handoff; use the archive fallback by exact session ID.`;
+	return `${baseHistoryRef}\n${describeHistoryAccess(access).archivedStorage}`;
 }
 
 async function promptHandoffEditor(
 	ctx: ExtensionCommandContext,
 	goal: string,
 	historyRef: string,
+	access: HistoryAccess,
 ): Promise<string | undefined> {
-	const draft = buildReferenceHandoffPrompt(goal, historyRef);
+	const draft = buildReferenceHandoffPrompt(goal, historyRef, access);
 	const edited = await ctx.ui.editor("Edit handoff prompt", draft);
 	if (edited === undefined) {
 		ctx.ui.notify("Cancelled", "info");

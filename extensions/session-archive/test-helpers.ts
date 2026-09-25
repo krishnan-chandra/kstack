@@ -3,7 +3,10 @@ import type { JsonObject } from "../shared/validation.ts";
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { archiveDestination } from "./archive-files.ts";
+import { finalizeArchived, importSessionPending, openArchiveDb } from "./archive-store.ts";
+import { parseSessionJsonlBytes, sha256Hex } from "./session-jsonl.ts";
 
 export const TEST_SESSION_ID = "019ff001-deb2-7696-997e-8684026835d1";
 
@@ -52,6 +55,32 @@ export function assistantMessage(text: string): JsonObject {
 		},
 		stopReason: "stop",
 		timestamp: 1786438183625,
+	};
+}
+
+export function toolCallMessage(calls: { id: string; name: string; arguments: JsonObject }[], text = ""): JsonObject {
+	return {
+		role: "assistant",
+		content: [
+			{ type: "thinking", thinking: "secret chain of thought" },
+			...(text ? [{ type: "text", text }] : []),
+			...calls.map((call) => ({ type: "toolCall", ...call })),
+		],
+		provider: "openai",
+		model: "gpt-5.6-sol",
+		stopReason: "toolUse",
+		timestamp: 1786438183625,
+	};
+}
+
+export function toolResultMessage(toolCallId: string, toolName: string, text: string, isError = false): JsonObject {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName,
+		content: [{ type: "text", text }],
+		isError,
+		timestamp: 1786438183626,
 	};
 }
 
@@ -194,4 +223,42 @@ export function makeTempTree(): TempTree {
 			return path;
 		},
 	};
+}
+
+/**
+ * Register `content` as a finalized archive and write its artifact. Options let
+ * a test register a different path, artifact bytes, or catalog size.
+ */
+export function registerArchivedSession(
+	tree: TempTree,
+	content: string,
+	originalPath: string,
+	options: { archivePath?: string; artifact?: string | null; fileSize?: number } = {},
+): string {
+	// Decode bytes as archive-ops does, so BOM-prefixed fixtures behave like real archives.
+	const parsed = parseSessionJsonlBytes(Buffer.from(content));
+	const archivePath =
+		options.archivePath ?? archiveDestination(tree.archiveRoot, parsed.header.id, parsed.header.timestamp);
+	const artifact = options.artifact === undefined ? content : options.artifact;
+	if (artifact !== null) {
+		mkdirSync(dirname(archivePath), { recursive: true });
+		writeFileSync(archivePath, artifact);
+	}
+	const hash = sha256Hex(content);
+	const size = options.fileSize ?? Buffer.byteLength(content);
+	const db = openArchiveDb(tree.dbPath);
+	try {
+		importSessionPending(db, {
+			header: parsed.header,
+			entries: parsed.entries,
+			originalPath,
+			archivePath,
+			fileSize: size,
+			sha256: hash,
+		});
+		finalizeArchived(db, parsed.header.id, archivePath, size, hash);
+	} finally {
+		db.close();
+	}
+	return archivePath;
 }
