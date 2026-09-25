@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import {
 	type AgentSession,
@@ -20,12 +20,13 @@ import { isString } from "../shared/validation.ts";
 const HANDOFF_EXTENSION = resolve(import.meta.dirname, "index.ts");
 
 /**
- * Exercise the real Pi replacement lifecycle without making a provider call.
- * Only sendUserMessage is suppressed; runtime creation, extension loading,
- * command dispatch, model selection, thinking selection, and persistence are
- * Pi's production implementations.
+ * Start a real Pi runtime whose process tool allowlist is `tools`, persist one
+ * completed turn, and run `/handoff <args>`. Only sendUserMessage is
+ * suppressed; runtime creation, extension loading, tool registration, command
+ * dispatch, model selection, thinking selection, and persistence are Pi's
+ * production implementations, so no provider call is made.
  */
-test("handoff applies an explicit model across isolated replacement module graphs", async (t) => {
+async function runSmokeHandoff(t: TestContext, tools: string[], args: string) {
 	const root = await mkdtemp(join(tmpdir(), "kstack-handoff-smoke-"));
 	const cwd = join(root, "project");
 	const agentDir = join(root, "agent");
@@ -92,7 +93,7 @@ test("handoff applies an explicit model across isolated replacement module graph
 				sessionStartEvent: options.sessionStartEvent,
 				model: parentModel,
 				thinkingLevel: "low",
-				noTools: "all",
+				tools,
 			})),
 			services,
 			diagnostics: services.diagnostics,
@@ -180,18 +181,27 @@ test("handoff applies an explicit model across isolated replacement module graph
 
 	const command = runtime.session.extensionRunner.getCommand("handoff");
 	assert.ok(command, "handoff command must be registered");
-	await command.handler(
-		"--model openai/gpt-5.6-terra:medium continue the smoke test",
-		runtime.session.extensionRunner.createCommandContext(),
-	);
+	await command.handler(args, runtime.session.extensionRunner.createCommandContext());
+	return { session: runtime.session, notifications, submittedPrompts, sourceFile, sourceBefore };
+}
 
-	assert.equal(`${runtime.session.model?.provider}/${runtime.session.model?.id}`, "openai/gpt-5.6-terra");
-	assert.equal(runtime.session.thinkingLevel, "medium");
+test("handoff applies an explicit model across isolated replacement module graphs", async (t) => {
+	const smoke = await runSmokeHandoff(
+		t,
+		["read_handoff_history", "search_handoff_history"],
+		"--model openai/gpt-5.6-terra:medium continue the smoke test",
+	);
+	const { session, notifications, submittedPrompts, sourceFile, sourceBefore } = smoke;
+
+	assert.equal(`${session.model?.provider}/${session.model?.id}`, "openai/gpt-5.6-terra");
+	assert.equal(session.thinkingLevel, "medium");
 	assert.equal(submittedPrompts.length, 1);
 	assert.match(submittedPrompts[0], /Continue work from the previous Pi session/);
+	assert.match(submittedPrompts[0], /^1\. Call read_handoff_history first, with no arguments\./mu);
+	assert.match(submittedPrompts[0], /^3\. Use search_handoff_history/mu);
 	assert.ok(notifications.some(({ message }) => message.includes("Model: openai/gpt-5.6-terra:medium")));
 
-	const replacementEntries = runtime.session.sessionManager.getEntries();
+	const replacementEntries = session.sessionManager.getEntries();
 	assert.ok(
 		replacementEntries.some((entry) => entry.type === "custom_message" && entry.customType === "handoff"),
 		"replacement transcript must retain handoff provenance",
@@ -207,4 +217,18 @@ test("handoff applies an explicit model across isolated replacement module graph
 		"replacement transcript must record the selected thinking level",
 	);
 	assert.equal(await readFile(sourceFile, "utf8"), sourceBefore, "handoff must not mutate the predecessor transcript");
+});
+
+test("handoff points a replacement without handoff tools at the transcript under a real allowlist", async (t) => {
+	const { session, notifications, submittedPrompts, sourceFile } = await runSmokeHandoff(
+		t,
+		["read", "grep"],
+		"review the diff",
+	);
+
+	assert.equal(submittedPrompts.length, 1);
+	assert.ok(submittedPrompts[0].includes(`read the transcript JSONL at ${sourceFile} with read and grep.`));
+	assert.ok(!submittedPrompts[0].includes("Call read_handoff_history"));
+	assert.ok(notifications.some(({ level, message }) => level === "warning" && message.includes("transcript file")));
+	assert.deepEqual(session.getActiveToolNames().sort(), ["grep", "read"]);
 });

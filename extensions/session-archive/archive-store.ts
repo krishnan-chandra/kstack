@@ -551,7 +551,7 @@ export function getSessionRow(db: DatabaseSync, sessionId: string): ArchiveSessi
 	return row === undefined ? undefined : decodeSessionRow(row);
 }
 
-function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
+export function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
 	if (value === undefined || !Number.isFinite(value)) return fallback;
 	return Math.min(Math.max(Math.floor(value), minimum), maximum);
 }
@@ -629,6 +629,7 @@ export function markVerified(db: DatabaseSync, sessionId: string, verifiedAt: nu
 interface SearchHit {
 	session_id: string;
 	entry_id: string;
+	ordinal: number;
 	entry_type: string;
 	role: string | null;
 	timestamp: string;
@@ -645,6 +646,7 @@ function decodeSearchHit(value: BoundaryValue): SearchHit {
 	return {
 		session_id: decodeString(row, table, "session_id"),
 		entry_id: decodeString(row, table, "entry_id"),
+		ordinal: decodeFiniteNumber(row, table, "ordinal"),
 		entry_type: decodeString(row, table, "entry_type"),
 		role: decodeNullableString(row, table, "role"),
 		timestamp: decodeString(row, table, "timestamp"),
@@ -675,7 +677,7 @@ export function searchArchive(
 ): SearchHit[] {
 	const limit = boundedInteger(opts.limit, 20, 1, 100);
 	const statement = db.prepare(
-		`SELECT e.session_id, e.entry_id, e.entry_type, e.role, e.timestamp,
+		`SELECT e.session_id, e.entry_id, e.ordinal, e.entry_type, e.role, e.timestamp,
 		        s.cwd, s.name AS session_name, s.archived_at,
 		        snippet(archive_entries_fts, 0, '[', ']', '…', 32) AS snippet
 		   FROM archive_entries_fts

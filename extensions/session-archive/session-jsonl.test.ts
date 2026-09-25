@@ -89,6 +89,29 @@ describe("parseSessionJsonl", () => {
 	it("accepts a header-only v3 session", () => {
 		assert.equal(parseSessionJsonl(sessionJsonl([])).entries.length, 0);
 	});
+
+	it("visits each validated entry with the raw object it was decoded from, including after a BOM", () => {
+		const content = `\uFEFF${richSessionJsonl()}`;
+		const visited: [number, string][] = [];
+		const parsed = parseSessionJsonlBytes(Buffer.from(content), (entry, raw) => {
+			visited.push([entry.ordinal, String(raw.id)]);
+		});
+		assert.deepEqual(
+			visited,
+			parsed.entries.map((entry) => [entry.ordinal, entry.entryId]),
+		);
+	});
+
+	it("propagates visitor errors instead of reporting invalid UTF-8", () => {
+		const bytes = Buffer.from(richSessionJsonl());
+		assert.throws(
+			() =>
+				parseSessionJsonlBytes(bytes, () => {
+					throw new RangeError("visitor failed");
+				}),
+			/^RangeError: visitor failed$/,
+		);
+	});
 });
 
 describe("text extraction", () => {

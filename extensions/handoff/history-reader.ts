@@ -1,29 +1,34 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, type Stats, statSync } from "node:fs";
-import { join, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { getArchiveDbPath, getArchiveRoot, isPathInside, validateSessionId } from "../session-archive/archive-files.ts";
-import {
-	countEntries,
-	getSessionRow,
-	openArchiveDbReadOnly,
-	readEntries,
-	searchArchive,
-} from "../session-archive/archive-store.ts";
+import { boundedInteger, countEntries, readEntries } from "../session-archive/archive-store.ts";
 import {
 	formatHistoryEntries,
 	type HistoryEntry,
 	historyPageNextLabel,
 	selectHistoryPage,
 } from "../session-archive/history-page.ts";
-import { type ParsedEntry, parseSessionJsonlBytes } from "../session-archive/session-jsonl.ts";
-import { splitUtf8Chunks } from "../session-archive/tool-output.ts";
-import { getAgentDir } from "../shared/kstack-config.ts";
+import { MAX_TEXT_CONTENT_CHARS } from "../session-archive/session-jsonl.ts";
 import { isString, type JsonValue } from "../shared/validation.ts";
+import { renderOutline } from "./outline.ts";
+import { clipUtf8, clipUtf8Start, collapseWhitespace } from "./text.ts";
+import {
+	clearHandoffParseCache,
+	type HandoffHistoryFs,
+	loadHandoffTranscript,
+	MAX_TRANSCRIPT_BYTES,
+	readActiveTranscript,
+	type SessionTranscript,
+	type ToolCallSummary,
+	toolCallsOf,
+	withArchivedSessionDb,
+} from "./transcript.ts";
 
-const MAX_ACTIVE_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_PREFLIGHT_REASON_BYTES = 1024;
 const MAX_OUTPUT_BYTES = 50 * 1024;
 const BODY_CHUNK_BYTES = MAX_OUTPUT_BYTES - 8192;
+const MAX_OFFSET = 2_147_483_647;
+const TOOL_OUTPUT_CLIP_BYTES = 800;
+const TOOL_CALL_TARGET_BYTES = 240;
+const TOOL_OUTPUT_ROLES = new Set(["toolResult", "bashExecution"]);
 
 export interface HandoffSource {
 	version: 1;
@@ -50,16 +55,13 @@ export interface HandoffBranchEntry {
 }
 
 interface ReadHandoffHistoryOptions {
+	view?: "outline" | "entries";
+	before?: number;
+	full?: boolean;
 	offset?: number;
 	limit?: number;
 	chunk?: number;
 	from?: "start" | "tail";
-}
-
-interface SearchHandoffHistoryOptions {
-	query: string;
-	role?: string;
-	limit?: number;
 }
 
 function decodeHandoffSource(value: HandoffSourceJson | undefined): HandoffSource | undefined {
@@ -86,147 +88,20 @@ export function findHandoffSource(entries: readonly HandoffBranchEntry[]): Hando
 	return undefined;
 }
 
-function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
-	if (value === undefined || !Number.isFinite(value)) return fallback;
-	return Math.min(Math.max(Math.floor(value), minimum), maximum);
-}
-
-function assertSafeActiveSessionPath(source: HandoffSource, env: NodeJS.ProcessEnv): string {
-	validateSessionId(source.sessionId);
-	const activeRoot = join(getAgentDir(env), "sessions");
-	const lst = lstatSync(source.sessionFile, { throwIfNoEntry: false });
-	if (!lst) throw Object.assign(new Error("active session file disappeared"), { code: "ENOENT" });
-	if (lst.isSymbolicLink() || !lst.isFile()) {
-		throw new Error(`Previous session path is not a regular non-symlink file: ${source.sessionFile}`);
-	}
-	const canonical = realpathSync(source.sessionFile);
-	const canonicalRoot = existsSync(activeRoot) ? realpathSync(activeRoot) : resolve(activeRoot);
-	if (!isPathInside(canonical, canonicalRoot)) {
-		throw new Error(`Previous session is outside Pi's active session directory: ${canonical}`);
-	}
-	if (!canonical.endsWith(".jsonl")) throw new Error(`Previous session is not a JSONL file: ${canonical}`);
-	const size = statSync(canonical).size;
-	if (size > MAX_ACTIVE_SESSION_BYTES) {
-		throw new Error(
-			`Previous session is ${size} bytes, over the ${MAX_ACTIVE_SESSION_BYTES}-byte active-reader limit; archive it and retry.`,
-		);
-	}
-	return canonical;
-}
-
-interface ActiveSession {
-	source: "active";
-	cwd: string;
-	entries: ParsedEntry[];
-}
-
-interface ParsedCacheEntry {
-	canonical: string;
-	size: number;
-	mtimeMs: number;
-	ino: number;
-	sessionId: string;
-	parsed: ActiveSession;
-}
-
-export interface HandoffHistoryFs {
-	statSync(path: string): Stats;
-	readFileSync: typeof readFileSync;
-}
-
-const defaultFs: HandoffHistoryFs = { statSync, readFileSync };
-let parseCache: ParsedCacheEntry | undefined;
-
-/** Test hook for isolating module-level cache behavior. */
-export function clearHandoffParseCache(): void {
-	parseCache = undefined;
-}
-
-function readActiveSession(
-	source: HandoffSource,
-	env: NodeJS.ProcessEnv,
-	fsImpl: HandoffHistoryFs,
-): ActiveSession | undefined {
-	let canonical: string;
-	try {
-		canonical = assertSafeActiveSessionPath(source, env);
-	} catch (error) {
-		if (
-			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
-				error as NodeJS.ErrnoException
-			).code === "ENOENT"
-		)
-			return undefined;
-		throw error;
-	}
-	let stat: Stats;
-	try {
-		stat = fsImpl.statSync(canonical);
-	} catch (error) {
-		// The file may have moved between validation and the cache check.
-		if (
-			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
-				error as NodeJS.ErrnoException
-			).code === "ENOENT"
-		)
-			return undefined;
-		throw error;
-	}
-	if (
-		parseCache?.canonical === canonical &&
-		parseCache.size === stat.size &&
-		parseCache.mtimeMs === stat.mtimeMs &&
-		parseCache.ino === stat.ino &&
-		parseCache.sessionId === source.sessionId
-	) {
-		return parseCache.parsed;
-	}
-
-	let parsed: ReturnType<typeof parseSessionJsonlBytes>;
-	try {
-		parsed = parseSessionJsonlBytes(fsImpl.readFileSync(canonical));
-	} catch (error) {
-		// The file may have moved between validation and reading.
-		if (
-			/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (
-				error as NodeJS.ErrnoException
-			).code === "ENOENT"
-		)
-			return undefined;
-		throw error;
-	}
-	if (parsed.header.id !== source.sessionId) {
-		throw new Error(
-			`Previous session ID mismatch: reference says ${source.sessionId}, file header says ${parsed.header.id}.`,
-		);
-	}
-	const active: ActiveSession = { source: "active", cwd: parsed.header.cwd, entries: parsed.entries };
-	parseCache = {
-		canonical,
-		size: stat.size,
-		mtimeMs: stat.mtimeMs,
-		ino: stat.ino,
-		sessionId: source.sessionId,
-		parsed: active,
-	};
-	return active;
-}
-
 function boundPreflightReason(reason: string): string {
-	const normalized = reason.replace(/\s+/gu, " ").trim() || "Active session history is unreadable.";
-	const chunks = splitUtf8Chunks(normalized, MAX_PREFLIGHT_REASON_BYTES - 3);
-	return chunks.length === 1 ? chunks[0] : `${chunks[0]}...`;
+	const normalized = collapseWhitespace(reason) || "Active session history is unreadable.";
+	return clipUtf8(normalized, MAX_PREFLIGHT_REASON_BYTES, "...");
 }
 
 /** Validate only the current active file; unlike history reads, never fall back to an archive. */
 export function preflightHandoffHistory(
 	source: HandoffSource,
 	env: NodeJS.ProcessEnv = process.env,
-	fsImpl: HandoffHistoryFs = defaultFs,
+	fsImpl?: HandoffHistoryFs,
 ): HandoffHistoryPreflight {
-	parseCache = undefined;
+	clearHandoffParseCache();
 	try {
-		if (!readActiveSession(source, env, fsImpl)) {
+		if (!readActiveTranscript(source, env, fsImpl)) {
 			return { kind: "rejected", reason: "The source session no longer exists at its recorded active path." };
 		}
 		return { kind: "ready" };
@@ -236,148 +111,133 @@ export function preflightHandoffHistory(
 	}
 }
 
-function pageOutput(
-	source: HandoffSource,
-	sourceKind: "active" | "archived",
-	cwd: string,
-	total: number,
-	views: readonly HistoryEntry[],
-	offset: number,
-	limit: number,
-	chunkIndex: number,
-): string {
+/** Prepare one entry's text for the entries view: clip tool output unless `full`, and list tool calls. */
+function entryText(
+	entry: { ordinal: number; role?: string | null; textContent?: string | null },
+	calls: readonly ToolCallSummary[],
+	full: boolean,
+): string | undefined {
+	const parts: string[] = [];
+	const text = entry.textContent ?? "";
+	const capped = text.length >= MAX_TEXT_CONTENT_CHARS;
+	const bytes = Buffer.byteLength(text);
+	if (!full && entry.role && TOOL_OUTPUT_ROLES.has(entry.role) && bytes > TOOL_OUTPUT_CLIP_BYTES) {
+		const clipped = clipUtf8(text, TOOL_OUTPUT_CLIP_BYTES, "");
+		parts.push(
+			`${clipped}\n[+${bytes - Buffer.byteLength(clipped)} bytes clipped; read_handoff_history({ view: "entries", offset: ${entry.ordinal}, limit: 1, full: true })]`,
+		);
+	} else if (text) {
+		parts.push(capped ? `${text}\n[normalized text capped at 200,000 characters by the session parser]` : text);
+	}
+	for (const call of calls) {
+		const target = call.target ? ` ${clipUtf8(call.target, TOOL_CALL_TARGET_BYTES)}` : "";
+		const note = call.note ? ` (${call.note})` : "";
+		parts.push(`→ ${call.name}${target}${note}`);
+	}
+	return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function pageParams(options: ReadHandoffHistoryOptions, total: number) {
+	const limit = boundedInteger(options.limit, 50, 1, 200);
+	const chunk = boundedInteger(options.chunk, 0, 0, 1_000_000);
+	const offset =
+		options.offset === undefined && options.from !== "start"
+			? Math.max(0, total - limit)
+			: boundedInteger(options.offset, 0, 0, MAX_OFFSET);
+	return { limit, chunk, offset };
+}
+
+function pageOutput(input: {
+	sessionId: string;
+	sourceKind: "active" | "archived";
+	cwd: string;
+	total: number;
+	views: readonly HistoryEntry[];
+	offset: number;
+	limit: number;
+	chunk: number;
+}): string {
 	const page = selectHistoryPage({
-		body: formatHistoryEntries(views),
-		offset,
-		pageEntries: views.length,
-		totalEntries: total,
-		chunk: chunkIndex,
+		body: formatHistoryEntries(input.views),
+		offset: input.offset,
+		pageEntries: input.views.length,
+		totalEntries: input.total,
+		chunk: input.chunk,
 		maxBytes: BODY_CHUNK_BYTES,
 	});
 	if (!page.ok) throw new Error(page.reason);
 	const next = historyPageNextLabel(page.next, { end: "end of session", fromStart: true });
+	const keepView = page.next ? ' (keep view: "entries")' : "";
 	const earlier =
-		offset > 0
-			? ` Earlier entries are available; use offset ${Math.max(0, offset - limit)}, from=start, and chunk 0.`
+		input.offset > 0
+			? ` Earlier entries are available; use view "entries", offset ${Math.max(0, input.offset - input.limit)}, from=start, and chunk 0.`
 			: "";
 	return (
-		`Previous session ${source.sessionId} — ${cwd} — source: ${sourceKind}\n` +
-		`${page.range} — chunk ${page.chunk + 1} of ${page.chunks} — ${next}.${earlier}\n\n${page.body}`
+		`Previous session ${input.sessionId} — ${clipUtf8Start(input.cwd, 512)} — source: ${input.sourceKind} — view: entries\n` +
+		`${page.range} — chunk ${page.chunk + 1} of ${page.chunks} — ${next}${keepView}.${earlier}\n\n${page.body}`
 	);
 }
 
-function withArchivedSession<T>(
-	source: HandoffSource,
-	env: NodeJS.ProcessEnv,
-	run: (db: DatabaseSync, session: { cwd: string }) => T,
-): T {
-	const dbPath = getArchiveDbPath(getArchiveRoot(env));
-	if (!existsSync(dbPath)) throw new Error(`Previous session ${source.sessionId} is not active or archived.`);
-	const db = openArchiveDbReadOnly(dbPath);
-	try {
-		const session = getSessionRow(db, source.sessionId);
-		if (session?.state !== "archived") {
-			throw new Error(`Previous session ${source.sessionId} is not active or finalized in the archive.`);
-		}
-		return run(db, session);
-	} finally {
-		db.close();
-	}
+function transcriptEntries(transcript: SessionTranscript, options: ReadHandoffHistoryOptions): string {
+	const total = transcript.entries.length;
+	const { limit, chunk, offset } = pageParams(options, total);
+	const full = options.full === true;
+	const views = transcript.entries.slice(offset, offset + limit).map((entry) => ({
+		...entry,
+		textContent: entryText(entry, toolCallsOf(entry), full),
+	}));
+	return pageOutput({
+		sessionId: transcript.sessionId,
+		sourceKind: transcript.sourceKind,
+		cwd: transcript.cwd,
+		total,
+		views,
+		offset,
+		limit,
+		chunk,
+	});
 }
 
-/** Read normalized entries, preferring the active JSONL and falling back to the archive by exact ID. */
+function archivedEntries(db: DatabaseSync, sessionId: string, cwd: string, options: ReadHandoffHistoryOptions): string {
+	const total = countEntries(db, sessionId);
+	const { limit, chunk, offset } = pageParams(options, total);
+	const full = options.full === true;
+	const views = readEntries(db, sessionId, offset, limit).map((row) => {
+		const entry = {
+			ordinal: row.ordinal,
+			entryType: row.entry_type,
+			role: row.role,
+			timestamp: row.timestamp,
+			entryId: row.entry_id,
+			parentId: row.parent_id,
+			textContent: row.text_content,
+		};
+		return { ...entry, textContent: entryText(entry, [], full) };
+	});
+	return pageOutput({ sessionId, sourceKind: "archived", cwd, total, views, offset, limit, chunk });
+}
+
+/**
+ * Read the linked previous session: an outline of the whole session by default,
+ * or paged entries with clipped tool output. Prefers the active JSONL and falls
+ * back to the finalized archive by exact session ID.
+ */
 export function readHandoffHistory(
 	source: HandoffSource,
 	options: ReadHandoffHistoryOptions = {},
 	env: NodeJS.ProcessEnv = process.env,
-	fsImpl: HandoffHistoryFs = defaultFs,
 ): string {
-	const limit = boundedInteger(options.limit, 50, 1, 200);
-	const chunk = boundedInteger(options.chunk, 0, 0, 1_000_000);
-	const active = readActiveSession(source, env, fsImpl);
-	if (active) {
-		const total = active.entries.length;
-		const offset =
-			options.offset === undefined && options.from !== "start"
-				? Math.max(0, total - limit)
-				: boundedInteger(options.offset, 0, 0, 2_147_483_647);
-		const views = active.entries.slice(offset, offset + limit);
-		return pageOutput(source, "active", active.cwd, total, views, offset, limit, chunk);
+	const transcript = loadHandoffTranscript(source, env);
+	const view = options.view ?? "outline";
+	if (transcript.kind === "oversized-archive") {
+		const entries = withArchivedSessionDb(source.sessionId, env, (db, row) =>
+			archivedEntries(db, source.sessionId, row.cwd, options),
+		);
+		if (view === "entries") return entries;
+		const limit = `${MAX_TRANSCRIPT_BYTES / (1024 * 1024)} MiB`;
+		return `Outline unavailable: archived session exceeds the ${limit} transcript limit; showing the bounded entries view.\n${entries}`;
 	}
-
-	return withArchivedSession(source, env, (db, session) => {
-		const total = countEntries(db, source.sessionId);
-		const offset =
-			options.offset === undefined && options.from !== "start"
-				? Math.max(0, total - limit)
-				: boundedInteger(options.offset, 0, 0, 2_147_483_647);
-		const views = readEntries(db, source.sessionId, offset, limit).map((entry) => ({
-			ordinal: entry.ordinal,
-			entryType: entry.entry_type,
-			role: entry.role,
-			timestamp: entry.timestamp,
-			entryId: entry.entry_id,
-			parentId: entry.parent_id,
-			textContent: entry.text_content,
-		}));
-		return pageOutput(source, "archived", session.cwd, total, views, offset, limit, chunk);
-	});
-}
-
-function searchTerms(query: string): string[] {
-	return (query.match(/"[^"]+"|\S+/gu) ?? [])
-		.map((term) => (term.startsWith('"') && term.endsWith('"') ? term.slice(1, -1) : term))
-		.map((term) => term.trim())
-		.filter(Boolean);
-}
-
-function archiveFtsQuery(terms: string[]): string {
-	return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" AND ");
-}
-
-/** Search normalized text in the referenced active session, or its archived FTS index. */
-export function searchHandoffHistory(
-	source: HandoffSource,
-	options: SearchHandoffHistoryOptions,
-	env: NodeJS.ProcessEnv = process.env,
-	fsImpl: HandoffHistoryFs = defaultFs,
-): string {
-	const query = options.query.trim();
-	if (!query) throw new Error("query must not be empty");
-	const limit = boundedInteger(options.limit, 20, 1, 100);
-	const terms = searchTerms(query);
-	if (terms.length === 0) throw new Error("query must contain at least one word or quoted phrase");
-	const active = readActiveSession(source, env, fsImpl);
-	let output: string;
-	if (active) {
-		const normalizedTerms = terms.map((term) => term.toLowerCase());
-		const hits = active.entries
-			.filter((entry) => !options.role || entry.role === options.role)
-			.filter((entry) => {
-				const haystack = (entry.textContent ?? "").toLowerCase();
-				return normalizedTerms.every((term) => haystack.includes(term));
-			})
-			.slice(-limit);
-		output =
-			hits.length === 0
-				? `No matches in active previous session ${source.sessionId}.`
-				: `Matches in active previous session ${source.sessionId}:\n\n${formatHistoryEntries(hits)}`;
-	} else {
-		output = withArchivedSession(source, env, (db) => {
-			const hits = searchArchive(db, {
-				query: archiveFtsQuery(terms),
-				role: options.role,
-				sessionId: source.sessionId,
-				limit,
-			});
-			return hits.length === 0
-				? `No matches in archived previous session ${source.sessionId}.`
-				: `Matches in archived previous session ${source.sessionId}:\n\n${hits
-						.map((hit) => `[${hit.role ?? hit.entry_type}] ${hit.timestamp} (id ${hit.entry_id})\n${hit.snippet}`)
-						.join("\n\n")}`;
-		});
-	}
-
-	const chunks = splitUtf8Chunks(output, MAX_OUTPUT_BYTES - 512);
-	return chunks.length === 1 ? chunks[0] : `${chunks[0]}\n\n[Output truncated; refine the query or lower the limit.]`;
+	if (view === "entries") return transcriptEntries(transcript, options);
+	const before = options.before === undefined ? undefined : boundedInteger(options.before, 0, 0, MAX_OFFSET);
+	return renderOutline(transcript, { before });
 }

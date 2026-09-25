@@ -123,7 +123,14 @@ function nonblankLines(content: string): JsonlLine[] {
 	return lines;
 }
 
-export function parseSessionJsonl(content: string): ParsedSession {
+/**
+ * Called with each validated entry and the JSON object it was parsed from, so a
+ * caller can derive extra fields from the same decode instead of reparsing
+ * `rawOffset`/`rawLength` byte ranges.
+ */
+type SessionEntryVisitor = (entry: ParsedEntry, raw: JsonObject) => void;
+
+export function parseSessionJsonl(content: string, visit?: SessionEntryVisitor): ParsedSession {
 	const lines = nonblankLines(content);
 	if (lines.length === 0) throw new SessionParseError("empty session file");
 
@@ -179,18 +186,20 @@ export function parseSessionJsonl(content: string): ParsedSession {
 			rawLength: line.byteLength,
 		};
 		extractEntryText(entry, raw);
+		visit?.(entry, raw);
 		entries.push(entry);
 	}
 	return { header, entries };
 }
 
-export function parseSessionJsonlBytes(content: Uint8Array): ParsedSession {
+export function parseSessionJsonlBytes(content: Uint8Array, visit?: SessionEntryVisitor): ParsedSession {
+	let text: string;
 	try {
-		return parseSessionJsonl(new TextDecoder("utf-8", { fatal: true }).decode(content));
-	} catch (error) {
-		if (error instanceof SessionParseError) throw error;
+		text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+	} catch {
 		throw new SessionParseError("session file is not valid UTF-8");
 	}
+	return parseSessionJsonl(text, visit);
 }
 
 export function sha256Hex(data: string | Buffer): string {

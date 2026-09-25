@@ -59,31 +59,68 @@ Continue work from the previous Pi session.
 Implement teams support.
 
 ## Instructions
-1. Call read_handoff_history before making changes; it reads recent normalized entries and automatically handles active or archived storage.
-2. Use search_handoff_history for targeted lookup of a decision, file, error, or topic.
-3. Determine what is done, pending, and the concrete resume point, then continue.
+1. Call read_handoff_history first, with no arguments. Its default outline maps the whole previous session with entry numbers.
+2. Expand only the entries you need with read_handoff_history({ view: "entries", offset, limit }).
+3. Use search_handoff_history to find a decision, file, command, or error.
+4. Inherit prior decisions and do not redo completed work. Determine what is done, what is pending, and the concrete resume point, then continue with the goal above.
 
 ## Previous session
 Previous session: /path/to/old-session.jsonl
 Session ID: <uuid>  CWD: /path/to/project
-Lookup: use the active path above; if it is later archived, use read_session_archive with the exact session ID (or search_session_archive with session_id to search within it)
+Lookup: read_handoff_history and search_handoff_history find this session in active or archived storage automatically. Read its history only through those tools; do not open the session file directly.
 ```
 
 Edit or cancel this prompt before any session replacement occurs. Saving it starts the replacement session and sends the prompt. Cancelling leaves the old session active.
 
 ## Read-only history tools
 
-- **`read_handoff_history`** pages through normalized entries from the linked previous session. It defaults to the latest 50 entries and supports `offset`, `limit`, `chunk`, and `from=start|tail`.
-- **`search_handoff_history`** searches only the linked previous session, using case-insensitive substring AND matching over words or quoted phrases for active history and SQLite FTS5 for archived history, with optional role and result limits.
+- **`read_handoff_history`** returns an **outline** of the whole linked session by default. Pass `view: "entries"` to page through entries.
+- **`search_handoff_history`** returns short snippets with entry numbers for words or quoted phrases, with optional `role` and `limit`.
 
-Both tools derive the source from structured metadata on the `handoff` custom message; they accept no filesystem path or session ID from the model. They validate the active file and exact header ID, omit thinking/image/tool-argument payloads, bound output to 50 KB, and transparently fall back to the archive database opened read-only with `query_only`.
+Both tools derive the source from structured metadata on the `handoff` custom message. They accept no filesystem path or session ID from the model, and they bound output to 50 KB.
+
+### Outline
+
+The outline is a deterministic map computed from the session file on each call; it is not a model-written summary. Its header lists the session, the outlined entry range, `Edit/write targets` with succeeded, failed, and no-result counts, tool-error entry numbers, and the count of calls without a result. Edit and write targets come from `edit` and `write` tool calls, correlated with their results by tool-call ID; shell-driven changes are not tracked.
+
+The body is a sequence of units, each labelled with its entry range (`#12` or `#12–40`):
+
+- `USER:` and `ASSISTANT:` messages, clipped to 300 and 160 bytes. Assistant text within the last 40 entries gets 600 bytes. The final user message (2,000 bytes) and final assistant message (3,000 bytes) keep their line breaks.
+- Tool activity aggregated by tool name, such as `→ read ×3 (a.ts, b.ts, +1) · bash (npm test)`. A tool call shows only its name and one allowlisted string argument (`path`, `file_path`, `command`, `pattern`, `query`, `url`, `tool`, `agent`, `name`, or `session_id`).
+- `✗ <tool>: <first line>` for each failed tool result, clipped to 160 bytes.
+- `COMPACTION:`, `SUMMARY:`, `CUSTOM <type>:`, and `BASH:` units, and a leading `META:` unit for metadata before the first message.
+
+Successful tool output, thinking, images, and `edit`/`write` payloads never appear in the outline. Each unit is capped at 4 KB, the header at 4 KB, and the response at 40 KB. When older units do not fit, the outline starts with `Entries #0–N are not outlined; call read_handoff_history({ before: N+1 })`; following these continuations covers every entry exactly once.
+
+### Entries view
+
+`view: "entries"` keeps the `offset`, `limit` (default 50), `chunk`, and `from=start|tail` paging. Each entry shows its normalized text, and assistant entries list their tool calls as `→ <name> <target>`. Tool results and user shell output are clipped to 800 bytes with an expansion hint. `full: true` returns the complete normalized text; the session parser already caps normalized text at 200,000 characters, and entries at that cap end with a marker saying so.
+
+### Search
+
+Search matches case-insensitive substrings; every word or quoted phrase must appear in the entry text or in a tool-call `name target` summary, so a path that appears only in a tool argument is found. It shows the newest `limit` matches (default 20) in session order. Each match shows its entry number, the matching tool calls, and up to three snippets. A snippet keeps the matched text whole and fills its 260-byte budget with context on both sides, so multibyte context cannot push the match out; a match longer than the budget keeps its start. Each match is capped at 1 KB.
+
+### Storage
+
+The tools read the active JSONL when it still exists at the recorded path. Otherwise they read the finalized archive artifact located by the exact session ID. The archive database is opened read-only, the artifact must be a regular non-symlink `.jsonl` file inside the archive root whose size matches the archive catalog, and its header must carry the referenced session ID. Active and archived sessions therefore share the same outline, entries view, and search semantics.
+
+Archived search previously used SQLite FTS5 token matching ordered by rank. It now uses the same substring matching and newest-first selection as active search, so `hand` matches `handoff` in both.
+
+Archived artifacts over 64 MiB are not parsed. The default call returns `Outline unavailable: …` followed by the entries view from the archive database, without tool-call lines. Search uses the FTS5 index with token matching and rank order, labelled as such, and each hit carries an entry number for the entries view. The header of an oversized artifact is still checked with a bounded first-line read.
 
 ## Behavior notes
 
 - **Reference-only:** no conversation serialization, synthesis call, generated summary, inherited conversation payload, or hidden thinking content. Handoff preserves the selected thinking **level**, not prior reasoning traces.
 - **Optional archive-first handoff:** `--archive` runs the session archive state machine before sending the continuation prompt. The replacement metadata explicitly marks the predecessor archived. Archive cancellation leaves the old session active; archive finalization failure leaves the replacement active without auto-submitting the prompt and reports pending-archive recovery instructions. If the archive finalizes successfully but replacement continuation fails (such as prompt submission errors), the archive remains completed; the replacement reports the continuation failure and advises inspecting the conversation rather than re-archiving.
 - **Immediate naming:** the replacement session receives a short lowercase slug derived from the handoff goal during setup, before the confirmed prompt is sent.
-- **On-demand history:** the replacement agent retrieves normalized recent entries or targeted matches through the handoff-specific tools.
+- **On-demand history:** the replacement agent reads the outline first, then expands only the entries or search matches it needs through the handoff-specific tools.
+- **Tool allowlists:** Pi applies `--tools` to the whole process, and extensions cannot activate a tool outside it. A replacement session therefore starts with the tools this session allows. `/handoff` predicts them from the current session (handoff tools count when registered; built-ins such as `grep` count only when active) and writes instructions for only those tools:
+  - `read_handoff_history` present: the outline-first steps, with search steps only when `search_handoff_history` is also allowed.
+  - Only `search_handoff_history`: search-only steps.
+  - No handoff reader but `read` or `bash`: steps that search the transcript JSONL with `grep` or `bash` when allowed, then read only the matching line ranges. The path is the active file, or with `--archive` the file's archived location.
+  - None of these, as with `--tools ls` or `--no-tools`: `/handoff` stops before opening the editor, so nothing is archived or replaced.
+
+  Degraded modes show a warning before the editor opens.
 - **Model and effort selection:** `--model` selects the requested model and optional `:<effort>` for the replacement session. Without a suffix, the handoff inherits the parent session's effective effort. Without `--model`, it inherits both the parent model and effort. A new session starts on the configured defaults, and `ctx.newSession()` takes no model options. The handoff factory therefore publishes each runtime's live selection API through a process-wide, session-keyed `Symbol.for` rendezvous. The predecessor's handler reads that rendezvous inside `withSession`, after Pi has loaded the replacement factory, then applies the model and effort to the replacement. This works even when Pi loads the two runtimes through separate module graphs. The calls append model and effort entries only to the replacement transcript. They do not change the predecessor or persisted defaults. The handler applies the model first so Pi can clamp effort against its capabilities. An unknown or ambiguous model reference fails before the editor opens. Handoff reports the effective selection before it sends the continuation prompt.
 - **Model and effort selection limits:** with model scoping active (`--models` / `enabledModels`), `--model` only accepts scoped models. If the selection cannot be applied — for example the model's credentials were removed, or the requested effort is unsupported and clamps — handoff warns with the requested and effective selections (plus the failure reason when Pi reports one) and continues on the replacement's actual state.
 - **No model required to open the handoff:** `/handoff` itself still makes no model call. Before auto-start, the extension checks that the replacement session has a model and credentials. If that preflight fails, the confirmed prompt stays in the editor.
@@ -100,4 +137,4 @@ Both tools derive the source from structured metadata on the `handoff` custom me
 node --test extensions/handoff/*.test.ts
 ```
 
-The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived reading, normalized output, targeted search, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), selection through the replacement session's live API, inheritance, effort clamping, predecessor immutability, scoped-model validation, and effective-selection mismatch reporting. The runtime smoke test loads the predecessor and replacement through separate extension module graphs and reproduces the Sol-to-Terra switch with Pi's real `AgentSessionRuntime`. It suppresses `sendUserMessage`, so it makes no provider request.
+The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived transcript loading, archive artifact validation, the outline representation contract (contiguous unit ranges, per-unit, header, and response bounds, `before` continuations, and payload absence), entries-view clipping and the parser cap marker, snippet search semantics shared by active and archived sources, the oversized-archive fallback, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), selection through the replacement session's live API, inheritance, effort clamping, predecessor immutability, scoped-model validation, and effective-selection mismatch reporting. The runtime smoke test loads the predecessor and replacement through separate extension module graphs and reproduces the Sol-to-Terra switch with Pi's real `AgentSessionRuntime`. It suppresses `sendUserMessage`, so it makes no provider request.

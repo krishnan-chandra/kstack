@@ -21,23 +21,38 @@ export const IMPORT_EXCEPTIONS = [
 	},
 	{
 		importer: "handoff/history-reader.ts",
-		target: "session-archive/archive-files.ts",
-		reason: "handoff reads the session archive",
-	},
-	{
-		importer: "handoff/history-reader.ts",
 		target: "session-archive/archive-store.ts",
 		reason: "handoff reads the session archive",
 	},
 	{
 		importer: "handoff/history-reader.ts",
 		target: "session-archive/session-jsonl.ts",
-		reason: "handoff parses active session history with the archive parser",
+		reason: "handoff reports the archive parser's text cap",
 	},
 	{
-		importer: "handoff/history-reader.ts",
-		target: "session-archive/tool-output.ts",
-		reason: "handoff uses the archive output bounds",
+		importer: "handoff/history-search.ts",
+		target: "session-archive/archive-store.ts",
+		reason: "handoff searches oversized archives with the archive FTS index",
+	},
+	{
+		importer: "handoff/test-helpers.ts",
+		target: "session-archive/test-helpers.ts",
+		reason: "handoff test fixtures reuse the archive session fixtures",
+	},
+	{
+		importer: "handoff/transcript.ts",
+		target: "session-archive/archive-files.ts",
+		reason: "handoff locates and validates archived session artifacts",
+	},
+	{
+		importer: "handoff/transcript.ts",
+		target: "session-archive/archive-store.ts",
+		reason: "handoff reads the session archive catalog",
+	},
+	{
+		importer: "handoff/transcript.ts",
+		target: "session-archive/session-jsonl.ts",
+		reason: "handoff parses session history with the archive parser",
 	},
 	{
 		importer: "handoff/history-reader.ts",
