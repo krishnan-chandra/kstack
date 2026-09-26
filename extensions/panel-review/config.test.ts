@@ -187,7 +187,7 @@ const find = (available: string[]) => (provider: string, modelId: string) =>
 
 describe("resolveReviewers", () => {
 	it("uses exact configured model IDs when the provider is authenticated but the catalog lags", () => {
-		const model = "openrouter/inception/mercury-2.5-preview";
+		const model = "openrouter/inception/mercury-2.5";
 		const config = {
 			reviewers: [
 				{ label: "mercury", model },
@@ -314,7 +314,7 @@ describe("resolveSynthesisModel", () => {
 	});
 
 	it("uses an exact configured synthesis ID when its provider is authenticated", () => {
-		const model = "openrouter/inception/mercury-2.5-preview";
+		const model = "openrouter/inception/mercury-2.5";
 		const r = resolveSynthesisModel(
 			{ synthesis: { model } },
 			{ find: find([]), hasProviderAuth: (provider) => provider === "openrouter", scopedModels: [] },

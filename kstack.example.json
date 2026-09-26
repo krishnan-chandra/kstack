@@ -17,7 +17,7 @@
     "reviewers": [
       {
         "label": "mercury",
-        "model": "openrouter/inception/mercury-2.5-preview",
+        "model": "openrouter/inception/mercury-2.5",
         "thinking": "high"
       },
       {
