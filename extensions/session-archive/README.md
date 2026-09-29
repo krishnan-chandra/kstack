@@ -54,17 +54,37 @@ or read rebuilds it within the refresh limits.
 
 | Command | Effect |
 |---|---|
-| `/session-archive` | Confirm, then archive the current session and continue in a new empty session. Named sessions keep their name; unnamed sessions stay unnamed. |
+| `/session-archive` | Confirm, then archive the current session and continue in a new empty session. Named sessions keep their name; unnamed sessions stay unnamed. The replacement session keeps the archived session's model and effort. |
 | `/session-archive-other` | Select any number of inactive sessions, confirm once, and archive the selection as one batch. In TUI mode, use arrows to navigate, Space to toggle, Enter to accept, and Escape to cancel. If nothing is checked, Enter accepts the focused session. RPC mode uses repeated selection with an explicit completion choice. Named sessions use their compact name; unnamed sessions use a bounded first-message summary. |
 | `/session-archive-all` | Confirm once, then archive every inactive session in this directory as one batch, including unnamed sessions. Malformed, empty, or otherwise unarchivable files are skipped and reported; one failure never aborts the batch. |
 | `/session-archive-rebuild` | Scan archived JSONL artifacts, show the rebuild plan, and recreate missing SQLite rows after confirmation. Existing rows and artifact bytes are never changed; newly indexed artifacts are re-marked read-only. Conflicts, invalid artifacts, and interrupted operations are reported for manual inspection. |
-| `/sessions` | Searchable unified browser for active, archived, and recovery-error sessions across all projects. Enter immediately archives/restores a healthy selected row; error rows show the session ID, failure, and preserved-copy paths without mutating them. Active rows are ordered by Pi's latest user/assistant message timestamp; archived rows use their indexed equivalent. |
+| `/sessions` | Searchable unified browser for active, archived, and recovery-error sessions across all projects. Enter immediately archives/restores a healthy selected row; error rows show the session ID, failure, and preserved-copy paths without mutating them. Active rows are ordered by Pi's latest user/assistant message timestamp; archived rows use their indexed equivalent. Archiving the active row from here also keeps the current model and effort. |
 
 Archiving is explicit. The existing archive commands remain confirmed; `/sessions` is the deliberate no-confirmation exception. Nothing is archived automatically
 on shutdown, reload, or session switch. Current and inactive sessions may be
 archived without names; their archive rows remain unnamed. A selected batch is
 processed in picker order. One malformed, stale, or failed session does not
 roll back the sessions archived successfully before or after it.
+
+## Model and effort carry-over
+
+`ctx.newSession()` builds a fresh runtime, so a brand-new session starts on Pi's
+configured defaults (`defaultProvider`, `defaultModel`, and
+`defaultThinkingLevel` in `$PI_CODING_AGENT_DIR/settings.json`). Archiving the
+current session from `/session-archive` or `/sessions` therefore captures the
+active model and effort before the replacement and re-applies both inside
+`withSession`, after Pi has created the new runtime: the predecessor's `pi` and
+contexts are stale there, so the live selection API is published by the
+replacement runtime's own factory through the process-wide, session-keyed
+`Symbol.for` rendezvous in `shared/replacement-selection-api.ts` (the same
+rendezvous `/handoff` uses).
+
+The model switch is skipped when the replacement already runs the carried
+model. A selection that cannot be applied — no published API, no credentials
+for the model, or a runtime error — is reported as a warning inside the
+replacement session and never blocks or rolls back the archive. The change is
+recorded in the replacement transcript only; Pi's persisted defaults are never
+modified.
 
 ## Agent tools
 
@@ -208,6 +228,7 @@ npm run test:session-archive
 Structure:
 
 - `index.ts` — Pi registration and command/session lifecycle only
+- `selection-carryover.ts` — capture and re-apply the model and effort on the replacement session
 - `session-choices.ts` — compact named/unnamed picker labels and duplicate disambiguation
 - `session-selection.ts` — deterministic multi-selection and RPC fallback state
 - `session-picker.ts` — bounded TUI multi-select adapter

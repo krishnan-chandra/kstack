@@ -4,7 +4,7 @@
  * This module resolves `--model` references against the catalogue and aliases.
  * The command handler applies the resolved or inherited model and effort inside
  * the replacement session's `withSession` callback through the live extension
- * API published in replacement-selection-api.ts.
+ * API published in shared/replacement-selection-api.ts.
  */
 import { THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { type ModelAlias, matchModelAliases } from "../shared/model-aliases.ts";

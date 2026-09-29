@@ -1,5 +1,6 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { CommandContext } from "./registration.ts";
+import { readCarriedSelection, startNewSessionCarryingSelection } from "./selection-carryover.ts";
 import type { ActiveSessionInfo } from "./sessions.ts";
 import { buildSessionRows } from "./sessions.ts";
 import { selectSessionToggle } from "./sessions-picker.ts";
@@ -83,10 +84,7 @@ export function createSessionsCommand(deps: SessionsCommandDeps) {
 					skipConfirmation: true,
 					notify: (message, level) => ctx.ui.notify(message, level),
 					startNewSession: (withSession) =>
-						ctx.newSession({
-							withSession: async (fresh) =>
-								withSession({ notify: (message, level) => fresh.ui.notify(message, level) }),
-						}),
+						startNewSessionCarryingSelection(ctx, readCarriedSelection(ctx), withSession),
 				});
 				return;
 			}

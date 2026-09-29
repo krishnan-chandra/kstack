@@ -24,16 +24,16 @@
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
+import {
+	bindReplacementSelectionApi,
+	type ReplacementSelectionApi,
+	unbindReplacementSelectionApi,
+} from "../shared/replacement-selection-api.ts";
 import { createHandoffHandler, requireHandoffSource } from "./command.ts";
 import { HANDOFF_HISTORY_TOOLS } from "./history-access.ts";
 import { readHandoffHistory } from "./history-reader.ts";
 import { searchHandoffHistory } from "./history-search.ts";
 import { completeHandoffArgs } from "./model-selection.ts";
-import {
-	bindReplacementSelectionApi,
-	type ReplacementSelectionApi,
-	unbindReplacementSelectionApi,
-} from "./replacement-selection-api.ts";
 
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "handoff");

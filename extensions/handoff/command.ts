@@ -9,7 +9,7 @@ import { type BoundaryValue, isString } from "../shared/validation.ts";
  * during setup can steer the already-created runtime. Pi re-runs extension
  * factories for every replacement runtime, sometimes through an isolated
  * module graph. The factory publishes its live API through the process-wide
- * rendezvous in replacement-selection-api.ts. The predecessor's handler reads
+ * rendezvous in shared/replacement-selection-api.ts. The predecessor's handler reads
  * that API after replacement, then records the model and effort only in the
  * replacement transcript. It never changes the predecessor or persisted
  * defaults.
@@ -21,6 +21,7 @@ import { archiveCurrentSession } from "../session-archive/archive-ops.ts";
 import { loadKstackRoot } from "../shared/kstack-config.ts";
 import { collectCatalogueNameAliases, collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { isRecord } from "../shared/narrow.ts";
+import { getReplacementSelectionApi, type ReplacementSelectionApi } from "../shared/replacement-selection-api.ts";
 import { deriveSessionName } from "../shared/session-name.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
 import {
@@ -45,7 +46,6 @@ import {
 	parseHandoffArgs,
 	resolveModelReference,
 } from "./model-selection.ts";
-import { getReplacementSelectionApi, type ReplacementSelectionApi } from "./replacement-selection-api.ts";
 
 type HandoffApi = {
 	getThinkingLevel(): string;

@@ -1,10 +1,10 @@
 /** Fake Pi command and replacement-session contexts shared by the handoff command tests. */
 
 import assert from "node:assert/strict";
+import type { ReplacementSelectionApi } from "../shared/replacement-selection-api.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { createHandoffHandler as createHandler } from "./command.ts";
 import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
-import type { ReplacementSelectionApi } from "./replacement-selection-api.ts";
 
 export const SESSION_FILE = "/sessions/old.jsonl";
 export const SESSION_ID = "11111111-2222-3333-4444-555555555555";

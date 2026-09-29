@@ -13,6 +13,11 @@ import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
+import {
+	bindReplacementSelectionApi,
+	type ReplacementSelectionApi,
+	unbindReplacementSelectionApi,
+} from "../shared/replacement-selection-api.ts";
 import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-files.ts";
 import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
 
@@ -90,7 +95,20 @@ export default async function (pi: ExtensionAPI) {
 	// Write/edit guard: archived content is read-only for agents.
 	pi.on("tool_call", async (event, ctx) => createWriteGuard(archiveRoot)(event, ctx));
 
+	let selectionApi: ReplacementSelectionApi | undefined;
 	pi.on("session_start", async (_event, ctx) => {
+		// Archiving replaces the session, and a fresh runtime starts on the
+		// configured default model. Publish this runtime's live API so the
+		// predecessor can restore the archived session's model and effort.
+		selectionApi = {
+			setModel: async (model) => {
+				const resolved = ctx.modelRegistry.find(model.provider, model.id);
+				return resolved ? pi.setModel(resolved) : false;
+			},
+			setThinkingLevel: (level) => pi.setThinkingLevel(level),
+		};
+		bindReplacementSelectionApi(ctx.sessionManager.getSessionId(), selectionApi);
+
 		try {
 			ensureArchiveDirs(archiveRoot);
 			const report = reconcileArchive({
@@ -113,6 +131,10 @@ export default async function (pi: ExtensionAPI) {
 				"warning",
 			);
 		}
+	});
+
+	pi.on("session_shutdown", (_event, ctx) => {
+		if (selectionApi) unbindReplacementSelectionApi(ctx.sessionManager.getSessionId(), selectionApi);
 	});
 
 	pi.registerCommand("session-archive", {

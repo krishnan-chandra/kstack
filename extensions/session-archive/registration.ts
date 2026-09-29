@@ -4,6 +4,7 @@ import { type BoundaryValue, isString } from "../shared/validation.ts";
 import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
 import type { BulkArchiveOutcome } from "./archive-ops.ts";
 import { formatHistoryEntries, historyPageNextLabel, selectHistoryPage } from "./history-page.ts";
+import { readCarriedSelection, startNewSessionCarryingSelection } from "./selection-carryover.ts";
 import { buildSessionChoices } from "./session-choices.ts";
 import { selectSessionChoices } from "./session-picker.ts";
 import { createSessionsCommand } from "./sessions-command.ts";
@@ -81,16 +82,7 @@ export function createArchiveCommands(deps: {
 			waitForIdle: () => ctx.waitForIdle(),
 			confirm: (title, message) => ctx.ui.confirm(title, message),
 			notify: (message, level) => ctx.ui.notify(message, level),
-			startNewSession: (withSession) =>
-				// Deliberately no parentSession: the archive destination does not
-				// exist yet, and SQLite preserves the archive relationship.
-				ctx.newSession({
-					withSession: async (freshCtx) => {
-						await withSession({
-							notify: (message, level) => freshCtx.ui.notify(message, level),
-						});
-					},
-				}),
+			startNewSession: (withSession) => startNewSessionCarryingSelection(ctx, readCarriedSelection(ctx), withSession),
 		});
 	};
 

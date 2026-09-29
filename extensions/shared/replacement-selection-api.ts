@@ -1,16 +1,38 @@
-import { type BoundaryValue, isFunction, isObject } from "../shared/validation.ts";
-import type { HandoffEffortLevel, HandoffModel } from "./model-selection.ts";
+/**
+ * Process-wide rendezvous for steering the model and effort of a replacement
+ * session.
+ *
+ * `ctx.newSession()` builds a brand-new runtime from Pi's configured defaults
+ * (`defaultProvider`, `defaultModel`, `defaultThinkingLevel`), so a command
+ * that replaces a session — `/handoff`, `/session-archive`, `/sessions` — must
+ * apply its selection inside `withSession`, after Pi has created that runtime.
+ * Everything captured before the replacement is stale, including the
+ * predecessor's `pi` object, so the live API is published by the replacement
+ * runtime's own extension factory through this registry.
+ *
+ * Pi re-runs extension factories per runtime, sometimes through an isolated
+ * module graph. `Symbol.for` provides one process-wide rendezvous without
+ * retaining a stale API in a command-handler closure, and session IDs keep
+ * independent SDK runtimes from overwriting one another.
+ */
+import type { ModelThinkingLevel } from "./kstack-config.ts";
+import { type BoundaryValue, isFunction, isObject } from "./validation.ts";
 
-/** Minimal replacement-owned API needed to apply a handoff selection. */
-export interface ReplacementSelectionApi {
-	setModel(model: HandoffModel): Promise<boolean>;
-	setThinkingLevel(level: HandoffEffortLevel): void;
+/** Minimal structural view of a pi-ai Model, enough to resolve and set it. */
+export interface ReplacementModelRef {
+	provider: string;
+	id: string;
+	name?: string;
 }
 
-// Pi may load an extension through a fresh module graph when it constructs the
-// replacement runtime. Symbol.for provides one process-wide rendezvous without
-// retaining the stale predecessor API in the command handler closure. Session
-// IDs keep independent SDK runtimes from overwriting one another.
+/** Minimal replacement-owned API needed to apply a model and effort selection. */
+export interface ReplacementSelectionApi {
+	setModel(model: ReplacementModelRef): Promise<boolean>;
+	setThinkingLevel(level: ModelThinkingLevel): void;
+}
+
+// The key string is unchanged from the handoff-only module that introduced the
+// rendezvous, so a predecessor module graph and its replacement still meet.
 const REPLACEMENT_SELECTION_APIS = Symbol.for("kstack.handoff.replacement-selection-apis.v1");
 
 function getRegistry(): Map<BoundaryValue, BoundaryValue> {

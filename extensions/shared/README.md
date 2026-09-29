@@ -25,6 +25,7 @@
 | `publication-lock.ts` | Serializes stack publication and landing mutations per repository across VCS backends. |
 | `repository-identity.ts` | Resolves a worktree-independent Git common-directory identity for publication locks, floor telemetry, and PR Autopilot state. |
 | `request-channel.ts` | Implements synchronous claim-once invocation between loaded extensions. |
+| `replacement-selection-api.ts` | Publishes each Pi runtime's live model and effort API through a process-wide, session-keyed `Symbol.for` rendezvous so a session replacement can restore a selection after `newSession()` rebuilt the runtime. |
 | `session-lifecycle.ts` | Provides generation-counted session and abortable-run lifecycle guards. |
 | `session-name.ts` | Derives and assigns workflow session names. |
 | `slug.ts` | Extracts the short keyword slug used for session names, branches, and worktree paths. |
