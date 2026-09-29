@@ -120,7 +120,7 @@ describe("plan-implement phases", () => {
 		);
 		assert.deepEqual(roles, ["planner", "adversary"]);
 		assert.equal(requestedReview, false);
-		assert.match(readFileSync(join(cwd, "local", "plans", "change.md"), "utf8"), /STEP-1/);
+		assert.match(readFileSync(join(cwd, "plans", "change.md"), "utf8"), /STEP-1/);
 		assert.match(notifications.join("\n"), /Plan-only run complete/);
 	});
 

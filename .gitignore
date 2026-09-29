@@ -7,4 +7,5 @@ coverage/
 .workspace/
 __pycache__/
 local/
+plans/
 .pi/

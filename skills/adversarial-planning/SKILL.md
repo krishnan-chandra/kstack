@@ -50,7 +50,7 @@ If startup reports `agent_not_ready`, tell the user which pane contains the prom
 
 ## Draft the plan
 
-Create `local/plans/`, then write `local/plans/<slug>.md`. Ground code claims in the repository and keep scope within the request:
+Create `plans/`, then write `plans/<slug>.md`. Ground code claims in the repository and keep scope within the request:
 
 ```markdown
 # <plan title>
@@ -68,7 +68,7 @@ Name the change-kind proof-obligation playbook when one applies.
 
 ## Run the debate
 
-Run at most three budgeted rounds. For round N, write `local/plans/<slug>-round-N.md` with the task, absolute plan path, prior critique path if any, and the instruction to return a structured critique in the final reply. The adversary does not write a report file.
+Run at most three budgeted rounds. For round N, write `plans/<slug>-round-N.md` with the task, absolute plan path, prior critique path if any, and the instruction to return a structured critique in the final reply. The adversary does not write a report file.
 
 Use the shared host request protocol against the existing agent:
 

@@ -13,6 +13,7 @@
 		".roo/**",
 		".windsurf/**",
 		"local/**",
+		"plans/**",
 		"tools/oxlint/anti-slop/**"
 	],
 	"jsPlugins": [

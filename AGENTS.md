@@ -85,8 +85,9 @@ hk install
 
 ## Layout notes
 
-- `local/` is gitignored, session-local working state. jj never snapshots it.
-- Keep all advisor and executor plans in `local/plans/`. Plans are temporary
+- `local/` and `plans/` are gitignored, session-local working state. jj never
+  snapshots them.
+- Keep all advisor and executor plans in `plans/`. Plans are temporary
   working state and must never be tracked. Delete a plan after its change ships;
   use pull requests and Git history as the durable record.
 - `config/pi-defaults/` is merged into the user's Pi configuration by

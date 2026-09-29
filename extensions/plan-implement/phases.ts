@@ -552,7 +552,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						fx.sendPhase(plan);
 					}
 					if (planOnly && !planValidationError) {
-						const plansDir = join(initialCwd, "local", "plans");
+						const plansDir = join(initialCwd, "plans");
 						mkdirSync(plansDir, { recursive: true });
 						writeFileSync(join(plansDir, `${extractSlug(task)}.md`), `${plan.output}\n`, { mode: 0o600 });
 					}
@@ -692,7 +692,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					fx.notify(`Adversarial debate did not complete: ${error}`, "error");
 				} else if (outcome.status === "rejected") fx.notify("Plan rejected; the implementer was not launched.", "info");
 				else if (outcome.status === "plan-only") {
-					const savedPlan = join(initialCwd, "local", "plans", `${extractSlug(task)}.md`);
+					const savedPlan = join(initialCwd, "plans", `${extractSlug(task)}.md`);
 					if (planValidationError) fx.notify(`Plan-only run failed validation: ${planValidationError}`, "error");
 					else fx.notify(`Plan-only run complete; plan at ${savedPlan}; no workstream created.`, "info");
 				} else if (outcome.status === "implementer-failed")

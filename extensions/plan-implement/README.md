@@ -25,7 +25,7 @@ The command accepts these leading flags:
 | `--worktree` | Run a single Git or Graphite delivery in a retained managed worktree. |
 | `--change-kind <kind>` | Select `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. |
 | `--no-adversary` | Skip the configured adversary for this run. |
-| `--plan-only` | Stop after the final plan and write it under `local/plans/`. This conflicts with `--fast`. |
+| `--plan-only` | Stop after the final plan and write it under `plans/`. This conflicts with `--fast`. |
 | `--fast` | Run one hosted implementer. Skip planning, panel review, and publication. |
 | `--plan-file <path>` | With `--fast`, snapshot this selected plan before workstream creation. The path must contain no whitespace; the file must be nonempty and at most 64 KiB. |
 
@@ -78,7 +78,7 @@ The adversary model must differ from the planner model. An unavailable adversary
 `--plan-only` runs the planner and configured debate, validates the final plan, and writes:
 
 ```text
-local/plans/<task-slug>.md
+plans/<task-slug>.md
 ```
 
 It does not create a branch, bookmark, Graphite workstream, worktree, panel review, or PR. Use the resulting plan with `--fast --plan-file <absolute-plan-path>` when the bounded implementation no longer needs another debate.
