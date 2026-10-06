@@ -51,6 +51,7 @@ routes do not create workstreams.
 | [`technical-writing`](skills/technical-writing/) | Writes and reviews clear technical docs using Diátaxis, Google developer style, STE, and Global English clarity rules. |
 | [`typescript-best-practices`](skills/typescript-best-practices/) | Applies TypeScript type-system discipline, boundary validation, constructive modeling, and safe narrowing patterns when reading or editing `.ts` or `.tsx` files. |
 | [`blast-radius`](skills/blast-radius/) | Traces cross-boundary risks in a focused change and proves its safety-critical assumption with executable evidence. |
+| [`bro`](skills/bro/) | Restates the agent's last message in plain spoken language without jargon. Explicit invocation only. |
 | [`reflect`](skills/reflect/) | Reviews a selected Pi session through independent judgment, tooling, and contrarian lenses, then proposes user-approved, durable workflow improvements. |
 | [`decision-trail`](skills/decision-trail/) | Keeps an opt-in, append-only TSV decision log (what, why, evidence, result) for long-running or unattended work, then audits it against the session transcript with a cross-model review. Explicit invocation only. |
 | [`personalize`](skills/personalize/) | Mines the user's own session history from any coding agent (Pi, Claude Code, Codex, Cursor) for durable, evidence-backed preferences and applies approved edits to a target such as AGENTS.md. |
@@ -59,6 +60,7 @@ routes do not create workstreams.
 | [`recall`](skills/recall/) | Reconstructs recent working context across Pi sessions, reconciles it with live Git/PR state, and returns a tight brief with thread statuses and a concrete resume point. Read-only. |
 | [`setup-kstack`](skills/setup-kstack/) | Interactively discovers and validates Pi model assignments, previews a user-level `kstack.json` update, and writes it only after approval. |
 | [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
+| [`teach`](skills/teach/) | Explains a change or subsystem plainly by running `how` and `why`, then weaving the results into one conversational account. Explicit invocation only. |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only; panel-review applies the same canonical lens to every reviewer and synthesis model. |
 
 ## Standalone shell tools
