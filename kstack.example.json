@@ -38,7 +38,13 @@
       "model": "openai/gpt-6-luna",
       "thinking": "low"
     },
-    "timeoutSeconds": 90
+    "timeoutSeconds": 90,
+    "review": {
+      "models": [
+        { "model": "anthropic/claude-opus-5-5", "thinking": "high" },
+        { "model": "openai/gpt-6-astra", "thinking": "xhigh" }
+      ]
+    }
   },
   "arena": {
     "runners": [

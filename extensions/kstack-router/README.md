@@ -21,6 +21,7 @@ session name.
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
 | `session-pickup` | Continue archived work, read-only | Active session, read-only tools |
+| `review` | Strict code-quality review of current changes | Isolated read-only child, thermo-nuclear skill, frontier model |
 | `pr-autopilot` | Drive an existing GitHub PR to merge-ready | pr-autopilot |
 | `land` | Confirm and merge one exact PR head | land |
 | `unsupported` | No safe dispatch available | Nothing |
@@ -36,6 +37,7 @@ session name.
 /kstack --route change --worktree --change-kind feature Add isolated search
 /kstack --route fast-change --worktree --change-kind bug-fix Fix a narrow parser bug
 /kstack --route change --stack --change-kind feature Split feature into three PRs
+/kstack --route review Review the latest changes
 /kstack --route pr-autopilot --mode drive --pr 42
 /kstack --route land --pr 42 --readiness watch --method squash
 /kstack Get PR 42 merge-ready
@@ -179,6 +181,11 @@ classifier output fails safe to manual route selection.
 Downstream routes have their own trust boundaries:
 - `change` restricts the planner to read-only tools and requires explicit
   approval.
+- `review` runs one isolated read-only review on a configured frontier model
+  (`kstack-router.review.models`, default Opus 5.5 then Astra): a visible pane
+  split off the caller's pane inside Herdr, or a headless child otherwise. It
+  loads the thermo-nuclear skill and read-only session-history tools and posts
+  the verdict back into the session.
 - `investigate` and `session-pickup` use read-only tools only.
 - `arena`, `swarm`, `skill-authoring` require read-only framing + approval
   before any write tool or paid fan-out.

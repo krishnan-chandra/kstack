@@ -20,9 +20,23 @@ export class RouterLifecycle extends SessionLifecycle {
 	private currentRoute: RouteId | undefined;
 	private toolSnapshot: ToolSnapshot | undefined;
 	private classifier: AbortController | undefined;
+	private dispatchAbort: AbortController | undefined;
 
 	sessionToken(): SessionToken | undefined {
 		return this.currentSessionToken();
+	}
+
+	/** Abort signal for the active dispatch's child work, if any. */
+	signal(): AbortSignal | undefined {
+		return this.dispatchAbort?.signal;
+	}
+
+	/** Abort the active dispatch's child work. Returns false when none is running. */
+	abortActive(): boolean {
+		const controller = this.dispatchAbort;
+		if (!controller || controller.signal.aborted) return false;
+		controller.abort();
+		return true;
 	}
 
 	beginClassifier(token: SessionToken): AbortController | undefined {
@@ -50,6 +64,7 @@ export class RouterLifecycle extends SessionLifecycle {
 		this.currentDispatch = dispatch;
 		this.currentRoute = options.route;
 		this.toolSnapshot = options.toolSnapshot ? { tools: [...options.toolSnapshot] } : undefined;
+		this.dispatchAbort = new AbortController();
 		return dispatch;
 	}
 
@@ -86,6 +101,8 @@ export class RouterLifecycle extends SessionLifecycle {
 	}
 
 	private clearDispatch(): void {
+		this.dispatchAbort?.abort();
+		this.dispatchAbort = undefined;
 		this.currentDispatch = undefined;
 		this.currentRoute = undefined;
 		this.toolSnapshot = undefined;

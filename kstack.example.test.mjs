@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { validateConfig } from "./extensions/plan-implement/config.ts";
+import { validateRouterConfig } from "./extensions/kstack-router/config.ts";
 import { validateAdversaryConfig } from "./extensions/shared/kstack-config.ts";
 import { isObject } from "./extensions/shared/validation.ts";
 
@@ -19,6 +20,9 @@ test("kstack.example.json passes the plan-implement and adversary validators", (
 
 	const adversary = validateAdversaryConfig(example.adversary);
 	assert.equal(adversary.ok, true, adversary.ok ? "" : adversary.error);
+
+	const router = validateRouterConfig(example["kstack-router"]);
+	assert.equal(router.ok, true, router.ok ? "" : router.error);
 });
 
 test("kstack.example.json keeps every adversary model distinct from the planner", () => {

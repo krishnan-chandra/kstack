@@ -54,6 +54,14 @@ const CATALOG: RouteCatalog = {
 		description: "Continue linked or archived work and recover prior decisions. Read-only tools only.",
 		playbookFile: "session-pickup.md",
 	},
+	review: {
+		id: "review",
+		label: "Review",
+		description:
+			"Run a strict thermo-nuclear maintainability review of the current changeset on a frontier model. Read-only.",
+		requires: ["skill:thermo-nuclear-code-quality-review"],
+		playbookFile: "review.md",
+	},
 	"pr-autopilot": {
 		id: "pr-autopilot",
 		label: "PR autopilot",
