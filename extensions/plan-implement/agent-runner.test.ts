@@ -107,6 +107,12 @@ describe("role contract builders", () => {
 		assert.deepEqual(spec.skillPaths, ["/skills/tdd"]);
 	});
 
+	it("appends extra system prompt files after the combined role prompt", () => {
+		const options = { ...roleOptions("implementer"), extraSystemPromptFiles: ["/run/planning-session.md"] };
+		const spec = buildRoleSpec(options, "/tmp/system.md");
+		assert.deepEqual(spec.systemPromptFiles, ["/tmp/system.md", "/run/planning-session.md"]);
+	});
+
 	it("keeps large content behind file pointers", () => {
 		const planner = buildRoleInstructions(roleOptions("planner"));
 		assert.match(planner, /Read the user task at/);

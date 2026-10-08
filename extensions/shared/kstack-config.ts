@@ -43,7 +43,7 @@ export interface AdversaryConfig {
 }
 
 /** Built-in adversary when the `adversary` section omits an explicit model. */
-const DEFAULT_ADVERSARY: AdversaryModel = { model: "openai/gpt-6-astra", thinking: "medium" };
+const DEFAULT_ADVERSARY: AdversaryModel = { model: "openai/gpt-6-astra", thinking: "xhigh" };
 
 /** Maximum number of configured adversaries. */
 const MAX_ADVERSARIES = 5;

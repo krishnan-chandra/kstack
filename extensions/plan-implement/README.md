@@ -76,6 +76,8 @@ The adversary model must differ from the planner model. An unavailable adversary
 
 After the implementer records its work, every configured adversary reviews the exact change. Each adversary reads the user task, the approved plan, the implementer execution ledger, and a unified diff of the recorded workstream against its immutable base. The diff comes from `VcsBackend.reviewDiff`, so the review works for Git, jj, and Graphite workstreams without a separate snapshot tool.
 
+When the planner reported a session file, the implementer, the review fixer, and every review adversary also receive a planning-session reference: a handoff-style file naming the planner session transcript, session id, and cwd, with read-only instructions for inspecting the plan and the debate. The reference is appended to their system prompt; the approved plan file stays authoritative. `--fast` and `--plan-only` runs plan no implementation review and add no reference.
+
 Adversaries run in parallel and share `adversary.reviewTimeoutMinutes` as a wall-clock deadline. Each returns the same `Verdict`/`Blocking`/`Suggestions` critique as the planning debate. The run combines every critique into one verdict; the implementer fixer reads all reports verbatim and addresses every blocking finding. The loop re-reviews until every adversary approves or `maxRounds` is reached. An `approve` verdict requires every adversary to approve.
 
 When the run is started inside Herdr, the adversaries share a pane split off the caller's pane, keeping them visible for inspection. When Herdr is not available, each adversary is a headless Pi child that reports its output and cleanup diagnostic. A full run still requires Herdr for its core roles today, so this headless path is the transport contract for the reviewer when the reviewers are launched without a Herdr host.
@@ -125,7 +127,7 @@ Kstack reads `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.jso
   },
   "adversary": {
     "adversary": [
-      { "model": "openai/gpt-6-astra", "thinking": "medium" }
+      { "model": "openai/gpt-6-astra", "thinking": "xhigh" }
     ],
     "maxRounds": 3,
     "timeoutMinutes": 15,
@@ -134,7 +136,7 @@ Kstack reads `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.jso
 }
 ```
 
-`adversary.adversary` is one model object or kstack model alias string, or an array of up to five of them. If it is omitted, the built-in adversary is `openai/gpt-6-astra` at `medium`. `maxRounds` is an integer from 1 through 5 and defaults to 3. `adversary.timeoutMinutes` is an integer from 1 through 60 and defaults to 15; `adversary.reviewTimeoutMinutes` is an integer from 1 through 60 and defaults to 10. If the `adversary` section is absent, the normal command uses the single-planner flow.
+`adversary.adversary` is one model object or kstack model alias string, or an array of up to five of them. If it is omitted, the built-in adversary is `openai/gpt-6-astra` at `xhigh`. `maxRounds` is an integer from 1 through 5 and defaults to 3. `adversary.timeoutMinutes` is an integer from 1 through 60 and defaults to 15; `adversary.reviewTimeoutMinutes` is an integer from 1 through 60 and defaults to 10. If the `adversary` section is absent, the normal command uses the single-planner flow.
 
 Planner thinking must be `high`, `xhigh`, or `max`. Planner and implementer models must differ. Every configured model must be available and authenticated in the parent registry.
 

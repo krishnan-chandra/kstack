@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -21,6 +21,13 @@ const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns
 const validPlan =
 	"## Ordered implementation steps\n1. [STEP-1] Make the change.\n\n## Acceptance criteria\n- [AC-1] Tests pass.\n";
 const validLedger = "## Execution Ledger\n- [STEP-1] Make the change. — done\n- [AC-1] Tests pass. — done\n";
+
+const PLANNER_SESSION_FILE = "/sessions/2026-01-01T00-00-00-000Z_00000000-0000-4000-8000-000000000001.jsonl";
+
+/** Run-scoped planning-session reference directories currently in the temp root. */
+function handoffDirs(): string[] {
+	return readdirSync(tmpdir()).filter((name) => name.startsWith("pi-plan-implement-handoff-"));
+}
 
 function options(): ApprovedWorkflowOptions {
 	return {
@@ -248,6 +255,260 @@ describe("plan-implement phases", () => {
 		);
 
 		assert.equal(reviewBase, "a".repeat(40));
+	});
+
+	it("hands the fresh implementer, fixer, and reviewers the planning-session reference", async () => {
+		const firstSession = "/sessions/2026-01-01T00-00-00-000Z_00000000-0000-4000-8000-000000000001.jsonl";
+		const finalSession = "/sessions/2026-01-01T00-00-01-000Z_00000000-0000-4000-8000-000000000002.jsonl";
+		const nonPlannerRefs: Array<readonly string[] | undefined> = [];
+		const reviewRefs: Array<readonly string[] | undefined> = [];
+		const referenceTexts: string[] = [];
+		let plannerCalls = 0;
+		let planningAdversaryCalls = 0;
+		let reviews = 0;
+		const { fx } = effects({
+			runAgent: async (input) => {
+				if (input.role === "planner") {
+					plannerCalls++;
+					return {
+						status: "completed",
+						role: "planner",
+						model: input.model,
+						output: validPlan,
+						usage,
+						session: plannerCalls === 1 ? firstSession : finalSession,
+					};
+				}
+				if (input.role === "adversary") {
+					planningAdversaryCalls++;
+					return {
+						status: "completed",
+						role: "adversary",
+						model: input.model,
+						output: planningAdversaryCalls === 1 ? reviseCritique : approveCritique,
+						usage,
+					};
+				}
+				nonPlannerRefs.push(input.extraSystemPromptFiles);
+				if (input.extraSystemPromptFiles?.[0]) {
+					referenceTexts.push(readFileSync(input.extraSystemPromptFiles[0], "utf8"));
+				}
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviews++;
+				reviewRefs.push(request.extraSystemPromptFiles);
+				if (request.extraSystemPromptFiles?.[0]) {
+					referenceTexts.push(readFileSync(request.extraSystemPromptFiles[0], "utf8"));
+				}
+				const output = reviews === 1 ? reviseCritique : approveCritique;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output,
+					usage,
+				}));
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				adversaryModel: "test/planner-adversary:medium",
+				adversaryPromptFile: "/prompts/adversary.md",
+				adversaryModels: ["test/adversary:medium"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 2,
+			},
+			fx,
+		);
+		// The first planning critique forces a planner revision, so the reference must
+		// come from the final revised planner result, not the first draft.
+		assert.equal(plannerCalls, 2);
+		const referenceFile = nonPlannerRefs[0]?.[0];
+		assert.ok(referenceFile);
+		// The fixer reuses the implementer's reference; both review rounds reuse it too.
+		assert.equal(nonPlannerRefs[1]?.[0], referenceFile);
+		assert.equal(reviewRefs[0]?.[0], referenceFile);
+		assert.equal(reviewRefs[1]?.[0], referenceFile);
+		// The implementer, fixer, and both review rounds read the same rendered content.
+		assert.equal(referenceTexts.length, 4);
+		for (const text of referenceTexts) {
+			assert.ok(text.includes(`Previous session: ${finalSession}`));
+			assert.ok(!text.includes(firstSession));
+			assert.match(text, /Session ID: 00000000-0000-4000-8000-000000000002 {2}CWD: \/repo/);
+		}
+		assert.equal(existsSync(referenceFile), false);
+	});
+
+	it("adds no planning-session reference when the planner reports no session", async () => {
+		let implementerRefs: readonly string[] | undefined;
+		const { fx } = effects({
+			runAgent: async (input) => {
+				if (input.role === "implementer") implementerRefs = input.extraSystemPromptFiles;
+				return {
+					status: "completed",
+					role: input.role,
+					model: input.model,
+					output: input.role === "planner" ? validPlan : validLedger,
+					usage,
+				};
+			},
+		});
+		await runApprovedWorkflow(options(), fx);
+		assert.equal(implementerRefs, undefined);
+	});
+
+	it("writes no planning-session reference in plan-only mode", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "kstack-plan-only-handoff-"));
+		const before = new Set(handoffDirs());
+		const { fx } = effects({
+			runAgent: async (input) =>
+				input.role === "planner"
+					? {
+							status: "completed",
+							role: "planner",
+							model: input.model,
+							output: validPlan,
+							usage,
+							session: PLANNER_SESSION_FILE,
+						}
+					: { status: "failed", role: input.role, model: input.model, error: "no other role expected" },
+		});
+		await runApprovedWorkflow({ ...options(), initialCwd: cwd, planOnly: true }, fx);
+		assert.deepEqual(
+			handoffDirs().filter((name) => !before.has(name)),
+			[],
+		);
+	});
+
+	it("removes the planning-session reference when the plan is rejected", async () => {
+		const before = new Set(handoffDirs());
+		const { fx } = effects({
+			confirm: async () => false,
+			runAgent: async (input) =>
+				input.role === "planner"
+					? {
+							status: "completed",
+							role: "planner",
+							model: input.model,
+							output: validPlan,
+							usage,
+							session: PLANNER_SESSION_FILE,
+						}
+					: { status: "failed", role: input.role, model: input.model, error: "no other role expected" },
+		});
+		await runApprovedWorkflow(options(), fx);
+		assert.deepEqual(
+			handoffDirs().filter((name) => !before.has(name)),
+			[],
+		);
+	});
+
+	it("removes the planning-session reference when the implementer fails", async () => {
+		let referenceFile: string | undefined;
+		const { fx } = effects({
+			runAgent: async (input) => {
+				if (input.role === "planner") {
+					return {
+						status: "completed",
+						role: "planner",
+						model: input.model,
+						output: validPlan,
+						usage,
+						session: PLANNER_SESSION_FILE,
+					};
+				}
+				referenceFile = input.extraSystemPromptFiles?.[0];
+				return { status: "failed", role: input.role, model: input.model, error: "boom" };
+			},
+		});
+		await runApprovedWorkflow(options(), fx);
+		assert.ok(referenceFile);
+		assert.equal(existsSync(referenceFile), false);
+	});
+
+	it("removes the planning-session reference when the session stops mid-run", async () => {
+		let current = true;
+		let referenceFile: string | undefined;
+		const { fx } = effects({
+			isCurrent: () => current,
+			runAgent: async (input) => {
+				if (input.role === "planner") {
+					return {
+						status: "completed",
+						role: "planner",
+						model: input.model,
+						output: validPlan,
+						usage,
+						session: PLANNER_SESSION_FILE,
+					};
+				}
+				referenceFile = input.extraSystemPromptFiles?.[0];
+				// The session changes while the implementer runs, so the workflow stops early.
+				current = false;
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+		});
+		await runApprovedWorkflow(options(), fx);
+		assert.ok(referenceFile);
+		assert.equal(existsSync(referenceFile), false);
+	});
+
+	it("warns once and drops a planning-session reference that disappears mid-run", async () => {
+		let referenceFile: string | undefined;
+		const nonPlannerRefs: Array<readonly string[] | undefined> = [];
+		const reviewRefs: Array<readonly string[] | undefined> = [];
+		let reviews = 0;
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				if (input.role === "planner") {
+					return {
+						status: "completed",
+						role: "planner",
+						model: input.model,
+						output: validPlan,
+						usage,
+						session: PLANNER_SESSION_FILE,
+					};
+				}
+				nonPlannerRefs.push(input.extraSystemPromptFiles);
+				if (input.role === "implementer" && input.extraSystemPromptFiles?.[0]) {
+					referenceFile = input.extraSystemPromptFiles[0];
+					// Simulate the reference disappearing before the fixer and reviewers start.
+					rmSync(referenceFile, { force: true });
+				}
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviews++;
+				reviewRefs.push(request.extraSystemPromptFiles);
+				const output = reviews === 1 ? reviseCritique : approveCritique;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output,
+					usage,
+				}));
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				adversaryModels: ["test/adversary"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 2,
+			},
+			fx,
+		);
+		assert.ok(referenceFile);
+		// The implementer saw the reference; the fixer and both review rounds run without it.
+		assert.equal(nonPlannerRefs[1]?.[0], undefined);
+		assert.deepEqual(reviewRefs, [undefined, undefined]);
+		// Only the first missing-file check warns; the reference is dropped from the run.
+		const warnings = notifications.filter((message) => message.includes("Planning-session reference"));
+		assert.equal(warnings.length, 1);
 	});
 
 	it("does not offer review or publish after implementer failure", async () => {

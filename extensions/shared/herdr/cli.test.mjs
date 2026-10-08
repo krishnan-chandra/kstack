@@ -102,7 +102,7 @@ test("resolve-model selects the first adversary and falls back to the built-in d
 		const fallback = await runCli(["resolve-model", "--section", "adversary", "--key", "adversary"], {
 			PI_CODING_AGENT_DIR: agentDir,
 		});
-		assert.deepEqual(fallback, { code: 0, stdout: "openai/gpt-6-astra:medium\n", stderr: "" });
+		assert.deepEqual(fallback, { code: 0, stdout: "openai/gpt-6-astra:xhigh\n", stderr: "" });
 	} finally {
 		rmSync(agentDir, { recursive: true, force: true });
 	}

@@ -94,7 +94,7 @@ describe("validateAdversaryConfig", () => {
 		assert.deepEqual(validateAdversaryConfig({}), {
 			ok: true,
 			config: {
-				adversaries: [{ model: "openai/gpt-6-astra", thinking: "medium" }],
+				adversaries: [{ model: "openai/gpt-6-astra", thinking: "xhigh" }],
 				maxRounds: 3,
 				timeoutMinutes: 15,
 				reviewTimeoutMinutes: 10,

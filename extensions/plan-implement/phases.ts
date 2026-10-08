@@ -1,6 +1,6 @@
 /** Deterministic plan/implement phase runners with UI and lifecycle effects injected. */
 
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
@@ -24,6 +24,7 @@ import {
 import type { RoleRunner } from "./agent-runner.ts";
 import { parseCritique } from "./critique.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
+import { buildPlanningSessionReference, sessionIdFromFile } from "./handoff-reference.ts";
 import { runHostedPhase } from "./hosted-phase.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
 import type { AgentRunResult, CritiqueResult, DeliveryMode, WorkLocation } from "./types.ts";
@@ -41,6 +42,8 @@ export interface AdversaryReviewRequest {
 	ledgerFile: string;
 	diffFile: string;
 	systemPromptFile: string;
+	/** Extra system prompt files appended to each adversary (the planning-session reference). */
+	extraSystemPromptFiles?: readonly string[];
 	/** Shared wall-clock deadline for the whole round. */
 	timeoutMs: number;
 	signal?: AbortSignal;
@@ -71,6 +74,8 @@ export interface PhaseEffects {
 interface WorkflowState {
 	workflowCwd: string;
 	workstreamCheckpoint?: WorkstreamCheckpoint;
+	/** Handoff reference file binding fresh roles to the planning session. */
+	planningReferenceFile?: string;
 }
 
 export interface ApprovedWorkflowOptions {
@@ -156,6 +161,22 @@ function removePrivateDir(dir: string | undefined, label: string, fx: PhaseEffec
 	}
 }
 
+/**
+ * The planning-session reference file for a fresh role, or undefined when the run
+ * has none. A reference that unexpectedly disappeared is reported once and
+ * dropped from the run, so a hosted agent never receives a missing path as
+ * prompt text and later roles do not warn again.
+ */
+function planningReferenceFiles(state: WorkflowState, fx: PhaseEffects): readonly string[] | undefined {
+	const file = state.planningReferenceFile;
+	if (!file) return undefined;
+	if (existsSync(file)) return [file];
+	state.planningReferenceFile = undefined;
+	if (fx.isCurrent())
+		fx.notify(`Planning-session reference ${file} is unavailable; the role runs without it.`, "warning");
+	return undefined;
+}
+
 interface ReviewRoundInput {
 	adversaries: readonly ReviewAdversary[];
 	systemPromptFile: string;
@@ -170,7 +191,7 @@ async function runAdversaryRound(
 	baseSha: string,
 	input: ReviewRoundInput,
 	options: ApprovedWorkflowOptions,
-	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
+	state: WorkflowState,
 	fx: PhaseEffects,
 ): Promise<AdversaryReviewOutcome> {
 	const dir = mkdtempSync(join(tmpdir(), "pi-plan-implement-adversary-"));
@@ -225,6 +246,7 @@ async function runAdversaryRound(
 				ledgerFile,
 				diffFile,
 				systemPromptFile: input.systemPromptFile,
+				extraSystemPromptFiles: planningReferenceFiles(state, fx),
 				timeoutMs: input.reviewTimeoutMinutes * 60_000,
 				signal: controller.signal,
 			});
@@ -244,7 +266,7 @@ async function runReviewFixer(
 	approvedPlan: string,
 	executionLedger: string | undefined,
 	options: ApprovedWorkflowOptions,
-	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
+	state: WorkflowState,
 	fx: PhaseEffects,
 	timeoutMs: number,
 ): Promise<boolean> {
@@ -286,6 +308,7 @@ async function runReviewFixer(
 					workLocation: options.workLocation,
 					skillPaths: options.skillPaths,
 					supplementalPrompts: [...options.changePrompts, ...(options.mutationPrompts ?? [])],
+					extraSystemPromptFiles: planningReferenceFiles(state, fx),
 				}),
 		});
 		if (hosted.status === "unavailable") return false;
@@ -325,7 +348,7 @@ export async function runImplementationReview(
 	baseSha: string,
 	input: ReviewRoundInput,
 	options: ApprovedWorkflowOptions,
-	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
+	state: WorkflowState,
 	fx: PhaseEffects,
 ): Promise<AdversaryReviewOutcome | undefined> {
 	const maxRounds = Math.max(1, input.maxRounds);
@@ -618,6 +641,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		workstreamCheckpoint: worktreePlan ? { ref: worktreePlan.ref, baseSha: worktreePlan.baseSha } : undefined,
 	};
 	let tempDir: string | undefined;
+	let handoffDir: string | undefined;
 	let completed: { approvedPlan: string; executionLedger?: string } | undefined;
 	const reviewModels = options.adversaryModels ?? (adversaryModel ? [adversaryModel] : []);
 	const reviewInput: ReviewRoundInput | undefined =
@@ -732,6 +756,20 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						: undefined,
 				onPlan: (plan) => {
 					if (!fx.isCurrent()) return;
+					if (!planOnly && plan.session) {
+						handoffDir ??= mkdtempSync(join(tmpdir(), "pi-plan-implement-handoff-"));
+						const referenceFile = join(handoffDir, "planning-session.md");
+						writeFileSync(
+							referenceFile,
+							buildPlanningSessionReference({
+								sessionFile: plan.session,
+								sessionId: sessionIdFromFile(plan.session),
+								cwd: initialCwd,
+							}),
+							{ encoding: "utf8", mode: 0o600 },
+						);
+						state.planningReferenceFile = referenceFile;
+					}
 					const approved = `# Approved implementation plan\n\n${plan.output}\n`;
 					writeFileSync(planFile, approved, { encoding: "utf8", mode: 0o600 });
 					writeFileSync(debatePlanFile, plan.output, { encoding: "utf8", mode: 0o600 });
@@ -837,6 +875,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 								workLocation,
 								skillPaths,
 								supplementalPrompts: [...changePrompts, ...(options.mutationPrompts ?? [])],
+								extraSystemPromptFiles: planningReferenceFiles(state, fx),
 							});
 							if (result.status !== "completed") return result;
 							if (readFileSync(planFile, "utf8") !== immutablePlanSnapshot)
@@ -937,5 +976,6 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		}
 	} finally {
 		if (fx.isSessionCurrent()) fx.setStatus(undefined);
+		removePrivateDir(handoffDir, "planning-session", fx);
 	}
 }

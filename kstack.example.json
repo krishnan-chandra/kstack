@@ -57,7 +57,7 @@
     "adversary": [
       {
         "model": "openai/gpt-6-astra",
-        "thinking": "medium"
+        "thinking": "xhigh"
       }
     ],
     "maxRounds": 3,
