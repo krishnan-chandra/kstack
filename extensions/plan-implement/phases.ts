@@ -27,6 +27,7 @@ import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger 
 import { buildPlanningSessionReference, sessionIdFromFile } from "./handoff-reference.ts";
 import { runHostedPhase } from "./hosted-phase.ts";
 import type { WorkflowPhase } from "./lifecycle.ts";
+import type { PlanSnapshot } from "./plan-handoff.ts";
 import type { AgentRunResult, CritiqueResult, DeliveryMode, WorkLocation } from "./types.ts";
 import { runWorkflow } from "./workflow.ts";
 
@@ -85,6 +86,8 @@ export interface ApprovedWorkflowOptions {
 	initialCwd: string;
 	promptsDir: string;
 	plannerModel: string;
+	/** A caller-supplied approved plan; skips the planner and the planning debate. */
+	planHandoff?: PlanSnapshot;
 	adversaryModel?: string;
 	adversaryPromptFile?: string;
 	maxRounds?: number;
@@ -621,6 +624,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		initialCwd,
 		promptsDir,
 		plannerModel,
+		planHandoff,
 		adversaryModel,
 		adversaryPromptFile,
 		maxRounds,
@@ -643,6 +647,17 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 	let tempDir: string | undefined;
 	let handoffDir: string | undefined;
 	let completed: { approvedPlan: string; executionLedger?: string } | undefined;
+	// A supplied plan already passed the planning debate before handoff, so the
+	// workflow starts from it and never runs the planner role.
+	const initialPlan: Extract<AgentRunResult, { status: "completed" }> | undefined = planHandoff
+		? {
+				status: "completed",
+				role: "planner",
+				model: "plan-file",
+				output: planHandoff.text,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+			}
+		: undefined;
 	const reviewModels = options.adversaryModels ?? (adversaryModel ? [adversaryModel] : []);
 	const reviewInput: ReviewRoundInput | undefined =
 		reviewModels.length > 0 && options.reviewAdversaryPromptFile
@@ -672,6 +687,7 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 				},
 			);
 			let debateApproval = adversaryModel ? `Adversary ${adversaryModel}: awaiting critique.` : "Adversary: skipped.";
+			if (planHandoff) debateApproval = `Plan supplied from ${planHandoff.path}.`;
 			const runPlanningRole = async (
 				role: "planner" | "adversary",
 				model: string,
@@ -704,12 +720,13 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 				return hosted.value;
 			};
 			const outcome = await runWorkflow({
+				...(initialPlan ? { initialPlan } : undefined),
 				runPlanner: () =>
 					runPlanningRole("planner", plannerModel, join(promptsDir, "planner.md"), {
 						supplementalPrompts: changePrompts,
 					}),
 				debate:
-					adversaryModel && adversaryPromptFile
+					!initialPlan && adversaryModel && adversaryPromptFile
 						? {
 								revisePlan: async (previous, critique) => {
 									writeFileSync(debatePlanFile, previous, { encoding: "utf8", mode: 0o600 });
@@ -795,11 +812,13 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 						fx.notify(`Planner output cannot be approved: ${planValidationError}`, "error");
 						return false;
 					}
+					const title = planHandoff ? "Approve the supplied plan?" : "Approve planner output?";
+					const cardHint = planHandoff ? "Review the plan above." : "Review the Planner card above.";
 					return fx.confirm(
-						"Approve planner output?",
+						title,
 						mode === "stack"
-							? `${debateApproval}\nReview the Planner card above. Continue with ${implementerModel}, which creates a local ${fx.backend.id} stack?`
-							: `${debateApproval}\nReview the Planner card above. Continue with ${implementerModel}, which ${policy.approvalSummary}?`,
+							? `${debateApproval}\n${cardHint} Continue with ${implementerModel}, which creates a local ${fx.backend.id} stack?`
+							: `${debateApproval}\n${cardHint} Continue with ${implementerModel}, which ${policy.approvalSummary}?`,
 					);
 				},
 				planOnly,

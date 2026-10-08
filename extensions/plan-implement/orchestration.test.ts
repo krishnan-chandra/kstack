@@ -59,11 +59,18 @@ class FakeHost implements AgentHost {
 interface Harness {
 	host: FakeHost;
 	notices: string[];
+	cwd: string;
+	hostOpened(): number;
 	run(): Promise<void>;
 	shutdown(): void;
 }
 
-function createHarness(t: TestContext, result: AskResult, confirm: () => Promise<boolean>): Harness {
+function createHarness(
+	t: TestContext,
+	result: AskResult,
+	confirm: () => Promise<boolean>,
+	args = "--plan-only --no-adversary --change-kind feature Test retention",
+): Harness {
 	const root = mkdtempSync(join(tmpdir(), "kstack-plan-orchestration-"));
 	const agentDir = join(root, "agent");
 	mkdirSync(agentDir);
@@ -109,6 +116,7 @@ function createHarness(t: TestContext, result: AskResult, confirm: () => Promise
 		exec: async () => ({ code: 0, stdout: `${root}\n`, stderr: "", killed: false }),
 	};
 	const host = new FakeHost(root, result);
+	let hostOpened = 0;
 	planImplementExtension(
 		/* SAFETY: This host supplies every Pi capability used by the exercised command path. */ piHost as ExtensionAPI,
 		{
@@ -119,7 +127,10 @@ function createHarness(t: TestContext, result: AskResult, confirm: () => Promise
 				workspaceId: "w1",
 				callerPane: "w1:p0",
 			}),
-			openHost: async () => ({ ok: true, host }),
+			openHost: async () => {
+				hostOpened++;
+				return { ok: true, host };
+			},
 			openPane: async () => ({ ok: false, error: "openPane is not used by plan-only runs" }),
 		},
 	);
@@ -155,8 +166,9 @@ function createHarness(t: TestContext, result: AskResult, confirm: () => Promise
 	return {
 		host,
 		notices,
-		run: () =>
-			registeredCommand.handler("--plan-only --no-adversary --change-kind feature Test retention", commandContext),
+		cwd: root,
+		hostOpened: () => hostOpened,
+		run: () => registeredCommand.handler(args, commandContext),
 		shutdown: () => {
 			const listener = listeners.get("session_shutdown");
 			assert.ok(listener);
@@ -206,5 +218,31 @@ describe("plan-implement host retention", () => {
 		await harness.run();
 		assert.deepEqual(harness.host.disposeArgs, [undefined]);
 		assert.ok(harness.notices.some((message) => /retained in Herdr tab/.test(message)));
+	});
+
+	it("rejects an unreadable supplied plan before opening the host", async (t) => {
+		const harness = createHarness(
+			t,
+			{ status: "completed", output: validPlan, usage },
+			async () => true,
+			"--plan-file missing.md --no-adversary --change-kind feature Implement it",
+		);
+		await harness.run();
+		assert.equal(harness.hostOpened(), 0);
+		assert.deepEqual(harness.host.disposeArgs, []);
+		assert.ok(harness.notices.some((message) => /Cannot open plan file/.test(message)));
+	});
+
+	it("rejects a supplied plan with no acceptance criteria before opening the host", async (t) => {
+		const harness = createHarness(
+			t,
+			{ status: "completed", output: validPlan, usage },
+			async () => true,
+			"--plan-file incomplete.md --no-adversary --change-kind feature Implement it",
+		);
+		writeFileSync(join(harness.cwd, "incomplete.md"), "## Ordered implementation steps\n1. [STEP-1] Do it.\n");
+		await harness.run();
+		assert.equal(harness.hostOpened(), 0);
+		assert.ok(harness.notices.some((message) => /no acceptance criteria/.test(message)));
 	});
 });

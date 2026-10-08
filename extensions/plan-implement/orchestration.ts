@@ -23,6 +23,7 @@ import { loadConfig, modelCliId, resolveAdversary, resolveImplementerOnly, resol
 import { type FastImplementOutcome, runFastCurrent, runFastWorktree } from "./fast-runner.ts";
 import type { WorkflowLifecycle } from "./lifecycle.ts";
 import { type AdversaryReviewRequest, runApprovedWorkflow } from "./phases.ts";
+import { loadPlanHandoff, type PlanSnapshot } from "./plan-handoff.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { createStackDeliveryClient } from "./stack-delivery.ts";
 import {
@@ -318,6 +319,16 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 			await runFastPrepared(task, workLocation, changeKind, ctx, vcsConfig, planFile);
 			return;
 		}
+		let planHandoff: PlanSnapshot | undefined;
+		if (planFile) {
+			const loaded = await loadPlanHandoff(planFile, ctx.cwd);
+			if (!deps.lifecycle.isSessionCurrent(commandSession)) return;
+			if (!loaded.ok) {
+				notify(loaded.error, "error");
+				return;
+			}
+			planHandoff = loaded.snapshot;
+		}
 		const backend = deps.backendFor(vcsConfig.backend);
 		const policy = vcsPolicy(backend.id);
 		const stackClient = createStackDeliveryClient(deps.pi, vcsConfig, ctx);
@@ -441,16 +452,18 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 		const host = opened.host;
 		let confirmationTitle = "Run plan → implement → adversarial review → fix → publish?";
 		if (planOnly) confirmationTitle = "Run planner and stop after the final plan?";
+		else if (planHandoff) confirmationTitle = "Implement the supplied plan → adversarial review → fix → publish?";
 		else if (mode === "stack")
 			confirmationTitle = "Run plan → implement (stacked PRs) → adversarial review → fix → publish?";
 		else if (workLocation === "worktree") {
 			confirmationTitle = "Run plan → implement in managed worktree → adversarial review → fix → publish?";
 		}
+		const planSource = planHandoff ? `Supplied plan: ${planHandoff.path}` : `Planner (read-only): ${plannerModel}`;
 		const confirmed = await ctx.ui.confirm(
 			confirmationTitle,
 			mode === "stack"
-				? `Planner (read-only): ${plannerModel}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role`
-				: `Planner (read-only): ${plannerModel}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (${policy.taskWorkstreamSummary}): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role`,
+				? `${planSource}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role`
+				: `${planSource}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (${policy.taskWorkstreamSummary}): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role`,
 		);
 		if (!deps.lifecycle.isSessionCurrent(commandSession) || !confirmed) {
 			await host.dispose({ closeTab: true });
@@ -503,6 +516,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 					initialCwd: ctx.cwd,
 					promptsDir: deps.paths.promptsDir,
 					plannerModel,
+					...(planHandoff ? { planHandoff } : undefined),
 					adversaryModel,
 					adversaryPromptFile: adversaryModel ? deps.paths.adversaryPromptFile : undefined,
 					maxRounds,

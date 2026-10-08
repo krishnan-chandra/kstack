@@ -13,6 +13,7 @@ The extension owns deterministic gates: model and repository preflight, plan and
 /plan-implement --stack --change-kind refactor Split the rollout into three PRs
 /plan-implement --plan-only --change-kind feature Draft the migration plan
 /plan-implement --no-adversary --change-kind feature Use an existing approved plan flow
+/plan-implement --plan-file plans/migration.md --change-kind feature Implement the approved plan
 /plan-implement --fast --change-kind feature Make one bounded change
 ```
 
@@ -25,9 +26,9 @@ The command accepts these leading flags:
 | `--worktree` | Run a single Git or Graphite delivery in a retained managed worktree. |
 | `--change-kind <kind>` | Select `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. |
 | `--no-adversary` | Skip the configured adversary for this run. |
-| `--plan-only` | Stop after the final plan and write it under `plans/`. This conflicts with `--fast`. |
+| `--plan-only` | Stop after the final plan and write it under `plans/`. This conflicts with `--fast` and `--plan-file`. |
 | `--fast` | Run one hosted implementer. Skip planning, adversarial review, and publication. |
-| `--plan-file <path>` | With `--fast`, snapshot this selected plan before workstream creation. The path must contain no whitespace; the file must be nonempty and at most 64 KiB. |
+| `--plan-file <path>` | Implement a plan supplied from this path instead of planning. The path must contain no whitespace; the file must be nonempty and at most 64 KiB. Without `--fast`, the plan must also use the ordered `[STEP-n]`/`[AC-n]` contract, and the full implement → review → fix → publish loop runs. With `--fast`, the loop is skipped. |
 
 Use `--` before a task that starts with a dash. The argument-less command prompts for delivery, change kind, and task.
 
@@ -49,8 +50,8 @@ A full run follows these phases:
 
 1. Preflight Herdr, configuration, models, VCS, and publication skills before a model call.
 2. Create one `plan-implement: <slug>` Herdr tab with `--no-focus`.
-3. Start a read-only planner in the tab's root pane.
-4. If `adversary` is configured, start a read-only adversary and run the debate.
+3. Start a read-only planner in the tab's root pane. With `--plan-file`, skip planning and load the supplied plan instead.
+4. If `adversary` is configured, start a read-only adversary and run the debate. A supplied plan skips the planning debate.
 5. Validate the final plan's ordered `[STEP-n]` items and `[AC-n]` criteria.
 6. Display the exact final validated plan, including verified human edits, then ask for approval. That same snapshot is persisted and supplied to the implementer.
 7. Create the backend workstream only after approval, then start the implementer.
@@ -59,6 +60,8 @@ A full run follows these phases:
 10. Offer a hosted review fixer, structural publication, a hosted metadata publisher, PR autopilot, and landing.
 
 Planner, adversary, implementer, fixer, and publisher agents stay visible in the run tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. Review adversaries run in a pane split off the caller's pane (or as headless children when Herdr is unavailable). The extension retains the tab after completion and reports its ID.
+
+With `--plan-file`, phases 3–4 are replaced by a bounded read of the supplied plan. The run starts from an immutable snapshot of that file, so a later edit cannot change what the implementer and reviewers see.
 
 The Planner, Adversary, Implementer, Review fixer, and Publisher cards show the model, status, turns, and cost. Expand a card with Ctrl+O. Press Ctrl+Shift+I to abort the active hosted agent. If an agent blocks on a question or approval, the extension shows its pane ID; answer there, then confirm that the run should resume.
 
@@ -76,7 +79,7 @@ The adversary model must differ from the planner model. An unavailable adversary
 
 After the implementer records its work, every configured adversary reviews the exact change. Each adversary reads the user task, the approved plan, the implementer execution ledger, and a unified diff of the recorded workstream against its immutable base. The diff comes from `VcsBackend.reviewDiff`, so the review works for Git, jj, and Graphite workstreams without a separate snapshot tool.
 
-When the planner reported a session file, the implementer, the review fixer, and every review adversary also receive a planning-session reference: a handoff-style file naming the planner session transcript, session id, and cwd, with read-only instructions for inspecting the plan and the debate. The reference is appended to their system prompt; the approved plan file stays authoritative. `--fast` and `--plan-only` runs plan no implementation review and add no reference.
+When the planner reported a session file, the implementer, the review fixer, and every review adversary also receive a planning-session reference: a handoff-style file naming the planner session transcript, session id, and cwd, with read-only instructions for inspecting the plan and the debate. The reference is appended to their system prompt; the approved plan file stays authoritative. `--fast` and `--plan-only` runs plan no implementation review and add no reference; a `--plan-file` handoff has no planner session, so it passes no reference.
 
 Adversaries run in parallel and share `adversary.reviewTimeoutMinutes` as a wall-clock deadline. Each returns the same `Verdict`/`Blocking`/`Suggestions` critique as the planning debate. The run combines every critique into one verdict; the implementer fixer reads all reports verbatim and addresses every blocking finding. The loop re-reviews until every adversary approves or `maxRounds` is reached. An `approve` verdict requires every adversary to approve.
 
@@ -90,7 +93,13 @@ When the run is started inside Herdr, the adversaries share a pane split off the
 plans/<task-slug>.md
 ```
 
-It does not create a branch, bookmark, Graphite workstream, worktree, adversarial review, or PR. Use the resulting plan with `--fast --plan-file <absolute-plan-path>` when the bounded implementation no longer needs another debate.
+It does not create a branch, bookmark, Graphite workstream, worktree, adversarial review, or PR. Use the resulting plan with `--plan-file plans/<task-slug>.md` to run the full implement → review → fix → publish loop without re-planning, or with `--fast --plan-file <absolute-plan-path>` when the bounded implementation no longer needs another debate.
+
+## Plan handoff mode
+
+`--plan-file <path>` supplies an already approved plan, so the run skips the planner and the planning debate and goes straight to the approval gate, implementer, adversarial implementation review, fixing, and publication. The run still resolves and authenticates the configured planner, because the planner model is the reference for the `adversary` distinctness check, even though no planner agent is launched. It also requires an available `plan-implement` implementer, a configured adversary for the review loop, and the publication skills.
+
+The extension resolves the path against the current workspace, reads at most 64 KiB, rejects empty files, and requires the ordered `[STEP-n]`/`[AC-n]` contract with at least one step and one acceptance criterion. The bounded read is written to a read-only run-local snapshot that the implementer and reviewers all receive; a later edit to the source file cannot change it. This is the handoff target for the [`adversarial-planning`](../../skills/adversarial-planning/SKILL.md) skill when planning and implementation should use different models.
 
 ## Fast mode
 

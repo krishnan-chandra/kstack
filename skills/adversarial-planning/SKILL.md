@@ -100,10 +100,10 @@ Leave the adversary pane open and report its name and pane ID. After the user ap
 
 The path must contain no whitespace; copy the selected plan to a suitable path if necessary. Fast mode snapshots the file before workstream creation and passes it to the fresh implementer. It does not inherit this conversation.
 
-For a full run with implementation review and publication gates, offer:
+For a full run that keeps the adversarial implementation review and publication gates without re-planning, offer:
 
 ```text
-/plan-implement --no-adversary Implement the plan at <absolute-plan-path>
+/plan-implement --plan-file <absolute-plan-path> --change-kind <kind> <task>
 ```
 
-This performs another planning pass but skips another adversarial debate. Neither handoff authorizes publication or landing.
+The full handoff validates the plan's ordered `[STEP-n]`/`[AC-n]` contract and snapshots it read-only before implementation. It skips the planner and the planning debate, then runs the implementer, the adversarial implementation review, fixing, and publication. The implementer and review adversaries come from the `plan-implement` and `adversary` configuration, so planning can run on a frontier planner while implementation runs on a smaller implementer. A supplied plan has no planner session, so later roles receive no planning-session reference. Neither handoff authorizes publication or landing.
