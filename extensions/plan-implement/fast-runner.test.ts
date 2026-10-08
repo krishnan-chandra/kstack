@@ -33,6 +33,7 @@ function fakeBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls:
 		captureWorkstream: async () => ({ ok: true, snapshot: { ref: "main", token: `main@${isolationPlan.baseSha}` } }),
 		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
+		reviewDiff: async () => ({ ok: true, diff: "" }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
 		createWorkstream: async (cwd, task) => {
 			calls.push(`workstream:${cwd}:${task}`);

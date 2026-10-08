@@ -484,6 +484,124 @@ describe("openPaneHost", () => {
 		assert.ok(!harness.fake.paneIdsTouched("pane close").includes(harness.fake.callerPaneId));
 		assert.equal(harness.fake.callsMatching("tab close").length, 0);
 	});
+
+	it("cancels a queued split, closes the late pane, and starts no agent", async () => {
+		const harness = makeHarness("pane-host-cancel");
+		let splitCount = 0;
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("pane split"),
+			async () => {
+				splitCount++;
+				if (splitCount > 1) await gate;
+				const paneId = `w5:pLate${splitCount}`;
+				return {
+					code: 0,
+					stdout: JSON.stringify({
+						id: "x",
+						result: {
+							type: "pane_info",
+							pane: { pane_id: paneId, tab_id: harness.fake.tabId, agent_status: "unknown" },
+						},
+					}),
+					stderr: "",
+				};
+			},
+		);
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 2 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+		const first = await opened.host.start(PLANNER_SPEC);
+		assert.ok(first.ok, first.ok ? "" : first.error);
+
+		const controller = new AbortController();
+		const starting = opened.host.start({ ...PLANNER_SPEC, role: "adversary", signal: controller.signal });
+		while (splitCount < 2) await new Promise((resolve) => setTimeout(resolve, 0));
+		controller.abort();
+		release?.();
+		const result = await starting;
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.equal(result.aborted, true);
+		assert.equal(harness.fake.callsMatching("agent start").length, 1);
+		assert.ok(harness.fake.paneIdsTouched("pane close").includes("w5:pLate2"));
+		assert.ok(!harness.fake.paneIdsTouched("pane close").includes(harness.fake.callerPaneId));
+	});
+
+	it("closes a late-started agent and sends no review request when the start is cancelled", async () => {
+		const harness = makeHarness("pane-host-start-cancel");
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "start-cancel", cwd: "/repo", maxAgents: 1 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+
+		let resolveStart: (() => void) | undefined;
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent start"),
+			(call) =>
+				new Promise<ExecResponse>((resolve) => {
+					resolveStart = () =>
+						resolve({
+							code: 0,
+							stdout: JSON.stringify({
+								id: "x",
+								result: {
+									type: "agent_started",
+									agent: agentRecord("idle", call.args[6] ?? harness.fake.rootPaneId, harness.fake.sessionFile),
+									argv: ["pi"],
+								},
+							}),
+							stderr: "",
+						});
+				}),
+		);
+		const controller = new AbortController();
+		const starting = opened.host.start({ ...PLANNER_SPEC, signal: controller.signal });
+		while (!resolveStart) await new Promise((resolve) => setTimeout(resolve, 0));
+		controller.abort();
+		resolveStart?.();
+		const result = await starting;
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.equal(result.aborted, true);
+		assert.equal(harness.fake.callsMatching("agent prompt").length, 0);
+		assert.ok(harness.fake.callsMatching("pane close").length > 0);
+		assert.ok(!harness.fake.paneIdsTouched("pane close").includes(harness.fake.callerPaneId));
+	});
+
+	it("cancels during the shell-readiness retry and closes every owned pane", async () => {
+		const harness = makeHarness("pane-host-busy-cancel");
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent start"),
+			() => ({
+				code: 1,
+				stdout: "",
+				stderr: JSON.stringify({ error: { code: "agent_pane_busy", message: "not an available shell" } }),
+			}),
+		);
+		const controller = new AbortController();
+		const deps = {
+			...harness.fake.deps(),
+			sleep: async () => {
+				controller.abort();
+			},
+		};
+		const opened = await openPaneHost({ owner: "adversary", label: "busy-cancel", cwd: "/repo", maxAgents: 1 }, deps);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+
+		const result = await opened.host.start({ ...PLANNER_SPEC, signal: controller.signal });
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.equal(result.aborted, true);
+		assert.equal(harness.fake.callsMatching("agent start").length, 1);
+
+		await opened.host.dispose({ closeTab: true });
+		assert.deepEqual(harness.fake.paneIdsTouched("pane close"), ["w5:p100"]);
+		assert.ok(!harness.fake.paneIdsTouched("pane close").includes(harness.fake.callerPaneId));
+	});
 });
 
 describe("agent-host: layout and start", () => {

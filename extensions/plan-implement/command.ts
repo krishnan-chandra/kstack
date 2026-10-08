@@ -1,6 +1,5 @@
-/** Pure task validation, command parsing, and panel-review options. */
+/** Pure task validation, command parsing, and flag handling. */
 
-import type { PanelWorktreeArgs } from "../panel-review/types.ts";
 import { CHANGE_KINDS, type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
@@ -222,46 +221,4 @@ export function parsePlanImplementArgs(args: string):
 		...(planFile ? { planFile } : undefined),
 		task: tokens.slice(i).join(" "),
 	};
-}
-
-function boundedPanelIntent(task: string): string {
-	const oneLine = task.replace(/\s+/g, " ").trim();
-	return Array.from(oneLine).slice(0, LIMITS.panelIntentChars).join("");
-}
-
-function addPlanReviewContext(
-	options: PanelWorktreeArgs,
-	approvedPlan?: string,
-	executionLedger?: string,
-): PanelWorktreeArgs {
-	return {
-		...options,
-		...(approvedPlan !== undefined ? { approvedPlan } : undefined),
-		...(executionLedger !== undefined ? { executionLedger } : undefined),
-	};
-}
-
-export function buildPanelReviewOptions(
-	task: string,
-	approvedPlan?: string,
-	executionLedger?: string,
-): PanelWorktreeArgs {
-	return addPlanReviewContext({ intent: `Plan/implement: ${boundedPanelIntent(task)}` }, approvedPlan, executionLedger);
-}
-
-/** Review a completed local stack against the immutable trunk SHA from preflight. */
-export function buildStackPanelReviewOptions(
-	task: string,
-	trunkSha: string,
-	approvedPlan?: string,
-	executionLedger?: string,
-): PanelWorktreeArgs {
-	return addPlanReviewContext(
-		{
-			base: trunkSha,
-			intent: `Plan/implement (stacked): ${boundedPanelIntent(task)}`,
-		},
-		approvedPlan,
-		executionLedger,
-	);
 }

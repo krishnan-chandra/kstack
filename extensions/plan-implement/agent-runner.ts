@@ -7,6 +7,11 @@ import { type AgentRole, type AgentRunResult, type DeliveryMode, LIMITS, type Wo
 
 interface BuildRoleOptions {
 	role: AgentRole;
+	/**
+	 * Distinguishes multiple hosted instances of the same role. The review loop
+	 * starts one adversary per configured model, so each needs its own session.
+	 */
+	instance?: string;
 	model: string;
 	promptFile: string;
 	taskFile: string;
@@ -34,16 +39,21 @@ interface RoleRunnerEffects {
 
 export interface RoleRunner {
 	readonly tabId: string;
-	paneId(role: AgentRole): string | undefined;
+	paneId(role: AgentRole, instance?: string): string | undefined;
 	run(options: RunAgentOptions): Promise<AgentRunResult>;
 	abortActive(): Promise<boolean>;
-	dispose(): Promise<void>;
+	/** Dispose the host; `closeTab` also closes the panes a pane host split off. */
+	dispose(options?: { closeTab?: boolean }): Promise<void>;
 }
 
 interface StartedRole {
 	agent: HostedAgent;
 	model: string;
 	cwd: string;
+}
+
+function roleKey(role: AgentRole, instance?: string): string {
+	return instance ? `${role}:${instance}` : role;
 }
 
 function outputCap(role: AgentRole): number {
@@ -55,13 +65,15 @@ function outputCap(role: AgentRole): number {
 /** Build the hosted Pi process contract for one role. */
 export function buildRoleSpec(options: RunAgentOptions, systemPromptFile: string): HostedAgentSpec {
 	const stackMode = options.mode === "stack";
+	const sessionRole = options.instance ? `${options.role}-${options.instance}` : options.role;
 	const spec: HostedAgentSpec = {
 		role: options.role,
 		model: options.model,
 		cwd: options.cwd,
 		systemPromptFiles: [systemPromptFile],
-		sessionName: `plan-implement/${options.role}`,
+		sessionName: `plan-implement/${sessionRole}`,
 	};
+	if (options.signal) spec.signal = options.signal;
 	if (options.role === "planner" || options.role === "adversary") spec.tools = ["read", "grep", "find", "ls"];
 	if (stackMode) {
 		spec.noSkills = true;
@@ -99,12 +111,12 @@ export function buildRoleInstructions(options: BuildRoleOptions): string {
 		const stackNote = stackMode
 			? " This is a stacked-PR delivery; follow the appended backend-specific local stack policy and amend the correct slice."
 			: "";
-		return `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then address the actionable findings and verify your fixes.${stackNote}${worktreeNote}`;
+		return `Read the user task at ${options.taskFile} and the adversarial review verdict at ${options.verdictFile}, then address every blocking finding and verify your fixes.${stackNote}${worktreeNote}`;
 	}
 	const stackNote = stackMode
 		? " This is a stacked-PR delivery; the parent already published the stack structure. Edit only titles and bodies for PR numbers in the trusted map and recommend reviewers. Do not push, create PRs, repair bases, or update navigation comments."
 		: "";
-	return `Read the user task at ${options.taskFile} and the panel-review verdict at ${options.verdictFile}, then publish the change as a draft pull request and recommend reviewers. Consult the write-pr and find-reviewers skills.${stackNote}${worktreeNote}`;
+	return `Read the user task at ${options.taskFile} and the adversarial review verdict at ${options.verdictFile}, then publish the change as a draft pull request and recommend reviewers. Consult the write-pr and find-reviewers skills.${stackNote}${worktreeNote}`;
 }
 
 type AskUsage = AskResult["usage"];
@@ -160,13 +172,14 @@ function mapAskResult(role: AgentRole, model: string, agent: HostedAgent, result
 
 /** Create a reusable role runner. Each role starts once and receives later asks in the same Pi session. */
 export function createRoleRunner(host: AgentHost, effects: RoleRunnerEffects = {}): RoleRunner {
-	const roles = new Map<AgentRole, StartedRole>();
+	const roles = new Map<string, StartedRole>();
 	let sequence = 0;
-	let active: HostedAgent | undefined;
+	const active = new Set<HostedAgent>();
 	let disposed = false;
 
 	const startRole = async (options: RunAgentOptions): Promise<StartedRole | AgentRunResult> => {
-		const existing = roles.get(options.role);
+		const key = roleKey(options.role, options.instance);
+		const existing = roles.get(key);
 		if (existing) {
 			if (existing.model !== options.model || existing.cwd !== options.cwd) {
 				return {
@@ -179,14 +192,16 @@ export function createRoleRunner(host: AgentHost, effects: RoleRunnerEffects = {
 			return existing;
 		}
 		const promptParts = [readFileSync(options.promptFile, "utf8"), ...(options.supplementalPrompts ?? [])];
-		const systemPromptFile = join(host.exchangeDir, `${sequence}-${options.role}-system.md`);
+		const systemPromptFile = join(host.exchangeDir, `${sequence}-${key}-system.md`);
 		writeFileSync(systemPromptFile, `${promptParts.join("\n\n---\n\n")}\n`, { mode: 0o600 });
 		const started = await host.start(buildRoleSpec(options, systemPromptFile));
 		if (!started.ok) {
-			return { status: "failed", role: options.role, model: options.model, error: started.error };
+			return started.aborted
+				? { status: "aborted", role: options.role, model: options.model }
+				: { status: "failed", role: options.role, model: options.model, error: started.error };
 		}
 		const role = { agent: started.agent, model: options.model, cwd: options.cwd };
-		roles.set(options.role, role);
+		roles.set(key, role);
 		effects.onStarted?.(options.role, options.model, started.agent.paneId);
 		return role;
 	};
@@ -194,13 +209,16 @@ export function createRoleRunner(host: AgentHost, effects: RoleRunnerEffects = {
 	const run = async (options: RunAgentOptions): Promise<AgentRunResult> => {
 		if (disposed)
 			return { status: "failed", role: options.role, model: options.model, error: "Role runner is disposed." };
+		// A deadline that fired before this queued role started must not launch an agent.
+		if (options.signal?.aborted) return { status: "aborted", role: options.role, model: options.model };
 		sequence++;
 		const started = await startRole(options);
 		if ("status" in started) return started;
-		const instructionFile = join(host.exchangeDir, `${sequence}-${options.role}-instructions.md`);
-		const outputFile = join(host.exchangeDir, `${sequence}-${options.role}-output.md`);
+		const key = roleKey(options.role, options.instance);
+		const instructionFile = join(host.exchangeDir, `${sequence}-${key}-instructions.md`);
+		const outputFile = join(host.exchangeDir, `${sequence}-${key}-output.md`);
 		writeFileSync(instructionFile, `${options.instructions ?? buildRoleInstructions(options)}\n`, { mode: 0o600 });
-		active = started.agent;
+		active.add(started.agent);
 		try {
 			const accumulated: AskUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 			let result = await started.agent.ask({
@@ -222,23 +240,23 @@ export function createRoleRunner(host: AgentHost, effects: RoleRunnerEffects = {
 			}
 			return mapAskResult(options.role, options.model, started.agent, withUsage(result, accumulated));
 		} finally {
-			if (active === started.agent) active = undefined;
+			active.delete(started.agent);
 		}
 	};
 
 	return {
 		tabId: host.tabId,
-		paneId: (role) => roles.get(role)?.agent.paneId,
+		paneId: (role, instance) => roles.get(roleKey(role, instance))?.agent.paneId,
 		run,
 		async abortActive() {
-			if (!active) return false;
-			await active.abort();
+			if (active.size === 0) return false;
+			await Promise.all([...active].map((agent) => agent.abort()));
 			return true;
 		},
-		async dispose() {
+		async dispose(options) {
 			if (disposed) return;
 			disposed = true;
-			await host.dispose();
+			await host.dispose(options);
 		},
 	};
 }

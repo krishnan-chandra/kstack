@@ -131,6 +131,13 @@ export class GraphiteBackend implements VcsBackend {
 		return { ok: true, paths: gitStatusChangedPaths(status.stdout) };
 	}
 
+	async reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>> {
+		const result = await this.git(cwd, ["diff", "--no-color", "--find-renames", `${baseSha}..HEAD`], 30_000);
+		return result.code === 0
+			? { ok: true, diff: result.stdout }
+			: { ok: false, error: `Could not diff the workstream against ${baseSha.slice(0, 8)}: ${diagnostic(result)}` };
+	}
+
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {
 		const status = await this.git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"], 5_000);
 		if (status.code !== 0)

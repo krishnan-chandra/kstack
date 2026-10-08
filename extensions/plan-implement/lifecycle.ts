@@ -2,7 +2,7 @@
 
 import { SessionRunLifecycle, type SessionToken } from "../shared/session-lifecycle.ts";
 
-export type WorkflowPhase = "idle" | "planning" | "approval" | "implementing" | "fixing" | "publishing";
+export type WorkflowPhase = "idle" | "planning" | "approval" | "implementing" | "reviewing" | "fixing" | "publishing";
 type WorkflowToken = SessionToken;
 
 export class WorkflowLifecycle extends SessionRunLifecycle {
@@ -19,7 +19,7 @@ export class WorkflowLifecycle extends SessionRunLifecycle {
 
 	beginRole(
 		token: WorkflowToken,
-		phase: "planning" | "implementing" | "fixing" | "publishing",
+		phase: "planning" | "implementing" | "reviewing" | "fixing" | "publishing",
 	): AbortController | undefined {
 		if (!this.isCurrent(token) || this.roleAbort) return undefined;
 		const controller = new AbortController();

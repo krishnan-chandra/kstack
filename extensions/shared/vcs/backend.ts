@@ -70,6 +70,8 @@ export interface VcsBackend {
 	captureWorkstream(cwd: string): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>>;
 	assertWorkstreamUnchanged(cwd: string, expected: WorkstreamSnapshot): Promise<VcsResult>;
 	changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>>;
+	/** Unified diff of the recorded workstream against an immutable base commit. */
+	reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>>;
 	isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>>;
 	createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>>;
 	verifyRecordedWorkstream(

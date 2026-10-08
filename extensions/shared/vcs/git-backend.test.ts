@@ -306,3 +306,33 @@ describe("GitBackend updateBase", () => {
 		});
 	});
 });
+
+describe("GitBackend reviewDiff", () => {
+	it("returns the unified diff of the recorded workstream against the base", async () => {
+		const exec = scriptedExec([
+			{
+				command: "git",
+				args: ["diff", "--no-color", "--find-renames", `${HEAD}..HEAD`],
+				result: { stdout: "diff --git a/a.ts b/a.ts\n" },
+			},
+		]);
+		assert.deepEqual(await new GitBackend(exec).reviewDiff("/repo", HEAD), {
+			ok: true,
+			diff: "diff --git a/a.ts b/a.ts\n",
+		});
+	});
+
+	it("surfaces diff diagnostics", async () => {
+		const exec = scriptedExec([
+			{
+				command: "git",
+				args: ["diff", "--no-color", "--find-renames", `${HEAD}..HEAD`],
+				result: { code: 128, stderr: "bad revision\n" },
+			},
+		]);
+		assert.deepEqual(await new GitBackend(exec).reviewDiff("/repo", HEAD), {
+			ok: false,
+			error: `Could not diff the workstream against ${HEAD.slice(0, 8)}: bad revision`,
+		});
+	});
+});

@@ -13,7 +13,7 @@ interface PlanImplementPayload {
 	mode: DeliveryMode;
 	workLocation: WorkLocation;
 	changeKind: ChangeKind;
-	/** When true, skip planner/panel-review/publisher and run one bounded implementer. */
+	/** When true, skip planner/adversarial-review/publisher and run one bounded implementer. */
 	fast: boolean;
 	/** Run the configured adversary debate before approval. */
 	adversary: boolean;
@@ -88,7 +88,7 @@ export function claimPlanImplementRequest(
 /**
  * Invoke the loaded plan-implement extension directly through Pi's event bus.
  * The mutable request is claimed synchronously; completion resolves when the
- * plan → approve → implement → panel-review workflow (or, with `fast`, the
+ * plan → approve → implement → adversarial-review workflow (or, with `fast`, the
  * single bounded implementer) finishes.
  */
 export async function requestPlanImplement(

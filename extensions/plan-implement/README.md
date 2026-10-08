@@ -1,6 +1,6 @@
 # plan-implement
 
-`/plan-implement` plans a code change, optionally debates the plan with a distinct adversary, asks for approval, implements on a backend-owned workstream, runs panel review, addresses findings, and publishes a draft PR. Long-lived roles run as named Pi agents in a dedicated Herdr tab.
+`/plan-implement` plans a code change, optionally debates the plan with a distinct adversary, asks for approval, implements on a backend-owned workstream, runs an adversarial implementation review, addresses findings, and publishes a draft PR. Long-lived roles run as named Pi agents in a dedicated Herdr tab; review adversaries run in a pane split off the caller's pane.
 
 The extension owns deterministic gates: model and repository preflight, plan and ledger validation, immutable-plan checks, recorded-work verification, stack publication, and cleanup. Hosted agents own planning and repository work.
 
@@ -26,7 +26,7 @@ The command accepts these leading flags:
 | `--change-kind <kind>` | Select `bug-fix`, `feature`, `refactor`, `performance`, `prototype`, or `generic`. |
 | `--no-adversary` | Skip the configured adversary for this run. |
 | `--plan-only` | Stop after the final plan and write it under `plans/`. This conflicts with `--fast`. |
-| `--fast` | Run one hosted implementer. Skip planning, panel review, and publication. |
+| `--fast` | Run one hosted implementer. Skip planning, adversarial review, and publication. |
 | `--plan-file <path>` | With `--fast`, snapshot this selected plan before workstream creation. The path must contain no whitespace; the file must be nonempty and at most 64 KiB. |
 
 Use `--` before a task that starts with a dash. The argument-less command prompts for delivery, change kind, and task.
@@ -39,16 +39,15 @@ Use `--` before a task that starts with a dash. The argument-less command prompt
 - the Pi integration installed by `herdr integration install pi`;
 - an accepted workspace for the configured VCS backend;
 - authenticated role models;
-- `panel-review` for full implementation runs; and
 - the `write-pr` and `find-reviewers` skills for runs that can publish.
 
-`--plan-only` does not require panel review or publication skills. Single mode checks the configured VCS workspace without creating a workstream. Stack mode also resolves the local trunk through its provider, but skips clean-tree checks, fetching, and publication manifests. Fetch the desired trunk yourself before planning when local refs are stale. RPC, JSON, and print modes are not supported.
+`--plan-only` does not require publication skills or a configured adversary. Single mode checks the configured VCS workspace without creating a workstream. Stack mode also resolves the local trunk through its provider, but skips clean-tree checks, fetching, and publication manifests. Fetch the desired trunk yourself before planning when local refs are stale. RPC, JSON, and print modes are not supported.
 
 ## Workflow
 
 A full run follows these phases:
 
-1. Preflight Herdr, configuration, models, VCS, panel review, and publication skills before a model call.
+1. Preflight Herdr, configuration, models, VCS, and publication skills before a model call.
 2. Create one `plan-implement: <slug>` Herdr tab with `--no-focus`.
 3. Start a read-only planner in the tab's root pane.
 4. If `adversary` is configured, start a read-only adversary and run the debate.
@@ -56,10 +55,10 @@ A full run follows these phases:
 6. Display the exact final validated plan, including verified human edits, then ask for approval. That same snapshot is persisted and supplied to the implementer.
 7. Create the backend workstream only after approval, then start the implementer.
 8. Verify the immutable plan, execution-ledger parity, and locally recorded work.
-9. Run panel review against the exact workstream or stack base.
+9. Run every configured implementation adversary against the exact workstream or stack base, then offer a fixer round while any adversary withholds approval.
 10. Offer a hosted review fixer, structural publication, a hosted metadata publisher, PR autopilot, and landing.
 
-Planner, adversary, implementer, fixer, and publisher agents stay visible in the run tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. The extension retains the tab after completion and reports its ID.
+Planner, adversary, implementer, fixer, and publisher agents stay visible in the run tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. Review adversaries run in a pane split off the caller's pane (or as headless children when Herdr is unavailable). The extension retains the tab after completion and reports its ID.
 
 The Planner, Adversary, Implementer, Review fixer, and Publisher cards show the model, status, turns, and cost. Expand a card with Ctrl+O. Press Ctrl+Shift+I to abort the active hosted agent. If an agent blocks on a question or approval, the extension shows its pane ID; answer there, then confirm that the run should resume.
 
@@ -73,6 +72,14 @@ Exhaustion blocks approval. The extension lists the open findings, plan path, an
 
 The adversary model must differ from the planner model. An unavailable adversary, malformed critique, failed planner revision, or aborted role stops before implementation.
 
+## Adversarial implementation review
+
+After the implementer records its work, every configured adversary reviews the exact change. Each adversary reads the user task, the approved plan, the implementer execution ledger, and a unified diff of the recorded workstream against its immutable base. The diff comes from `VcsBackend.reviewDiff`, so the review works for Git, jj, and Graphite workstreams without a separate snapshot tool.
+
+Adversaries run in parallel and share `adversary.reviewTimeoutMinutes` as a wall-clock deadline. Each returns the same `Verdict`/`Blocking`/`Suggestions` critique as the planning debate. The run combines every critique into one verdict; the implementer fixer reads all reports verbatim and addresses every blocking finding. The loop re-reviews until every adversary approves or `maxRounds` is reached. An `approve` verdict requires every adversary to approve.
+
+When the run is started inside Herdr, the adversaries share a pane split off the caller's pane, keeping them visible for inspection. When Herdr is not available, each adversary is a headless Pi child that reports its output and cleanup diagnostic. A full run still requires Herdr for its core roles today, so this headless path is the transport contract for the reviewer when the reviewers are launched without a Herdr host.
+
 ## Plan-only mode
 
 `--plan-only` runs the planner and configured debate, validates the final plan, and writes:
@@ -81,7 +88,7 @@ The adversary model must differ from the planner model. An unavailable adversary
 plans/<task-slug>.md
 ```
 
-It does not create a branch, bookmark, Graphite workstream, worktree, panel review, or PR. Use the resulting plan with `--fast --plan-file <absolute-plan-path>` when the bounded implementation no longer needs another debate.
+It does not create a branch, bookmark, Graphite workstream, worktree, adversarial review, or PR. Use the resulting plan with `--fast --plan-file <absolute-plan-path>` when the bounded implementation no longer needs another debate.
 
 ## Fast mode
 
@@ -99,7 +106,7 @@ The configured VCS backend owns workstream creation and verification:
 
 ### Managed worktree
 
-`--worktree` supports Git and Graphite single-PR delivery. The backend creates a linked worktree beneath `~/.pi/kstack/worktrees/` after plan approval. Implementation, panel review, fixing, and publication use that path. The extension retains the worktree on every outcome; use the `git-worktrees` skill for cleanup.
+`--worktree` supports Git and Graphite single-PR delivery. The backend creates a linked worktree beneath `~/.pi/kstack/worktrees/` after plan approval. Implementation, adversarial review, fixing, and publication use that path. The extension retains the worktree on every outcome; use the `git-worktrees` skill for cleanup.
 
 ### Stacked PRs
 
@@ -143,14 +150,15 @@ The shared module under [`../shared/herdr/`](../shared/herdr/) creates the tab, 
 | Implementer, fixer, or publisher output | 32 KiB UTF-8 |
 | Debate rounds | 1–5; default 3 |
 | Role timeout | 1–60 min |
-| Hosted agents in one full run | 5 |
+| Hosted agents in the run tab | 5 |
+| Review adversaries per round | 1–5 (own pane split) |
 | Pointer prompt | 512 bytes |
 
 This is a capability restriction, not a sandbox. Hosted agents use the user's OS permissions. Planner and adversary tools are limited to `read,grep,find,ls`; mutation roles have Pi's normal tools after approval. Repository files, skills, context files, tasks, plans, and verdicts may contain hostile instructions.
 
 ## Failure and cleanup
 
-Failures before approval do not create a workstream. An implementation failure may leave recorded checkpoints or partial edits on the retained workstream. A fixer failure prevents publication when backend postconditions fail. Publication failures can leave a pushed ref or draft PR that needs inspection.
+Failures before approval do not create a workstream. An implementation failure may leave recorded checkpoints or partial edits on the retained workstream. A fixer failure stops the review loop before re-review and prevents publication when backend postconditions fail. Publication failures can leave a pushed ref or draft PR that needs inspection.
 
 Abort sends Escape, then Ctrl+C twice, then closes only the hosted pane if the agent does not settle. Session replacement and shutdown abort the active role. Cancellation remains connected while a blocked-input confirmation is open. Resume retains the original request and sends it only if Herdr rejected it before delivery. Host disposal cancels pending work and removes exchange files when no request is outstanding, but leaves idle panes open.
 

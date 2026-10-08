@@ -289,3 +289,27 @@ describe("GraphiteBackend", () => {
 		);
 	});
 });
+
+describe("GraphiteBackend reviewDiff", () => {
+	it("returns the unified diff of the recorded workstream against the base", async () => {
+		const base = "b".repeat(40);
+		const { exec } = scripted({
+			[`git diff --no-color --find-renames ${base}..HEAD`]: { stdout: "diff --git a/a.ts b/a.ts\n" },
+		});
+		assert.deepEqual(await new GraphiteBackend(exec).reviewDiff("/repo", base), {
+			ok: true,
+			diff: "diff --git a/a.ts b/a.ts\n",
+		});
+	});
+
+	it("surfaces diff diagnostics", async () => {
+		const base = "b".repeat(40);
+		const { exec } = scripted({
+			[`git diff --no-color --find-renames ${base}..HEAD`]: { code: 128, stderr: "bad revision\n" },
+		});
+		assert.deepEqual(await new GraphiteBackend(exec).reviewDiff("/repo", base), {
+			ok: false,
+			error: `Could not diff the workstream against ${base.slice(0, 8)}: bad revision`,
+		});
+	});
+});

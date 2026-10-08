@@ -5,7 +5,13 @@
  * (see `openPaneHost`); everywhere else it is a non-interactive `pi` child.
  */
 
-import { type ChildRunnerDeps, type ChildSession, childIsolationArgs, runChildAgent } from "../child-agent-runner.ts";
+import {
+	type ChildRunnerDeps,
+	type ChildSession,
+	type ChildUsage,
+	childIsolationArgs,
+	runChildAgent,
+} from "../child-agent-runner.ts";
 
 /* exported: adversary transport contract */
 export type AdversaryTransport = "pane" | "headless";
@@ -32,9 +38,9 @@ export interface HeadlessAdversaryOptions {
 
 /* exported: headless adversary transport contract */
 export type HeadlessAdversaryResult = (
-	| { status: "completed"; output: string; session: ChildSession }
-	| { status: "failed"; error: string; session: ChildSession }
-	| { status: "aborted"; session: ChildSession }
+	| { status: "completed"; output: string; session: ChildSession; usage: ChildUsage }
+	| { status: "failed"; error: string; session: ChildSession; usage: ChildUsage }
+	| { status: "aborted"; session: ChildSession; usage: ChildUsage }
 ) & { cleanupError?: string };
 
 /** Build the isolated Pi argv for one headless adversary. */
@@ -65,7 +71,8 @@ export async function runHeadlessAdversary(
 	});
 	const cleanup = result.cleanupError ? { cleanupError: result.cleanupError } : undefined;
 	if (result.status === "completed")
-		return { status: "completed", output: result.output, session: result.session, ...cleanup };
-	if (result.status === "aborted") return { status: "aborted", session: result.session, ...cleanup };
-	return { status: "failed", error: result.error, session: result.session, ...cleanup };
+		return { status: "completed", output: result.output, session: result.session, usage: result.usage, ...cleanup };
+	if (result.status === "aborted")
+		return { status: "aborted", session: result.session, usage: result.usage, ...cleanup };
+	return { status: "failed", error: result.error, session: result.session, usage: result.usage, ...cleanup };
 }

@@ -52,6 +52,11 @@ export interface HostedAgentSpec {
 	sessionName?: string;
 	/** Interactive-readiness timeout in ms, 3_000..300_000 (default 30_000). */
 	startupTimeoutMs?: number;
+	/**
+	 * Cancels queued pane allocation and startup. When it fires, no agent is
+	 * launched and any pane the host split off is closed again.
+	 */
+	signal?: AbortSignal;
 }
 
 export interface AskOptions {
@@ -92,7 +97,9 @@ export interface AgentHost {
 	readonly tabId: string;
 	/** 0700 exchange directory for instruction and answer files. */
 	readonly exchangeDir: string;
-	start(spec: HostedAgentSpec): Promise<{ ok: true; agent: HostedAgent } | { ok: false; error: string }>;
+	start(
+		spec: HostedAgentSpec,
+	): Promise<{ ok: true; agent: HostedAgent } | { ok: false; error: string; aborted?: boolean }>;
 	dispose(options?: { closeTab?: boolean }): Promise<void>;
 }
 
@@ -694,6 +701,9 @@ export async function openPaneHost(
 	};
 }
 
+/** Internal signal that a queued agent start was cancelled before or during launch. */
+class StartCancelledError extends Error {}
+
 async function buildHost(
 	options: { owner: string; label: string; cwd: string; maxAgents: number },
 	deps: HostDeps,
@@ -714,6 +724,7 @@ async function buildHost(
 	const allocatePane = (spec: HostedAgentSpec): Promise<string> => {
 		const next = allocation.then(async () => {
 			if (disposed) throw new Error("The agent host is disposed.");
+			if (spec.signal?.aborted) throw new StartCancelledError();
 			if (panes.length >= options.maxAgents) throw new Error(`This run hosts at most ${options.maxAgents} agent(s).`);
 			const index = panes.length;
 			const placement: AgentPanePlacement | undefined = placeAgent(index, options.maxAgents, {
@@ -736,15 +747,15 @@ async function buildHost(
 				);
 				if (!split.ok) throw new Error(`Could not split a pane for ${spec.role}: ${split.message}`);
 				paneId = split.value.paneId;
-				if (disposed) {
-					// Disposal may start while a split is in flight; close the late pane here
-					// instead of letting it escape the snapshot dispose already took.
+				if (disposed || spec.signal?.aborted) {
+					// Disposal or cancellation may start while a split is in flight; close the late
+					// pane here instead of letting it escape the snapshot dispose already took.
 					try {
 						await cli.paneClose({ paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
 					} catch {
 						/* best effort */
 					}
-					throw new Error("The agent host is disposed.");
+					throw disposed ? new Error("The agent host is disposed.") : new StartCancelledError();
 				}
 				if (!ownedPanes.includes(paneId)) ownedPanes.push(paneId);
 			}
@@ -769,6 +780,7 @@ async function buildHost(
 		exchangeDir,
 		async start(spec) {
 			if (disposed) return { ok: false, error: "The agent host is disposed." };
+			if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 			const startupTimeoutMs = spec.startupTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
 			if (
 				!Number.isSafeInteger(startupTimeoutMs) ||
@@ -784,13 +796,17 @@ async function buildHost(
 			try {
 				paneId = await allocatePane(spec);
 			} catch (error) {
+				if (error instanceof StartCancelledError)
+					return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 				return { ok: false, error: errorText(error) };
 			}
 			if (disposed) return { ok: false, error: "The agent host is disposed." };
+			if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 			const args = hostedAgentArgs(spec, preflight.integrationPath);
 			let lastError: CliError | undefined;
 			for (let attempt = 0; attempt < 3; attempt++) {
 				if (disposed) return { ok: false, error: "The agent host is disposed." };
+				if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 				const name = buildAgentName(options.owner, spec.role, randomSuffix());
 				let started = await cli.agentStart(
 					{ name, paneId, timeoutMs: startupTimeoutMs, args },
@@ -800,6 +816,8 @@ async function buildHost(
 				for (let retry = 0; !started.ok && started.code === "agent_pane_busy" && retry < 3; retry++) {
 					await (deps.sleep ?? delay)(1_000);
 					if (disposed) return { ok: false, error: "The agent host is disposed." };
+					if (spec.signal?.aborted)
+						return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 					started = await cli.agentStart(
 						{ name, paneId, timeoutMs: startupTimeoutMs, args },
 						{ timeoutMs: startupTimeoutMs + 30_000 },
@@ -826,6 +844,12 @@ async function buildHost(
 					if (disposed) {
 						await agent.dispose();
 						return { ok: false, error: "The agent host is disposed." };
+					}
+					if (spec.signal?.aborted) {
+						// The agent launched after cancellation; close it and its pane instead of
+						// leaving an unreviewed agent running past the deadline.
+						await agent.dispose({ closePane: true });
+						return { ok: false, error: `Cancelled while starting ${spec.role}.`, aborted: true };
 					}
 					agents.push(agent);
 					return { ok: true, agent };

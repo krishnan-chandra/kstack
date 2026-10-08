@@ -65,7 +65,7 @@ interface PanelReviewContext {
 	executionLedger?: string;
 }
 
-export type PanelWorktreeArgs = PanelReviewContext & { base?: string; pr?: never };
+type PanelWorktreeArgs = PanelReviewContext & { base?: string; pr?: never };
 /* exported: in-process panel-review request contract */
 export type PanelPrArgs = PanelReviewContext & { base?: never; pr: number };
 export type PanelArgs = PanelWorktreeArgs | PanelPrArgs;

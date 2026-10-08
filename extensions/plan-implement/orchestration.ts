@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestLand } from "../land/api.ts";
-import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { type ChangeKind, changeKindLabel, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { findOpenPullRequestByHead } from "../shared/github.ts";
-import type { openAgentHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
+import { runHeadlessAdversary, selectAdversaryTransport } from "../shared/herdr/adversary-runner.ts";
+import type { openAgentHost, openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
 import type { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
@@ -17,11 +17,12 @@ import { extractSlug } from "../shared/slug.ts";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
-import { createRoleRunner } from "./agent-runner.ts";
+import { buildReviewInstructions } from "./adversary-review.ts";
+import { createRoleRunner, type RoleRunner } from "./agent-runner.ts";
 import { loadConfig, modelCliId, resolveAdversary, resolveImplementerOnly, resolveRoles } from "./config.ts";
 import { type FastImplementOutcome, runFastCurrent, runFastWorktree } from "./fast-runner.ts";
 import type { WorkflowLifecycle } from "./lifecycle.ts";
-import { runApprovedWorkflow } from "./phases.ts";
+import { type AdversaryReviewRequest, runApprovedWorkflow } from "./phases.ts";
 import { buildStackSkillPolicy, missingPublishSkills } from "./skill-policy.ts";
 import { createStackDeliveryClient } from "./stack-delivery.ts";
 import {
@@ -38,6 +39,7 @@ export interface HerdrEntryPoints {
 	createExec: typeof createNodeHerdrExec;
 	preflight: typeof preflightHerdr;
 	openHost: typeof openAgentHost;
+	openPane: typeof openPaneHost;
 }
 
 export interface OrchestrationDeps {
@@ -45,11 +47,10 @@ export interface OrchestrationDeps {
 	lifecycle: WorkflowLifecycle;
 	herdr: HerdrEntryPoints;
 	backendFor: (id: VcsBackend["id"]) => VcsBackend;
-	checkBasicPreflights: (ctx: ExtensionCommandContext) => Promise<string | undefined>;
 	phaseLabels: Readonly<Record<AgentRole, string>>;
 	sendPhaseMessage: (result: AgentRunResult) => void;
 	discoveredSkillRefs: (ctx: ExtensionCommandContext) => SkillRef[];
-	paths: { promptsDir: string; playbooksDir: string; adversaryPromptFile: string };
+	paths: { promptsDir: string; playbooksDir: string; adversaryPromptFile: string; reviewAdversaryPromptFile: string };
 }
 
 interface PlanImplementOrchestration {
@@ -72,6 +73,200 @@ interface PlanImplementOrchestration {
 		vcsConfig: ReturnType<typeof loadVcsBackend>,
 		planFile?: string,
 	) => Promise<void>;
+}
+
+/* exported: adversary review transport contract */
+interface AdversaryReviewEffects {
+	openPane: typeof openPaneHost;
+	createExec: typeof createNodeHerdrExec;
+	notify: (message: string, level: "info" | "warning" | "error") => void;
+	onStarted: (role: AgentRole, model: string, paneId: string) => void;
+	onBlocked: (role: AgentRole, paneId: string, signal?: AbortSignal) => Promise<boolean>;
+	label: string;
+}
+
+function headlessToAgentRun(
+	adversary: { model: string },
+	result: Awaited<ReturnType<typeof runHeadlessAdversary>>,
+): AgentRunResult {
+	const session = result.session.kind === "persisted" ? result.session.file : undefined;
+	const cleanup = result.cleanupError ? { cleanupError: result.cleanupError } : undefined;
+	if (result.status === "completed")
+		return {
+			status: "completed",
+			role: "adversary",
+			model: adversary.model,
+			output: result.output,
+			usage: result.usage,
+			...(session ? { session } : undefined),
+			...cleanup,
+		};
+	if (result.status === "aborted")
+		return {
+			status: "aborted",
+			role: "adversary",
+			model: adversary.model,
+			...(session ? { session } : undefined),
+			...cleanup,
+		};
+	return {
+		status: "failed",
+		role: "adversary",
+		model: adversary.model,
+		error: result.error,
+		...(session ? { session } : undefined),
+		...cleanup,
+	};
+}
+
+/* exported: adversary review transport contract */
+interface AdversaryReviewController {
+	run: (request: AdversaryReviewRequest) => Promise<AgentRunResult[]>;
+	dispose: () => Promise<void>;
+}
+
+/** Resolve with `promise`, or with `onTimeout()` once `deadline` aborts first. */
+function raceDeadline<T>(promise: Promise<T>, deadline: AbortSignal, onTimeout: () => T): Promise<T> {
+	if (deadline.aborted) return Promise.resolve(onTimeout());
+	return new Promise<T>((resolve) => {
+		const onAbort = () => resolve(onTimeout());
+		deadline.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(value) => {
+				deadline.removeEventListener("abort", onAbort);
+				resolve(value);
+			},
+			() => {
+				deadline.removeEventListener("abort", onAbort);
+				resolve(onTimeout());
+			},
+		);
+	});
+}
+
+/**
+ * Build the implementation-review transport. Inside Herdr the adversaries share
+ * one pane split off the caller's pane; otherwise each is a headless Pi child.
+ * The pane host is created lazily on the first round and reused across rounds.
+ */
+/* exported: adversary review transport contract */
+export function createAdversaryReview(effects: AdversaryReviewEffects): AdversaryReviewController {
+	if (selectAdversaryTransport() === "headless") {
+		return {
+			async run(request) {
+				const deadline = AbortSignal.any([
+					...(request.signal ? [request.signal] : []),
+					AbortSignal.timeout(request.timeoutMs),
+				]);
+				return Promise.all(
+					request.adversaries.map(async (adversary) => {
+						const result = await runHeadlessAdversary({
+							model: adversary.model,
+							cwd: request.cwd,
+							prompt: buildReviewInstructions(request),
+							systemPromptFile: request.systemPromptFile,
+							owner: "plan-implement",
+							label: adversary.label,
+							timeoutMs: request.timeoutMs,
+							signal: deadline,
+						});
+						return headlessToAgentRun(adversary, result);
+					}),
+				);
+			},
+			async dispose() {},
+		};
+	}
+
+	let pending: Promise<RoleRunner | undefined> | undefined;
+	const discarded: Array<Promise<void>> = [];
+	// A pane host is single-use per attempt: a cancelled or never-ready host is closed
+	// (including the panes it split off) and a later round opens a fresh one. The cleanup
+	// promise is tracked so the controller's dispose() waits for late hosts to settle.
+	const discardHost = (): void => {
+		const host = pending;
+		pending = undefined;
+		if (!host) return;
+		discarded.push(
+			host.then(
+				async (runner) => {
+					await runner?.dispose({ closeTab: true });
+				},
+				() => undefined,
+			),
+		);
+	};
+	const runnerFor = (cwd: string, maxAgents: number): Promise<RoleRunner | undefined> => {
+		pending ??= (async () => {
+			const opened = await effects.openPane(
+				{ owner: "plan-implement", label: effects.label, cwd, maxAgents },
+				{ exec: effects.createExec() },
+			);
+			if (!opened.ok) {
+				effects.notify(opened.error, "error");
+				return undefined;
+			}
+			return createRoleRunner(opened.host, { onStarted: effects.onStarted, onBlocked: effects.onBlocked });
+		})();
+		return pending;
+	};
+
+	return {
+		async run(request) {
+			const deadline = AbortSignal.any([
+				...(request.signal ? [request.signal] : []),
+				AbortSignal.timeout(request.timeoutMs),
+			]);
+			const runner = await raceDeadline(runnerFor(request.cwd, request.adversaries.length), deadline, () => undefined);
+			if (!runner) {
+				discardHost();
+				return request.adversaries.map((adversary) => ({
+					status: "failed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					error: "the adversary pane host was not ready before the review deadline.",
+				}));
+			}
+			const instructions = buildReviewInstructions(request);
+			// The deadline signal cancels any queued allocation or in-flight ask. Awaiting every
+			// settled run means no cancelled work outlives the round's bundle, and a rejected run
+			// becomes a failure instead of rejecting the whole round.
+			const settled = await Promise.allSettled(
+				request.adversaries.map((adversary, index) =>
+					runner.run({
+						role: "adversary",
+						instance: `${index + 1}`,
+						model: adversary.model,
+						promptFile: request.systemPromptFile,
+						taskFile: request.taskFile,
+						planFile: request.planFile,
+						ledgerFile: request.ledgerFile,
+						cwd: request.cwd,
+						timeoutMs: request.timeoutMs,
+						instructions,
+						signal: deadline,
+					}),
+				),
+			);
+			if (deadline.aborted) discardHost();
+			return settled.map((entry, index) => {
+				if (entry.status === "fulfilled") return entry.value;
+				return {
+					status: "failed" as const,
+					role: "adversary" as const,
+					model: request.adversaries[index].model,
+					error: `the review run rejected: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`,
+				};
+			});
+		},
+		async dispose() {
+			const runner = await pending;
+			await runner?.dispose();
+			// Wait for every discarded late host to open and close its panes before the
+			// workflow finishes, so cleanup cannot outlive the session.
+			await Promise.allSettled(discarded);
+		},
+	};
 }
 
 export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanImplementOrchestration {
@@ -131,12 +326,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 		const changePrompts = playbookPrompt
 			? [engineeringPrinciplesPrompt, playbookPrompt, backendPrompt]
 			: [engineeringPrinciplesPrompt, backendPrompt];
-		const preflightError = planOnly ? undefined : await deps.checkBasicPreflights(ctx);
 		if (!deps.lifecycle.isSessionCurrent(commandSession)) return;
-		if (preflightError) {
-			notify(preflightError, "error");
-			return;
-		}
 		if (mode === "single") {
 			const preflight = await backend.preflight(ctx.cwd);
 			if (!deps.lifecycle.isSessionCurrent(commandSession)) return;
@@ -247,11 +437,12 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 			return;
 		}
 		const host = opened.host;
-		let confirmationTitle = "Run plan → implement → panel review → fix → publish?";
+		let confirmationTitle = "Run plan → implement → adversarial review → fix → publish?";
 		if (planOnly) confirmationTitle = "Run planner and stop after the final plan?";
-		else if (mode === "stack") confirmationTitle = "Run plan → implement (stacked PRs) → panel review → fix → publish?";
+		else if (mode === "stack")
+			confirmationTitle = "Run plan → implement (stacked PRs) → adversarial review → fix → publish?";
 		else if (workLocation === "worktree") {
-			confirmationTitle = "Run plan → implement in managed worktree → panel review → fix → publish?";
+			confirmationTitle = "Run plan → implement in managed worktree → adversarial review → fix → publish?";
 		}
 		const confirmed = await ctx.ui.confirm(
 			confirmationTitle,
@@ -284,6 +475,23 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 					{ signal },
 				),
 		});
+		const adversaryReview = createAdversaryReview({
+			openPane: deps.herdr.openPane,
+			createExec: deps.herdr.createExec,
+			notify,
+			label: extractSlug(task),
+			onStarted: (role, model, paneId) => {
+				if (deps.lifecycle.isCurrent(token)) {
+					ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
+				}
+			},
+			onBlocked: async (role, paneId, signal) =>
+				ctx.ui.confirm(
+					`${deps.phaseLabels[role]} is waiting for input`,
+					`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
+					{ signal },
+				),
+		});
 		try {
 			await runApprovedWorkflow(
 				{
@@ -297,6 +505,9 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 					adversaryPromptFile: adversaryModel ? deps.paths.adversaryPromptFile : undefined,
 					maxRounds,
 					adversaryTimeoutMinutes,
+					adversaryModels,
+					reviewAdversaryPromptFile: deps.paths.reviewAdversaryPromptFile,
+					reviewTimeoutMinutes: adversaryResolution.adversary?.reviewTimeoutMinutes,
 					planOnly,
 					implementerModel,
 					timeoutMinutes: roles.timeoutMinutes,
@@ -318,7 +529,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 					beginRole: (phase) => deps.lifecycle.beginRole(token, phase),
 					endRole: (controller) => deps.lifecycle.endRole(token, controller),
 					backend,
-					requestPanelReview: (options) => requestPanelReview(deps.pi, options, ctx),
+					runAdversaries: (request) => adversaryReview.run(request),
 					resolvePublishedPr: async (cwd) => {
 						const current = await backend.currentRef(cwd);
 						const head =
@@ -350,6 +561,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 				},
 			);
 		} finally {
+			await adversaryReview.dispose();
 			await runner.dispose();
 			if (deps.lifecycle.isSessionCurrent(token)) {
 				notify(`Hosted agents retained in Herdr tab ${runner.tabId}.`, "info");
@@ -430,7 +642,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 			configLoad.status === "loaded" ? configLoad.config.timeoutMinutes : LIMITS.defaultTimeoutMinutes;
 		const confirmed = await ctx.ui.confirm(
 			"Run one fast hosted implementer?",
-			`Implementer: ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\nLocation: ${workLocation === "current" ? policy.currentWorkspaceLabel : "managed Git worktree"}\nTimeout: ${timeoutMinutes} min\n\nFast mode skips planning, panel review, and publishing. It runs in a visible Herdr pane, verifies locally recorded changes, and never publishes automatically.`,
+			`Implementer: ${implementerModel}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\nLocation: ${workLocation === "current" ? policy.currentWorkspaceLabel : "managed Git worktree"}\nTimeout: ${timeoutMinutes} min\n\nFast mode skips planning, adversarial review, and publishing. It runs in a visible Herdr pane, verifies locally recorded changes, and never publishes automatically.`,
 		);
 		if (!deps.lifecycle.isSessionCurrent(fastSession) || !confirmed) return;
 		const runToken = deps.lifecycle.beginWorkflow(fastSession);

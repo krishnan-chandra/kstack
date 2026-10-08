@@ -43,7 +43,7 @@ Inspect the selected backend's status and current branch or bookmark before the 
 - Include only workstream files. Keep unrelated changes out of recorded changes.
 - Finish with a clean Git tree in Git mode or an empty jj working-copy change above the task bookmark in jj mode.
 - Never push, publish, force-push, or create a PR.
-- Do not invoke another planning or review workflow; the parent extension triggers panel review after you finish.
+- Do not invoke another planning or review workflow; the parent extension triggers adversarial review after you finish.
 
 ## Stacked-PR implementation
 

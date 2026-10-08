@@ -148,7 +148,7 @@ function parseLedger(output: string): { ok: true; entries: LedgerEntry[] } | { o
 	return { ok: true, entries };
 }
 
-/** Preserve the implementer's ledger section for panel review, including omissions. */
+/** Preserve the implementer's ledger section for adversarial review, including omissions. */
 export function extractExecutionLedger(output: string): string {
 	const lines = output.split(/\r?\n/);
 	const start = lines.findIndex((line) => /^##\s+Execution Ledger\s*$/i.test(line.trim()));
@@ -161,7 +161,7 @@ export function extractExecutionLedger(output: string): string {
 	return `${body.join("\n").trim()}\n`;
 }
 
-/** Prove item-by-item parity and return a canonical ledger for panel review. */
+/** Prove item-by-item parity and return a canonical ledger for adversarial review. */
 export function validateExecutionLedger(plan: string, output: string): LedgerValidation {
 	const expected = extractPlanItems(plan);
 	if (!expected.ok) return expected;

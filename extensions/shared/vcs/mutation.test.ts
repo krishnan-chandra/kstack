@@ -34,6 +34,7 @@ function fakeBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls:
 		}),
 		assertWorkstreamUnchanged: async () => ({ ok: true }),
 		changedPaths: async () => ({ ok: true, paths: [] }),
+		reviewDiff: async () => ({ ok: true, diff: "" }),
 		isWorkingCopyEmpty: async () => ({ ok: true, empty: true }),
 		createWorkstream: async () => ({ ok: true, ref: target.headRef, baseSha: SHA }),
 		verifyRecordedWorkstream: async () => ({ ok: true, headSha: SHA }),

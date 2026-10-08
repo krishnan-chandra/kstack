@@ -178,6 +178,13 @@ export class GitBackend implements VcsBackend {
 			: { ok: false, error: `Could not inspect working-copy changes: ${status.stderr.trim()}` };
 	}
 
+	async reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>> {
+		const result = await this.git(cwd, ["diff", "--no-color", "--find-renames", `${baseSha}..HEAD`], 30_000);
+		return result.code === 0
+			? { ok: true, diff: result.stdout }
+			: { ok: false, error: `Could not diff the workstream against ${baseSha.slice(0, 8)}: ${result.stderr.trim()}` };
+	}
+
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {
 		const status = await this.git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"], 5_000);
 		if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
