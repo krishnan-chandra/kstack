@@ -15,13 +15,12 @@ session name.
 | Route | Description | Dispatch target |
 |---|---|---|
 | `investigate` | Read-only research, explain, diagnose | Active session, read-only tools |
-| `change` | Feature, fix, refactor, prototype | plan-implement → panel-review |
+| `change` | Feature, fix, refactor, prototype | plan-implement → adversarial review |
 | `fast-change` | Implement an explicit, bounded existing plan | plan-implement --fast in one hosted Herdr pane |
 | `arena` | Competing parallel candidates | Arena skill, frame-first |
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
 | `session-pickup` | Continue archived work, read-only | Active session, read-only tools |
-| `review` | Review working-tree or branch changes | panel-review |
 | `pr-autopilot` | Drive an existing GitHub PR to merge-ready | pr-autopilot |
 | `land` | Confirm and merge one exact PR head | land |
 | `unsupported` | No safe dispatch available | Nothing |
@@ -37,7 +36,6 @@ session name.
 /kstack --route change --worktree --change-kind feature Add isolated search
 /kstack --route fast-change --worktree --change-kind bug-fix Fix a narrow parser bug
 /kstack --route change --stack --change-kind feature Split feature into three PRs
-/kstack --route review Review the latest changes
 /kstack --route pr-autopilot --mode drive --pr 42
 /kstack --route land --pr 42 --readiness watch --method squash
 /kstack Get PR 42 merge-ready
@@ -164,7 +162,6 @@ All fields are optional. Without configuration:
 - `Ctrl+Shift+K`: abort the classifier during classification.
 - After dispatch, use the downstream cancellation mechanism:
   - `Ctrl+Shift+I`: abort plan/implement.
-  - `Ctrl+Shift+X`: abort panel review.
   - `Ctrl+Shift+B`: abort pr-autopilot.
   - `Ctrl+Shift+L`: abort land.
   - `Esc` (normal agent cancellation) for active-session routes.
@@ -182,7 +179,6 @@ classifier output fails safe to manual route selection.
 Downstream routes have their own trust boundaries:
 - `change` restricts the planner to read-only tools and requires explicit
   approval.
-- `review` runs reviewers in isolated read-only subprocesses.
 - `investigate` and `session-pickup` use read-only tools only.
 - `arena`, `swarm`, `skill-authoring` require read-only framing + approval
   before any write tool or paid fan-out.
@@ -204,9 +200,6 @@ Classifier runs persist native Pi sessions under `~/.pi/kstack/subagents/`. Reop
 
 **"plan-implement extension is not loaded"**: Run `pi list` to verify
 plan-implement is installed. Run `/reload` after installing it.
-
-**"panel-review extension is not loaded"**: Same — verify installation and
-reload.
 
 **"Classifier timed out"**: The classifier model may be slow. Increase
 `timeoutSeconds` in config, or use `--route` to bypass the classifier.

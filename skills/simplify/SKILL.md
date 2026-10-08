@@ -9,7 +9,7 @@ compatibility: A repository checkout with git and Kstack's parallel-agents exten
 
 Reduce complexity in scoped code without changing behavior. Parallel read-only subagents surface simplification opportunities in Kstack's shared live agent pane; the parent applies only targeted fixes that preserve behavior.
 
-This complements `/panel-review` and `blast-radius`. Panel review judges correctness and risk; blast-radius proves cross-boundary safety. Simplify removes unnecessary complexity in code already deemed acceptable to change.
+This complements `blast-radius`, which proves cross-boundary safety. Simplify removes unnecessary complexity in code already deemed acceptable to change.
 
 ## Scope selection
 
@@ -46,7 +46,7 @@ Keep the bundle under 2 MiB. If the diff is larger, include `git diff --stat` an
 
 ## Parallel read-only reviewers
 
-Launch all three reviewers in one `parallel_agents` tool call. This is the same child-agent runner and shared live pane used by panel review: queued/running/completed state, model, elapsed time, current tool, output preview, cancellation, bounded output, and persisted subagent sessions. Do not replace it with Herdr, background `pi` commands, or a silent shell `wait`.
+Launch all three reviewers in one `parallel_agents` tool call. This is Kstack's shared child-agent runner and live pane: queued/running/completed state, model, elapsed time, current tool, output preview, cancellation, bounded output, and persisted subagent sessions. Do not replace it with Herdr, background `pi` commands, or a silent shell `wait`.
 
 Use one task per lens with the repository root as `cwd`. All tasks are read-only by construction. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. The extension enforces read/grep/find/ls-only tools and disables unrelated extensions, skills, prompt templates, and context files.
 

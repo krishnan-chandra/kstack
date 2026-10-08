@@ -48,7 +48,7 @@ function toolSession(): string {
 			id: "x1",
 			parentId: "r2",
 			timestamp: "2026-08-11T08:52:00.000Z",
-			customType: "panel-review",
+			customType: "plan-implement",
 			content: "review findings",
 			display: true,
 		},
@@ -130,7 +130,7 @@ describe("loadHandoffTranscript", () => {
 		});
 		assert.deepEqual(editResult.detail, { kind: "toolResult", toolCallId: "c1", toolName: "edit", isError: false });
 		assert.deepEqual(writeResult.detail, { kind: "toolResult", toolCallId: "c2", toolName: "write", isError: true });
-		assert.deepEqual(custom.detail, { kind: "custom", customType: "panel-review" });
+		assert.deepEqual(custom.detail, { kind: "custom", customType: "plan-implement" });
 		const serialized = JSON.stringify(transcript.entries.map((entry) => entry.detail));
 		for (const secret of ["PAYLOAD-SECRET", "ENV-ARG-SECRET", "TOKEN-ARG-SECRET", "secret chain of thought"]) {
 			assert.ok(!serialized.includes(secret), secret);

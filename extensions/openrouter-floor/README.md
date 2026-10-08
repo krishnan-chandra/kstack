@@ -31,8 +31,8 @@ It leaves a request alone when:
 
 ## Where it runs
 
-Pi loads it with the rest of Kstack. Kstack child agents (panel-review,
-plan-implement, pr-autopilot, kstack-router) run with
+Pi loads it with the rest of Kstack. Kstack child agents (plan-implement,
+pr-autopilot, kstack-router) run with
 `--no-extensions -e <kstack>/kstack.ts`, so they load Kstack alone and their
 OpenRouter calls are floor-routed without booting the user's other extensions.
 

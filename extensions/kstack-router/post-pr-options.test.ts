@@ -30,13 +30,13 @@ function effects(
 describe("resolvePostPrOptions", () => {
 	it("returns no request for non-post routes without post-PR flags", async () => {
 		const { fx, calls } = effects();
-		assert.deepEqual(await resolvePostPrOptions("review", args(), fx), { ok: true });
+		assert.deepEqual(await resolvePostPrOptions("investigate", args(), fx), { ok: true });
 		assert.deepEqual(calls, []);
 	});
 
 	it("rejects post-PR flags on non-post routes", async () => {
 		const { fx } = effects();
-		assert.deepEqual(await resolvePostPrOptions("review", args({ prNumber: 3 }), fx), {
+		assert.deepEqual(await resolvePostPrOptions("investigate", args({ prNumber: 3 }), fx), {
 			failed: "--pr is only valid with the pr-autopilot or land routes.",
 		});
 		assert.deepEqual(await resolvePostPrOptions("change", args({ autopilotMode: "drive" }), fx), {

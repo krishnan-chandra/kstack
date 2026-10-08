@@ -1,6 +1,6 @@
 ---
 name: setup-kstack
-description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change panel reviewers", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change the adversary model", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
 compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); Git 2.38+ for GitHub stacks; jj 0.44+ for jj; gt 1.8.5+ and Git 2.38+ for Graphite.
 ---
@@ -111,7 +111,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | --- | --- | --- |
 | `vcs` | `backend`, Git-only `stackProvider` | Use exactly `"git"`, `"jj"`, or `"graphite"`. With Git, use `"github"` (default, Git 2.38+) or `"none"`. jj requires a colocated workspace and jj 0.44+. Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. `--fast` mode reuses this implementer and skips planning, review, and publishing. |
-| `panel-review` | 2–5 labeled `reviewers`, `synthesis`, concurrency, timeouts | Reviewer labels are unique 1–16-character letters, digits, `_`, or `-`. `maxConcurrency` is 1–5. `maxRuntimeMinutes` is at least `timeoutMinutes`. |
+| `adversary` | `adversary` (one model or an array of 1–5 models), `maxRounds`, `timeoutMinutes`, `reviewTimeoutMinutes` | Every adversary differs from the planner model. `maxRounds` is an integer from 1 to 5 (default 3). `timeoutMinutes` is an integer from 1 to 60 (default 15); `reviewTimeoutMinutes` is an integer from 1 to 60 (default 10). The first adversary debates the plan; every adversary reviews the implementation. |
 | `kstack-router` | `classifier`, `timeoutSeconds` | `timeoutSeconds` is 1–600. |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
@@ -119,9 +119,9 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `pr-autopilot` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Each run picks one model at random from this pool. Prefer cheap, fast models from distinct families. |
 
 Keep the current timeouts and concurrency values unless the user asks to change
-them. Keep at least two distinct model families in a panel when available. Warn,
-but do not block, if synthesis uses the same model as a reviewer. A different
-synthesis model makes agreement and disagreement easier to interpret.
+them. Prefer adversaries from different model families when more than one is
+configured, so agreement and disagreement are easier to interpret. Every
+adversary must use a different model ID from the planner.
 
 The investigation list has a stricter allowlist than the other roles. Its valid
 model IDs are currently:
@@ -155,7 +155,10 @@ Before showing the preview, check all of these conditions:
   byte-for-byte in meaning, including settings for extensions this skill does
   not know.
 - Each configured section has the shape and constraints in the table above.
-- `panel-review.reviewers` contains 2–5 entries and has a `synthesis` entry.
+- `adversary.adversary` is one model object or kstack model alias string, or an
+  array of 1–5 models, and every model ID differs from the planner. `maxRounds`
+  is an integer from 1 to 5, `timeoutMinutes` is an integer from 1 to 60, and
+  `reviewTimeoutMinutes` is an integer from 1 to 60.
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
   high-or-deeper thinking. `--fast` reuses the `implementer` without a planner.
 - The investigation rules above hold.
@@ -170,7 +173,7 @@ an entire section and start over.
 ## 6. Preview, then write atomically
 
 Render a unified diff from the current JSON to the complete proposed JSON. State
-all warnings, including duplicate reviewer/synthesis models, any model whose
+all warnings, including duplicate adversary models, any model whose
 thinking support is not fully discoverable, and exact user-requested IDs accepted
 through the catalog-lag exception. Ask for explicit approval of this
 exact preview.

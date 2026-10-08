@@ -180,7 +180,7 @@ describe("pr-autopilot config", () => {
 			writeFileSync(
 				join(dir, "kstack.json"),
 				JSON.stringify({
-					"panel-review": { reviewers: [] },
+					"other-extension": { models: [] },
 					"pr-autopilot": {
 						models: [
 							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },

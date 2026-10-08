@@ -1,6 +1,6 @@
 ---
 name: blast-radius
-description: Analyze what a code change could break outside its direct diff and callers, then prove the safety-critical assumption by running the affected code. Use for "blast radius", "what could this break", "is this change safe", risky small diffs, compatibility checks, lifecycle or timing changes, schema or wire-format changes, dependency upgrades, or a focused pre-merge risk review. Complements broad panel review; it is not a generic code review.
+description: Analyze what a code change could break outside its direct diff and callers, then prove the safety-critical assumption by running the affected code. Use for "blast radius", "what could this break", "is this change safe", risky small diffs, compatibility checks, lifecycle or timing changes, schema or wire-format changes, dependency upgrades, or a focused pre-merge risk review. Complements broader review; it is not a generic code review.
 license: MIT
 compatibility: A repository checkout with its normal test or runtime commands. Primarily read-only; may add a focused test or temporary proof script when that is the best evidence. Never commit, push, or publish.
 ---
@@ -11,7 +11,7 @@ Assess what a change can break beyond the lines that changed, then test the fact
 
 Run the investigation directly in the model and session where the skill was invoked. Keep it focused on the concrete safety question; reserve Arena for the exceptional cases described below.
 
-Use this for a risky narrow change or a specific safety question. For a broad diff review, use `/panel-review` first. Do not run this automatically for every change: it costs attention and only helps when a concrete cross-boundary risk exists.
+Use this for a risky narrow change or a specific safety question. Do not run this automatically for every change: it costs attention and only helps when a concrete cross-boundary risk exists.
 
 ## Operating principle
 

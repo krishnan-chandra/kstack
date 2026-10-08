@@ -14,7 +14,6 @@ export type RouteId =
 	| "swarm"
 	| "skill-authoring"
 	| "session-pickup"
-	| "review"
 	| "pr-autopilot"
 	| "land"
 	| "unsupported";
@@ -27,7 +26,6 @@ export const ALL_ROUTES: readonly RouteId[] = [
 	"swarm",
 	"skill-authoring",
 	"session-pickup",
-	"review",
 	"pr-autopilot",
 	"land",
 	"unsupported",

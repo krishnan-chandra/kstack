@@ -7,8 +7,6 @@ disable-model-invocation: true
 # Thermo-Nuclear Code Quality Review
 
 Read and follow the canonical review lens at
-`../../extensions/panel-review/prompts/thermo-nuclear.md`.
+`references/thermo-nuclear.md`.
 
-Apply every instruction in that file to the current changeset. The lens is also
-used directly by panel-review so explicit skill runs and panel reviews cannot
-drift.
+Apply every instruction in that file to the current changeset.
