@@ -43,7 +43,7 @@ interface FastRunEffects {
 	timeoutMinutes?: number;
 }
 
-export function buildFastImplementerGuidance(changeKind: ChangeKind, backend: Pick<VcsBackend, "id">): string {
+function buildFastImplementerGuidance(changeKind: ChangeKind, backend: Pick<VcsBackend, "id">): string {
 	const playbook = changeKindPlaybookFile(changeKind);
 	return [
 		readPromptAsset(PROMPTS_DIR, "implementer-fast.md"),

@@ -44,6 +44,11 @@ node --test skills/git-worktrees/
   properties, or runtime namespaces.
 - Colocate tests in `*.test.ts` using `node:test` so production and tests use the
   same runtime.
+- Test behavior at executable boundaries. Do not add tests that load a prompt,
+  skill, README, or other static prose and assert that selected phrases are
+  present; those tests duplicate wording and fail on harmless edits. When a
+  static asset has a real contract, test its parsed structure, link resolution,
+  schema, or runtime consumer instead.
 - Keep extension `index.ts` files as thin Pi adapters. Put domain behavior in
   named modules and inject filesystem, Git, process, time, and model effects.
 - Prefer exhaustive `if` / `else if` / `switch` over nested ternaries. A
