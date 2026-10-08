@@ -38,9 +38,9 @@ describe("RouterLifecycle", () => {
 
 		const first = lifecycle.beginDispatch(session, { route: "change" });
 		assert.ok(first);
-		assert.equal(lifecycle.beginDispatch(session, { route: "review" }), undefined);
+		assert.equal(lifecycle.beginDispatch(session, { route: "investigate" }), undefined);
 		lifecycle.endDispatch(first);
-		assert.ok(lifecycle.beginDispatch(session, { route: "review" }));
+		assert.ok(lifecycle.beginDispatch(session, { route: "investigate" }));
 	});
 
 	it("invalidates dispatches across session replacement", () => {

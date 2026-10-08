@@ -32,16 +32,6 @@ export interface PullRequestSnapshot {
 	mergeCommitOid: string | null;
 }
 
-export interface PullRequestReviewTarget {
-	number: number;
-	url: string;
-	title: string;
-	state: PullRequestSnapshot["state"];
-	baseRef: string;
-	headOid: string;
-	baseOid: string;
-}
-
 interface GithubLimits {
 	queryMs: number;
 	mergeMs: number;
@@ -221,41 +211,6 @@ export async function getPullRequest(
 		mergeStateStatus: String(value.mergeStateStatus),
 		mergedAt: isString(value.mergedAt) ? value.mergedAt : null,
 		mergeCommitOid: isString(commit?.oid) ? commit.oid : null,
-	};
-}
-
-export async function getPullRequestReviewTarget(
-	exec: ExecFn,
-	cwd: string,
-	number: number,
-	signal?: AbortSignal,
-	limitOverrides: Partial<GithubLimits> = {},
-	/** `owner/name` for `gh -R`; required when `cwd` has no Git remotes (jj workspaces). */
-	repository?: string,
-): Promise<PullRequestReviewTarget> {
-	const limits = withDefaults(limitOverrides);
-	const { value, identity } = await readPullRequestJson(
-		exec,
-		cwd,
-		number,
-		"number,url,title,state,baseRefName,headRefOid,baseRefOid",
-		signal,
-		limits,
-		repository,
-	);
-	if (
-		!isString(value.baseRefName) ||
-		!isString(value.headRefOid) ||
-		!SHA.test(value.headRefOid) ||
-		!isString(value.baseRefOid) ||
-		!SHA.test(value.baseRefOid)
-	)
-		throw new GitHubError(`PR #${number} response failed validation.`);
-	return {
-		...identity,
-		baseRef: value.baseRefName,
-		headOid: value.headRefOid,
-		baseOid: value.baseRefOid,
 	};
 }
 

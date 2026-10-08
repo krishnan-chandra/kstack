@@ -12,14 +12,13 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
 | [`openrouter-floor`](extensions/openrouter-floor/) | Sends every OpenRouter request as the model's `:floor` variant and records bounded, redacted rewrite and service-tier observations. Users keep selecting plain model IDs; models that already carry a variant pass through. |
-| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
+| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
 | [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools that outline the linked history and expand or search only the entries the agent needs. |
-| [`parallel-agents`](extensions/parallel-agents/) | Runs bounded isolated read-only child agents for Simplify through the same shared live TUI pane, cancellation path, and persisted subagent sessions used by panel review. |
-| [`panel-review`](extensions/panel-review/) | Runs 2–5 isolated read-only reviewer subagents in parallel against the current Git changeset, a pinned jj working-copy snapshot (including secondary workspaces), or a GitHub PR snapshot, then synthesizes a lead-review verdict with a live multi-agent TUI dashboard. |
-| [`plan-implement`](extensions/plan-implement/) | Runs a planner and optional adversary in visible Herdr panes, gates the final plan, implements on a dedicated Git/Graphite branch or jj bookmark, runs panel review, fixes findings, and publishes a draft PR with reviewer recommendations. Supports local stacks, managed worktrees, `--plan-only`, and a hosted `--fast` implementer. |
+| [`parallel-agents`](extensions/parallel-agents/) | Runs bounded isolated read-only child agents for Simplify through the same shared live TUI pane, cancellation path, and persisted subagent sessions. |
+| [`plan-implement`](extensions/plan-implement/) | Runs a planner and optional adversary in visible Herdr panes, gates the final plan, implements on a dedicated Git/Graphite branch or jj bookmark, runs adversarial review, fixes findings, and publishes a draft PR with reviewer recommendations. Supports local stacks, managed worktrees, `--plan-only`, and a hosted `--fast` implementer. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 | [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Publishes linear jj bookmarks as GitHub-native stacks and lands a complete stack with one asynchronous GitHub stack merge. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
@@ -61,7 +60,7 @@ routes do not create workstreams.
 | [`setup-kstack`](skills/setup-kstack/) | Interactively discovers and validates Pi model assignments, previews a user-level `kstack.json` update, and writes it only after approval. |
 | [`tdd`](skills/tdd/) | Makes a cheap failing-before / passing-after regression check before fixing a bug, and skips a new test when the path is expensive or unclear. |
 | [`teach`](skills/teach/) | Explains a change or subsystem plainly by running `how` and `why`, then weaving the results into one conversational account. Explicit invocation only. |
-| [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only; panel-review applies the same canonical lens to every reviewer and synthesis model. |
+| [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/) | Extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Explicit-only. |
 
 ## Standalone shell tools
 
@@ -80,7 +79,7 @@ instructions and options.
 
 ## Subagent sessions
 
-Short headless Kstack child agents persist native Pi sessions under `~/.pi/kstack/subagents/`. The managed flat store protects active runs and retains at most 500 sessions, pruning inactive sessions oldest-first. Inactive means that the child is no longer running, not that its work succeeded. These sessions do not appear in normal `/resume` results; reopen one with `pi --session <absolute-jsonl-path>`. Panel-review verdicts expose reviewer and lead evidence paths when expanded.
+Short headless Kstack child agents persist native Pi sessions under `~/.pi/kstack/subagents/`. The managed flat store protects active runs and retains at most 500 sessions, pruning inactive sessions oldest-first. Inactive means that the child is no longer running, not that its work succeeded. These sessions do not appear in normal `/resume` results; reopen one with `pi --session <absolute-jsonl-path>`.
 
 Use `search_subagent_history` to search retained inactive sessions. Use `read_subagent_history` with an exact session UUID to read normalized entries or raw JSONL chunks. Both tools validate the source file and lease before returning content. They never change source files or leases. Their disposable FTS5 cache lives at `$PI_CODING_AGENT_DIR/cache/kstack-subagent-history/index.sqlite3` and refreshes on demand. Search results are snapshots: retention can remove a source before a later read, so keep the reported UUID and path as expiring references.
 
@@ -183,9 +182,8 @@ rows stay unnamed.
 - Pi 1.1.0 or newer
 - Node 22.18 or newer for Pi's runtime and local tooling. CI tests Node 22.18, 24, and 26.
 - A local filesystem for Pi's agent directory
-- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step
+- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step
 - `github/gh-stack` 0.1.0 or newer (`gh extension install github/gh-stack`) — required for multi-PR jj publication and landing
-- `tar` — required to extract the temporary source snapshot for PR-scoped panel review
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
@@ -391,7 +389,6 @@ node --test scripts/install/index.test.mjs
 node --test scripts/check-exports/index.test.mjs
 npm run test:handoff
 npm run test:session-archive
-node --test extensions/panel-review/
 node --test extensions/plan-implement/
 node --test extensions/kstack-router/
 node --test extensions/land/

@@ -75,7 +75,7 @@ describe("dispatchRoute", () => {
 	it("aborts when the dispatch token is stale", async () => {
 		const { lifecycle, token } = setup();
 		lifecycle.endDispatch(token);
-		const result = await dispatchRoute("review", "task", undefined, false, "generic", token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("investigate", "task", undefined, false, "generic", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "aborted");
 	});
 

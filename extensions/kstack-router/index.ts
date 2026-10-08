@@ -381,8 +381,6 @@ export default function (pi: ExtensionAPI): void {
 							: "Delegated to plan-implement --fast in this session; its plan and discussion remain in context.",
 						"info",
 					);
-				} else if (route === "review") {
-					notify("Delegated to panel-review. Use Ctrl+Shift+X to abort the review.", "info");
 				} else if (route === "pr-autopilot") {
 					notify("Delegated to pr-autopilot. Use Ctrl+Shift+B to abort the run.", "info");
 				} else if (route === "land") {

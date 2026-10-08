@@ -122,9 +122,9 @@ describe("agent pane host", () => {
 		parent.note("planner", "parent transcript");
 		assert.match(renderWidget(state), /Plan & implement/);
 
-		const nested = host.startRun({ ctx, title: "Panel review", onAbort() {} });
+		const nested = host.startRun({ ctx, title: "Simplify run", onAbort() {} });
 		nested.addChild({ id: "reviewer", label: "Reviewer", model: "model/r" });
-		assert.match(renderWidget(state), /Panel review/);
+		assert.match(renderWidget(state), /Simplify run/);
 		nested.dispose();
 		assert.match(renderWidget(state), /Plan & implement/);
 		parent.dispose();

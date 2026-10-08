@@ -146,6 +146,14 @@ describe("parseClassifierOutput", () => {
 		assert.ok(!result.ok);
 	});
 
+	it("rejects the removed review route", () => {
+		const output = buildEnvelope(
+			JSON.stringify({ schemaVersion: 1, route: "review", confidence: "high", rationale: "Review the diff." }),
+		);
+		const result = parseClassifierOutput(output);
+		assert.ok(!result.ok);
+	});
+
 	it("rejects invalid confidence", () => {
 		const output = buildEnvelope(
 			JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "certain", rationale: "test" }),
@@ -248,11 +256,11 @@ describe("parseClassifierOutput", () => {
 	});
 
 	it("handles text before/after sentinels", () => {
-		const output = `some text before\n${CLASSIFIER_SENTINEL_START}\n${JSON.stringify({ schemaVersion: 1, route: "review", confidence: "medium", rationale: "Review task." })}\n${CLASSIFIER_SENTINEL_END}\nsome text after`;
+		const output = `some text before\n${CLASSIFIER_SENTINEL_START}\n${JSON.stringify({ schemaVersion: 1, route: "investigate", confidence: "medium", rationale: "Research task." })}\n${CLASSIFIER_SENTINEL_END}\nsome text after`;
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
 		if (result.ok) {
-			assert.equal(result.envelope.route, "review");
+			assert.equal(result.envelope.route, "investigate");
 		}
 	});
 });
@@ -293,7 +301,7 @@ describe("buildRouteAlternatives", () => {
 		assert.ok(!ids.includes("change"));
 		assert.ok(!ids.includes("unsupported"));
 		assert.ok(ids.includes("investigate"));
-		assert.ok(ids.includes("review"));
+		assert.ok(ids.includes("session-pickup"));
 		assert.ok(ids.includes("pr-autopilot"));
 		assert.ok(ids.includes("land"));
 	});

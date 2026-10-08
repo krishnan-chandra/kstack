@@ -35,7 +35,7 @@ and optional effort for the replacement session. It accepts a canonical
 partial id/name match (provider-scoped when the reference contains a slash).
 Short names come from two centralized sources (see
 `extensions/shared/model-aliases.ts`): any `{ "label", "model", "thinking" }`
-entry in `kstack.json` (panel-review reviewers, arena runners, pr-autopilot
+entry in `kstack.json` (adversaries, arena runners, pr-autopilot
 models, ...) and model display names from the Pi catalogue. Display names
 match exactly, case-insensitively, in either their written or slug form
 (`Claude Sonnet 4.5` or `claude-sonnet-4.5`); quote names that contain

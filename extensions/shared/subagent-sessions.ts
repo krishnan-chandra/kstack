@@ -39,6 +39,7 @@ export interface ChildSessionIdentity {
 	label: string;
 }
 
+/* exported: child-session contract reason union */
 export type MissingSessionReason =
 	| "setup-failed"
 	| "spawn-failed"

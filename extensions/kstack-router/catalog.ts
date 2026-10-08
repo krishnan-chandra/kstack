@@ -15,8 +15,8 @@ const CATALOG: RouteCatalog = {
 		id: "change",
 		label: "Change",
 		description:
-			"Features, fixes, refactors, prototypes, docs/config changes, and Pi extension implementation. Runs plan → approve → implement → panel review.",
-		requires: ["plan-implement", "panel-review"],
+			"Features, fixes, refactors, prototypes, docs/config changes, and Pi extension implementation. Runs plan → approve → implement → adversarial review.",
+		requires: ["plan-implement"],
 	},
 	"fast-change": {
 		id: "fast-change",
@@ -53,12 +53,6 @@ const CATALOG: RouteCatalog = {
 		label: "Session Pickup",
 		description: "Continue linked or archived work and recover prior decisions. Read-only tools only.",
 		playbookFile: "session-pickup.md",
-	},
-	review: {
-		id: "review",
-		label: "Review",
-		description: "Review existing working-tree or branch changes. Runs read-only panel review.",
-		requires: ["panel-review"],
 	},
 	"pr-autopilot": {
 		id: "pr-autopilot",

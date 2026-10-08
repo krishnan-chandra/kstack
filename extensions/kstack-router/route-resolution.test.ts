@@ -84,11 +84,11 @@ test("accepting a recommendation inherits delivery and change kind", async () =>
 });
 
 test("overriding a recommendation does not inherit change metadata", async () => {
-	const { fx } = effects({ routes: ["review"] });
+	const { fx } = effects({ routes: ["investigate"] });
 	const result = await resolve({ task: "do work" }, fx);
 	assert.ok("resolved" in result);
 	if ("resolved" in result) {
-		assert.equal(result.resolved.route, "review");
+		assert.equal(result.resolved.route, "investigate");
 		assert.equal(result.resolved.delivery, undefined);
 		assert.equal(result.resolved.changeKind, "generic");
 		assert.equal(result.resolved.overrode, true);
@@ -106,7 +106,7 @@ test("classifier failure falls back to manual selection", async () => {
 });
 
 test("missing classifier model uses the no-classifier manual prompt", async () => {
-	const { fx, calls } = effects({ routes: ["review"] });
+	const { fx, calls } = effects({ routes: ["investigate"] });
 	const result = await resolveRoute(
 		{
 			parsedArgs: { task: "do work" },
@@ -116,20 +116,20 @@ test("missing classifier model uses the no-classifier manual prompt", async () =
 		},
 		fx,
 	);
-	assert.ok("resolved" in result && result.resolved.route === "review");
+	assert.ok("resolved" in result && result.resolved.route === "investigate");
 	assert.ok(calls.includes("route:No classifier available. Select a route:"));
 	assert.ok(calls.includes("notify:No model available for routing classification."));
 });
 
 test("change kind is rejected for non-change routes", async () => {
 	const { fx } = effects();
-	const result = await resolve({ route: "review", changeKind: "feature", task: "do work" }, fx);
+	const result = await resolve({ route: "investigate", changeKind: "feature", task: "do work" }, fx);
 	assert.deepEqual(result, { failed: "--change-kind is only valid with the change or fast-change routes." });
 });
 
 test("worktree is rejected for non-change routes", async () => {
 	const { fx } = effects();
-	const result = await resolve({ route: "review", worktree: true, task: "do work" }, fx);
+	const result = await resolve({ route: "investigate", worktree: true, task: "do work" }, fx);
 	assert.deepEqual(result, { failed: "--worktree is only valid with the change or fast-change routes." });
 });
 

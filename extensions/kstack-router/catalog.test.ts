@@ -28,7 +28,6 @@ describe("kstack-router catalog", () => {
 			"investigate",
 			"land",
 			"pr-autopilot",
-			"review",
 			"session-pickup",
 			"skill-authoring",
 			"swarm",
@@ -43,15 +42,9 @@ describe("kstack-router catalog", () => {
 		}
 	});
 
-	it("change requires plan-implement and panel-review", () => {
+	it("change requires plan-implement", () => {
 		const deps = routeRequires("change");
-		assert.ok(deps.includes("plan-implement"));
-		assert.ok(deps.includes("panel-review"));
-	});
-
-	it("review requires panel-review", () => {
-		const deps = routeRequires("review");
-		assert.ok(deps.includes("panel-review"));
+		assert.deepEqual(deps, ["plan-implement"]);
 	});
 
 	it("pr-autopilot requires the pr-autopilot extension", () => {
@@ -87,11 +80,10 @@ describe("kstack-router catalog", () => {
 		const missing = checkDependencies("change", [], []);
 		assert.ok(missing.length > 0);
 		assert.ok(missing.some((m) => m.includes("plan-implement")));
-		assert.ok(missing.some((m) => m.includes("panel-review")));
 	});
 
 	it("checkDependencies returns empty when all deps are satisfied", () => {
-		const missing = checkDependencies("change", ["plan-implement", "panel-review"], []);
+		const missing = checkDependencies("change", ["plan-implement"], []);
 		assert.deepEqual(missing, []);
 	});
 
@@ -125,10 +117,7 @@ describe("kstack-router catalog", () => {
 		assert.match(principles, /## Writable workstreams/);
 		assert.match(principles, /dedicated `kstack\/<task-slug>` branch/);
 		assert.match(principles, /commits coherent, verified increments/);
-		assert.match(
-			principles,
-			/Read-only routes[\s\S]*`investigate`, `review`, `session-pickup`[\s\S]*do not create branches/,
-		);
+		assert.match(principles, /Read-only routes[\s\S]*`investigate`, `session-pickup`[\s\S]*do not create branches/);
 		assert.match(principles, /Local branch creation and incremental commits are part of writable/);
 	});
 

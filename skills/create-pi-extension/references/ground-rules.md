@@ -1,6 +1,6 @@
 # Pi extension ground rules
 
-These rules combine current Pi documentation with the implementation lessons from `session-archive`, `handoff`, and `panel-review`.
+These rules combine current Pi documentation with the implementation lessons from `session-archive` and `handoff`.
 
 ## Repository shape
 

@@ -28,7 +28,7 @@ function isReadiness(value: string): value is LandReadinessFlag {
 	return value === "check" || value === "watch";
 }
 const VALID_ROUTES =
-	"investigate, change, fast-change, arena, swarm, skill-authoring, session-pickup, review, pr-autopilot, land";
+	"investigate, change, fast-change, arena, swarm, skill-authoring, session-pickup, pr-autopilot, land";
 const SUPPORTED_FLAGS =
 	"--route <id>, --single, --stack, --worktree, --change-kind <kind>, --no-adversary, --plan-only, --mode <mode>, --pr <n>, --method <method>, --readiness <mode>";
 

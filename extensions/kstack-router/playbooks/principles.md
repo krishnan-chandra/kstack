@@ -32,13 +32,13 @@ After approval and before the first repository write, a writable route creates a
 dedicated `kstack/<task-slug>` branch (or reuses the parent-created managed
 worktree branch) and commits coherent, verified increments as work proceeds.
 Do not carry a dirty current working tree onto that branch. Read-only routes
-(`investigate`, `review`, `session-pickup`) do not create branches. Routes that
+(`investigate`, `session-pickup`) do not create branches. Routes that
 become writable only after approval inherit this policy at that point.
 
 ## Verification
 
 - Tests run and pass (or are reported with a clear reason for skipping).
-- Changes are reviewable (panel review or manual inspection).
+- Changes are reviewable by adversarial review or manual inspection.
 - Partial failures are reported honestly.
 
 ## Publication prohibition

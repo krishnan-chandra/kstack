@@ -7,7 +7,7 @@
  * way:
  *
  * - kstack.json: any `{ "label": ..., "model": ..., "thinking"? }` entry, at
- *   any nesting depth (panel-review reviewers, arena runners, pr-autopilot
+ *   any nesting depth (adversaries, arena runners, pr-autopilot
  *   models, ...). The label is the alias; the model and optional thinking
  *   level are the target.
  * - Model catalogue display names: the `name` field of models known to Pi

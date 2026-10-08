@@ -13,7 +13,7 @@ function configDir(contents?: string): string {
 
 describe("VCS backend config", () => {
 	it("defaults a missing section to Git with GitHub stacks", () => {
-		const dir = configDir('{"panel-review":{}}');
+		const dir = configDir('{"legacy-extension":{}}');
 		assert.deepEqual(loadVcsBackend({ PI_CODING_AGENT_DIR: dir }), {
 			backend: "git",
 			gitStackProvider: "github",

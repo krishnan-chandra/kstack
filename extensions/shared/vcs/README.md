@@ -40,7 +40,7 @@ delegate planning to it and still return only the `IsolationPlan`.
 `worktree-inventory.ts` owns decoding Git's porcelain worktree listing.
 Cleanup, rebase scope, and the skill inspector consume that inventory and
 keep their own safety decisions. `git-status.ts` owns decoding Git's
-porcelain status records. Git and Graphite path lists, panel-review context
+porcelain status records. Git and Graphite path lists, backend context
 checks, and the skill inspector consume those records.
 
 The Git backend creates a clean `kstack/<task-slug>` branch and can create a

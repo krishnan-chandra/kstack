@@ -2,7 +2,6 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { requestLand } from "../land/api.ts";
-import { requestPanelReview } from "../panel-review/api.ts";
 import { requestPlanImplement } from "../plan-implement/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import type { ChangeKind } from "../shared/change-kind.ts";
@@ -16,7 +15,7 @@ type DispatchResult = { status: "dispatched" } | { status: "failed"; error: stri
 /**
  * Dispatch the task to the appropriate handler based on the selected route.
  *
- * For `change`, `review`, `pr-autopilot`, and `land`, this uses in-process
+ * For `change`, `pr-autopilot`, and `land`, this uses in-process
  * event APIs to avoid synthesizing slash-command strings. For other routes,
  * the caller handles active-session lifecycle (tool restriction, playbook
  * attachment, etc.) before calling this function; those routes return here
@@ -101,26 +100,6 @@ export async function dispatchRoute(
 			}
 		}
 
-		case "review": {
-			try {
-				const result = await requestPanelReview(pi, { intent: task }, ctx);
-				if (!result.handled) {
-					return {
-						status: "failed",
-						error:
-							"panel-review extension is not loaded or did not accept the request. " +
-							"Make sure it is installed: pi list | grep panel-review",
-					};
-				}
-				return { status: "dispatched" };
-			} catch (err) {
-				return {
-					status: "failed",
-					error: `panel-review dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
-				};
-			}
-		}
-
 		case "pr-autopilot": {
 			if (postPr?.route !== "pr-autopilot") {
 				return { status: "failed", error: "Internal error: pr-autopilot dispatch is missing a typed request." };
@@ -193,10 +172,10 @@ export async function dispatchRoute(
 				status: "failed",
 				error:
 					"This task does not fit a supported route. Kstack Router supports: " +
-					"investigate (read-only research), change (plan → implement → review), fast-change (one-shot bounded implementation), " +
+					"investigate (read-only research), change (plan → implement → adversarial review), fast-change (one-shot bounded implementation), " +
 					"arena (parallel candidate comparison), swarm (parallel independent slices), " +
 					"skill-authoring (create/test skills), session-pickup (recover context), " +
-					"review (read-only panel review), pr-autopilot (drive an existing PR to merge-ready), " +
+					"pr-autopilot (drive an existing PR to merge-ready), " +
 					"land (confirm and merge one PR). Use --route to pick one explicitly.",
 			};
 

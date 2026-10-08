@@ -1,6 +1,6 @@
 /**
- * Full-screen, read-only subagent console overlay shared by panel-review and
- * plan-implement.
+ * Full-screen, read-only subagent console overlay shared by parallel-agents
+ * (the Simplify skill).
  *
  * Replaces the old 80%×80% floating inspector popup. The console covers the
  * terminal edge-to-edge (`width: "100%", maxHeight: "100%", anchor: "top-left",
