@@ -94,6 +94,7 @@ function createHarness(t: TestContext, result: AskResult, confirm: () => Promise
 				/* SAFETY: The lifecycle listeners exercised here accept no required runtime data. */
 				void (listener as () => void)();
 			});
+			return () => {};
 		},
 		registerCommand(_name, value) {
 			command = value;

@@ -23,6 +23,7 @@ describe("session archive retained-history registration", () => {
 			const fake: Partial<ExtensionAPI> = {
 				on(name) {
 					events.push(name);
+					return () => {};
 				},
 				registerCommand(name) {
 					commands.push(name);

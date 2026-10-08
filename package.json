@@ -5,11 +5,16 @@
 	"engines": {
 		"node": ">=22.18"
 	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": ">=1.1.0",
+		"@earendil-works/pi-coding-agent": ">=1.1.0",
+		"@earendil-works/pi-tui": ">=1.1.0"
+	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
-		"@earendil-works/pi-ai": "^0.84.2",
-		"@earendil-works/pi-coding-agent": "^0.84.2",
-		"@earendil-works/pi-tui": "^0.84.2",
+		"@earendil-works/pi-ai": "^1.1.0",
+		"@earendil-works/pi-coding-agent": "^1.1.0",
+		"@earendil-works/pi-tui": "^1.1.0",
 		"@oxlint/plugins": "^1.80.0",
 		"@types/node": "^22",
 		"oxlint": "^1.80.0",

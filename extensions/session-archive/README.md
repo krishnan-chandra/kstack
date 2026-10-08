@@ -10,7 +10,7 @@ provides two read-only source tools for inactive Kstack child sessions.
 
 - Node 22 or newer (`node:sqlite`). The extension fails at startup with an
   actionable message when it is unavailable.
-- Pi 0.84.1+ (tested against `@earendil-works/pi-coding-agent` 0.84.1).
+- Pi 1.1.0+ (tested against `@earendil-works/pi-coding-agent` 1.1.0).
 - Session format v3. Open an older session once in Pi to let Pi upgrade it before archiving.
 - A local filesystem for `$PI_CODING_AGENT_DIR`. SQLite WAL and the archive's
   rename/fsync guarantees are not designed for a shared network filesystem or

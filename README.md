@@ -180,7 +180,7 @@ rows stay unnamed.
 
 ## Requirements
 
-- Pi 0.84.2 or newer
+- Pi 1.1.0 or newer
 - Node 22.18 or newer for Pi's runtime and local tooling. CI tests Node 22.18, 24, and 26.
 - A local filesystem for Pi's agent directory
 - `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by PR-scoped panel review, pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step

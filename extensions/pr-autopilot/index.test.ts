@@ -30,7 +30,7 @@ test("standalone check scopes GitHub commands from a non-colocated jj origin", a
 	let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
 	const identityCalls: string[] = [];
 	const host: Partial<ExtensionAPI> = {
-		on() {},
+		on: () => () => {},
 		registerCommand(_name, value) {
 			command = value;
 		},
@@ -112,7 +112,7 @@ test("delegated check uses its explicit repository from a .git-less jj workspace
 
 	const listeners = new Map<string, Array<(value: never) => void>>();
 	const host: Partial<ExtensionAPI> = {
-		on() {},
+		on: () => () => {},
 		registerCommand() {},
 		registerShortcut() {},
 		registerMessageRenderer() {},
@@ -185,7 +185,7 @@ test("delegated repository-resolution cancellation returns aborted without an er
 	const listeners = new Map<string, Array<(value: never) => void>>();
 	const notices: Array<{ message: string; level: string }> = [];
 	const host: Partial<ExtensionAPI> = {
-		on() {},
+		on: () => () => {},
 		registerCommand() {},
 		registerShortcut() {},
 		registerMessageRenderer() {},
@@ -274,6 +274,7 @@ for (const cancel of ["shutdown", "shortcut"] as const) {
 					// SAFETY: The registered shutdown callback ignores the host event and context.
 					events.set(event, handler as () => void);
 				}
+				return () => {};
 			},
 			registerCommand(_name, value) {
 				command = value;
