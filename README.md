@@ -93,10 +93,10 @@ K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
 `"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
 For Git, `vcs.stackProvider` defaults to `"github"`; set it to `"none"` to
 disable stacked-PR publication and membership routing.
-Model assignments for panel-review, plan-implement, plan-adversary, arena,
+Model assignments for plan-implement, adversary, arena,
 swarm, and the `how` and `why` investigation skills use sections in the same
-file. `plan-adversary` selects the model and round limits for adversarial
-planning. The `plan-implement` section also drives `--fast` mode, which runs the same
+file. `adversary` selects the planning and implementation adversaries, their
+round limits, and the implementation review timeout. The `plan-implement` section also drives `--fast` mode, which runs the same
 implementer while skipping planning, review, and publishing. A top-level
 `aliases` array (or any `{label, model, thinking}`
 entry anywhere in the file) defines model short names that `/handoff --model`

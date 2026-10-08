@@ -16,7 +16,7 @@ test("adversarial planning is explicit-only and guarded by Herdr", () => {
 
 test("the skill keeps standalone planning and uses the shared request lifecycle", () => {
 	assert.match(skill, /resolve-model/);
-	assert.match(skill, /--section plan-adversary --key adversary/);
+	assert.match(skill, /--section adversary --key adversary/);
 	assert.match(skill, /herdr agent start/);
 	assert.match(skill, /herdr pane split/);
 	assert.match(skill, /--no-focus/);

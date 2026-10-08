@@ -177,7 +177,8 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 			return;
 		}
 		if (adversaryResolution.notice) notify(adversaryResolution.notice, "info");
-		const adversaryModel = adversaryResolution.adversary?.model;
+		const adversaryModels = adversaryResolution.adversary?.models ?? [];
+		const adversaryModel = adversaryModels[0];
 		const adversaryTimeoutMinutes = adversaryResolution.adversary?.timeoutMinutes;
 		const maxRounds = adversaryResolution.adversary?.maxRounds;
 		let trunkSha: string | undefined;

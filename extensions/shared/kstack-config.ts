@@ -28,14 +28,25 @@ const thinkingLevelsComplete: ThinkingLevelsComplete = true;
 void thinkingLevelsComplete;
 export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
-export type PlanAdversaryModel = string | { model: string; thinking?: ModelThinkingLevel };
+export type AdversaryModel = string | { model: string; thinking?: ModelThinkingLevel };
 
 /* exported: shared configuration contract for plan-implement and the adversarial-planning CLI */
-export interface PlanAdversaryConfig {
-	adversary: PlanAdversaryModel;
+export interface AdversaryConfig {
+	/** One or more adversaries, in configured order. */
+	adversaries: AdversaryModel[];
+	/** Planning debate rounds. */
 	maxRounds: number;
+	/** Wall-clock limit for one planning-round critique. */
 	timeoutMinutes: number;
+	/** Shared deadline for the implementation review fan-out. */
+	reviewTimeoutMinutes: number;
 }
+
+/** Built-in adversary when the `adversary` section omits an explicit model. */
+const DEFAULT_ADVERSARY: AdversaryModel = { model: "openai/gpt-6-astra", thinking: "medium" };
+
+/** Maximum number of configured adversaries. */
+const MAX_ADVERSARIES = 5;
 
 export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLevel {
 	return (
@@ -46,54 +57,78 @@ export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLev
 	);
 }
 
-function validatePlanAdversaryModel(
+function validateAdversaryModel(
 	value: BoundaryValue,
-): { ok: true; model: PlanAdversaryModel } | { ok: false; error: string } {
+	where: string,
+): { ok: true; model: AdversaryModel } | { ok: false; error: string } {
 	if (isString(value)) {
 		if (!/^[A-Za-z0-9_-]{1,16}$/.test(value)) {
 			return {
 				ok: false,
-				error: "plan-adversary.adversary alias must use 1–16 letters, digits, underscores, or hyphens.",
+				error: `${where} alias must use 1–16 letters, digits, underscores, or hyphens.`,
 			};
 		}
 		return { ok: true, model: value };
 	}
 	if (!isObject(value) || value === null || Array.isArray(value)) {
-		return { ok: false, error: "plan-adversary.adversary must be a model object or alias string." };
+		return { ok: false, error: `${where} must be a model object or alias string.` };
 	}
 	// SAFETY: the object guard above establishes a string-keyed config record.
 	const record = value as JsonObject;
 	if (!isString(record.model) || !MODEL_ID_RE.test(record.model)) {
-		return { ok: false, error: "plan-adversary.adversary.model must be provider/model." };
+		return { ok: false, error: `${where}.model must be provider/model.` };
 	}
 	if (record.thinking !== undefined && !isThinkingLevel(record.thinking)) {
-		return { ok: false, error: "plan-adversary.adversary.thinking is not a supported thinking level." };
+		return { ok: false, error: `${where}.thinking is not a supported thinking level.` };
 	}
-	const model: Exclude<PlanAdversaryModel, string> = { model: record.model };
+	const model: Exclude<AdversaryModel, string> = { model: record.model };
 	if (isThinkingLevel(record.thinking)) model.thinking = record.thinking;
 	return { ok: true, model };
 }
 
-/** Validate the shared adversarial-planning settings once for the skill CLI and plan-implement. */
-export function validatePlanAdversaryConfig(
+/**
+ * Validate the shared adversary settings once for the skill CLI and
+ * plan-implement. `adversary` accepts one model or an array of models; an
+ * omitted model falls back to {@link DEFAULT_ADVERSARY}.
+ */
+export function validateAdversaryConfig(
 	value: BoundaryValue,
-): { ok: true; config: PlanAdversaryConfig } | { ok: false; error: string } {
+): { ok: true; config: AdversaryConfig } | { ok: false; error: string } {
 	if (!isObject(value) || value === null || Array.isArray(value)) {
-		return { ok: false, error: "plan-adversary must be an object." };
+		return { ok: false, error: "adversary must be an object." };
 	}
 	// SAFETY: the object guard above establishes a string-keyed config record.
 	const record = value as JsonObject;
-	const adversary = validatePlanAdversaryModel(record.adversary);
-	if (!adversary.ok) return adversary;
+	const raw = record.adversary;
+	const entries = raw === undefined ? [DEFAULT_ADVERSARY] : Array.isArray(raw) ? raw : [raw];
+	if (entries.length < 1 || entries.length > MAX_ADVERSARIES) {
+		return { ok: false, error: `adversary.adversary must contain 1 to ${MAX_ADVERSARIES} entries.` };
+	}
+	const adversaries: AdversaryModel[] = [];
+	for (let index = 0; index < entries.length; index++) {
+		const where = entries.length === 1 ? "adversary.adversary" : `adversary.adversary[${index}]`;
+		const model = validateAdversaryModel(entries[index], where);
+		if (!model.ok) return model;
+		adversaries.push(model.model);
+	}
 	const maxRounds = record.maxRounds ?? 3;
 	if (!isNumber(maxRounds) || !Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 5) {
-		return { ok: false, error: "plan-adversary.maxRounds must be an integer from 1 to 5." };
+		return { ok: false, error: "adversary.maxRounds must be an integer from 1 to 5." };
 	}
 	const timeoutMinutes = record.timeoutMinutes ?? 15;
 	if (!isNumber(timeoutMinutes) || !Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 60) {
-		return { ok: false, error: "plan-adversary.timeoutMinutes must be an integer from 1 to 60." };
+		return { ok: false, error: "adversary.timeoutMinutes must be an integer from 1 to 60." };
 	}
-	return { ok: true, config: { adversary: adversary.model, maxRounds, timeoutMinutes } };
+	const reviewTimeoutMinutes = record.reviewTimeoutMinutes ?? 10;
+	if (
+		!isNumber(reviewTimeoutMinutes) ||
+		!Number.isInteger(reviewTimeoutMinutes) ||
+		reviewTimeoutMinutes < 1 ||
+		reviewTimeoutMinutes > 60
+	) {
+		return { ok: false, error: "adversary.reviewTimeoutMinutes must be an integer from 1 to 60." };
+	}
+	return { ok: true, config: { adversaries, maxRounds, timeoutMinutes, reviewTimeoutMinutes } };
 }
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {

@@ -10,7 +10,7 @@ import {
 	loadKstackSection,
 	loadValidatedSection,
 	MODEL_ID_RE,
-	validatePlanAdversaryConfig,
+	validateAdversaryConfig,
 } from "./kstack-config.ts";
 import { type BoundaryValue, isString } from "./validation.ts";
 
@@ -70,48 +70,90 @@ describe("shared kstack config", () => {
 	});
 });
 
-function planAdversaryError(value: BoundaryValue): string {
-	const result = validatePlanAdversaryConfig(value);
+function adversaryError(value: BoundaryValue): string {
+	const result = validateAdversaryConfig(value);
 	assert.equal(result.ok, false);
-	if (result.ok) throw new Error("expected plan-adversary validation to fail");
+	if (result.ok) throw new Error("expected adversary validation to fail");
 	return result.error;
 }
 
-describe("validatePlanAdversaryConfig", () => {
+describe("validateAdversaryConfig", () => {
 	it("accepts an object model and applies defaults", () => {
+		assert.deepEqual(validateAdversaryConfig({ adversary: { model: "openai/gpt-6-astra", thinking: "medium" } }), {
+			ok: true,
+			config: {
+				adversaries: [{ model: "openai/gpt-6-astra", thinking: "medium" }],
+				maxRounds: 3,
+				timeoutMinutes: 15,
+				reviewTimeoutMinutes: 10,
+			},
+		});
+	});
+
+	it("falls back to the built-in adversary and accepts multiple entries", () => {
+		assert.deepEqual(validateAdversaryConfig({}), {
+			ok: true,
+			config: {
+				adversaries: [{ model: "openai/gpt-6-astra", thinking: "medium" }],
+				maxRounds: 3,
+				timeoutMinutes: 15,
+				reviewTimeoutMinutes: 10,
+			},
+		});
+		assert.deepEqual(validateAdversaryConfig({ adversary: [{ model: "openai/gpt-6-astra" }, "fable"] }), {
+			ok: true,
+			config: {
+				adversaries: [{ model: "openai/gpt-6-astra" }, "fable"],
+				maxRounds: 3,
+				timeoutMinutes: 15,
+				reviewTimeoutMinutes: 10,
+			},
+		});
+	});
+
+	it("accepts an alias and explicit bounds", () => {
 		assert.deepEqual(
-			validatePlanAdversaryConfig({ adversary: { model: "openai/gpt-5.6-astra", thinking: "medium" } }),
+			validateAdversaryConfig({
+				adversary: "fable",
+				maxRounds: 5,
+				timeoutMinutes: 60,
+				reviewTimeoutMinutes: 20,
+			}),
 			{
 				ok: true,
-				config: {
-					adversary: { model: "openai/gpt-5.6-astra", thinking: "medium" },
-					maxRounds: 3,
-					timeoutMinutes: 15,
-				},
+				config: { adversaries: ["fable"], maxRounds: 5, timeoutMinutes: 60, reviewTimeoutMinutes: 20 },
 			},
 		);
 	});
 
-	it("accepts an alias and explicit bounds", () => {
-		assert.deepEqual(validatePlanAdversaryConfig({ adversary: "fable", maxRounds: 5, timeoutMinutes: 60 }), {
-			ok: true,
-			config: { adversary: "fable", maxRounds: 5, timeoutMinutes: 60 },
-		});
+	it("rejects malformed models and aliases", () => {
+		assert.match(adversaryError({ adversary: {} }), /model/);
+		assert.match(adversaryError({ adversary: "not an alias" }), /alias/);
+		assert.match(adversaryError({ adversary: { model: "astra", thinking: "medium" } }), /provider\/model/);
+		assert.match(adversaryError({ adversary: { model: "openai/astra", thinking: "enormous" } }), /thinking/);
+		assert.match(adversaryError({ adversary: [] }), /1 to 5/);
 	});
 
-	it("rejects malformed models and aliases", () => {
-		assert.match(planAdversaryError({ adversary: {} }), /model/);
-		assert.match(planAdversaryError({ adversary: "not an alias" }), /alias/);
-		assert.match(planAdversaryError({ adversary: { model: "astra", thinking: "medium" } }), /provider\/model/);
-		assert.match(planAdversaryError({ adversary: { model: "openai/astra", thinking: "enormous" } }), /thinking/);
+	it("accepts five adversaries, rejects six, and indexes malformed later entries", () => {
+		const five = [{ model: "a/b" }, { model: "c/d" }, { model: "e/f" }, { model: "g/h" }, { model: "i/j" }];
+		assert.equal(validateAdversaryConfig({ adversary: five }).ok, true);
+		assert.match(adversaryError({ adversary: [...five, { model: "k/l" }] }), /1 to 5/);
+		assert.match(adversaryError({ adversary: [{ model: "a/b" }, {}] }), /adversary\.adversary\[1\]\.model/);
+		assert.match(
+			adversaryError({ adversary: [{ model: "a/b" }, { model: "c/d", thinking: "enormous" }] }),
+			/adversary\.adversary\[1\]\.thinking/,
+		);
 	});
 
 	it("rejects round and timeout values outside their integer bounds", () => {
 		for (const maxRounds of [0, 6, 1.5]) {
-			assert.match(planAdversaryError({ adversary: "fable", maxRounds }), /maxRounds/);
+			assert.match(adversaryError({ adversary: "fable", maxRounds }), /maxRounds/);
 		}
 		for (const timeoutMinutes of [0, 61, 1.5]) {
-			assert.match(planAdversaryError({ adversary: "fable", timeoutMinutes }), /timeoutMinutes/);
+			assert.match(adversaryError({ adversary: "fable", timeoutMinutes }), /timeoutMinutes/);
+		}
+		for (const reviewTimeoutMinutes of [0, 61, 1.5]) {
+			assert.match(adversaryError({ adversary: "fable", reviewTimeoutMinutes }), /reviewTimeoutMinutes/);
 		}
 	});
 });

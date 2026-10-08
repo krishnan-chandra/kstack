@@ -51,7 +51,7 @@ A full run follows these phases:
 1. Preflight Herdr, configuration, models, VCS, panel review, and publication skills before a model call.
 2. Create one `plan-implement: <slug>` Herdr tab with `--no-focus`.
 3. Start a read-only planner in the tab's root pane.
-4. If `plan-adversary` is configured, start a read-only adversary and run the debate.
+4. If `adversary` is configured, start a read-only adversary and run the debate.
 5. Validate the final plan's ordered `[STEP-n]` items and `[AC-n]` criteria.
 6. Display the exact final validated plan, including verified human edits, then ask for approval. That same snapshot is persisted and supplied to the implementer.
 7. Create the backend workstream only after approval, then start the implementer.
@@ -116,15 +116,18 @@ Kstack reads `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.jso
     "implementer": { "model": "openrouter/google/gemini-3.8-flash", "thinking": "high" },
     "timeoutMinutes": 30
   },
-  "plan-adversary": {
-    "adversary": { "model": "anthropic/claude-fable-5-1", "thinking": "medium" },
+  "adversary": {
+    "adversary": [
+      { "model": "openai/gpt-6-astra", "thinking": "medium" }
+    ],
     "maxRounds": 3,
-    "timeoutMinutes": 15
+    "timeoutMinutes": 15,
+    "reviewTimeoutMinutes": 10
   }
 }
 ```
 
-The adversary may be an object or a kstack model alias string. `maxRounds` is an integer from 1 through 5 and defaults to 3. Adversary `timeoutMinutes` is an integer from 1 through 60 and defaults to 15. If `plan-adversary` is absent, the normal command uses the single-planner flow.
+`adversary.adversary` is one model object or kstack model alias string, or an array of up to five of them. If it is omitted, the built-in adversary is `openai/gpt-6-astra` at `medium`. `maxRounds` is an integer from 1 through 5 and defaults to 3. `adversary.timeoutMinutes` is an integer from 1 through 60 and defaults to 15; `adversary.reviewTimeoutMinutes` is an integer from 1 through 60 and defaults to 10. If the `adversary` section is absent, the normal command uses the single-planner flow.
 
 Planner thinking must be `high`, `xhigh`, or `max`. Planner and implementer models must differ. Every configured model must be available and authenticated in the parent registry.
 

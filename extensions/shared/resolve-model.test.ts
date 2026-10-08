@@ -29,7 +29,7 @@ describe("resolveModelRef", () => {
 				argument: "openai/gpt-5.6-astra:medium",
 				configured: "fable",
 				aliases,
-				section: "plan-adversary",
+				section: "adversary",
 				key: "adversary",
 			}),
 			{ ok: true, ref: "openai/gpt-5.6-astra:medium" },
@@ -41,7 +41,7 @@ describe("resolveModelRef", () => {
 			resolveModelRef({
 				argument: "fable:medium",
 				aliases,
-				section: "plan-adversary",
+				section: "adversary",
 				key: "adversary",
 			}),
 			{ ok: true, ref: "anthropic/claude-fable-5-1:medium" },
@@ -49,7 +49,7 @@ describe("resolveModelRef", () => {
 	});
 
 	it("falls back to configured alias and object forms", () => {
-		assert.deepEqual(resolveModelRef({ configured: "fable", aliases, section: "plan-adversary", key: "adversary" }), {
+		assert.deepEqual(resolveModelRef({ configured: "fable", aliases, section: "adversary", key: "adversary" }), {
 			ok: true,
 			ref: "anthropic/claude-fable-5-1:high",
 		});
@@ -57,7 +57,7 @@ describe("resolveModelRef", () => {
 			resolveModelRef({
 				configured: { model: "openai/gpt-5.6-astra", thinking: "low" },
 				aliases,
-				section: "plan-adversary",
+				section: "adversary",
 				key: "adversary",
 			}),
 			{ ok: true, ref: "openai/gpt-5.6-astra:low" },
@@ -79,18 +79,18 @@ describe("resolveModelRef", () => {
 });
 
 describe("resolveConfiguredModel", () => {
-	it("loads and validates the plan-adversary default", () => {
+	it("loads and validates the adversary default", () => {
 		const dir = mkdtempSync(join(tmpdir(), "kstack-resolve-model-"));
 		writeFileSync(
 			join(dir, "kstack.json"),
 			JSON.stringify({
 				aliases: [{ label: "fable", model: "anthropic/claude-fable-5-1", thinking: "high" }],
-				"plan-adversary": { adversary: "fable", maxRounds: 3, timeoutMinutes: 15 },
+				adversary: { adversary: "fable", maxRounds: 3, timeoutMinutes: 15 },
 			}),
 		);
 		assert.deepEqual(
 			resolveConfiguredModel({
-				section: "plan-adversary",
+				section: "adversary",
 				key: "adversary",
 				env: { PI_CODING_AGENT_DIR: dir },
 			}),
@@ -115,7 +115,7 @@ describe("resolveConfiguredModel", () => {
 		assert.deepEqual(
 			resolveConfiguredModel({
 				argument: "openai/gpt-5.6-astra:medium",
-				section: "plan-adversary",
+				section: "adversary",
 				key: "adversary",
 				env: { PI_CODING_AGENT_DIR: dir },
 			}),

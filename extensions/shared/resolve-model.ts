@@ -1,19 +1,19 @@
 /** Resolve skill-facing model references through kstack.json aliases and section defaults. */
 
 import {
+	type AdversaryModel,
 	isThinkingLevel,
 	loadKstackRoot,
 	MODEL_ID_RE,
 	type ModelThinkingLevel,
-	type PlanAdversaryModel,
-	validatePlanAdversaryConfig,
+	validateAdversaryConfig,
 } from "./kstack-config.ts";
 import { collectKstackModelAliases, type ModelAlias, matchModelAliases } from "./model-aliases.ts";
 import { type BoundaryValue, isObject, isString, type JsonObject } from "./validation.ts";
 
 interface ResolveModelRequest {
 	argument?: string;
-	configured?: PlanAdversaryModel;
+	configured?: AdversaryModel;
 	aliases: readonly ModelAlias[];
 	section: string;
 	key: string;
@@ -27,7 +27,7 @@ interface ResolveConfiguredModelRequest {
 }
 
 type ResolveModelResult = { ok: true; ref: string } | { ok: false; error: string };
-type ConfiguredModelResult = { ok: true; model: PlanAdversaryModel | undefined } | { ok: false; error: string };
+type ConfiguredModelResult = { ok: true; model: AdversaryModel | undefined } | { ok: false; error: string };
 
 interface ParsedModelReference {
 	base: string;
@@ -89,7 +89,7 @@ function genericConfiguredModel(value: BoundaryValue, section: string, key: stri
 	if (record.thinking !== undefined && !isThinkingLevel(record.thinking)) {
 		return { ok: false, error: `${section}.${key}.thinking is not a supported thinking level.` };
 	}
-	const model: Exclude<PlanAdversaryModel, string> = { model: record.model };
+	const model: Exclude<AdversaryModel, string> = { model: record.model };
 	if (isThinkingLevel(record.thinking)) model.thinking = record.thinking;
 	return { ok: true, model };
 }
@@ -97,9 +97,9 @@ function genericConfiguredModel(value: BoundaryValue, section: string, key: stri
 function configuredModel(root: JsonObject | undefined, section: string, key: string): ConfiguredModelResult {
 	if (root === undefined || root[section] === undefined) return { ok: true, model: undefined };
 	const sectionValue = root[section];
-	if (section === "plan-adversary") {
-		const validated = validatePlanAdversaryConfig(sectionValue);
-		return validated.ok ? { ok: true, model: validated.config.adversary } : validated;
+	if (section === "adversary") {
+		const validated = validateAdversaryConfig(sectionValue);
+		return validated.ok ? { ok: true, model: validated.config.adversaries[0] } : validated;
 	}
 	if (!isObject(sectionValue) || sectionValue === null || Array.isArray(sectionValue)) {
 		return { ok: false, error: `${section} must be an object.` };

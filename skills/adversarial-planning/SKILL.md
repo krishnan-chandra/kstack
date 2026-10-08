@@ -2,7 +2,7 @@
 name: adversarial-planning
 description: Draft an implementation plan and debate it with a distinct, read-only adversary in a visible Herdr pane until approval or a three-round limit. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan critique loop, or a planner-versus-adversary debate.
 license: MIT
-compatibility: Pi running inside Herdr with the Herdr Pi integration installed and kstack.json plan-adversary model configuration.
+compatibility: Pi running inside Herdr with the Herdr Pi integration installed and kstack.json adversary model configuration.
 disable-model-invocation: true
 ---
 
@@ -19,7 +19,7 @@ Draft a repository-grounded implementation plan, then run a bounded debate with 
 
    ```sh
    MODEL="$(node "$KSTACK/extensions/shared/herdr/cli.mjs" resolve-model \
-     --section plan-adversary --key adversary)"
+     --section adversary --key adversary)"
    ```
 
    Append `--model '<argument>'` for an explicit model or alias. Stop on resolver failure. Use a model distinct from the parent planner.

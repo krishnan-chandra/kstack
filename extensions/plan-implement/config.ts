@@ -8,7 +8,7 @@ import {
 	loadValidatedSection,
 	type ConfigLoad as SharedConfigLoad,
 	THINKING_LEVELS,
-	validatePlanAdversaryConfig,
+	validateAdversaryConfig,
 } from "../shared/kstack-config.ts";
 import { collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
@@ -108,9 +108,10 @@ interface ResolveDeps {
 }
 
 interface ResolvedAdversary {
-	model: string;
+	models: string[];
 	maxRounds: number;
 	timeoutMinutes: number;
+	reviewTimeoutMinutes: number;
 }
 
 type AdversaryResolution = { ok: true; adversary?: ResolvedAdversary; notice?: string } | { ok: false; error: string };
@@ -165,43 +166,44 @@ function modelWithoutThinking(ref: string): string {
 	return ref.slice(0, separator);
 }
 
-/** Resolve the optional adversary through the shared validator and kstack.json aliases. */
+/** Resolve the optional adversary list through the shared validator and kstack.json aliases. */
 export function resolveAdversary(
 	enabled: boolean,
 	plannerModel: string,
 	deps: ResolveDeps,
 	env: NodeJS.ProcessEnv = process.env,
 ): AdversaryResolution {
-	const loaded = loadKstackSection("plan-adversary", env);
+	const loaded = loadKstackSection("adversary", env);
 	if (loaded.status === "invalid") return { ok: false, error: `Invalid ${loaded.path}: ${loaded.error}` };
 	if (!enabled) {
 		if (loaded.status === "missing") {
-			return { ok: true, notice: "--no-adversary has no effect because plan-adversary is not configured." };
+			return { ok: true, notice: "--no-adversary has no effect because no adversary is configured." };
 		}
 		return { ok: true };
 	}
 	if (loaded.status === "missing") return { ok: true };
-	const validated = validatePlanAdversaryConfig(loaded.value);
+	const validated = validateAdversaryConfig(loaded.value);
 	if (!validated.ok) return { ok: false, error: `Invalid ${loaded.path}: ${validated.error}` };
-	const resolved = resolveModelRef({
-		configured: validated.config.adversary,
-		aliases: collectKstackModelAliases(loaded.root),
-		section: "plan-adversary",
-		key: "adversary",
-	});
-	if (!resolved.ok) return resolved;
-	const model = modelWithoutThinking(resolved.ref);
-	if (model === plannerModel) return { ok: false, error: "The adversary model must differ from the planner model." };
-	const { provider, modelId } = splitModelRef(model);
-	if (!deps.available(provider, modelId)) {
-		return { ok: false, error: `Configured plan-adversary model is unavailable or unauthenticated: ${model}.` };
+	const aliases = collectKstackModelAliases(loaded.root);
+	const models: string[] = [];
+	for (const configured of validated.config.adversaries) {
+		const resolved = resolveModelRef({ configured, aliases, section: "adversary", key: "adversary" });
+		if (!resolved.ok) return resolved;
+		const model = modelWithoutThinking(resolved.ref);
+		if (model === plannerModel) return { ok: false, error: "The adversary model must differ from the planner model." };
+		const { provider, modelId } = splitModelRef(model);
+		if (!deps.available(provider, modelId)) {
+			return { ok: false, error: `Configured adversary model is unavailable or unauthenticated: ${model}.` };
+		}
+		models.push(resolved.ref);
 	}
 	return {
 		ok: true,
 		adversary: {
-			model: resolved.ref,
+			models,
 			maxRounds: validated.config.maxRounds,
 			timeoutMinutes: validated.config.timeoutMinutes,
+			reviewTimeoutMinutes: validated.config.reviewTimeoutMinutes,
 		},
 	};
 }

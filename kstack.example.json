@@ -53,13 +53,16 @@
     },
     "timeoutMinutes": 30
   },
-  "plan-adversary": {
-    "adversary": {
-      "model": "anthropic/claude-opus-5-5",
-      "thinking": "medium"
-    },
+  "adversary": {
+    "adversary": [
+      {
+        "model": "openai/gpt-6-astra",
+        "thinking": "medium"
+      }
+    ],
     "maxRounds": 3,
-    "timeoutMinutes": 15
+    "timeoutMinutes": 15,
+    "reviewTimeoutMinutes": 10
   },
   "kstack-router": {
     "classifier": {

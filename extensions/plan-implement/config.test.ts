@@ -112,14 +112,19 @@ describe("plan-implement config", () => {
 		}
 	});
 
-	it("resolves the configured adversary, aliases, and skip behavior", () => {
-		const dir = mkdtempSync(join(tmpdir(), "plan-adversary-config-"));
+	it("resolves the configured adversaries, aliases, and skip behavior", () => {
+		const dir = mkdtempSync(join(tmpdir(), "adversary-config-"));
 		try {
 			writeFileSync(
 				join(dir, "kstack.json"),
 				JSON.stringify({
 					aliases: [{ label: "fable", model: "anthropic/fable", thinking: "high" }],
-					"plan-adversary": { adversary: "fable", maxRounds: 4, timeoutMinutes: 12 },
+					adversary: {
+						adversary: ["fable", { model: "openai/gpt-6-astra", thinking: "medium" }],
+						maxRounds: 4,
+						timeoutMinutes: 12,
+						reviewTimeoutMinutes: 20,
+					},
 				}),
 			);
 			const result = resolveAdversary(
@@ -132,7 +137,12 @@ describe("plan-implement config", () => {
 			);
 			assert.deepEqual(result, {
 				ok: true,
-				adversary: { model: "anthropic/fable:high", maxRounds: 4, timeoutMinutes: 12 },
+				adversary: {
+					models: ["anthropic/fable:high", "openai/gpt-6-astra:medium"],
+					maxRounds: 4,
+					timeoutMinutes: 12,
+					reviewTimeoutMinutes: 20,
+				},
 			});
 			assert.deepEqual(
 				resolveAdversary(
@@ -151,9 +161,9 @@ describe("plan-implement config", () => {
 	});
 
 	it("rejects an unavailable or planner-identical adversary", () => {
-		const dir = mkdtempSync(join(tmpdir(), "plan-adversary-invalid-"));
+		const dir = mkdtempSync(join(tmpdir(), "adversary-invalid-"));
 		try {
-			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ "plan-adversary": { adversary: { model: "a/p" } } }));
+			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ adversary: { adversary: { model: "a/p" } } }));
 			const same = resolveAdversary(true, "a/p", { available: () => true }, { PI_CODING_AGENT_DIR: dir });
 			assert.equal(same.ok, false);
 			const unavailable = resolveAdversary(
@@ -165,6 +175,50 @@ describe("plan-implement config", () => {
 				},
 			);
 			assert.equal(unavailable.ok, false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a bad later entry in the adversary list", () => {
+		const dir = mkdtempSync(join(tmpdir(), "adversary-list-invalid-"));
+		try {
+			writeFileSync(
+				join(dir, "kstack.json"),
+				JSON.stringify({
+					aliases: [{ label: "fable", model: "anthropic/fable", thinking: "high" }],
+					adversary: { adversary: ["fable", "missing-alias"] },
+				}),
+			);
+			const unknown = resolveAdversary(true, "openai/planner", { available: () => true }, { PI_CODING_AGENT_DIR: dir });
+			assert.equal(unknown.ok, false);
+			assert.match(unknown.ok ? "" : unknown.error, /not found/);
+
+			writeFileSync(
+				join(dir, "kstack.json"),
+				JSON.stringify({ adversary: { adversary: [{ model: "openai/ok" }, { model: "openai/unavailable" }] } }),
+			);
+			const unavailable = resolveAdversary(
+				true,
+				"openai/planner",
+				{ available: (_provider, model) => model !== "unavailable" },
+				{ PI_CODING_AGENT_DIR: dir },
+			);
+			assert.equal(unavailable.ok, false);
+			assert.match(unavailable.ok ? "" : unavailable.error, /unavailable or unauthenticated/);
+
+			writeFileSync(
+				join(dir, "kstack.json"),
+				JSON.stringify({ adversary: { adversary: [{ model: "openai/ok" }, { model: "openai/planner" }] } }),
+			);
+			const identical = resolveAdversary(
+				true,
+				"openai/planner",
+				{ available: () => true },
+				{ PI_CODING_AGENT_DIR: dir },
+			);
+			assert.equal(identical.ok, false);
+			assert.match(identical.ok ? "" : identical.error, /must differ from the planner/);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
