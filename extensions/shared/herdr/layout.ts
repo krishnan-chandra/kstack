@@ -49,6 +49,26 @@ export function placeAgent(index: number, total: number, geometry: PaneGeometry)
 	return { splitFrom: index - columns, direction: "down", ratio: 1 / (rows - sourceRow) };
 }
 
+/* exported: pane split decision contract for openPaneHost */
+export type PaneSplitDirection = "right" | "down";
+
+/* exported: pane split decision contract for openPaneHost */
+export interface PaneSplitDecision {
+	direction: PaneSplitDirection;
+	ratio: number;
+}
+
+/**
+ * Decide how to split the caller's own pane for a hosted adversary. Matches the
+ * adversarial-planning skill: split right when the pane is wide, down when it
+ * is narrow or tall.
+ */
+export function paneSplitDecision(layout: { widthColumns: number; heightRows: number }): PaneSplitDecision {
+	if (layout.heightRows > layout.widthColumns) return { direction: "down", ratio: 0.5 };
+	if (layout.widthColumns < 2 * MIN_COLUMN_COLUMNS) return { direction: "down", ratio: 0.5 };
+	return { direction: "right", ratio: 0.5 };
+}
+
 function ceilSqrt(total: number): number {
 	let columns = 1;
 	while (columns * columns < total) columns++;

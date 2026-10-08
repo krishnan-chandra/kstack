@@ -1,11 +1,12 @@
 /** Deep module hosting long-lived Pi agents in Herdr panes.
  *
- * One `AgentHost` owns exactly one Herdr tab in the caller's workspace, lays
- * out agent panes inside it, starts named interactive Pi agents, and talks to
- * them through a file-based ask protocol: a short pointer prompt crosses the
- * terminal, instructions and answers cross as 0600 files in a 0700 exchange
- * directory. The caller's own pane is never split, focused, or closed. Panes
- * are retained by default so the user can keep talking to the agents.
+ * An `AgentHost` lays out agent panes, starts named interactive Pi agents, and
+ * talks to them through a file-based ask protocol: a short pointer prompt
+ * crosses the terminal, instructions and answers cross as 0600 files in a 0700
+ * exchange directory. `openAgentHost` owns a new tab in the caller's workspace;
+ * `openPaneHost` instead splits the caller's own pane and hosts the agents as
+ * siblings in the caller's tab, which it never closes. Either way panes are
+ * retained by default so the user can keep talking to the agents.
  *
  * The exec function is injected through {@link HostDeps}, so tests script a
  * fake herdr instead of spawning the binary.
@@ -27,7 +28,7 @@ import {
 	type HerdrExec,
 	type HerdrRunOptions,
 } from "./herdr-cli.ts";
-import { type AgentPanePlacement, placeAgent } from "./layout.ts";
+import { type AgentPanePlacement, paneSplitDecision, placeAgent } from "./layout.ts";
 import { readResponse, responseMarker } from "./response.ts";
 import { emptyUsage, readUsageSince, type UsageSummary, usageOffset } from "./session-usage.ts";
 
@@ -619,6 +620,18 @@ export async function attachHostedAgent(
 	};
 }
 
+/** Container a hosted-agent group lives in: its own tab, or a split of the caller's pane. */
+interface HostBase {
+	kind: "tab" | "pane";
+	tabId: string;
+	rootPaneId: string;
+	widthColumns: number;
+}
+
+function validMaxAgents(maxAgents: number): boolean {
+	return Number.isInteger(maxAgents) && maxAgents >= 1 && maxAgents <= MAX_AGENTS_PER_HOST;
+}
+
 /** Create the host: preflight, one `--no-focus` tab in the caller's workspace, a 0700 exchange directory. */
 export async function openAgentHost(
 	options: { owner: string; label: string; cwd: string; maxAgents: number },
@@ -626,7 +639,7 @@ export async function openAgentHost(
 ): Promise<{ ok: true; host: AgentHost } | { ok: false; error: string }> {
 	const preflight = await preflightHerdr(deps);
 	if (!preflight.ok) return { ok: false, error: preflight.error };
-	if (!Number.isInteger(options.maxAgents) || options.maxAgents < 1 || options.maxAgents > MAX_AGENTS_PER_HOST) {
+	if (!validMaxAgents(options.maxAgents)) {
 		return { ok: false, error: `maxAgents must be an integer from 1 to ${MAX_AGENTS_PER_HOST}.` };
 	}
 	const cli = createHerdrCli(deps.exec);
@@ -636,11 +649,65 @@ export async function openAgentHost(
 	);
 	if (!tab.ok) return { ok: false, error: `Could not create the Herdr tab: ${tab.message}` };
 	const layout = await cli.paneLayout({ paneId: tab.value.rootPaneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
-	const widthColumns = layout.ok ? layout.value.widthColumns : 240;
+	return {
+		ok: true,
+		host: await buildHost(options, deps, cli, preflight, {
+			kind: "tab",
+			tabId: tab.value.tabId,
+			rootPaneId: tab.value.rootPaneId,
+			widthColumns: layout.ok ? layout.value.widthColumns : 240,
+		}),
+	};
+}
+
+/**
+ * Create the host in a new split of the caller's own pane instead of a separate
+ * tab. The caller's tab is never closed by `dispose`, so the adversary stays
+ * visible for inspection and steering.
+ */
+export async function openPaneHost(
+	options: { owner: string; label: string; cwd: string; maxAgents: number },
+	deps: HostDeps,
+): Promise<{ ok: true; host: AgentHost } | { ok: false; error: string }> {
+	const preflight = await preflightHerdr(deps);
+	if (!preflight.ok) return { ok: false, error: preflight.error };
+	if (!validMaxAgents(options.maxAgents)) {
+		return { ok: false, error: `maxAgents must be an integer from 1 to ${MAX_AGENTS_PER_HOST}.` };
+	}
+	const cli = createHerdrCli(deps.exec);
+	const callerLayout = await cli.paneLayout({ paneId: preflight.callerPane }, { timeoutMs: CONTROL_TIMEOUT_MS });
+	const decision = paneSplitDecision(callerLayout.ok ? callerLayout.value : { widthColumns: 240, heightRows: 60 });
+	const split = await cli.paneSplit(
+		{ paneId: preflight.callerPane, direction: decision.direction, ratio: decision.ratio, cwd: options.cwd },
+		{ timeoutMs: CONTROL_TIMEOUT_MS },
+	);
+	if (!split.ok) return { ok: false, error: `Could not split the caller's Herdr pane: ${split.message}` };
+	const layout = await cli.paneLayout({ paneId: split.value.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+	return {
+		ok: true,
+		host: await buildHost(options, deps, cli, preflight, {
+			kind: "pane",
+			tabId: split.value.tabId,
+			rootPaneId: split.value.paneId,
+			widthColumns: layout.ok ? layout.value.widthColumns : 240,
+		}),
+	};
+}
+
+async function buildHost(
+	options: { owner: string; label: string; cwd: string; maxAgents: number },
+	deps: HostDeps,
+	cli: HerdrCli,
+	preflight: { integrationPath: string },
+	base: HostBase,
+): Promise<AgentHost> {
 	const ownsExchangeDir = deps.exchangeDir === undefined;
 	const exchangeDir = deps.exchangeDir ?? (await createExchangeDir());
 	const agents: HostedAgentImpl[] = [];
 	const panes: string[] = [];
+	// Panes this host created. A pane host owns its initial split even before an
+	// agent starts there, so cleanup cannot leave an orphan split behind.
+	const ownedPanes: string[] = base.kind === "pane" ? [base.rootPaneId] : [];
 	let allocation = Promise.resolve();
 	let disposed = false;
 
@@ -649,13 +716,15 @@ export async function openAgentHost(
 			if (disposed) throw new Error("The agent host is disposed.");
 			if (panes.length >= options.maxAgents) throw new Error(`This run hosts at most ${options.maxAgents} agent(s).`);
 			const index = panes.length;
-			const placement: AgentPanePlacement | undefined = placeAgent(index, options.maxAgents, { widthColumns });
-			let paneId = tab.value.rootPaneId;
+			const placement: AgentPanePlacement | undefined = placeAgent(index, options.maxAgents, {
+				widthColumns: base.widthColumns,
+			});
+			let paneId = base.rootPaneId;
 			if (placement || resolve(spec.cwd) !== resolve(options.cwd)) {
 				const sourcePane =
 					placement && placement.splitFrom !== "root"
-						? (panes[placement.splitFrom] ?? tab.value.rootPaneId)
-						: tab.value.rootPaneId;
+						? (panes[placement.splitFrom] ?? base.rootPaneId)
+						: base.rootPaneId;
 				const split = await cli.paneSplit(
 					{
 						paneId: sourcePane,
@@ -667,6 +736,17 @@ export async function openAgentHost(
 				);
 				if (!split.ok) throw new Error(`Could not split a pane for ${spec.role}: ${split.message}`);
 				paneId = split.value.paneId;
+				if (disposed) {
+					// Disposal may start while a split is in flight; close the late pane here
+					// instead of letting it escape the snapshot dispose already took.
+					try {
+						await cli.paneClose({ paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+					} catch {
+						/* best effort */
+					}
+					throw new Error("The agent host is disposed.");
+				}
+				if (!ownedPanes.includes(paneId)) ownedPanes.push(paneId);
 			}
 			// Reserve before startup: failed or concurrent starts cannot reuse this pane.
 			panes.push(paneId);
@@ -684,8 +764,8 @@ export async function openAgentHost(
 		await rm(exchangeDir, { recursive: true, force: true });
 	};
 
-	const host: AgentHost = {
-		tabId: tab.value.tabId,
+	return {
+		tabId: base.tabId,
 		exchangeDir,
 		async start(spec) {
 			if (disposed) return { ok: false, error: "The agent host is disposed." };
@@ -706,9 +786,11 @@ export async function openAgentHost(
 			} catch (error) {
 				return { ok: false, error: errorText(error) };
 			}
+			if (disposed) return { ok: false, error: "The agent host is disposed." };
 			const args = hostedAgentArgs(spec, preflight.integrationPath);
 			let lastError: CliError | undefined;
 			for (let attempt = 0; attempt < 3; attempt++) {
+				if (disposed) return { ok: false, error: "The agent host is disposed." };
 				const name = buildAgentName(options.owner, spec.role, randomSuffix());
 				let started = await cli.agentStart(
 					{ name, paneId, timeoutMs: startupTimeoutMs, args },
@@ -735,12 +817,16 @@ export async function openAgentHost(
 							role: spec.role,
 							cwd: spec.cwd,
 							paneId,
-							tabId: tab.value.tabId,
+							tabId: base.tabId,
 							...(started.value.sessionFile ? { sessionFile: started.value.sessionFile } : undefined),
 						},
 						cli,
 						deps,
 					);
+					if (disposed) {
+						await agent.dispose();
+						return { ok: false, error: "The agent host is disposed." };
+					}
 					agents.push(agent);
 					return { ok: true, agent };
 				}
@@ -760,12 +846,26 @@ export async function openAgentHost(
 		async dispose(disposeOptions) {
 			if (disposed) return;
 			disposed = true;
+			// Wait for in-flight pane allocations so their late panes are closed here,
+			// not left behind after dispose snapshots ownedPanes.
+			await allocation;
 			await Promise.all(agents.map((agent) => agent.dispose()));
 			if (disposeOptions?.closeTab) {
-				try {
-					await cli.tabClose({ tabId: tab.value.tabId }, { timeoutMs: CONTROL_TIMEOUT_MS });
-				} catch {
-					/* dispose is best effort */
+				if (base.kind === "tab") {
+					try {
+						await cli.tabClose({ tabId: base.tabId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+					} catch {
+						/* dispose is best effort */
+					}
+				} else {
+					// The caller's tab owns these panes; close only what this host split off.
+					for (const paneId of [...ownedPanes].reverse()) {
+						try {
+							await cli.paneClose({ paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+						} catch {
+							/* best effort */
+						}
+					}
 				}
 			}
 			if (!agents.some((agent) => agent.hasAskInFlight())) {
@@ -777,7 +877,6 @@ export async function openAgentHost(
 			}
 		},
 	};
-	return { ok: true, host };
 }
 
 function canonicalCwd(cwd: string): string {

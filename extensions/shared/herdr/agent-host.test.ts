@@ -23,6 +23,7 @@ import {
 	type HostedAgentSpec,
 	hostedAgentArgs,
 	openAgentHost,
+	openPaneHost,
 	POINTER_PROMPT_MAX_BYTES,
 	pointerPrompt,
 	preflightHerdr,
@@ -338,6 +339,150 @@ describe("preflightHerdr", () => {
 		const result = await preflightHerdr(harness.fake.deps());
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /Herdr is not reachable/);
+	});
+});
+
+describe("openPaneHost", () => {
+	it("splits the caller's pane and starts the agent there without a tab", async () => {
+		const harness = makeHarness("pane-host");
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 1 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+		assert.equal(opened.host.tabId, harness.fake.tabId);
+		assert.equal(harness.fake.callsMatching("tab create").length, 0);
+		const split = harness.fake.callsMatching("pane split")[0];
+		assert.ok(split);
+		assert.equal(split.args[2], harness.fake.callerPaneId);
+		assert.ok(split.args.includes("--no-focus"));
+
+		const started = await opened.host.start(PLANNER_SPEC);
+		assert.ok(started.ok, started.ok ? "" : started.error);
+		assert.notEqual(started.agent.paneId, harness.fake.callerPaneId);
+
+		await opened.host.dispose({ closeTab: true });
+		assert.equal(harness.fake.callsMatching("tab close").length, 0);
+	});
+
+	it("closes its own split when disposed before an agent starts, never the caller's pane", async () => {
+		const harness = makeHarness("pane-host-empty");
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 1 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+		await opened.host.dispose({ closeTab: true });
+		const closed = harness.fake.paneIdsTouched("pane close");
+		assert.equal(closed.length, 1);
+		assert.notEqual(closed[0], harness.fake.callerPaneId);
+		assert.equal(harness.fake.callsMatching("tab close").length, 0);
+	});
+
+	it("splits the caller's pane for the first agent and within it for later agents", async () => {
+		const harness = makeHarness("pane-host-multi");
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 2 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+		const first = await opened.host.start(PLANNER_SPEC);
+		assert.ok(first.ok, first.ok ? "" : first.error);
+		const second = await opened.host.start({ ...PLANNER_SPEC, role: "adversary" });
+		assert.ok(second.ok, second.ok ? "" : second.error);
+		assert.notEqual(first.agent.paneId, second.agent.paneId);
+		const splits = harness.fake.callsMatching("pane split");
+		assert.equal(splits.length, 2);
+		assert.equal(splits[0].args[2], harness.fake.callerPaneId);
+		assert.equal(splits[1].args[2], first.agent.paneId);
+
+		await opened.host.dispose({ closeTab: true });
+		const closed = harness.fake.paneIdsTouched("pane close");
+		assert.ok(closed.includes(first.agent.paneId));
+		assert.ok(closed.includes(second.agent.paneId));
+		assert.ok(!closed.includes(harness.fake.callerPaneId));
+		assert.equal(harness.fake.callsMatching("tab close").length, 0);
+	});
+
+	it("closes a split that resolves after disposal and rejects the late start", async () => {
+		const harness = makeHarness("pane-host-race");
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "race", cwd: "/repo", maxAgents: 2 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+		const first = await opened.host.start(PLANNER_SPEC);
+		assert.ok(first.ok, first.ok ? "" : first.error);
+
+		let resolveSplit: ((response: ExecResponse) => void) | undefined;
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("pane split"),
+			() =>
+				new Promise<ExecResponse>((resolve) => {
+					resolveSplit = resolve;
+				}),
+		);
+		const second = opened.host.start({ ...PLANNER_SPEC, role: "adversary" });
+		while (!resolveSplit) await new Promise((resolve) => setTimeout(resolve, 0));
+		const disposing = opened.host.dispose({ closeTab: true });
+		resolveSplit?.({
+			code: 0,
+			stdout: JSON.stringify({
+				id: "x",
+				result: {
+					type: "pane_info",
+					pane: { pane_id: "w5:p999", tab_id: harness.fake.tabId, agent_status: "unknown" },
+				},
+			}),
+			stderr: "",
+		});
+		const secondResult = await second;
+		await disposing;
+		assert.equal(secondResult.ok, false);
+		assert.ok(harness.fake.paneIdsTouched("pane close").includes("w5:p999"));
+		assert.equal(harness.fake.callsMatching("agent start").length, 1);
+		assert.ok(!harness.fake.paneIdsTouched("pane close").includes(harness.fake.callerPaneId));
+		assert.equal(harness.fake.callsMatching("tab close").length, 0);
+	});
+
+	it("rejects and disposes an agent whose start resolves after disposal", async () => {
+		const harness = makeHarness("pane-host-start-race");
+		const opened = await openPaneHost(
+			{ owner: "adversary", label: "start-race", cwd: "/repo", maxAgents: 1 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok, opened.ok ? "" : opened.error);
+
+		let resolveStart: (() => void) | undefined;
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent start"),
+			(call) =>
+				new Promise<ExecResponse>((resolve) => {
+					resolveStart = () =>
+						resolve({
+							code: 0,
+							stdout: JSON.stringify({
+								id: "x",
+								result: {
+									type: "agent_started",
+									agent: agentRecord("idle", call.args[6] ?? harness.fake.rootPaneId, harness.fake.sessionFile),
+									argv: ["pi"],
+								},
+							}),
+							stderr: "",
+						});
+				}),
+		);
+		const starting = opened.host.start(PLANNER_SPEC);
+		while (!resolveStart) await new Promise((resolve) => setTimeout(resolve, 0));
+		const disposing = opened.host.dispose({ closeTab: true });
+		resolveStart?.();
+		const startResult = await starting;
+		await disposing;
+		assert.equal(startResult.ok, false);
+		assert.equal(harness.fake.callsMatching("agent start").length, 1);
+		assert.ok(!harness.fake.paneIdsTouched("pane close").includes(harness.fake.callerPaneId));
+		assert.equal(harness.fake.callsMatching("tab close").length, 0);
 	});
 });
 

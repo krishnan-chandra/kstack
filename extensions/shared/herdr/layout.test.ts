@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { MIN_COLUMN_COLUMNS, placeAgent } from "./layout.ts";
+import { MIN_COLUMN_COLUMNS, paneSplitDecision, placeAgent } from "./layout.ts";
 
 describe("placeAgent", () => {
 	it("places agent 0 on the root pane for every total", () => {
@@ -69,5 +69,23 @@ describe("placeAgent", () => {
 				if (placement.splitFrom !== "root") assert.ok(placement.splitFrom >= 0 && placement.splitFrom < index);
 			}
 		}
+	});
+});
+
+describe("paneSplitDecision", () => {
+	it("splits right when the pane is wide and short", () => {
+		assert.deepEqual(paneSplitDecision({ widthColumns: 240, heightRows: 60 }), { direction: "right", ratio: 0.5 });
+		assert.deepEqual(paneSplitDecision({ widthColumns: MIN_COLUMN_COLUMNS * 2, heightRows: 20 }), {
+			direction: "right",
+			ratio: 0.5,
+		});
+	});
+
+	it("splits down when the pane is narrow or tall", () => {
+		assert.deepEqual(paneSplitDecision({ widthColumns: MIN_COLUMN_COLUMNS * 2 - 1, heightRows: 20 }), {
+			direction: "down",
+			ratio: 0.5,
+		});
+		assert.deepEqual(paneSplitDecision({ widthColumns: 240, heightRows: 400 }), { direction: "down", ratio: 0.5 });
 	});
 });
