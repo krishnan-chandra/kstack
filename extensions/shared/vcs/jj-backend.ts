@@ -114,6 +114,13 @@ export class JjBackend implements VcsBackend {
 			: { ok: false, error: `Could not inspect jj working-copy changes: ${diagnostic(result)}` };
 	}
 
+	async reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>> {
+		const result = await this.jj(cwd, ["diff", "--git", "--from", baseSha, "--to", "@"], 30_000);
+		return result.code === 0
+			? { ok: true, diff: result.stdout }
+			: { ok: false, error: `Could not diff the workstream against ${baseSha.slice(0, 8)}: ${diagnostic(result)}` };
+	}
+
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {
 		const result = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")'], 5_000);
 		if (result.code !== 0) return { ok: false, error: `Could not inspect the jj working copy: ${diagnostic(result)}` };

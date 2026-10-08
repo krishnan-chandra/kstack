@@ -1,38 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-	buildPanelReviewOptions,
-	buildStackPanelReviewOptions,
-	getArgumentCompletions,
-	parsePlanImplementArgs,
-	validateTask,
-} from "./command.ts";
+import { getArgumentCompletions, parsePlanImplementArgs, validateTask } from "./command.ts";
 
 describe("plan-implement command helpers", () => {
 	it("validates empty and oversized tasks", () => {
 		assert.equal(validateTask("  do it  ").ok, true);
 		assert.equal(validateTask("   ").ok, false);
 		assert.equal(validateTask("x".repeat(32 * 1024 + 1)).ok, false);
-	});
-
-	it("keeps task text as structured panel intent", () => {
-		const options = buildPanelReviewOptions('add "safe" mode --base evil; /other \\ path\nnext');
-		assert.deepEqual(options, {
-			intent: 'Plan/implement: add "safe" mode --base evil; /other \\ path next',
-		});
-	});
-
-	it("bounds panel intent", () => {
-		const options = buildPanelReviewOptions("x".repeat(2000));
-		assert.equal(options.intent?.length, "Plan/implement: ".length + 1000);
-	});
-
-	it("passes the approved plan and implementer ledger to panel review", () => {
-		assert.deepEqual(buildPanelReviewOptions("task", "approved plan", "## Execution Ledger\n- [STEP-1] task — done"), {
-			intent: "Plan/implement: task",
-			approvedPlan: "approved plan",
-			executionLedger: "## Execution Ledger\n- [STEP-1] task — done",
-		});
 	});
 });
 
@@ -126,24 +100,6 @@ describe("parsePlanImplementArgs", () => {
 		assert.equal(parsePlanImplementArgs("--change-kind feature --change-kind refactor thing").ok, false);
 		assert.equal(parsePlanImplementArgs("--change-kind rewrite thing").ok, false);
 		assert.equal(parsePlanImplementArgs("--bogus thing").ok, false);
-	});
-});
-
-describe("buildStackPanelReviewOptions", () => {
-	it("passes the immutable trunk SHA and tags the intent as stacked", () => {
-		const options = buildStackPanelReviewOptions(
-			'add "safe" mode; rm -rf /',
-			"0123456789abcdef0123456789abcdef01234567",
-		);
-		assert.deepEqual(options, {
-			base: "0123456789abcdef0123456789abcdef01234567",
-			intent: 'Plan/implement (stacked): add "safe" mode; rm -rf /',
-		});
-	});
-
-	it("bounds the intent", () => {
-		const options = buildStackPanelReviewOptions("x".repeat(2000), "0123456789abcdef0123456789abcdef01234567");
-		assert.equal(options.intent?.length, "Plan/implement (stacked): ".length + 1000);
 	});
 });
 

@@ -67,20 +67,26 @@ export type CritiqueResult =
 	| { status: "failed"; error: string }
 	| { status: "aborted" };
 
+/** A process-group cleanup diagnostic a transport could not perform cleanly. */
+interface CleanupDiagnostic {
+	/** Set when a child may have survived cancellation or completion; it blocks approval. */
+	cleanupError?: string;
+}
+
 export type AgentRunResult =
-	| {
+	| ({
 			status: "completed";
 			role: AgentRole;
 			model: string;
 			output: string;
 			usage: UsageSummary;
 			session?: string;
-			/** Execution-ledger section preserved for panel review, including omissions. */
+			/** Execution-ledger section preserved for adversarial review, including omissions. */
 			executionLedger?: string;
-	  }
-	| { status: "blocked"; role: AgentRole; model: string; paneId: string; session?: string }
-	| { status: "failed"; role: AgentRole; model: string; error: string; session?: string }
-	| { status: "aborted"; role: AgentRole; model: string; session?: string };
+	  } & CleanupDiagnostic)
+	| ({ status: "blocked"; role: AgentRole; model: string; paneId: string; session?: string } & CleanupDiagnostic)
+	| ({ status: "failed"; role: AgentRole; model: string; error: string; session?: string } & CleanupDiagnostic)
+	| ({ status: "aborted"; role: AgentRole; model: string; session?: string } & CleanupDiagnostic);
 
 export const LIMITS = {
 	taskBytes: 32 * 1024,
@@ -90,5 +96,6 @@ export const LIMITS = {
 	defaultTimeoutMinutes: 30,
 	minTimeoutMinutes: 1,
 	maxTimeoutMinutes: 60,
-	panelIntentChars: 1000,
+	/** Cap on the implementation-review diff written for read-only adversaries. */
+	reviewDiffBytes: 2 * 1024 * 1024,
 } as const;

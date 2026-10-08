@@ -21,10 +21,10 @@ class FakeAgent implements HostedAgent {
 	abortCalls = 0;
 	askGate: Promise<void> | undefined;
 
-	constructor(role: string) {
+	constructor(role: string, identity: string = role) {
 		this.role = role;
 		this.name = `plan-${role}-abcd`;
-		this.paneId = `w1:p-${role}`;
+		this.paneId = `w1:p-${identity}`;
 		this.sessionFile = `/sessions/${role}.jsonl`;
 	}
 
@@ -59,9 +59,10 @@ class FakeHost implements AgentHost {
 
 	async start(spec: HostedAgentSpec) {
 		this.specs.push(spec);
-		const agent = new FakeAgent(spec.role);
+		const identity = spec.sessionName ?? spec.role;
+		const agent = new FakeAgent(spec.role, identity);
 		agent.askGate = this.nextAskGate;
-		this.agents.set(spec.role, agent);
+		this.agents.set(identity, agent);
 		return { ok: true as const, agent };
 	}
 
@@ -113,7 +114,7 @@ describe("role contract builders", () => {
 		assert.match(implementer, /approved plan at/);
 		assert.match(implementer, /execution ledger at/);
 		const fixer = buildRoleInstructions(roleOptions("fixer"));
-		assert.match(fixer, /panel-review verdict at/);
+		assert.match(fixer, /adversarial review verdict at/);
 	});
 });
 
@@ -126,7 +127,7 @@ describe("createRoleRunner", () => {
 		assert.equal(first.status, "completed");
 		assert.equal(second.status, "completed");
 		assert.equal(host.specs.length, 1);
-		assert.equal(host.agents.get("planner")?.asks.length, 2);
+		assert.equal(host.agents.get("plan-implement/planner")?.asks.length, 2);
 	});
 
 	it("maps output, usage, and session path", async () => {
@@ -148,12 +149,12 @@ describe("createRoleRunner", () => {
 		const runner = createRoleRunner(host, {
 			onBlocked: async (role, paneId) => {
 				assert.equal(role, "planner");
-				assert.equal(paneId, "w1:p-planner");
+				assert.equal(paneId, "w1:p-plan-implement/planner");
 				return true;
 			},
 		});
 		const pending = runner.run(roleOptions("planner"));
-		const agent = host.agents.get("planner");
+		const agent = host.agents.get("plan-implement/planner");
 		assert.ok(agent);
 		agent.results.push({ status: "blocked", paneId: agent.paneId, usage });
 		agent.resumeResults.push({ status: "completed", output: "revised", usage });
@@ -169,7 +170,7 @@ describe("createRoleRunner", () => {
 		const host = new FakeHost();
 		const runner = createRoleRunner(host, { onBlocked: async () => false });
 		const pending = runner.run(roleOptions("planner"));
-		const agent = host.agents.get("planner");
+		const agent = host.agents.get("plan-implement/planner");
 		assert.ok(agent);
 		agent.results.push({ status: "blocked", paneId: agent.paneId, usage });
 		const result = await pending;
@@ -191,7 +192,7 @@ describe("createRoleRunner", () => {
 		const pending = runner.run(roleOptions("implementer"));
 		await Promise.resolve();
 		await Promise.resolve();
-		const agent = host.agents.get("implementer");
+		const agent = host.agents.get("plan-implement/implementer");
 		assert.ok(agent);
 		assert.equal(await runner.abortActive(), true);
 		assert.equal(agent.abortCalls, 1);
@@ -209,5 +210,40 @@ describe("createRoleRunner", () => {
 		const result = await runner.run({ ...roleOptions("planner"), model: "other/model" });
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /different model or cwd/);
+	});
+
+	it("starts independent instances of the same role under distinct sessions", async () => {
+		const host = new FakeHost();
+		const runner = createRoleRunner(host);
+		const first = await runner.run({ ...roleOptions("adversary"), instance: "a", model: "openai/astra:medium" });
+		const second = await runner.run({ ...roleOptions("adversary"), instance: "b", model: "openai/terra:medium" });
+		assert.equal(first.status, "completed");
+		assert.equal(second.status, "completed");
+		assert.equal(host.specs.length, 2);
+		assert.deepEqual(
+			host.specs.map((spec) => spec.sessionName),
+			["plan-implement/adversary-a", "plan-implement/adversary-b"],
+		);
+		assert.equal(runner.paneId("adversary", "a"), "w1:p-plan-implement/adversary-a");
+		assert.equal(runner.paneId("adversary", "b"), "w1:p-plan-implement/adversary-b");
+		// Re-asking an instance reuses its session rather than starting a third agent.
+		await runner.run({ ...roleOptions("adversary"), instance: "a", model: "openai/astra:medium" });
+		assert.equal(host.specs.length, 2);
+		assert.equal(host.agents.get("plan-implement/adversary-a")?.asks.length, 2);
+	});
+
+	it("does not start a queued role whose deadline already fired", async () => {
+		const host = new FakeHost();
+		const runner = createRoleRunner(host);
+		const controller = new AbortController();
+		controller.abort();
+		const result = await runner.run({
+			...roleOptions("adversary"),
+			instance: "1",
+			model: "openai/astra:medium",
+			signal: controller.signal,
+		});
+		assert.equal(result.status, "aborted");
+		assert.equal(host.specs.length, 0);
 	});
 });

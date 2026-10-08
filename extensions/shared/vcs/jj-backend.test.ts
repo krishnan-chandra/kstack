@@ -454,3 +454,35 @@ describe("configured VCS child policy", () => {
 		assert.equal(createVcsBackend("jj", exec).id, "jj");
 	});
 });
+
+describe("JjBackend reviewDiff", () => {
+	const base = "a".repeat(40);
+
+	it("returns the git-format diff from the base to the working copy", async () => {
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["diff", "--git", "--from", base, "--to", "@"]),
+				result: { stdout: "diff --git a/a.ts b/a.ts\n" },
+			},
+		]);
+		assert.deepEqual(await new JjBackend(exec).reviewDiff("/repo", base), {
+			ok: true,
+			diff: "diff --git a/a.ts b/a.ts\n",
+		});
+	});
+
+	it("surfaces diff diagnostics", async () => {
+		const exec = scriptedExec([
+			{
+				command: "jj",
+				args: noPager(["diff", "--git", "--from", base, "--to", "@"]),
+				result: { code: 1, stderr: "unknown revision\n" },
+			},
+		]);
+		assert.deepEqual(await new JjBackend(exec).reviewDiff("/repo", base), {
+			ok: false,
+			error: `Could not diff the workstream against ${base.slice(0, 8)}: unknown revision`,
+		});
+	});
+});

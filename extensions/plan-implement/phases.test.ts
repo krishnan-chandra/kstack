@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { GitBackend } from "../shared/vcs/git-backend.ts";
 import type { RoleRunner, RunAgentOptions } from "./agent-runner.ts";
 import {
@@ -11,6 +12,7 @@ import {
 	type PhaseEffects,
 	phaseErrorText,
 	runApprovedWorkflow,
+	runImplementationReview,
 	runPostReviewPhases,
 } from "./phases.ts";
 import type { AgentRunResult } from "./types.ts";
@@ -57,6 +59,23 @@ const defaultRunRole: RunRole = async (input) => ({
 	usage,
 });
 
+const approveCritique = "Verdict: approve\n\n## Blocking\nNone.\n\n## Suggestions\nNone.\n";
+const reviseCritique = "Verdict: revise\n\n## Blocking\n- [B-1] Unsafe operation.\n\n## Suggestions\nNone.\n";
+const defaultRunAdversaries: PhaseEffects["runAdversaries"] = async (request) =>
+	request.adversaries.map((adversary) => ({
+		status: "completed" as const,
+		role: "adversary" as const,
+		model: adversary.model,
+		output: approveCritique,
+		usage,
+	}));
+
+function defaultBackend(): VcsBackend {
+	return Object.assign(new GitBackend(async () => ({ code: 1, stdout: "", stderr: "not configured" })), {
+		reviewDiff: async () => ({ ok: true as const, diff: "" }),
+	});
+}
+
 function effects(overrides: EffectOverrides = {}) {
 	const notifications: string[] = [];
 	const { runAgent, ...phaseOverrides } = overrides;
@@ -70,8 +89,8 @@ function effects(overrides: EffectOverrides = {}) {
 		isSessionCurrent: () => true,
 		beginRole: () => new AbortController(),
 		endRole: () => {},
-		backend: new GitBackend(async () => ({ code: 1, stdout: "", stderr: "not configured" })),
-		requestPanelReview: async () => ({ handled: false }),
+		backend: defaultBackend(),
+		runAdversaries: overrides.runAdversaries ?? defaultRunAdversaries,
 		resolvePublishedPr: async () => ({ ok: false, error: "not resolved (test default)" }),
 		requestLand: async () => ({ handled: false }),
 		requestAutopilot: async () => ({ handled: false }),
@@ -102,9 +121,9 @@ describe("plan-implement phases", () => {
 				}
 				return assert.fail(`unexpected role ${input.role}`);
 			},
-			requestPanelReview: async () => {
+			runAdversaries: async () => {
 				requestedReview = true;
-				return { handled: false };
+				return [];
 			},
 		});
 		await runApprovedWorkflow(
@@ -199,9 +218,9 @@ describe("plan-implement phases", () => {
 		};
 		const { fx, notifications } = effects({
 			runAgent,
-			requestPanelReview: async () => {
+			runAdversaries: async () => {
 				requestedReview = true;
-				return { handled: false };
+				return [];
 			},
 		});
 		await runApprovedWorkflow(options(), fx);
@@ -209,20 +228,25 @@ describe("plan-implement phases", () => {
 		assert.match(notifications.join("\n"), /modified the approved plan/);
 	});
 
-	it("pins an orchestrated panel review to the implementation workspace", async () => {
-		let repositoryPath: string | undefined;
+	it("reviews the implemented change against the pinned base", async () => {
 		let reviewBase: string | undefined;
-		const { fx } = effects({
-			requestPanelReview: async (review) => {
-				repositoryPath = review.repositoryPath;
-				reviewBase = review.base;
-				return { handled: false };
+		const backend = Object.assign(new GitBackend(async () => ({ code: 1, stdout: "", stderr: "unused" })), {
+			reviewDiff: async (_cwd: string, baseSha: string) => {
+				reviewBase = baseSha;
+				return { ok: true as const, diff: "diff --git a/a.ts b/a.ts\n" };
 			},
 		});
+		const { fx } = effects({ backend });
 
-		await runApprovedWorkflow(options(), fx);
+		await runApprovedWorkflow(
+			{
+				...options(),
+				adversaryModels: ["test/adversary:medium"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+			},
+			fx,
+		);
 
-		assert.equal(repositoryPath, "/repo");
 		assert.equal(reviewBase, "a".repeat(40));
 	});
 
@@ -234,16 +258,16 @@ describe("plan-implement phases", () => {
 				: { status: "failed", role: "implementer", model: input.model, error: "boom" };
 		const { fx } = effects({
 			runAgent,
-			requestPanelReview: async () => {
+			runAdversaries: async () => {
 				requestedReview = true;
-				return { handled: false };
+				return [];
 			},
 		});
 		await runApprovedWorkflow(options(), fx);
 		assert.equal(requestedReview, false);
 	});
 
-	it("blocks publication when fixer postconditions fail", async () => {
+	it("stops the review loop when the fixer fails its postcondition", async () => {
 		let confirms = 0;
 		const { fx, notifications } = effects({
 			confirm: async () => {
@@ -257,16 +281,350 @@ describe("plan-implement phases", () => {
 				output: validLedger,
 				usage,
 			}),
+			runAdversaries: async (request) =>
+				request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: reviseCritique,
+					usage,
+				})),
 			backend: new GitBackend(async () => ({ code: 0, stdout: "wrong-branch\n", stderr: "" })),
 		});
-		await runPostReviewPhases(
-			"fix it",
+		await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [{ label: "adversary-1", model: "test/adversary" }],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 3,
+				reviewTimeoutMinutes: 10,
+			},
 			{ ...options(), mode: "single" },
 			{ workflowCwd: "/repo", workstreamCheckpoint: { ref: "expected", baseSha: "a".repeat(40) } },
 			fx,
 		);
 		assert.equal(confirms, 1);
 		assert.match(notifications.join("\n"), /postcondition failed/);
+	});
+
+	it("approves without running the fixer when every adversary approves", async () => {
+		const roles: string[] = [];
+		let reviews = 0;
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				roles.push(input.role);
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviews++;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: approveCritique,
+					usage,
+				}));
+			},
+		});
+		const outcome = await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [
+					{ label: "adversary-1", model: "test/a" },
+					{ label: "adversary-2", model: "test/b" },
+				],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 3,
+				reviewTimeoutMinutes: 10,
+			},
+			options(),
+			{ workflowCwd: "/repo" },
+			fx,
+		);
+		assert.equal(outcome?.approved, true);
+		assert.equal(reviews, 1);
+		assert.equal(roles.includes("fixer"), false);
+		assert.match(notifications.join("\n"), /approved by all 2/);
+	});
+
+	it("re-reviews after the fixer addresses blocking findings", async () => {
+		const roles: string[] = [];
+		let reviews = 0;
+		const { fx } = effects({
+			runAgent: async (input) => {
+				roles.push(input.role);
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviews++;
+				const output = reviews === 1 ? reviseCritique : approveCritique;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output,
+					usage,
+				}));
+			},
+		});
+		const outcome = await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [{ label: "adversary-1", model: "test/a" }],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 3,
+				reviewTimeoutMinutes: 10,
+			},
+			options(),
+			{ workflowCwd: "/repo" },
+			fx,
+		);
+		assert.equal(outcome?.approved, true);
+		assert.equal(reviews, 2);
+		assert.equal(roles.filter((role) => role === "fixer").length, 1);
+	});
+
+	it("does not approve when an adversary fails to return a critique", async () => {
+		const { fx } = effects({
+			runAdversaries: async (request) =>
+				request.adversaries.map((adversary, index) =>
+					index === 0
+						? {
+								status: "completed" as const,
+								role: "adversary" as const,
+								model: adversary.model,
+								output: approveCritique,
+								usage,
+							}
+						: {
+								status: "failed" as const,
+								role: "adversary" as const,
+								model: adversary.model,
+								error: "timed out",
+							},
+				),
+		});
+		const outcome = await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [
+					{ label: "adversary-1", model: "test/a" },
+					{ label: "adversary-2", model: "test/b" },
+				],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 1,
+				reviewTimeoutMinutes: 10,
+			},
+			options(),
+			{ workflowCwd: "/repo" },
+			fx,
+		);
+		assert.equal(outcome?.approved, false);
+		assert.match(outcome?.verdict ?? "", /adversary-2/);
+	});
+
+	it("does not publish when the adversarial review does not approve", async () => {
+		let published = false;
+		const { fx, notifications } = effects({
+			runAdversaries: async (request) =>
+				request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: reviseCritique,
+					usage,
+				})),
+			requestStackPublication: async () => {
+				published = true;
+				return { handled: false };
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				adversaryModels: ["test/adversary"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 1,
+			},
+			fx,
+		);
+		assert.equal(published, false);
+		assert.match(notifications.join("\n"), /publication was not offered/);
+	});
+
+	it("does not publish when the fixer fails after changing files", async () => {
+		let published = false;
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				if (input.role === "planner")
+					return { status: "completed", role: input.role, model: input.model, output: validPlan, usage };
+				if (input.role === "fixer")
+					return { status: "failed", role: input.role, model: input.model, error: "left partial edits" };
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) =>
+				request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: reviseCritique,
+					usage,
+				})),
+			requestStackPublication: async () => {
+				published = true;
+				return { handled: false };
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				adversaryModels: ["test/adversary"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 3,
+			},
+			fx,
+		);
+		assert.equal(published, false);
+		assert.match(notifications.join("\n"), /Review fixer did not complete/);
+		assert.match(notifications.join("\n"), /publication was not offered/);
+	});
+
+	it("fails the review round when the diff cannot be computed", async () => {
+		let adversaryRan = false;
+		const backend = Object.assign(new GitBackend(async () => ({ code: 1, stdout: "", stderr: "unused" })), {
+			reviewDiff: async () => ({ ok: false as const, error: "no merge base" }),
+		});
+		const { fx } = effects({
+			backend,
+			runAdversaries: async (request) => {
+				adversaryRan = true;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: approveCritique,
+					usage,
+				}));
+			},
+		});
+		const outcome = await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [{ label: "adversary-1", model: "test/adversary" }],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 1,
+				reviewTimeoutMinutes: 10,
+			},
+			options(),
+			{ workflowCwd: "/repo" },
+			fx,
+		);
+		assert.equal(outcome?.approved, false);
+		assert.equal(adversaryRan, false);
+		assert.match(outcome?.failures[0] ?? "", /diff could not be computed/);
+	});
+
+	it("gives the fixer the approved plan and execution ledger", async () => {
+		let fixerPlan = "";
+		let fixerLedger = "";
+		let reviews = 0;
+		const { fx } = effects({
+			runAgent: async (input) => {
+				if (input.role === "fixer") {
+					fixerPlan = input.planFile ? readFileSync(input.planFile, "utf8") : "";
+					fixerLedger = input.ledgerFile ? readFileSync(input.ledgerFile, "utf8") : "";
+				}
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviews++;
+				const output = reviews === 1 ? reviseCritique : approveCritique;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output,
+					usage,
+				}));
+			},
+		});
+		await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [{ label: "adversary-1", model: "test/adversary" }],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 2,
+				reviewTimeoutMinutes: 10,
+			},
+			options(),
+			{ workflowCwd: "/repo" },
+			fx,
+		);
+		assert.match(fixerPlan, /STEP-1/);
+		assert.match(fixerLedger, /Execution Ledger/);
+	});
+
+	it("does not offer the fixer when any adversary fails in the same round", async () => {
+		const roles: string[] = [];
+		let reviews = 0;
+		const { fx, notifications } = effects({
+			runAgent: async (input) => {
+				roles.push(input.role);
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviews++;
+				return request.adversaries.map((adversary, index) =>
+					index === 0
+						? {
+								status: "completed" as const,
+								role: "adversary" as const,
+								model: adversary.model,
+								output: reviseCritique,
+								usage,
+							}
+						: {
+								status: "failed" as const,
+								role: "adversary" as const,
+								model: adversary.model,
+								error: "timed out",
+							},
+				);
+			},
+		});
+		const outcome = await runImplementationReview(
+			validPlan,
+			validLedger,
+			"a".repeat(40),
+			{
+				adversaries: [
+					{ label: "adversary-1", model: "test/a" },
+					{ label: "adversary-2", model: "test/b" },
+				],
+				systemPromptFile: "/prompts/implementation-adversary.md",
+				maxRounds: 3,
+				reviewTimeoutMinutes: 10,
+			},
+			options(),
+			{ workflowCwd: "/repo" },
+			fx,
+		);
+		assert.equal(outcome?.approved, false);
+		assert.equal(reviews, 1);
+		assert.equal(roles.includes("fixer"), false);
+		assert.match(notifications.join("\n"), /did not complete/);
 	});
 
 	it("offers autopilot and landing after a completed single-mode publisher", async () => {
@@ -325,7 +683,6 @@ describe("plan-implement phases", () => {
 	});
 
 	it("uses parent-owned single publication before launching the metadata publisher", async () => {
-		let confirms = 0;
 		let published = false;
 		let publisherSawPublication = false;
 		const backend = Object.assign(new GitBackend(async () => ({ code: 1, stdout: "", stderr: "unused" })), {
@@ -338,7 +695,7 @@ describe("plan-implement phases", () => {
 		});
 		const { fx } = effects({
 			backend,
-			confirm: async () => ++confirms === 2,
+			confirm: async () => true,
 			resolvePublishedPr: async () => ({ ok: true, prNumber: 42 }),
 			runAgent: async (input) => {
 				if (input.role === "publisher") {
@@ -425,12 +782,8 @@ describe("plan-implement phases", () => {
 
 	it("writes the trusted PR map and can decline metadata after completed publication", async () => {
 		let publisherRan = false;
-		let confirms = 0;
 		const { fx, notifications } = effects({
-			confirm: async () => {
-				confirms++;
-				return confirms === 1;
-			},
+			confirm: async () => false,
 			runAgent: async (input) => {
 				if (input.role === "publisher") publisherRan = true;
 				return { status: "completed", role: input.role, model: input.model, output: "fixed", usage };

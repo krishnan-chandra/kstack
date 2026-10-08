@@ -4,7 +4,6 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
-import type { PanelArgs, PanelReviewOutcome } from "../panel-review/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { extractSlug } from "../shared/slug.ts";
 import {
@@ -15,8 +14,14 @@ import {
 } from "../shared/stack/outcome.ts";
 import type { IsolationPlan, VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
+import {
+	type AdversaryReviewOutcome,
+	capReviewDiff,
+	combineAdversaryResults,
+	type ReviewAdversary,
+	summarizeFindings,
+} from "./adversary-review.ts";
 import type { RoleRunner } from "./agent-runner.ts";
-import { buildPanelReviewOptions, buildStackPanelReviewOptions } from "./command.ts";
 import { parseCritique } from "./critique.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import { runHostedPhase } from "./hosted-phase.ts";
@@ -25,6 +30,21 @@ import type { AgentRunResult, CritiqueResult, DeliveryMode, WorkLocation } from 
 import { runWorkflow } from "./workflow.ts";
 
 type Level = "info" | "warning" | "error";
+
+/** One parallel adversary review request routed through the selected transport. */
+export interface AdversaryReviewRequest {
+	adversaries: readonly ReviewAdversary[];
+	/** Workstream the read-only adversaries inspect. */
+	cwd: string;
+	taskFile: string;
+	planFile: string;
+	ledgerFile: string;
+	diffFile: string;
+	systemPromptFile: string;
+	/** Shared wall-clock deadline for the whole round. */
+	timeoutMs: number;
+	signal?: AbortSignal;
+}
 
 export interface PhaseEffects {
 	runner: RoleRunner;
@@ -37,7 +57,8 @@ export interface PhaseEffects {
 	beginRole(phase: Exclude<WorkflowPhase, "idle" | "approval">): AbortController | undefined;
 	endRole(controller: AbortController): void;
 	backend: VcsBackend;
-	requestPanelReview(options: PanelArgs): Promise<{ handled: false } | { handled: true; outcome: PanelReviewOutcome }>;
+	/** Run every configured adversary in parallel and return one result per adversary, in order. */
+	runAdversaries(request: AdversaryReviewRequest): Promise<AgentRunResult[]>;
 	resolvePublishedPr(cwd: string): Promise<{ ok: true; prNumber: number } | { ok: false; error: string }>;
 	requestLand(prNumber: number, cwd: string): Promise<{ handled: false } | { handled: true; outcome: LandResult }>;
 	requestAutopilot(
@@ -63,6 +84,12 @@ export interface ApprovedWorkflowOptions {
 	adversaryPromptFile?: string;
 	maxRounds?: number;
 	adversaryTimeoutMinutes?: number;
+	/** Every configured adversary; the review loop runs one instance per entry. */
+	adversaryModels?: string[];
+	/** System prompt for the implementation-review adversaries. */
+	reviewAdversaryPromptFile?: string;
+	/** Shared wall-clock deadline for one review round. */
+	reviewTimeoutMinutes?: number;
 	planOnly?: boolean;
 	implementerModel: string;
 	timeoutMinutes: number;
@@ -129,85 +156,241 @@ function removePrivateDir(dir: string | undefined, label: string, fx: PhaseEffec
 	}
 }
 
+interface ReviewRoundInput {
+	adversaries: readonly ReviewAdversary[];
+	systemPromptFile: string;
+	maxRounds: number;
+	reviewTimeoutMinutes: number;
+}
+
+/** Build the per-round review bundle and combine one critique per adversary. */
+async function runAdversaryRound(
+	approvedPlan: string,
+	executionLedger: string | undefined,
+	baseSha: string,
+	input: ReviewRoundInput,
+	options: ApprovedWorkflowOptions,
+	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
+	fx: PhaseEffects,
+): Promise<AdversaryReviewOutcome> {
+	const dir = mkdtempSync(join(tmpdir(), "pi-plan-implement-adversary-"));
+	try {
+		const taskFile = join(dir, "task.md");
+		const planFile = join(dir, "approved-plan.md");
+		const ledgerFile = join(dir, "execution-ledger.md");
+		const diffFile = join(dir, "change.diff");
+		writeFileSync(
+			taskFile,
+			`# User task\n\n${options.task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${options.mode}\n${state.workstreamCheckpoint ? `Workstream: ${state.workstreamCheckpoint.ref}\n` : ""}`,
+			{ encoding: "utf8", mode: 0o600 },
+		);
+		writeFileSync(planFile, `# Approved implementation plan\n\n${approvedPlan}\n`, { encoding: "utf8", mode: 0o600 });
+		writeFileSync(ledgerFile, `# Execution ledger\n\n${executionLedger ?? "(no execution ledger was reported)"}\n`, {
+			encoding: "utf8",
+			mode: 0o600,
+		});
+		const diff = await fx.backend.reviewDiff(state.workflowCwd, baseSha);
+		if (!diff.ok) {
+			return {
+				approved: false,
+				critiques: [],
+				failures: [`the review diff could not be computed: ${diff.error}`],
+				verdict: `# Adversarial implementation review\n\nDecision: revise\n\nThe review diff could not be computed: ${diff.error}\n`,
+				openFindings: [],
+			};
+		}
+		const capped = capReviewDiff(diff.diff);
+		const diffText = capped.truncated
+			? `${capped.text}\n\n[DIFF TRUNCATED: the change exceeded the review size cap. Open the changed files directly for the full content.]\n`
+			: capped.text;
+		writeFileSync(diffFile, diffText, { encoding: "utf8", mode: 0o600 });
+
+		const controller = fx.beginRole("reviewing");
+		if (!controller) {
+			return {
+				approved: false,
+				critiques: [],
+				failures: ["the review phase could not start an abortable run"],
+				verdict: "# Adversarial implementation review\n\nDecision: revise\n",
+				openFindings: [],
+			};
+		}
+		try {
+			fx.setStatus(`plan-implement: ${input.adversaries.length} adversary review(s) · tab ${fx.runner.tabId}`);
+			const results = await fx.runAdversaries({
+				adversaries: input.adversaries,
+				cwd: state.workflowCwd,
+				taskFile,
+				planFile,
+				ledgerFile,
+				diffFile,
+				systemPromptFile: input.systemPromptFile,
+				timeoutMs: input.reviewTimeoutMinutes * 60_000,
+				signal: controller.signal,
+			});
+			return combineAdversaryResults(input.adversaries, results);
+		} finally {
+			fx.endRole(controller);
+			if (fx.isCurrent()) fx.setStatus(undefined);
+		}
+	} finally {
+		removePrivateDir(dir, "adversary-review", fx);
+	}
+}
+
+/** Run the review-fixer against the aggregated adversary verdict; true when it completed and passed postconditions. */
+async function runReviewFixer(
+	outcome: AdversaryReviewOutcome,
+	approvedPlan: string,
+	executionLedger: string | undefined,
+	options: ApprovedWorkflowOptions,
+	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
+	fx: PhaseEffects,
+	timeoutMs: number,
+): Promise<boolean> {
+	const dir = mkdtempSync(join(tmpdir(), "pi-plan-implement-fix-"));
+	try {
+		const taskFile = join(dir, "task.md");
+		const planFile = join(dir, "approved-plan.md");
+		const ledgerFile = join(dir, "execution-ledger.md");
+		const verdictFile = join(dir, "adversary-verdict.md");
+		writeFileSync(
+			taskFile,
+			`# User task\n\n${options.task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${options.mode}\n${state.workstreamCheckpoint ? `Workstream: ${state.workstreamCheckpoint.ref}\n` : ""}`,
+			{ encoding: "utf8", mode: 0o600 },
+		);
+		writeFileSync(planFile, `# Approved implementation plan\n\n${approvedPlan}\n`, { encoding: "utf8", mode: 0o600 });
+		writeFileSync(ledgerFile, `# Execution ledger\n\n${executionLedger ?? "(no execution ledger was reported)"}\n`, {
+			encoding: "utf8",
+			mode: 0o600,
+		});
+		writeFileSync(verdictFile, `${outcome.verdict}\n`, { encoding: "utf8", mode: 0o600 });
+		const instructions = `Read the user task at ${taskFile}, the read-only approved plan at ${planFile}, and the implementer execution ledger at ${ledgerFile}. Then read the adversarial review verdict at ${verdictFile} and address every blocking finding, verifying each against the repository before editing.`;
+		const hosted = await runHostedPhase(fx, {
+			phase: "fixing",
+			status: `plan-implement: fixer ${options.implementerModel} · tab ${fx.runner.tabId}`,
+			run: (signal) =>
+				fx.runner.run({
+					role: "fixer",
+					model: options.implementerModel,
+					promptFile: join(options.promptsDir, "review-fixer.md"),
+					taskFile,
+					planFile,
+					ledgerFile,
+					verdictFile,
+					cwd: state.workflowCwd,
+					timeoutMs,
+					signal,
+					instructions,
+					mode: options.mode,
+					workLocation: options.workLocation,
+					skillPaths: options.skillPaths,
+					supplementalPrompts: [...options.changePrompts, ...(options.mutationPrompts ?? [])],
+				}),
+		});
+		if (hosted.status === "unavailable") return false;
+		const fixer = hosted.value;
+		if (fx.isCurrent()) fx.sendPhase(fixer);
+		if (fixer.status !== "completed") {
+			fx.notify(
+				`Review fixer did not complete: ${phaseErrorText(fixer)}`,
+				fixer.status === "aborted" ? "info" : "error",
+			);
+			return false;
+		}
+		if (options.mode === "single" && state.workstreamCheckpoint) {
+			const verified = await fx.backend.verifyRecordedWorkstream(state.workflowCwd, {
+				...state.workstreamCheckpoint,
+				requireNewCommit: false,
+			});
+			if (!verified.ok) {
+				fx.notify(`Review fixer postcondition failed: ${verified.error} Publication was not offered.`, "error");
+				return false;
+			}
+		}
+		return true;
+	} finally {
+		removePrivateDir(dir, "review-fix", fx);
+	}
+}
+
+/**
+ * Review the implemented change with every configured adversary, then let the
+ * implementer fix blocking findings and re-review, bounded by `maxRounds`.
+ * Returns the final verdict, or undefined when the session stopped mid-loop.
+ */
+export async function runImplementationReview(
+	approvedPlan: string,
+	executionLedger: string | undefined,
+	baseSha: string,
+	input: ReviewRoundInput,
+	options: ApprovedWorkflowOptions,
+	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
+	fx: PhaseEffects,
+): Promise<AdversaryReviewOutcome | undefined> {
+	const maxRounds = Math.max(1, input.maxRounds);
+	let outcome = await runAdversaryRound(approvedPlan, executionLedger, baseSha, input, options, state, fx);
+	if (!fx.isCurrent()) return undefined;
+	let round = 1;
+	// Offer the fixer only for a failure-free round with parsed findings. A timeout,
+	// abort, transport error, or cleanup failure is terminal: it cannot approve, cannot
+	// reach the fixer, and cannot publish.
+	while (!outcome.approved && outcome.failures.length === 0 && outcome.critiques.length > 0 && round < maxRounds) {
+		const confirmed = await fx.confirm(
+			`Address adversarial implementation findings? (round ${round} of ${maxRounds})`,
+			`Review fixer (commits verified fixes locally): ${options.implementerModel}\n` +
+				`Timeout: ${options.timeoutMinutes} min\n\nOpen blocking findings:\n${summarizeFindings(outcome.openFindings) || "(none parsed)"}\n\n` +
+				"The fixer addresses every blocking finding from every adversary, verifies each against the repository, and re-runs focused tests. It commits verified fixes locally but does not push or publish.",
+		);
+		if (!fx.isCurrent() || !confirmed) break;
+		if (
+			!(await runReviewFixer(
+				outcome,
+				approvedPlan,
+				executionLedger,
+				options,
+				state,
+				fx,
+				options.timeoutMinutes * 60_000,
+			))
+		)
+			break;
+		round++;
+		outcome = await runAdversaryRound(approvedPlan, executionLedger, baseSha, input, options, state, fx);
+		if (!fx.isCurrent()) return undefined;
+	}
+	if (outcome.approved) {
+		fx.notify(`Adversarial review approved by all ${input.adversaries.length} adversary(ies).`, "info");
+	} else if (outcome.failures.length > 0) {
+		fx.notify(`Adversarial review did not complete cleanly: ${outcome.failures.join("; ")}`, "error");
+	} else {
+		fx.notify(`Adversarial review still has blocking findings after ${round} of ${maxRounds} round(s).`, "warning");
+	}
+	return outcome;
+}
+
 export async function runPostReviewPhases(
 	verdict: string,
 	options: ApprovedWorkflowOptions,
 	state: { workflowCwd: string; workstreamCheckpoint?: WorkstreamCheckpoint },
 	fx: PhaseEffects,
 ): Promise<void> {
-	const {
-		task,
-		mode,
-		workLocation,
-		promptsDir,
-		implementerModel,
-		timeoutMinutes,
-		skillPaths,
-		changePrompts,
-		mutationPrompts,
-	} = options;
+	const { task, mode, workLocation, promptsDir, implementerModel, timeoutMinutes, skillPaths } = options;
 	const timeoutMs = timeoutMinutes * 60_000;
 	let reviewDir: string | undefined;
 	try {
 		reviewDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-review-"));
 		const taskFile = join(reviewDir, "task.md");
-		const verdictFile = join(reviewDir, "panel-verdict.md");
+		const verdictFile = join(reviewDir, "adversary-verdict.md");
 		writeFileSync(
 			taskFile,
 			`# User task\n\n${task}\n\nVCS backend: ${fx.backend.id}\nDelivery: ${mode}\n${state.workstreamCheckpoint ? `Workstream: ${state.workstreamCheckpoint.ref}\n` : ""}`,
 			{ encoding: "utf8", mode: 0o600 },
 		);
-		writeFileSync(verdictFile, `# Panel-review verdict\n\n${verdict}\n`, { encoding: "utf8", mode: 0o600 });
-
-		const fixConfirmed = await fx.confirm(
-			"Address panel-review findings?",
-			`Review fixer (commits verified fixes locally): ${implementerModel}\n` +
-				`Timeout: ${timeoutMinutes} min\n\n` +
-				"The fixer addresses the verdict's Act On findings (and small, clearly-correct Consider items), " +
-				"verifies each against the repository, and re-runs focused tests. It commits verified fixes locally but does not push or publish.",
-		);
-		if (fx.isCurrent() && fixConfirmed) {
-			const hosted = await runHostedPhase(fx, {
-				phase: "fixing",
-				status: `plan-implement: fixer ${implementerModel} · tab ${fx.runner.tabId}`,
-				run: (signal) =>
-					fx.runner.run({
-						role: "fixer",
-						model: implementerModel,
-						promptFile: join(promptsDir, "review-fixer.md"),
-						taskFile,
-						verdictFile,
-						cwd: state.workflowCwd,
-						timeoutMs,
-						signal,
-						mode,
-						workLocation,
-						skillPaths,
-						supplementalPrompts: [...changePrompts, ...(mutationPrompts ?? [])],
-					}),
-			});
-			if (hosted.status === "ran" && fx.isCurrent()) {
-				const fixer = hosted.value;
-				fx.sendPhase(fixer);
-				if (fixer.status !== "completed") {
-					fx.notify(
-						`Review fixer did not complete: ${phaseErrorText(fixer)}`,
-						fixer.status === "aborted" ? "info" : "error",
-					);
-					return;
-				}
-				if (mode === "single" && state.workstreamCheckpoint) {
-					const verified = await fx.backend.verifyRecordedWorkstream(state.workflowCwd, {
-						...state.workstreamCheckpoint,
-						requireNewCommit: false,
-					});
-					if (!verified.ok) {
-						fx.notify(`Review fixer postcondition failed: ${verified.error} Publication was not offered.`, "error");
-						return;
-					}
-				}
-			}
-		}
+		writeFileSync(verdictFile, `# Adversarial implementation verdict\n\n${verdict}\n`, {
+			encoding: "utf8",
+			mode: 0o600,
+		});
 
 		if (!fx.isCurrent()) return;
 		let trustedMapFile: string | undefined;
@@ -435,7 +618,17 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 		workstreamCheckpoint: worktreePlan ? { ref: worktreePlan.ref, baseSha: worktreePlan.baseSha } : undefined,
 	};
 	let tempDir: string | undefined;
-	let reviewOptions: PanelArgs | undefined;
+	let completed: { approvedPlan: string; executionLedger?: string } | undefined;
+	const reviewModels = options.adversaryModels ?? (adversaryModel ? [adversaryModel] : []);
+	const reviewInput: ReviewRoundInput | undefined =
+		reviewModels.length > 0 && options.reviewAdversaryPromptFile
+			? {
+					adversaries: reviewModels.map((model, index) => ({ label: `adversary-${index + 1}`, model })),
+					systemPromptFile: options.reviewAdversaryPromptFile,
+					maxRounds: maxRounds ?? 3,
+					reviewTimeoutMinutes: options.reviewTimeoutMinutes ?? 10,
+				}
+			: undefined;
 	try {
 		try {
 			tempDir = mkdtempSync(join(tmpdir(), "pi-plan-implement-"));
@@ -697,58 +890,49 @@ export async function runApprovedWorkflow(options: ApprovedWorkflowOptions, fx: 
 					else fx.notify(`Plan-only run complete; plan at ${savedPlan}; no workstream created.`, "info");
 				} else if (outcome.status === "implementer-failed")
 					fx.notify(
-						`Implementer did not complete: ${phaseErrorText(outcome.implementer)} Committed checkpoints may exist on the task branch, and uncommitted partial edits may remain; panel review was not started.`,
+						`Implementer did not complete: ${phaseErrorText(outcome.implementer)} Committed checkpoints may exist on the task branch, and uncommitted partial edits may remain; adversarial review was not started.`,
 						outcome.implementer.status === "aborted" ? "warning" : "error",
 					);
 				else
-					reviewOptions =
-						mode === "stack" && trunkSha
-							? {
-									...buildStackPanelReviewOptions(
-										task,
-										trunkSha,
-										outcome.planner.output,
-										outcome.implementer.executionLedger,
-									),
-									repositoryPath: state.workflowCwd,
-								}
-							: {
-									...buildPanelReviewOptions(task, outcome.planner.output, outcome.implementer.executionLedger),
-									repositoryPath: state.workflowCwd,
-									...(worktreePlan ? { base: worktreePlan.baseSha } : undefined),
-								};
+					completed = {
+						approvedPlan: outcome.planner.output,
+						executionLedger: outcome.implementer.executionLedger,
+					};
 			}
 		} finally {
 			if (fx.isSessionCurrent()) fx.setStatus(undefined);
 			removePrivateDir(tempDir, "plan/implement", fx);
 		}
 
-		if (reviewOptions && fx.isCurrent()) {
-			fx.notify(
-				mode === "stack"
-					? "Local stack implemented; starting panel review against trunk() base."
-					: worktreePlan
-						? `Implementation complete in ${state.workflowCwd}; starting panel review against the pinned base.`
-						: "Implementation complete; starting panel review.",
-				"info",
-			);
-			try {
-				const request = await fx.requestPanelReview(reviewOptions);
-				if (!request.handled && fx.isCurrent())
-					fx.notify("panel-review did not accept the in-process review request.", "error");
-				else if (request.handled && request.outcome.status === "completed" && fx.isCurrent())
-					await runPostReviewPhases(request.outcome.verdict, options, state, fx);
-				else if (request.handled && fx.isCurrent())
-					fx.notify(
-						`Panel review ended without a verdict (${request.outcome.status}); skipping the fix and publish phases.`,
-						request.outcome.status === "failed" ? "warning" : "info",
-					);
-			} catch (error) {
+		if (completed && fx.isCurrent()) {
+			const reviewBase = state.workstreamCheckpoint?.baseSha ?? trunkSha;
+			if (reviewInput && reviewBase) {
+				fx.notify(
+					mode === "stack"
+						? `Local stack implemented; starting ${reviewInput.adversaries.length} adversary review(s) against the pinned trunk base.`
+						: worktreePlan
+							? `Implementation complete in ${state.workflowCwd}; starting ${reviewInput.adversaries.length} adversary review(s) against the pinned base.`
+							: `Implementation complete; starting ${reviewInput.adversaries.length} adversary review(s).`,
+					"info",
+				);
+				const review = await runImplementationReview(
+					completed.approvedPlan,
+					completed.executionLedger,
+					reviewBase,
+					reviewInput,
+					options,
+					state,
+					fx,
+				);
+				if (review?.approved && fx.isCurrent()) {
+					await runPostReviewPhases(review.verdict, options, state, fx);
+				} else if (review?.approved === false && fx.isCurrent()) {
+					fx.notify("Adversarial review did not approve the change; publication was not offered.", "warning");
+				}
+			} else {
 				if (fx.isCurrent())
-					fx.notify(
-						`panel-review request failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (error as Error).message}`,
-						"error",
-					);
+					fx.notify("No implementation adversary is configured; skipping adversarial review.", "warning");
+				await runPostReviewPhases("No adversarial implementation review was configured.", options, state, fx);
 			}
 		}
 	} finally {

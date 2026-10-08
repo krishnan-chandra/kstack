@@ -6,7 +6,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { CHANGE_KINDS, type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import { openAgentHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
+import { openAgentHost, openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
 import { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
@@ -21,10 +21,12 @@ const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(EXTENSION_DIR, "prompts");
 const PLAYBOOKS_DIR = join(EXTENSION_DIR, "..", "shared", "playbooks");
 const ADVERSARY_PROMPT_FILE = join(EXTENSION_DIR, "..", "..", "skills", "adversarial-planning", "adversary-prompt.md");
+const REVIEW_ADVERSARY_PROMPT_FILE = join(EXTENSION_DIR, "prompts", "implementation-adversary.md");
 const defaultHerdr: HerdrEntryPoints = {
 	createExec: createNodeHerdrExec,
 	preflight: preflightHerdr,
 	openHost: openAgentHost,
+	openPane: openPaneHost,
 };
 interface PhaseDetails {
 	schemaVersion: 2;
@@ -73,7 +75,6 @@ export default function planImplementExtension(pi: ExtensionAPI, herdr: HerdrEnt
 		lifecycle,
 		herdr,
 		backendFor,
-		checkBasicPreflights,
 		phaseLabels: PHASE_LABELS,
 		sendPhaseMessage: (result) => sendPhaseMessage(pi, result),
 		discoveredSkillRefs,
@@ -81,6 +82,7 @@ export default function planImplementExtension(pi: ExtensionAPI, herdr: HerdrEnt
 			promptsDir: PROMPTS_DIR,
 			playbooksDir: PLAYBOOKS_DIR,
 			adversaryPromptFile: ADVERSARY_PROMPT_FILE,
+			reviewAdversaryPromptFile: REVIEW_ADVERSARY_PROMPT_FILE,
 		},
 	} satisfies OrchestrationDeps);
 	// Extensions normally load before session_start; eager activation also keeps
@@ -128,11 +130,6 @@ export default function planImplementExtension(pi: ExtensionAPI, herdr: HerdrEnt
 		return box;
 	});
 
-	async function checkBasicPreflights(_ctx: ExtensionCommandContext): Promise<string | undefined> {
-		return pi.getCommands().some((command) => command.source === "extension" && command.name === "panel-review")
-			? undefined
-			: "plan-implement requires the panel-review extension to be loaded.";
-	}
 	function prepareTask(
 		rawTask: string,
 		notify: (message: string, level?: "info" | "warning" | "error") => void,
@@ -162,7 +159,8 @@ export default function planImplementExtension(pi: ExtensionAPI, herdr: HerdrEnt
 		}
 	}
 	pi.registerCommand("plan-implement", {
-		description: "Plan, approve, implement here or in --worktree, panel-review, fix findings, then publish a draft PR",
+		description:
+			"Plan, approve, implement here or in --worktree, adversarially review, fix findings, then publish a draft PR",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const notify = ctx.ui.notify.bind(ctx.ui);
@@ -185,12 +183,6 @@ export default function planImplementExtension(pi: ExtensionAPI, herdr: HerdrEnt
 			if (parsed.task.trim() && !task) return;
 			await ctx.waitForIdle();
 			if (!lifecycle.isSessionCurrent(commandSession)) return;
-			const preflightError = parsed.fast || parsed.planOnly ? undefined : await checkBasicPreflights(ctx);
-			if (!lifecycle.isSessionCurrent(commandSession)) return;
-			if (preflightError) {
-				notify(preflightError, "error");
-				return;
-			}
 			let mode: DeliveryMode = parsed.mode;
 			const workLocation = parsed.workLocation;
 			let changeKind = parsed.changeKind;

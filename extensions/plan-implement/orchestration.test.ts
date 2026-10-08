@@ -101,13 +101,7 @@ function createHarness(t: TestContext, result: AskResult, confirm: () => Promise
 		},
 		registerShortcut() {},
 		registerMessageRenderer() {},
-		getCommands: () => [
-			{
-				name: "panel-review",
-				source: "extension",
-				sourceInfo: { path: "test", source: "test", scope: "temporary", origin: "top-level" },
-			},
-		],
+		getCommands: () => [],
 		getSessionName: () => undefined,
 		setSessionName() {},
 		sendMessage() {},
@@ -126,6 +120,7 @@ function createHarness(t: TestContext, result: AskResult, confirm: () => Promise
 				callerPane: "w1:p0",
 			}),
 			openHost: async () => ({ ok: true, host }),
+			openPane: async () => ({ ok: false, error: "openPane is not used by plan-only runs" }),
 		},
 	);
 	const registeredCommand = command;
