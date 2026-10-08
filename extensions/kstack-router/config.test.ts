@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { loadConfig, resolveClassifierModel, validateRouterConfig } from "./config.ts";
+import { loadConfig, resolveClassifierModel, resolveReviewModel, validateRouterConfig } from "./config.ts";
 
 describe("kstack-router config validation", () => {
 	it("accepts empty config", () => {
@@ -50,6 +50,27 @@ describe("kstack-router config validation", () => {
 		assert.ok(!validateRouterConfig({ timeoutSeconds: 601 }).ok);
 		assert.ok(!validateRouterConfig({ timeoutSeconds: -1 }).ok);
 		assert.ok(!validateRouterConfig({ timeoutSeconds: "slow" }).ok);
+	});
+
+	it("validates the review model preference list", () => {
+		const r = validateRouterConfig({
+			review: { models: [{ model: "anthropic/claude-opus-5-5", thinking: "high" }] },
+		});
+		assert.ok(r.ok);
+		if (r.ok) assert.deepEqual(r.config.review?.models, [{ model: "anthropic/claude-opus-5-5", thinking: "high" }]);
+	});
+
+	it("rejects invalid review models", () => {
+		assert.ok(!validateRouterConfig({ review: {} }).ok);
+		assert.ok(!validateRouterConfig({ review: { models: [] } }).ok);
+		assert.ok(!validateRouterConfig({ review: { models: [{ model: "no-slash" }] } }).ok);
+		assert.ok(!validateRouterConfig({ review: { models: [{ model: "p/m", thinking: "turbo" }] } }).ok);
+		// Only Opus 5.5 and Astra may run reviews.
+		assert.ok(!validateRouterConfig({ review: { models: [{ model: "openai/gpt-6-sol" }] } }).ok);
+		assert.ok(
+			!validateRouterConfig({ review: { models: Array.from({ length: 6 }, () => ({ model: "openai/gpt-6-astra" })) } })
+				.ok,
+		);
 	});
 });
 
@@ -166,6 +187,38 @@ describe("resolveClassifierModel", () => {
 			available: () => false,
 			activeModelId: undefined,
 		});
+		assert.ok("error" in result);
+	});
+});
+
+describe("resolveReviewModel", () => {
+	it("uses the first available configured model", () => {
+		const result = resolveReviewModel(
+			{
+				review: {
+					models: [
+						{ model: "anthropic/claude-opus-5-5", thinking: "high" },
+						{ model: "openai/gpt-6-astra", thinking: "xhigh" },
+					],
+				},
+			},
+			{ available: (provider: string) => provider === "openai" },
+		);
+		if ("error" in result) assert.fail("should not error");
+		assert.equal(result.modelId, "openai/gpt-6-astra");
+		assert.equal(result.source, "config");
+		assert.equal(result.thinking, "xhigh");
+	});
+
+	it("falls back to the built-in Opus 5.5 then Astra order", () => {
+		const result = resolveReviewModel(null, { available: (provider: string) => provider === "openai" });
+		if ("error" in result) assert.fail("should not error");
+		assert.equal(result.modelId, "openai/gpt-6-astra");
+		assert.equal(result.source, "default");
+	});
+
+	it("returns error when no review model is available", () => {
+		const result = resolveReviewModel(null, { available: () => false });
 		assert.ok("error" in result);
 	});
 });

@@ -43,6 +43,24 @@ describe("RouterLifecycle", () => {
 		assert.ok(lifecycle.beginDispatch(session, { route: "investigate" }));
 	});
 
+	it("exposes and aborts the active dispatch signal", () => {
+		const lifecycle = new RouterLifecycle();
+		lifecycle.startSession();
+		const session = lifecycle.sessionToken();
+		assert.ok(session);
+		const token = lifecycle.beginDispatch(session, { route: "review" });
+		assert.ok(token);
+
+		const signal = lifecycle.signal();
+		assert.ok(signal);
+		assert.equal(signal.aborted, false);
+		assert.equal(lifecycle.abortActive(), true);
+		assert.equal(signal.aborted, true);
+
+		lifecycle.endDispatch(token);
+		assert.equal(lifecycle.signal(), undefined);
+	});
+
 	it("invalidates dispatches across session replacement", () => {
 		const lifecycle = new RouterLifecycle();
 		lifecycle.startSession();

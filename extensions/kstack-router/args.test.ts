@@ -64,10 +64,13 @@ describe("kstack-router args parser", () => {
 		assert.equal(parseArgs("--route investigate --plan-only Research it").ok, false);
 	});
 
-	it("rejects the removed review route", () => {
+	it("accepts the review route", () => {
 		const r = parseArgs("--route review Review the latest changes");
-		assert.ok(!r.ok);
-		if (!r.ok) assert.match(r.error, /Unknown route "review"/);
+		assert.ok(r.ok);
+		if (r.ok) {
+			assert.equal(r.args.route, "review");
+			assert.equal(r.args.task, "Review the latest changes");
+		}
 	});
 
 	it("parses an explicit change-kind override", () => {

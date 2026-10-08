@@ -14,6 +14,7 @@ export type RouteId =
 	| "swarm"
 	| "skill-authoring"
 	| "session-pickup"
+	| "review"
 	| "pr-autopilot"
 	| "land"
 	| "unsupported";
@@ -26,6 +27,7 @@ export const ALL_ROUTES: readonly RouteId[] = [
 	"swarm",
 	"skill-authoring",
 	"session-pickup",
+	"review",
 	"pr-autopilot",
 	"land",
 	"unsupported",
@@ -62,6 +64,16 @@ export interface RouterConfig {
 	};
 	/** Classifier wall-clock timeout in seconds. */
 	timeoutSeconds?: number;
+	/** Ordered model preference for the explicit review route. */
+	review?: {
+		models: ReadonlyArray<ReviewModelSpec>;
+	};
+}
+
+/** One candidate model for the review route, in preference order. */
+export interface ReviewModelSpec {
+	model: string;
+	thinking?: ModelThinkingLevel;
 }
 
 export const DEFAULTS = {
@@ -71,6 +83,12 @@ export const DEFAULTS = {
 	maxTaskBytes: 32 * 1024,
 	maxRationaleChars: 500,
 } as const;
+
+/** Built-in review models, tried in order. Reviews always use a frontier model. */
+export const DEFAULT_REVIEW_MODELS: ReadonlyArray<ReviewModelSpec> = [
+	{ model: "anthropic/claude-opus-5-5", thinking: "high" },
+	{ model: "openai/gpt-6-astra", thinking: "xhigh" },
+];
 
 export interface RouteMetadata {
 	id: RouteId;

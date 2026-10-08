@@ -8,6 +8,7 @@ import type { ChangeKind } from "../shared/change-kind.ts";
 import { getRoutePlaybook } from "./catalog.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import type { PostPrRequest } from "./post-pr-options.ts";
+import { runReviewRoute } from "./review-runner.ts";
 import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
 
 type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
@@ -15,7 +16,7 @@ type DispatchResult = { status: "dispatched" } | { status: "failed"; error: stri
 /**
  * Dispatch the task to the appropriate handler based on the selected route.
  *
- * For `change`, `pr-autopilot`, and `land`, this uses in-process
+ * For `change`, `review`, `pr-autopilot`, and `land`, this uses in-process
  * event APIs to avoid synthesizing slash-command strings. For other routes,
  * the caller handles active-session lifecycle (tool restriction, playbook
  * attachment, etc.) before calling this function; those routes return here
@@ -100,6 +101,13 @@ export async function dispatchRoute(
 			}
 		}
 
+		case "review": {
+			const result = await runReviewRoute(pi, ctx, task, lifecycle.signal());
+			if (result.status === "failed") return { status: "failed", error: result.error };
+			if (result.status === "aborted") return { status: "aborted" };
+			return { status: "dispatched" };
+		}
+
 		case "pr-autopilot": {
 			if (postPr?.route !== "pr-autopilot") {
 				return { status: "failed", error: "Internal error: pr-autopilot dispatch is missing a typed request." };
@@ -175,7 +183,7 @@ export async function dispatchRoute(
 					"investigate (read-only research), change (plan → implement → adversarial review), fast-change (one-shot bounded implementation), " +
 					"arena (parallel candidate comparison), swarm (parallel independent slices), " +
 					"skill-authoring (create/test skills), session-pickup (recover context), " +
-					"pr-autopilot (drive an existing PR to merge-ready), " +
+					"review (strict code-quality review on a frontier model), pr-autopilot (drive an existing PR to merge-ready), " +
 					"land (confirm and merge one PR). Use --route to pick one explicitly.",
 			};
 

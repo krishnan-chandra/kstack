@@ -112,7 +112,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `vcs` | `backend`, Git-only `stackProvider` | Use exactly `"git"`, `"jj"`, or `"graphite"`. With Git, use `"github"` (default, Git 2.38+) or `"none"`. jj requires a colocated workspace and jj 0.44+. Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. `--fast` mode reuses this implementer and skips planning, review, and publishing. |
 | `adversary` | `adversary` (one model or an array of 1–5 models), `maxRounds`, `timeoutMinutes`, `reviewTimeoutMinutes` | Every adversary differs from the planner model. `maxRounds` is an integer from 1 to 5 (default 3). `timeoutMinutes` is an integer from 1 to 60 (default 15); `reviewTimeoutMinutes` is an integer from 1 to 60 (default 10). The first adversary debates the plan; every adversary reviews the implementation. |
-| `kstack-router` | `classifier`, `timeoutSeconds` | `timeoutSeconds` is 1–600. |
+| `kstack-router` | `classifier`, `timeoutSeconds`, `review.models` | `timeoutSeconds` is 1–600. `review.models` is 1–5 model specs in preference order; the review route always runs on one of them (built-in order: Opus 5.5, then Astra). |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
 | `swarm` | `worker`, `maxConcurrency` | Use a fast worker for broad coverage work. |
@@ -159,6 +159,7 @@ Before showing the preview, check all of these conditions:
   array of 1–5 models, and every model ID differs from the planner. `maxRounds`
   is an integer from 1 to 5, `timeoutMinutes` is an integer from 1 to 60, and
   `reviewTimeoutMinutes` is an integer from 1 to 60.
+- `kstack-router.review.models` contains 1–5 model specs in preference order.
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
   high-or-deeper thinking. `--fast` reuses the `implementer` without a planner.
 - The investigation rules above hold.

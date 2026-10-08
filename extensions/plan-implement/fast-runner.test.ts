@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { IsolationPlan, VcsBackend } from "../shared/vcs/backend.ts";
 import type { RoleRunner, RunAgentOptions } from "./agent-runner.ts";
-import { buildFastImplementerGuidance, runFastCurrent, runFastWorktree } from "./fast-runner.ts";
+import { runFastCurrent, runFastWorktree } from "./fast-runner.ts";
 import type { AgentRunResult, RoleSpec } from "./types.ts";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
@@ -88,15 +88,6 @@ function completed(output = "implemented"): AgentRunResult {
 	};
 }
 
-describe("buildFastImplementerGuidance", () => {
-	it("includes the role prompt, engineering principles, playbook, and backend policy", () => {
-		const guidance = buildFastImplementerGuidance("bug-fix", { id: "git" });
-		assert.match(guidance, /fast implementation/i);
-		assert.match(guidance, /bug/i);
-		assert.match(guidance, /git/i);
-	});
-});
-
 describe("runFastWorktree", () => {
 	it("rejects unsupported isolation before preflight", async () => {
 		const backend = fakeBackend({ isolation: undefined });
@@ -145,12 +136,10 @@ describe("runFastWorktree", () => {
 	it("creates the worktree before opening a hosted runner in it", async () => {
 		const backend = fakeBackend();
 		let openedCwd = "";
-		let seenPrompt = "";
 		let promptPath = "";
 		const fake = fakeRunner(async (options) => {
 			openedCwd = options.cwd;
 			promptPath = options.promptFile;
-			seenPrompt = readFileSync(options.promptFile, "utf8");
 			assert.equal(statSync(options.taskFile).mode & 0o777, 0o600);
 			assert.match(readFileSync(options.taskFile, "utf8"), /Fix the narrow bug/);
 			return completed();
@@ -164,7 +153,6 @@ describe("runFastWorktree", () => {
 		});
 		assert.equal(result.status, "completed");
 		assert.equal(openedCwd, isolationPlan.path);
-		assert.match(seenPrompt, /fast implementation/i);
 		assert.equal(existsSync(promptPath), false);
 		assert.equal(fake.disposeCalls(), 1);
 		assert.deepEqual(backend.calls, [

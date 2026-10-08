@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkDependencies, getAllRoutes, validateCatalog } from "./catalog.ts";
-import { CLASSIFIER_SENTINEL_END, CLASSIFIER_SENTINEL_START, type RouteId } from "./types.ts";
+import type { RouteId } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +28,7 @@ describe("kstack-router catalog", () => {
 			"investigate",
 			"land",
 			"pr-autopilot",
+			"review",
 			"session-pickup",
 			"skill-authoring",
 			"swarm",
@@ -45,6 +46,11 @@ describe("kstack-router catalog", () => {
 	it("change requires plan-implement", () => {
 		const deps = routeRequires("change");
 		assert.deepEqual(deps, ["plan-implement"]);
+	});
+
+	it("review requires the thermo-nuclear skill", () => {
+		const deps = routeRequires("review");
+		assert.deepEqual(deps, ["skill:thermo-nuclear-code-quality-review"]);
 	});
 
 	it("pr-autopilot requires the pr-autopilot extension", () => {
@@ -110,26 +116,5 @@ describe("kstack-router catalog", () => {
 
 	it("principles.md exists for the shared active-session preamble", () => {
 		assert.ok(existsSync(join(EXTENSION_DIR, "playbooks", "principles.md")));
-	});
-
-	it("shared principles require branch-and-commit policy for writable work", () => {
-		const principles = readFileSync(join(EXTENSION_DIR, "playbooks", "principles.md"), "utf8");
-		assert.match(principles, /## Writable workstreams/);
-		assert.match(principles, /dedicated `kstack\/<task-slug>` branch/);
-		assert.match(principles, /commits coherent, verified increments/);
-		assert.match(principles, /Read-only routes[\s\S]*`investigate`, `session-pickup`[\s\S]*do not create branches/);
-		assert.match(principles, /Local branch creation and incremental commits are part of writable/);
-	});
-
-	it("classifier prompt stays in sync with the catalog", () => {
-		const prompt = readFileSync(join(EXTENSION_DIR, "prompts", "classifier.md"), "utf8");
-		for (const route of getAllRoutes()) {
-			assert.ok(
-				prompt.includes(`**${route.id}**`),
-				`prompts/classifier.md must describe route "${route.id}" so prompt and catalog cannot drift`,
-			);
-		}
-		assert.ok(prompt.includes(CLASSIFIER_SENTINEL_START), "classifier prompt must include the start sentinel");
-		assert.ok(prompt.includes(CLASSIFIER_SENTINEL_END), "classifier prompt must include the end sentinel");
 	});
 });

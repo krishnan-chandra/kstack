@@ -146,12 +146,13 @@ describe("parseClassifierOutput", () => {
 		assert.ok(!result.ok);
 	});
 
-	it("rejects the removed review route", () => {
+	it("accepts the review route", () => {
 		const output = buildEnvelope(
 			JSON.stringify({ schemaVersion: 1, route: "review", confidence: "high", rationale: "Review the diff." }),
 		);
 		const result = parseClassifierOutput(output);
-		assert.ok(!result.ok);
+		assert.ok(result.ok);
+		if (result.ok) assert.equal(result.envelope.route, "review");
 	});
 
 	it("rejects invalid confidence", () => {

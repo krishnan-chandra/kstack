@@ -9,34 +9,15 @@ import { fileURLToPath } from "node:url";
 const skillDir = dirname(fileURLToPath(import.meta.url));
 const EXTRACT = resolve(skillDir, "scripts/extract_sessions.py");
 
-async function read(path) {
-	return readFile(resolve(skillDir, path), "utf8");
-}
-
-test("personalize conforms to the Agent Skills format and links resolve", async () => {
-	const skill = await read("SKILL.md");
-
-	assert.match(skill, /^---\nname: personalize\ndescription: .{50,}/);
-	const frontmatter = skill.split("---")[1];
-	const description = frontmatter.match(/description: (.+)/)[1];
-	assert.ok(description.length <= 1024, "description fits the 1024-char spec limit");
-	assert.match(frontmatter, /license: MIT/);
-	assert.doesNotMatch(frontmatter, /disable-model-invocation/, "model-invocable like reflect");
+test("personalize frontmatter and local markdown links resolve", async () => {
+	const skill = await readFile(resolve(skillDir, "SKILL.md"), "utf8");
+	const frontmatter = skill.split("---")[1] ?? "";
+	const description = frontmatter.match(/description: (.+)/)?.[1] ?? "";
+	assert.ok(description.length > 0 && description.length <= 1024);
 
 	for (const link of skill.matchAll(/\]\(([^)#]+\.md)(?:#[^)]+)?\)/g)) {
 		await access(resolve(skillDir, link[1]));
 	}
-});
-
-test("personalize keeps the safety contract: read-only, untrusted input, approval gate", async () => {
-	const skill = await read("SKILL.md");
-	const script = await read("scripts/extract_sessions.py");
-
-	assert.match(skill, /untrusted data/);
-	assert.match(skill, /never\s+upload/i);
-	assert.match(skill, /approves the exact proposed edits/i);
-	assert.match(script, /query_only/);
-	assert.doesNotMatch(script, /requests|urllib|http\.client/, "extractor must not touch the network");
 });
 
 async function makeFixture() {

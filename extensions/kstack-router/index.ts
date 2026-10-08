@@ -14,6 +14,7 @@ import { loadConfig, resolveClassifierModel } from "./config.ts";
 import { dispatchRoute, getPlaybookForRoute, getRestrictedTools } from "./dispatch.ts";
 import { type DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import { resolvePostPrOptions } from "./post-pr-options.ts";
+import { registerReviewRenderer } from "./review-runner.ts";
 import { type RouteCardDetails, registerRouteCardRenderer } from "./route-card.ts";
 import { resolveRoute } from "./route-resolution.ts";
 import { allowedReadToolsForRoute, isActiveSessionRoute, type RouteId, type RouterConfig } from "./types.ts";
@@ -64,6 +65,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	registerRouteCardRenderer(pi);
+	registerReviewRenderer(pi);
 
 	// --- Shortcut: abort classifier ---
 	pi.registerShortcut("ctrl+shift+k", {
@@ -381,6 +383,8 @@ export default function (pi: ExtensionAPI): void {
 							: "Delegated to plan-implement --fast in this session; its plan and discussion remain in context.",
 						"info",
 					);
+				} else if (route === "review") {
+					notify("Review running in an isolated read-only child. The verdict appears here when it finishes.", "info");
 				} else if (route === "pr-autopilot") {
 					notify("Delegated to pr-autopilot. Use Ctrl+Shift+B to abort the run.", "info");
 				} else if (route === "land") {
