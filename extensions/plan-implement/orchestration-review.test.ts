@@ -1,7 +1,40 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { AgentHost, HostedAgent, HostedAgentSpec } from "../shared/herdr/agent-host.ts";
+import type { AgentHost, AskResult, HostedAgent, HostedAgentSpec } from "../shared/herdr/agent-host.ts";
 import { createAdversaryReview } from "./orchestration.ts";
+
+const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+
+/** A host that starts one working adversary and records the spec it received. */
+class RecordingAgent implements HostedAgent {
+	readonly name = "plan-adversary-1-abcd";
+	readonly role = "adversary";
+	readonly paneId = "w1:p1";
+	readonly tabId = "w1:tHost";
+	readonly sessionFile = "/sessions/adversary.jsonl";
+	async ask(): Promise<AskResult> {
+		return { status: "completed", output: "Verdict: approve", usage };
+	}
+	async resume(): Promise<AskResult> {
+		return { status: "completed", output: "", usage };
+	}
+	async abort(): Promise<void> {}
+	async dispose(): Promise<void> {}
+}
+
+class RecordingHost implements AgentHost {
+	readonly tabId = "w1:tHost";
+	readonly exchangeDir = mkdtempSync(join(tmpdir(), "kstack-review-host-"));
+	readonly specs: HostedAgentSpec[] = [];
+	async start(spec: HostedAgentSpec): Promise<{ ok: true; agent: HostedAgent }> {
+		this.specs.push(spec);
+		return { ok: true, agent: new RecordingAgent() };
+	}
+	async dispose(): Promise<void> {}
+}
 
 /** A host that only records disposal; the review never reaches `start`. */
 class FakeLateHost implements AgentHost {
@@ -60,6 +93,45 @@ describe("createAdversaryReview", () => {
 			await review.dispose();
 			assert.equal(host.disposed, true);
 			assert.equal(host.closeTab, true);
+		} finally {
+			if (previous === undefined) delete process.env.HERDR_ENV;
+			else process.env.HERDR_ENV = previous;
+		}
+	});
+
+	it("appends the planning-session reference to a pane adversary's system prompts", async () => {
+		const previous = process.env.HERDR_ENV;
+		process.env.HERDR_ENV = "1";
+		try {
+			const dir = mkdtempSync(join(tmpdir(), "kstack-review-"));
+			const basePrompt = join(dir, "adversary.md");
+			const reference = join(dir, "planning-session.md");
+			writeFileSync(basePrompt, "review prompt\n");
+			writeFileSync(reference, "planning reference\n");
+			const host = new RecordingHost();
+			const review = createAdversaryReview({
+				openPane: async () => ({ ok: true, host }),
+				createExec: () => async () => ({ code: 0, stdout: "", stderr: "" }),
+				notify: () => {},
+				onStarted: () => {},
+				onBlocked: async () => false,
+				label: "test",
+			});
+			const results = await review.run({
+				adversaries: [{ label: "adversary-1", model: "openai/astra:medium" }],
+				cwd: "/repo",
+				taskFile: join(dir, "task.md"),
+				planFile: join(dir, "plan.md"),
+				ledgerFile: join(dir, "ledger.md"),
+				diffFile: join(dir, "change.diff"),
+				systemPromptFile: basePrompt,
+				extraSystemPromptFiles: [reference],
+				timeoutMs: 60_000,
+			});
+			assert.equal(results[0]?.status, "completed");
+			assert.equal(host.specs.length, 1);
+			assert.equal(host.specs[0]?.systemPromptFiles?.at(-1), reference);
+			await review.dispose();
 		} finally {
 			if (previous === undefined) delete process.env.HERDR_ENV;
 			else process.env.HERDR_ENV = previous;

@@ -37,6 +37,19 @@ describe("headlessAdversaryArgs", () => {
 		assert.deepEqual(pair("--model"), ["--model", "openai/gpt-6-astra:medium"]);
 		assert.deepEqual(pair("--append-system-prompt"), ["--append-system-prompt", "/tmp/adversary.md"]);
 	});
+
+	it("appends extra system prompt files for the planning-session reference", () => {
+		const args = headlessAdversaryArgs({
+			model: "openai/gpt-6-astra:medium",
+			systemPromptFile: "/tmp/adversary.md",
+			extraSystemPromptFiles: ["/run/planning-session.md"],
+		});
+		const prompts: string[] = [];
+		for (let index = 0; index < args.length; index++) {
+			if (args[index] === "--append-system-prompt") prompts.push(args[index + 1] ?? "");
+		}
+		assert.deepEqual(prompts, ["/tmp/adversary.md", "/run/planning-session.md"]);
+	});
 });
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";

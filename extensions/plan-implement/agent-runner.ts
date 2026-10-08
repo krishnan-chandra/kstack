@@ -22,6 +22,8 @@ interface BuildRoleOptions {
 	workLocation?: WorkLocation;
 	skillPaths?: readonly string[];
 	supplementalPrompts?: readonly string[];
+	/** Extra system prompt files appended after the role prompt (for example a planning-session reference). */
+	extraSystemPromptFiles?: readonly string[];
 }
 
 export interface RunAgentOptions extends BuildRoleOptions {
@@ -70,7 +72,7 @@ export function buildRoleSpec(options: RunAgentOptions, systemPromptFile: string
 		role: options.role,
 		model: options.model,
 		cwd: options.cwd,
-		systemPromptFiles: [systemPromptFile],
+		systemPromptFiles: [systemPromptFile, ...(options.extraSystemPromptFiles ?? [])],
 		sessionName: `plan-implement/${sessionRole}`,
 	};
 	if (options.signal) spec.signal = options.signal;

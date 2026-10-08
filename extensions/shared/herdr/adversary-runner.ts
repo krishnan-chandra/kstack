@@ -30,6 +30,8 @@ export interface HeadlessAdversaryOptions {
 	prompt: string;
 	/** Absolute path to the adversary system prompt. */
 	systemPromptFile: string;
+	/** Extra system prompt files appended after the adversary prompt. */
+	extraSystemPromptFiles?: readonly string[];
 	owner: string;
 	label: string;
 	timeoutMs: number;
@@ -44,8 +46,10 @@ export type HeadlessAdversaryResult = (
 ) & { cleanupError?: string };
 
 /** Build the isolated Pi argv for one headless adversary. */
-export function headlessAdversaryArgs(options: Pick<HeadlessAdversaryOptions, "model" | "systemPromptFile">): string[] {
-	return [
+export function headlessAdversaryArgs(
+	options: Pick<HeadlessAdversaryOptions, "model" | "systemPromptFile" | "extraSystemPromptFiles">,
+): string[] {
+	const args = [
 		...childIsolationArgs({ noContextFiles: true }),
 		"--tools",
 		"read,grep,find,ls",
@@ -54,6 +58,8 @@ export function headlessAdversaryArgs(options: Pick<HeadlessAdversaryOptions, "m
 		"--append-system-prompt",
 		options.systemPromptFile,
 	];
+	for (const file of options.extraSystemPromptFiles ?? []) args.push("--append-system-prompt", file);
+	return args;
 }
 
 /** Run one read-only adversary as a non-interactive Pi child when Herdr is unavailable. */
