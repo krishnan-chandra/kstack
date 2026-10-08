@@ -1,9 +1,8 @@
 /** Hosted `--fast` implementer for current and managed-worktree workstreams. */
 
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ChangeKind, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
@@ -11,6 +10,7 @@ import type { VcsBackend, WorkstreamCheckpoint } from "../shared/vcs/backend.ts"
 import { vcsPolicy } from "../shared/vcs/policy.ts";
 import type { RoleRunner } from "./agent-runner.ts";
 import { modelCliId } from "./config.ts";
+import { readPlanSnapshot } from "./plan-handoff.ts";
 import { LIMITS, type RoleSpec } from "./types.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -58,25 +58,9 @@ async function loadPlan(
 	cwd: string,
 ): Promise<{ ok: true; snapshot?: string } | { ok: false; status: "failed"; error: string }> {
 	if (!request.planFile) return { ok: true };
-	try {
-		const handle = await open(resolve(cwd, request.planFile), "r");
-		try {
-			const buffer = Buffer.alloc(LIMITS.plannerOutputBytes + 1);
-			const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-			if (bytesRead > LIMITS.plannerOutputBytes) throw new Error(`Plan exceeds ${LIMITS.plannerOutputBytes} bytes.`);
-			const snapshot = buffer.toString("utf8", 0, bytesRead);
-			if (!snapshot.trim()) throw new Error("Plan is empty.");
-			return { ok: true, snapshot };
-		} finally {
-			await handle.close();
-		}
-	} catch (error) {
-		return {
-			ok: false,
-			status: "failed",
-			error: `Cannot load fast plan: ${error instanceof Error ? error.message : String(error)}`,
-		};
-	}
+	const read = await readPlanSnapshot(request.planFile, cwd);
+	if (!read.ok) return { ok: false, status: "failed", error: `Cannot load fast plan: ${read.error}` };
+	return { ok: true, snapshot: read.snapshot.text };
 }
 
 async function runHostedFast(

@@ -68,12 +68,22 @@ describe("parsePlanImplementArgs", () => {
 		assert.equal(parsePlanImplementArgs("--no-adversary --no-adversary task").ok, false);
 	});
 
-	it("accepts an explicit plan only for fast mode", () => {
-		const parsed = parsePlanImplementArgs("--fast --plan-file /plans/approved.md implement it");
-		assert.ok(parsed.ok);
-		assert.equal(parsed.planFile, "/plans/approved.md");
-		assert.equal(parsed.task, "implement it");
-		assert.equal(parsePlanImplementArgs("--plan-file /plans/a.md task").ok, false);
+	it("accepts an explicit plan for fast and full runs", () => {
+		const fast = parsePlanImplementArgs("--fast --plan-file /plans/approved.md implement it");
+		assert.ok(fast.ok);
+		if (fast.ok) {
+			assert.equal(fast.planFile, "/plans/approved.md");
+			assert.equal(fast.fast, true);
+			assert.equal(fast.task, "implement it");
+		}
+		const full = parsePlanImplementArgs("--plan-file /plans/approved.md implement it");
+		assert.ok(full.ok);
+		if (full.ok) {
+			assert.equal(full.planFile, "/plans/approved.md");
+			assert.equal(full.fast, false);
+			assert.equal(full.task, "implement it");
+		}
+		assert.equal(parsePlanImplementArgs("--plan-file /plans/a.md --plan-only task").ok, false);
 		assert.equal(parsePlanImplementArgs("--fast --plan-file").ok, false);
 		assert.equal(parsePlanImplementArgs("--fast --plan-file a --plan-file b task").ok, false);
 	});

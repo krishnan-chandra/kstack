@@ -234,4 +234,48 @@ describe("runWorkflow", () => {
 		assert.equal(result.status, "implementer-failed");
 		assert.equal(displayed, true);
 	});
+
+	it("starts from a supplied plan without running the planner or debate", async () => {
+		const events: string[] = [];
+		const supplied: Extract<AgentRunResult, { status: "completed" }> = {
+			status: "completed",
+			role: "planner",
+			model: "a/p",
+			output: "supplied-plan",
+			usage,
+		};
+		const result = await runWorkflow({
+			initialPlan: supplied,
+			runPlanner: async () => {
+				events.push("planner");
+				return plan;
+			},
+			debate: {
+				critique: async () => {
+					events.push("critique");
+					return critique("approve");
+				},
+				revisePlan: async () => assert.fail("debate must not run"),
+				resolveExhaustion: async () => assert.fail("exhaustion must not run"),
+				readPlan: () => "unused",
+			},
+			onPlan: () => {
+				events.push("show-plan");
+			},
+			approvePlan: async () => {
+				events.push("approve");
+				return true;
+			},
+			runImplementer: async (text) => {
+				events.push(`implement:${text}`);
+				return implementation;
+			},
+			onImplementation: () => {
+				events.push("show-implementation");
+			},
+		});
+		assert.equal(result.status, "completed");
+		assert.deepEqual(events, ["show-plan", "approve", "implement:supplied-plan", "show-implementation"]);
+		if (result.status === "completed") assert.equal(result.planner.output, "supplied-plan");
+	});
 });

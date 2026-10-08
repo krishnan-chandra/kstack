@@ -26,6 +26,8 @@ interface Debate {
 }
 
 interface WorkflowDeps {
+	/** A caller-supplied approved plan; skips the planner and any debate. */
+	initialPlan?: CompletedAgentRun;
 	runPlanner: () => Promise<AgentRunResult>;
 	/** Absent means skip debate; enabled debate has every required operation. */
 	debate?: Debate;
@@ -76,10 +78,11 @@ async function runDebate(initial: CompletedAgentRun, deps: Debate): Promise<Work
 }
 
 export async function runWorkflow(deps: WorkflowDeps): Promise<WorkflowResult> {
-	const initialPlanner = await deps.runPlanner();
+	const initialPlanner = deps.initialPlan ?? (await deps.runPlanner());
 	if (initialPlanner.status !== "completed") return { status: "planner-failed", planner: initialPlanner };
 
-	const debated = deps.debate ? await runDebate(initialPlanner, deps.debate) : initialPlanner;
+	// A supplied plan was already debated before the handoff, so never re-debate it.
+	const debated = deps.initialPlan || !deps.debate ? initialPlanner : await runDebate(initialPlanner, deps.debate);
 	if ("planner" in debated) return debated;
 	const planner = debated;
 

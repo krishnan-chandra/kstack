@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -15,6 +24,7 @@ import {
 	runImplementationReview,
 	runPostReviewPhases,
 } from "./phases.ts";
+import { loadPlanHandoff } from "./plan-handoff.ts";
 import type { AgentRunResult } from "./types.ts";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
@@ -148,6 +158,165 @@ describe("plan-implement phases", () => {
 		assert.equal(requestedReview, false);
 		assert.match(readFileSync(join(cwd, "plans", "change.md"), "utf8"), /STEP-1/);
 		assert.match(notifications.join("\n"), /Plan-only run complete/);
+	});
+
+	it("starts from a supplied plan, skips the planner and debate, and still reviews", async () => {
+		const roles: string[] = [];
+		let implementerPlan = "";
+		let approvalTitle = "";
+		let reviewed = false;
+		const { fx, notifications } = effects({
+			confirm: async (title) => {
+				if (title.startsWith("Approve")) approvalTitle = title;
+				return true;
+			},
+			runAgent: async (input) => {
+				roles.push(input.role);
+				if (input.role === "planner") return assert.fail("planner must not run in a handoff");
+				if (input.role === "adversary") return assert.fail("planning adversary must not run");
+				implementerPlan = readFileSync(input.planFile ?? "", "utf8");
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviewed = true;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: approveCritique,
+					usage,
+				}));
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				planHandoff: { path: "/plans/approved.md", text: validPlan },
+				adversaryModels: ["test/reviewer:high"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+			},
+			fx,
+		);
+		assert.deepEqual(roles, ["implementer"]);
+		assert.equal(implementerPlan, `# Approved implementation plan\n\n${validPlan}\n`);
+		assert.equal(reviewed, true);
+		assert.equal(approvalTitle, "Approve the supplied plan?");
+		assert.match(notifications.join("\n"), /Adversarial review approved/);
+	});
+
+	it("runs implement → revise → fix → approve → publish for a supplied plan", async () => {
+		const roles: string[] = [];
+		let reviewRounds = 0;
+		let publicationRequested = false;
+		const { fx } = effects({
+			confirm: async () => true,
+			requestStackPublication: async () => {
+				publicationRequested = true;
+				return {
+					handled: true,
+					outcome: {
+						status: "completed",
+						planId: "plan-1",
+						publication: {
+							topRef: "kstack/change",
+							pullRequests: [
+								{
+									ref: "kstack/change",
+									baseRef: "main",
+									prNumber: 7,
+									url: "https://example.test/pull/7",
+									draft: true,
+								},
+							],
+						},
+						completedActions: [
+							{ kind: "create-draft-pr", ref: "kstack/change", prNumber: 7, url: "https://example.test/pull/7" },
+						],
+					},
+				};
+			},
+			runAgent: async (input) => {
+				roles.push(input.role);
+				if (input.role === "planner") return assert.fail("planner must not run in a handoff");
+				if (input.role === "adversary") return assert.fail("planning adversary must not run");
+				return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+			},
+			runAdversaries: async (request) => {
+				reviewRounds++;
+				const verdict = reviewRounds === 1 ? reviseCritique : approveCritique;
+				return request.adversaries.map((adversary) => ({
+					status: "completed" as const,
+					role: "adversary" as const,
+					model: adversary.model,
+					output: verdict,
+					usage,
+				}));
+			},
+		});
+		await runApprovedWorkflow(
+			{
+				...options(),
+				planHandoff: { path: "/plans/approved.md", text: validPlan },
+				maxRounds: 3,
+				adversaryModels: ["test/reviewer:high"],
+				reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+			},
+			fx,
+		);
+		assert.deepEqual(roles, ["implementer", "fixer", "publisher"]);
+		assert.equal(reviewRounds, 2);
+		assert.equal(publicationRequested, true);
+	});
+
+	it("snapshots a real plan file and ignores a later source edit", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "kstack-handoff-snapshot-"));
+		try {
+			const source = join(dir, "approved.md");
+			writeFileSync(source, validPlan);
+			const loaded = await loadPlanHandoff(source, dir);
+			assert.ok(loaded.ok);
+			if (!loaded.ok) return;
+			writeFileSync(
+				source,
+				"## Ordered implementation steps\n1. [STEP-1] Mutated.\n\n## Acceptance criteria\n- [AC-1] Mutated.\n",
+			);
+			let implementerPlan = "";
+			let implementerMode = 0;
+			let reviewerPlan = "";
+			const { fx } = effects({
+				runAgent: async (input) => {
+					if (input.role === "planner") return assert.fail("planner must not run in a handoff");
+					implementerPlan = readFileSync(input.planFile ?? "", "utf8");
+					implementerMode = statSync(input.planFile ?? "").mode & 0o777;
+					return { status: "completed", role: input.role, model: input.model, output: validLedger, usage };
+				},
+				runAdversaries: async (request) => {
+					reviewerPlan = readFileSync(request.planFile, "utf8");
+					return request.adversaries.map((adversary) => ({
+						status: "completed" as const,
+						role: "adversary" as const,
+						model: adversary.model,
+						output: approveCritique,
+						usage,
+					}));
+				},
+			});
+			await runApprovedWorkflow(
+				{
+					...options(),
+					planHandoff: loaded.snapshot,
+					adversaryModels: ["test/reviewer:high"],
+					reviewAdversaryPromptFile: "/prompts/implementation-adversary.md",
+				},
+				fx,
+			);
+			const snapshot = `# Approved implementation plan\n\n${validPlan}\n`;
+			assert.equal(implementerPlan, snapshot);
+			assert.equal(reviewerPlan, snapshot);
+			assert.equal(implementerMode, 0o444);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("displays the verified human edit as the final plan at approval and implementation", async () => {

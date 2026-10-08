@@ -187,7 +187,7 @@ export function parsePlanImplementArgs(args: string):
 
 		return {
 			ok: false,
-			error: `Unknown plan-implement flag: ${token}. Use --single, --stack, --worktree, --change-kind <kind>, --fast, --no-adversary, or --plan-only.`,
+			error: `Unknown plan-implement flag: ${token}. Use --single, --stack, --worktree, --change-kind <kind>, --fast, --no-adversary, --plan-only, or --plan-file.`,
 		};
 	}
 
@@ -202,6 +202,9 @@ export function parsePlanImplementArgs(args: string):
 	if (fast && planOnly) {
 		return { ok: false, error: "--plan-only cannot be combined with --fast." };
 	}
+	if (planFile && planOnly) {
+		return { ok: false, error: "--plan-file cannot be combined with --plan-only." };
+	}
 	if (mode === "stack" && workLocation === "worktree") {
 		return {
 			ok: false,
@@ -209,7 +212,6 @@ export function parsePlanImplementArgs(args: string):
 				"--stack and --worktree cannot currently be combined. Use --stack in the jj workspace or --single --worktree.",
 		};
 	}
-	if (planFile && !fast) return { ok: false, error: "--plan-file requires --fast." };
 	return {
 		ok: true,
 		mode,
