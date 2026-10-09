@@ -30,6 +30,8 @@ Removing patterns is only half the job. Sterile, voiceless writing is also obvio
 
 ## Patterns to detect and fix
 
+Rule numbers are stable ids that other skills cite. A removed rule leaves a gap.
+
 ### Content
 
 1. **Puffery.** Cut phrases such as "pivotal moment," "testament to," "evolving landscape," "setting the stage for," and "indelible mark." State what happened.
@@ -51,7 +53,7 @@ Removing patterns is only half the job. Sterile, voiceless writing is also obvio
 ### Style
 
 13. **Dash and parenthesis crutches.** Prefer periods or commas to em dashes, en dashes used as dashes, hyphen-as-dash substitutes, and parenthetical asides. If the thought matters, give it a sentence.
-14. **Colon overuse.** Use a colon for a real list or example, not as a mid-sentence connector.
+14. **Colon overuse.** Use a colon for a real list or example, not as a mid-sentence connector. "If you're coming from traditional automation: instead of registering handlers, you describe conditions" works better without the colon and the comparison framing.
 15. **Boldface overuse.** Do not bold every proper noun or acronym.
 16. **Inline-header lists.** Turn labels that merely repeat the rest of the line, such as "**Performance:** Performance improved," into prose. A short bold lead-in is fine when it adds information.
 17. **Title-case headings.** Use sentence case unless a project style guide says otherwise.
@@ -69,12 +71,14 @@ Removing patterns is only half the job. Sterile, voiceless writing is also obvio
 
 ### Jargon and clarity
 
-26. **Abstract metaphor nouns.** Replace terms such as "substrate," "wedge," "vector," "locus," "vantage," "nexus," "bedrock," metaphorical "scaffolding," "modality," "paradigm," "gold-plating," "ratchet," "evacuate," "endgame," and "north star" with the concrete mechanism or a plain word. Keep established technical terms when they are the precise name of something.
-27. **Feelings in place of mechanisms.** Say what the system does, not how it feels. Replace "SQL you can read" with the query or behavior that makes it inspectable.
+26. **Abstract metaphor nouns.** Replace terms such as "substrate," "wedge," "vector," "locus," "vantage," "nexus," "bedrock," metaphorical "scaffolding," "modality," "paradigm," "gold-plating," "ratchet," "evacuate," "endgame," and "north star," "flywheel," "primitive" as a noun, "harness" as a metaphor, and "surface" as in "API surface" with the concrete mechanism or a plain word. "Wedge in" becomes "add." "Ratchet" becomes the mechanism's real name or "a limit that only tightens." Keep established technical terms when they are the precise name of something.
+27. **Feelings in place of mechanisms.** Say what the system does, not how it feels. Replace "SQL you can read" with the mechanism or a number, such as "`.toSQL()` returns the exact string sent to the database" or "a column rename fails the build." If a sentence could appear unchanged in another project's docs, it says nothing about this one. Cut it.
 28. **Dense sentences.** Split sentences that make the reader backtrack. Keep clauses together only when they express one thought.
 29. **Passive voice.** Prefer an actor and action when they clarify responsibility. Passive voice is fine when the actor is unknown or irrelevant.
 30. **Weak verb plus adverb.** Cut the adverb, use a stronger verb, or state the measurement.
-31. **Fancy synonyms.** Prefer "use" to "utilize," "help" to "facilitate," "many" to "numerous," and "if" to "in the event that."
+31. **Fancy synonyms.** Prefer "use" to "utilize," "help" to "facilitate," "use" to "leverage," "many" to "numerous," and "if" to "in the event that."
+32. **Mannered prose.** Replace aphorisms ("wire it or delete it"), rhetorical fragments, personified code ("the plan holds it"), figurative verbs ("rides along," "stands on"), and stock framing with the literal phrase. "A dial worth turning" becomes "a parameter worth varying."
+33. **Over-compression.** Restore dropped articles, verbs, and spelled-out words when the reader has to decode symbol-speak. "Parser rejects bad date → exit 2, no write" becomes "The parser rejects a bad date, exits with code 2, and writes nothing." Terse chat in the author's own voice may stay terse.
 
 ## Output
 
