@@ -1244,6 +1244,34 @@ describe("agent-host review regressions", () => {
 		await opened.host.dispose();
 	});
 
+	it("closes a cancelled startup even when readiness fails", async () => {
+		const h = makeHarness("cancelled-readiness-failure");
+		const controller = new AbortController();
+		const opened = await openPaneHost({ owner: "review", label: "test", cwd: "/repo", maxAgents: 1 }, h.fake.deps());
+		assert.ok(opened.ok);
+		h.fake.on(
+			(args) => args[0] === "agent" && args[1] === "start",
+			() => {
+				controller.abort();
+				return {
+					code: 1,
+					stdout: "",
+					stderr: JSON.stringify({ error: { code: "agent_not_ready", message: "startup timed out" } }),
+				};
+			},
+		);
+		const started = await opened.host.start({ ...PLANNER_SPEC, signal: controller.signal });
+		assert.equal(started.ok, false);
+		if (!started.ok) assert.equal(started.aborted, true);
+		const launchedPane = h.fake.callsMatching("agent start")[0]?.args[6];
+		assert.deepEqual(
+			h.fake.callsMatching("pane close").map(({ args }) => args[2]),
+			[launchedPane],
+		);
+		assert.equal(h.fake.callsMatching("tab close").length, 0);
+		await opened.host.dispose();
+	});
+
 	it("allocates the first different cwd and never reuses a failed startup pane", async () => {
 		const h = makeHarness("first-cwd");
 		const opened = await openAgentHost({ owner: "arena", label: "test", cwd: "/repo", maxAgents: 2 }, h.fake.deps());
@@ -1330,6 +1358,14 @@ describe("agent-host helpers", () => {
 		const args = hostedAgentArgs({ ...PLANNER_SPEC, tools: [] }, "/tmp/herdr-agent-state.ts");
 		assert.ok(args.includes("--no-tools"));
 		assert.equal(args.includes("--tools"), false);
+	});
+
+	it("keeps the caller's configured extensions when extension inheritance is on", () => {
+		const spec: HostedAgentSpec = { role: "planner", model: "a/planner", cwd: "/repo", inheritExtensions: true };
+		const args = hostedAgentArgs(spec, "/tmp/herdr-agent-state.ts");
+		assert.equal(args.includes("--no-extensions"), false);
+		assert.equal(args.includes("--tools"), false);
+		assert.equal(args.filter((arg) => arg === "-e").length, 2);
 	});
 
 	it("keeps instruction content in files via the fixed pointer prompt", () => {

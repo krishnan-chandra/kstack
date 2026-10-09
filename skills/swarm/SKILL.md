@@ -50,7 +50,7 @@ When `kstack.json` is absent or has no `swarm` section, ask the user which model
    - **Mix** — partition some slices and race others.
 3. **Set N** from the user request or derive it from the shape (e.g. one worker per package directory).
 4. **Pick the worker model.** Use `worker` from `kstack.json` when present. Otherwise default to a fast available model for coverage work. For a model race, name each arm’s model up front.
-5. **Give each worker its own writable output** when it writes. Use a distinct linked worktree or directory under `/tmp/swarm-<slug>/worker-<n>/`, outside the repository root. A branch name alone does not isolate a cwd; repository subdirectories and overlapping directories are rejected. Workers must not share a write target. When workers only inspect or analyze, keep them read-only.
+5. **Give each worker its own writable output** when it writes. Use a distinct linked worktree or directory under `/tmp/swarm-<slug>/worker-<n>/`, outside the repository root. A branch name alone does not isolate a cwd; repository subdirectories and overlapping directories are rejected. Workers must not share a write target. When workers only inspect or analyze, mark the task read-only and tell the worker in its prompt not to modify files or run mutating commands.
 
 ## Phase B: Fan out
 
@@ -78,7 +78,6 @@ Compose a spec JSON file at `/tmp/swarm-<run-id>/spec.json`. Substitute absolute
       "promptFile": "/tmp/swarm-<run-id>/prompts/worker-1.md",
       "outputFile": "/tmp/swarm-<run-id>/outputs/worker-1.md",
       "access": "read-only",
-      "tools": ["read", "grep", "find", "ls"],
       "noContextFiles": true,
       "timeoutMinutes": 15
     }
@@ -87,7 +86,7 @@ Compose a spec JSON file at `/tmp/swarm-<run-id>/spec.json`. Substitute absolute
 }
 ```
 
-Use `access: "read-only"` with `tools: ["read", "grep", "find", "ls"]` unless a worker must write files to its own isolated target directory.
+Use `access: "read-only"` and state the read-only contract in the worker prompt unless a worker must write files to its own isolated target directory. The host appends a read-only system prompt for these tasks; tool capabilities do not enforce it.
 
 Launch the swarm:
 

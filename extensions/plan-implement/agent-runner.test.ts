@@ -91,18 +91,29 @@ function roleOptions(role: RunAgentOptions["role"] = "planner"): RunAgentOptions
 }
 
 describe("role contract builders", () => {
-	it("gives planner and adversary read-only tools", () => {
+	it("enables discovery and a read-only system prompt for planner and adversary", () => {
 		const planner = roleOptions("planner");
 		const plannerSpec = buildRoleSpec(planner, "/tmp/system.md");
-		assert.deepEqual(plannerSpec.tools, ["read", "grep", "find", "ls"]);
+		assert.equal(plannerSpec.tools, undefined);
+		assert.equal(plannerSpec.inheritExtensions, true);
 		assert.equal(plannerSpec.sessionName, "plan-implement/planner");
 		const adversarySpec = buildRoleSpec(roleOptions("adversary"), "/tmp/system.md");
-		assert.deepEqual(adversarySpec.tools, ["read", "grep", "find", "ls"]);
+		assert.equal(adversarySpec.tools, undefined);
+		assert.equal(adversarySpec.inheritExtensions, true);
+		for (const spec of [plannerSpec, adversarySpec]) {
+			assert.ok(spec.systemPromptFiles?.some((file) => file.endsWith("/read-only.md")));
+		}
+		const implementer = buildRoleSpec(roleOptions("implementer"), "/tmp/system.md");
+		assert.equal(
+			implementer.systemPromptFiles?.some((file) => file.endsWith("/read-only.md")),
+			false,
+		);
 	});
 
 	it("disables discovery and re-adds selected skills in stack mode", () => {
 		const options = { ...roleOptions("implementer"), mode: "stack" as const, skillPaths: ["/skills/tdd"] };
 		const spec = buildRoleSpec(options, "/tmp/system.md");
+		assert.equal(spec.inheritExtensions, true);
 		assert.equal(spec.noSkills, true);
 		assert.deepEqual(spec.skillPaths, ["/skills/tdd"]);
 	});

@@ -109,6 +109,11 @@ interface ChildIsolationOptions {
 	noContextFiles?: boolean;
 	/** Pass --no-tools --no-approve (classifier only; default false). */
 	noToolsNoApprove?: boolean;
+	/**
+	 * Pass --no-extensions (default true). Set false for normal Pi discovery
+	 * from the child's cwd and trust state, not a copy of the parent runtime.
+	 */
+	noExtensions?: boolean;
 }
 
 /** The Kstack aggregate entry, loaded explicitly into children instead of full extension discovery. */
@@ -117,13 +122,17 @@ export const KSTACK_ENTRY = join(dirname(dirname(dirname(fileURLToPath(import.me
 /**
  * Canonical isolation prefix for isolated Pi child processes.
  *
- * Extension discovery is off so a child does not boot the user's other
- * extensions (for example MCP adapters it cannot use). Kstack itself is loaded
- * explicitly so request shaping such as openrouter-floor applies to child
- * provider calls; each caller's `--tools` list still bounds tool exposure.
+ * Extension discovery is off by default so a child does not boot the user's
+ * other extensions (for example MCP adapters it cannot use). Kstack itself is
+ * loaded explicitly so request shaping such as openrouter-floor applies to
+ * child provider calls; each caller's `--tools` list still bounds tool
+ * exposure. `noExtensions: false` enables normal resource discovery; parent
+ * CLI extensions and runtime-only tools are not forwarded.
  */
 export function childIsolationArgs(options: ChildIsolationOptions = {}): string[] {
-	const args = ["--mode", "json", "-p", "--no-extensions", "-e", KSTACK_ENTRY];
+	const args = ["--mode", "json", "-p"];
+	if (options.noExtensions !== false) args.push("--no-extensions");
+	args.push("-e", KSTACK_ENTRY);
 	if (options.noSkills !== false) args.push("--no-skills");
 	args.push("--no-prompt-templates");
 	if (options.noContextFiles) args.push("--no-context-files");

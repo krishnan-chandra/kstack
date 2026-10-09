@@ -4,6 +4,7 @@ import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 import { mapWithConcurrencyLimit } from "../concurrency.ts";
 import { isThinkingLevel, MODEL_ID_RE } from "../kstack-config.ts";
+import { READ_ONLY_PROMPT_FILE } from "../prompt-assets.ts";
 import { type BoundaryValue, isBoolean, isNumber, isObject, isString, type JsonObject } from "../validation.ts";
 import { type HostDeps, type HostedAgent, openAgentHost } from "./agent-host.ts";
 import { emptyUsage, type UsageSummary } from "./session-usage.ts";
@@ -16,7 +17,6 @@ export interface FanoutTask {
 	cwd: string;
 	promptFile: string;
 	outputFile: string;
-	tools?: readonly string[];
 	access: FanoutAccess;
 	noContextFiles: boolean;
 	timeoutMinutes: number;
@@ -59,22 +59,11 @@ type FanoutRun = { ok: true; outcome: FanoutOutcome } | { ok: false; error: stri
 
 const MAX_TASKS = 8;
 const DEFAULT_CONCURRENCY = 4;
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 function modelRefIsValid(ref: string): boolean {
 	const separator = ref.lastIndexOf(":");
 	if (separator >= 0 && isThinkingLevel(ref.slice(separator + 1))) return MODEL_ID_RE.test(ref.slice(0, separator));
 	return MODEL_ID_RE.test(ref);
-}
-
-function stringArray(value: BoundaryValue): string[] | undefined {
-	if (!Array.isArray(value)) return undefined;
-	const strings: string[] = [];
-	for (const item of value) {
-		if (!isString(item)) return undefined;
-		strings.push(item);
-	}
-	return strings;
 }
 
 function parseTask(value: BoundaryValue, index: number): { ok: true; task: FanoutTask } | { ok: false; error: string } {
@@ -102,14 +91,6 @@ function parseTask(value: BoundaryValue, index: number): { ok: true; task: Fanou
 	if (access !== "read-only" && access !== "workspace") {
 		return { ok: false, error: `tasks[${index}].access must be read-only or workspace.` };
 	}
-	let tools: string[] | undefined;
-	if (record.tools !== undefined && record.tools !== null) {
-		tools = stringArray(record.tools);
-		if (!tools) return { ok: false, error: `tasks[${index}].tools must be null or an array of tool names.` };
-	}
-	if (access === "read-only" && tools?.some((tool) => !READ_ONLY_TOOLS.has(tool))) {
-		return { ok: false, error: `tasks[${index}] read-only tools may include only read, grep, find, and ls.` };
-	}
 	const noContextFiles = record.noContextFiles ?? true;
 	if (!isBoolean(noContextFiles)) return { ok: false, error: `tasks[${index}].noContextFiles must be boolean.` };
 	const timeoutMinutes = record.timeoutMinutes ?? 30;
@@ -124,7 +105,6 @@ function parseTask(value: BoundaryValue, index: number): { ok: true; task: Fanou
 			cwd: record.cwd,
 			promptFile: record.promptFile,
 			outputFile: record.outputFile,
-			tools,
 			access,
 			noContextFiles,
 			timeoutMinutes,
@@ -260,12 +240,13 @@ export async function runFanout(spec: FanoutSpec, deps: HostDeps, signal?: Abort
 				});
 				if (signal?.aborted) return failure("Fanout cancelled before startup.");
 				try {
-					const tools = task.access === "read-only" ? (task.tools ?? [...READ_ONLY_TOOLS]) : task.tools;
 					const started = await opened.host.start({
 						role: task.label,
 						model: task.model,
 						cwd: task.cwd,
-						tools,
+						inheritExtensions: true,
+						systemPromptFiles: task.access === "read-only" ? [READ_ONLY_PROMPT_FILE] : [],
+						signal,
 						noSkills: true,
 						noContextFiles: task.noContextFiles,
 						sessionName: `${spec.owner}/${task.label}`,

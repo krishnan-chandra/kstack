@@ -9,7 +9,7 @@ import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { type ChangeKind, changeKindLabel, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { findOpenPullRequestByHead } from "../shared/github.ts";
 import { runHeadlessAdversary, selectAdversaryTransport } from "../shared/herdr/adversary-runner.ts";
-import type { openAgentHost, openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
+import type { openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
 import type { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
@@ -39,7 +39,6 @@ import { validateVcsMode } from "./vcs-mode.ts";
 export interface HerdrEntryPoints {
 	createExec: typeof createNodeHerdrExec;
 	preflight: typeof preflightHerdr;
-	openHost: typeof openAgentHost;
 	openPane: typeof openPaneHost;
 }
 
@@ -440,7 +439,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 		else if (stackClient?.provider === "github") stackBaseLabel = "Git remote trunk";
 		let maxAgents = planOnly ? 1 : 4;
 		if (adversaryModel) maxAgents++;
-		const opened = await deps.herdr.openHost(
+		const opened = await deps.herdr.openPane(
 			{ owner: "plan-implement", label: extractSlug(task), cwd: ctx.cwd, maxAgents },
 			{ exec: herdrExec },
 		);
@@ -450,139 +449,142 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 			return;
 		}
 		const host = opened.host;
-		let confirmationTitle = "Run plan → implement → adversarial review → fix → publish?";
-		if (planOnly) confirmationTitle = "Run planner and stop after the final plan?";
-		else if (planHandoff) confirmationTitle = "Implement the supplied plan → adversarial review → fix → publish?";
-		else if (mode === "stack")
-			confirmationTitle = "Run plan → implement (stacked PRs) → adversarial review → fix → publish?";
-		else if (workLocation === "worktree") {
-			confirmationTitle = "Run plan → implement in managed worktree → adversarial review → fix → publish?";
-		}
-		const planSource = planHandoff ? `Supplied plan: ${planHandoff.path}` : `Planner (read-only): ${plannerModel}`;
-		const confirmed = await ctx.ui.confirm(
-			confirmationTitle,
-			mode === "stack"
-				? `${planSource}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role`
-				: `${planSource}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (${policy.taskWorkstreamSummary}): ${planOnly ? "not run" : implementerModel}\nHerdr tab: ${host.tabId}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role`,
-		);
-		if (!deps.lifecycle.isSessionCurrent(commandSession) || !confirmed) {
-			await host.dispose({ closeTab: true });
-			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
-			return;
-		}
-		const token = deps.lifecycle.beginWorkflow(commandSession);
-		if (!token) {
-			await host.dispose({ closeTab: true });
-			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
-			notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
-			return;
-		}
-		const runner = createRoleRunner(host, {
-			onStarted: (role, model, paneId) => {
-				if (deps.lifecycle.isCurrent(token)) {
-					ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
-				}
-			},
-			onBlocked: async (role, paneId, signal) =>
-				ctx.ui.confirm(
-					`${deps.phaseLabels[role]} is waiting for input`,
-					`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
-					{ signal },
-				),
-		});
-		const adversaryReview = createAdversaryReview({
-			openPane: deps.herdr.openPane,
-			createExec: deps.herdr.createExec,
-			notify,
-			label: extractSlug(task),
-			onStarted: (role, model, paneId) => {
-				if (deps.lifecycle.isCurrent(token)) {
-					ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
-				}
-			},
-			onBlocked: async (role, paneId, signal) =>
-				ctx.ui.confirm(
-					`${deps.phaseLabels[role]} is waiting for input`,
-					`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
-					{ signal },
-				),
-		});
+		let workflowStarted = false;
 		try {
-			await runApprovedWorkflow(
-				{
-					task,
-					mode,
-					workLocation,
-					initialCwd: ctx.cwd,
-					promptsDir: deps.paths.promptsDir,
-					plannerModel,
-					...(planHandoff ? { planHandoff } : undefined),
-					adversaryModel,
-					adversaryPromptFile: adversaryModel ? deps.paths.adversaryPromptFile : undefined,
-					maxRounds,
-					adversaryTimeoutMinutes,
-					adversaryModels,
-					reviewAdversaryPromptFile: deps.paths.reviewAdversaryPromptFile,
-					reviewTimeoutMinutes: adversaryResolution.adversary?.reviewTimeoutMinutes,
-					planOnly,
-					implementerModel,
-					timeoutMinutes: roles.timeoutMinutes,
-					skillPaths,
-					changePrompts,
-					mutationPrompts,
-					trunkSha,
-					stackTrunkRef,
-					worktreePlan,
-				},
-				{
-					runner,
-					confirm: ctx.ui.confirm.bind(ctx.ui),
-					notify,
-					setStatus: (status) => ctx.ui.setStatus("plan-implement", status),
-					sendPhase: (result) => deps.sendPhaseMessage(result),
-					isCurrent: () => deps.lifecycle.isCurrent(token),
-					isSessionCurrent: () => deps.lifecycle.isSessionCurrent(token),
-					beginRole: (phase) => deps.lifecycle.beginRole(token, phase),
-					endRole: (controller) => deps.lifecycle.endRole(token, controller),
-					backend,
-					runAdversaries: (request) => adversaryReview.run(request),
-					resolvePublishedPr: async (cwd) => {
-						const current = await backend.currentRef(cwd);
-						const head =
-							current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark") ? current.ref.name : "";
-						if (!head) return { ok: false, error: "could not resolve the workflow branch or bookmark." };
-						try {
-							return {
-								ok: true,
-								prNumber: await findOpenPullRequestByHead(
-									(command, args, options) => deps.pi.exec(command, args, options),
-									cwd,
-									head,
-								),
-							};
-						} catch (error) {
-							return { ok: false, error: error instanceof Error ? error.message : String(error) };
-						}
-					},
-					requestLand: (prNumber, cwd) =>
-						requestLand(deps.pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
-					requestAutopilot: (prNumber, cwd) => requestPrAutopilot(deps.pi, "drive", prNumber, ctx, cwd),
-					requestStackPublication: async (cwd) =>
-						stackClient
-							? {
-									handled: true,
-									outcome: await stackClient.publish(cwd, stackManifestPath, ctx.signal),
-								}
-							: { handled: false },
-				},
-			);
-		} finally {
-			await adversaryReview.dispose();
-			await runner.dispose();
-			if (deps.lifecycle.isSessionCurrent(token)) {
-				notify(`Hosted agents retained in Herdr tab ${runner.tabId}.`, "info");
+			if (!deps.lifecycle.isSessionCurrent(commandSession)) return;
+			let confirmationTitle = "Run plan → implement → adversarial review → fix → publish?";
+			if (planOnly) confirmationTitle = "Run planner and stop after the final plan?";
+			else if (planHandoff) confirmationTitle = "Implement the supplied plan → adversarial review → fix → publish?";
+			else if (mode === "stack")
+				confirmationTitle = "Run plan → implement (stacked PRs) → adversarial review → fix → publish?";
+			else if (workLocation === "worktree") {
+				confirmationTitle = "Run plan → implement in managed worktree → adversarial review → fix → publish?";
 			}
-			deps.lifecycle.finishWorkflow(token);
+			const planSource = planHandoff ? `Supplied plan: ${planHandoff.path}` : `Planner: ${plannerModel}`;
+			const confirmed = await ctx.ui.confirm(
+				confirmationTitle,
+				mode === "stack"
+					? `${planSource}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (creates a local ${stackClient?.provider ?? "configured"} stack): ${planOnly ? "not run" : implementerModel}\nHerdr tab (shared): ${host.tabId}\nChange kind: ${changeKindLabel(changeKind)}\nStack base: ${stackBaseLabel} @ ${trunkSha?.slice(0, 8) ?? "?"}\nTimeout: ${roles.timeoutMinutes} min per role`
+					: `${planSource}\nAdversary: ${adversaryModel ?? "none"}\nImplementer (${policy.taskWorkstreamSummary}): ${planOnly ? "not run" : implementerModel}\nHerdr tab (shared): ${host.tabId}\nVCS backend: ${backend.id}\nChange kind: ${changeKindLabel(changeKind)}\n${worktreePlan ? `Location: ${worktreePlan.path}\nBranch: ${worktreePlan.ref}\nBase: ${worktreePlan.baseRef} @ ${worktreePlan.baseSha.slice(0, 8)}\n` : `Location: ${policy.currentWorkspaceLabel}\n`}Timeout: ${roles.timeoutMinutes} min per role`,
+			);
+			if (!deps.lifecycle.isSessionCurrent(commandSession) || !confirmed) return;
+			const token = deps.lifecycle.beginWorkflow(commandSession);
+			if (!token) {
+				notify("The session changed or another plan/implement run started before confirmation completed.", "warning");
+				return;
+			}
+			const runner = createRoleRunner(host, {
+				onStarted: (role, model, paneId) => {
+					if (deps.lifecycle.isCurrent(token)) {
+						ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
+					}
+				},
+				onBlocked: async (role, paneId, signal) =>
+					ctx.ui.confirm(
+						`${deps.phaseLabels[role]} is waiting for input`,
+						`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
+						{ signal },
+					),
+			});
+			const adversaryReview = createAdversaryReview({
+				openPane: deps.herdr.openPane,
+				createExec: deps.herdr.createExec,
+				notify,
+				label: extractSlug(task),
+				onStarted: (role, model, paneId) => {
+					if (deps.lifecycle.isCurrent(token)) {
+						ctx.ui.setStatus("plan-implement", `plan-implement: ${role} ${model} · pane ${paneId}`);
+					}
+				},
+				onBlocked: async (role, paneId, signal) =>
+					ctx.ui.confirm(
+						`${deps.phaseLabels[role]} is waiting for input`,
+						`Answer the agent in pane ${paneId}, then continue. Decline to abort this phase.`,
+						{ signal },
+					),
+			});
+			workflowStarted = true;
+			try {
+				await runApprovedWorkflow(
+					{
+						task,
+						mode,
+						workLocation,
+						initialCwd: ctx.cwd,
+						promptsDir: deps.paths.promptsDir,
+						plannerModel,
+						...(planHandoff ? { planHandoff } : undefined),
+						adversaryModel,
+						adversaryPromptFile: adversaryModel ? deps.paths.adversaryPromptFile : undefined,
+						maxRounds,
+						adversaryTimeoutMinutes,
+						adversaryModels,
+						reviewAdversaryPromptFile: deps.paths.reviewAdversaryPromptFile,
+						reviewTimeoutMinutes: adversaryResolution.adversary?.reviewTimeoutMinutes,
+						planOnly,
+						implementerModel,
+						timeoutMinutes: roles.timeoutMinutes,
+						skillPaths,
+						changePrompts,
+						mutationPrompts,
+						trunkSha,
+						stackTrunkRef,
+						worktreePlan,
+					},
+					{
+						runner,
+						confirm: ctx.ui.confirm.bind(ctx.ui),
+						notify,
+						setStatus: (status) => ctx.ui.setStatus("plan-implement", status),
+						sendPhase: (result) => deps.sendPhaseMessage(result),
+						isCurrent: () => deps.lifecycle.isCurrent(token),
+						isSessionCurrent: () => deps.lifecycle.isSessionCurrent(token),
+						beginRole: (phase) => deps.lifecycle.beginRole(token, phase),
+						endRole: (controller) => deps.lifecycle.endRole(token, controller),
+						backend,
+						runAdversaries: (request) => adversaryReview.run(request),
+						resolvePublishedPr: async (cwd) => {
+							const current = await backend.currentRef(cwd);
+							const head =
+								current.ok && (current.ref.kind === "branch" || current.ref.kind === "bookmark")
+									? current.ref.name
+									: "";
+							if (!head) return { ok: false, error: "could not resolve the workflow branch or bookmark." };
+							try {
+								return {
+									ok: true,
+									prNumber: await findOpenPullRequestByHead(
+										(command, args, options) => deps.pi.exec(command, args, options),
+										cwd,
+										head,
+									),
+								};
+							} catch (error) {
+								return { ok: false, error: error instanceof Error ? error.message : String(error) };
+							}
+						},
+						requestLand: (prNumber, cwd) =>
+							requestLand(deps.pi, { target: { kind: "single", prNumber }, readiness: "watch", cwd }, ctx),
+						requestAutopilot: (prNumber, cwd) => requestPrAutopilot(deps.pi, "drive", prNumber, ctx, cwd),
+						requestStackPublication: async (cwd) =>
+							stackClient
+								? {
+										handled: true,
+										outcome: await stackClient.publish(cwd, stackManifestPath, ctx.signal),
+									}
+								: { handled: false },
+					},
+				);
+			} finally {
+				await adversaryReview.dispose();
+				await runner.dispose();
+				if (deps.lifecycle.isSessionCurrent(token)) {
+					notify(`Hosted agents retained in Herdr tab ${runner.tabId}.`, "info");
+				}
+				deps.lifecycle.finishWorkflow(token);
+			}
+		} finally {
+			if (!workflowStarted) await host.dispose({ closeTab: true });
 			if (stackTempDir) rmSync(stackTempDir, { recursive: true, force: true });
 		}
 	}
@@ -674,7 +676,7 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 		}
 		let retainedTab: string | undefined;
 		const openRunner = async (cwd: string) => {
-			const opened = await deps.herdr.openHost(
+			const opened = await deps.herdr.openPane(
 				{ owner: "plan-implement", label: `fast-${extractSlug(task)}`, cwd, maxAgents: 1 },
 				{ exec: deps.herdr.createExec() },
 			);

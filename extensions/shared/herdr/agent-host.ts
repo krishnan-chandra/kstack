@@ -42,6 +42,12 @@ export interface HostedAgentSpec {
 	cwd: string;
 	/** `--tools` allowlist; undefined = Pi defaults. */
 	tools?: readonly string[];
+	/**
+	 * Enable normal Pi extension discovery instead of `--no-extensions`.
+	 * Discovery uses the child's cwd and trust state; it does not transfer
+	 * parent-only CLI extensions or runtime registrations. Default false.
+	 */
+	inheritExtensions?: boolean;
 	/** Repeated `--append-system-prompt`. */
 	systemPromptFiles?: readonly string[];
 	/** Repeated `--skill` (implies `--no-skills`). */
@@ -135,7 +141,11 @@ function integrationFilePath(env: NodeJS.ProcessEnv = process.env): string {
  * `--session-dir`: the session lands in Pi's normal directory and is visible
  * to `/resume` and session-archive. */
 export function hostedAgentArgs(spec: HostedAgentSpec, integrationPath: string): string[] {
-	const args = ["--no-extensions", "-e", KSTACK_ENTRY, "-e", integrationPath, "--no-prompt-templates"];
+	const args: string[] = [];
+	// The explicit entries survive `--no-extensions` and dedupe with package
+	// discovery when that flag is absent, so they are always safe to pass.
+	if (!spec.inheritExtensions) args.push("--no-extensions");
+	args.push("-e", KSTACK_ENTRY, "-e", integrationPath, "--no-prompt-templates");
 	if (spec.skillPaths && spec.skillPaths.length > 0) {
 		args.push("--no-skills");
 		for (const path of spec.skillPaths) args.push("--skill", path);
@@ -717,7 +727,7 @@ async function buildHost(
 	const panes: string[] = [];
 	// Panes this host created. A pane host owns its initial split even before an
 	// agent starts there, so cleanup cannot leave an orphan split behind.
-	const ownedPanes: string[] = base.kind === "pane" ? [base.rootPaneId] : [];
+	const ownedPanes = new Set(base.kind === "pane" ? [base.rootPaneId] : []);
 	let allocation = Promise.resolve();
 	let disposed = false;
 
@@ -757,7 +767,7 @@ async function buildHost(
 					}
 					throw disposed ? new Error("The agent host is disposed.") : new StartCancelledError();
 				}
-				if (!ownedPanes.includes(paneId)) ownedPanes.push(paneId);
+				ownedPanes.add(paneId);
 			}
 			// Reserve before startup: failed or concurrent starts cannot reuse this pane.
 			panes.push(paneId);
@@ -800,72 +810,83 @@ async function buildHost(
 					return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 				return { ok: false, error: errorText(error) };
 			}
-			if (disposed) return { ok: false, error: "The agent host is disposed." };
-			if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
-			const args = hostedAgentArgs(spec, preflight.integrationPath);
-			let lastError: CliError | undefined;
-			for (let attempt = 0; attempt < 3; attempt++) {
+			try {
 				if (disposed) return { ok: false, error: "The agent host is disposed." };
 				if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
-				const name = buildAgentName(options.owner, spec.role, randomSuffix());
-				let started = await cli.agentStart(
-					{ name, paneId, timeoutMs: startupTimeoutMs, args },
-					{ timeoutMs: startupTimeoutMs + 30_000 },
-				);
-				// New panes can precede the shell prompt. Only this rejection proves no agent was launched.
-				for (let retry = 0; !started.ok && started.code === "agent_pane_busy" && retry < 3; retry++) {
-					await (deps.sleep ?? delay)(1_000);
+				const args = hostedAgentArgs(spec, preflight.integrationPath);
+				let lastError: CliError | undefined;
+				for (let attempt = 0; attempt < 3; attempt++) {
 					if (disposed) return { ok: false, error: "The agent host is disposed." };
 					if (spec.signal?.aborted)
 						return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
-					started = await cli.agentStart(
+					const name = buildAgentName(options.owner, spec.role, randomSuffix());
+					let started = await cli.agentStart(
 						{ name, paneId, timeoutMs: startupTimeoutMs, args },
 						{ timeoutMs: startupTimeoutMs + 30_000 },
 					);
-				}
-				if (started.ok) {
-					if (!started.value.cwd || canonicalCwd(started.value.cwd) !== canonicalCwd(spec.cwd))
-						return {
-							ok: false,
-							error: `Herdr started ${spec.role} with a missing or unexpected cwd; expected ${spec.cwd}. No task was sent.`,
-						};
-					const agent = new HostedAgentImpl(
-						{
-							name: started.value.name || name,
-							role: spec.role,
-							cwd: spec.cwd,
-							paneId,
-							tabId: base.tabId,
-							...(started.value.sessionFile ? { sessionFile: started.value.sessionFile } : undefined),
-						},
-						cli,
-						deps,
-					);
-					if (disposed) {
-						await agent.dispose();
-						return { ok: false, error: "The agent host is disposed." };
+					// New panes can precede the shell prompt. Only this rejection proves no agent was launched.
+					for (let retry = 0; !started.ok && started.code === "agent_pane_busy" && retry < 3; retry++) {
+						await (deps.sleep ?? delay)(1_000);
+						if (disposed) return { ok: false, error: "The agent host is disposed." };
+						if (spec.signal?.aborted)
+							return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
+						started = await cli.agentStart(
+							{ name, paneId, timeoutMs: startupTimeoutMs, args },
+							{ timeoutMs: startupTimeoutMs + 30_000 },
+						);
 					}
 					if (spec.signal?.aborted) {
-						// The agent launched after cancellation; close it and its pane instead of
-						// leaving an unreviewed agent running past the deadline.
-						await agent.dispose({ closePane: true });
 						return { ok: false, error: `Cancelled while starting ${spec.role}.`, aborted: true };
 					}
-					agents.push(agent);
-					return { ok: true, agent };
+					if (started.ok) {
+						if (!started.value.cwd || canonicalCwd(started.value.cwd) !== canonicalCwd(spec.cwd))
+							return {
+								ok: false,
+								error: `Herdr started ${spec.role} with a missing or unexpected cwd; expected ${spec.cwd}. No task was sent.`,
+							};
+						const agent = new HostedAgentImpl(
+							{
+								name: started.value.name || name,
+								role: spec.role,
+								cwd: spec.cwd,
+								paneId,
+								tabId: base.tabId,
+								...(started.value.sessionFile ? { sessionFile: started.value.sessionFile } : undefined),
+							},
+							cli,
+							deps,
+						);
+						if (disposed) {
+							await agent.dispose();
+							return { ok: false, error: "The agent host is disposed." };
+						}
+						agents.push(agent);
+						return { ok: true, agent };
+					}
+					lastError = { code: started.code, message: started.message };
+					if (!isNameConflict(started)) {
+						return {
+							ok: false,
+							error: `Could not start ${spec.role} in pane ${paneId}: ${started.message} (${started.code}). Answer any prompt in that pane — typically a project-trust prompt — then retry.`,
+						};
+					}
 				}
-				lastError = { code: started.code, message: started.message };
-				if (!isNameConflict(started)) {
-					return {
-						ok: false,
-						error: `Could not start ${spec.role} in pane ${paneId}: ${started.message} (${started.code}). Answer any prompt in that pane — typically a project-trust prompt — then retry.`,
-					};
+				return {
+					ok: false,
+					error: `Could not start ${spec.role}: agent name conflicts persisted after 3 attempts (${lastError?.message ?? "unknown"}).`,
+				};
+			} finally {
+				// Readiness failures can leave a live process too. Cancellation owns
+				// the allocated pane regardless of whether Herdr returned an agent.
+				if (spec.signal?.aborted) {
+					try {
+						const closed = await cli.paneClose({ paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+						if (closed.ok) ownedPanes.delete(paneId);
+					} catch {
+						/* cleanup is best effort */
+					}
 				}
 			}
-			return {
-				ok: false,
-				error: `Could not start ${spec.role}: agent name conflicts persisted after 3 attempts (${lastError?.message ?? "unknown"}).`,
-			};
 		},
 		async dispose(disposeOptions) {
 			if (disposed) return;

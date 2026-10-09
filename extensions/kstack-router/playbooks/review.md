@@ -6,10 +6,12 @@ frontier review model.
 
 ## Constraints
 
-- **Read-only tools only**: read, grep, find, ls, plus the read-only session
-  tools `read_handoff_history`, `search_handoff_history`,
+- **Read-only by contract**: you have the full tool set, but you must not edit,
+  create, or delete files, run mutating commands, or use write, edit, or other
+  mutating tools. Use the session-history tools
+  (`read_handoff_history`, `search_handoff_history`,
   `read_session_archive`, `search_session_archive`, `search_subagent_history`,
-  and `read_subagent_history`. No bash, write, edit, or custom mutating tools.
+  and `read_subagent_history`) to recover prior context.
 - **No repository changes**: you must not modify any file, and you must not
   push, publish, or open a pull request.
 - **Apply the canonical lens**: follow the

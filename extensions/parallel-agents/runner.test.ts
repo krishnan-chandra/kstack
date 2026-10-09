@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import type { ChildEvent } from "../shared/child-agent-runner.ts";
+import { READ_ONLY_PROMPT_FILE } from "../shared/prompt-assets.ts";
 import { buildParallelAgentArgs, runParallelAgent } from "./runner.ts";
 
 const baseTask = {
@@ -12,19 +13,21 @@ const baseTask = {
 } as const;
 
 describe("parallel agent child arguments", () => {
-	it("enforces the read-only tool boundary for Simplify", () => {
+	it("enables normal discovery and a read-only system prompt for Simplify", () => {
 		const args = buildParallelAgentArgs(baseTask);
-		assert.deepEqual(args.slice(0, 4), ["--mode", "json", "-p", "--no-extensions"]);
-		assert.equal(args[4], "-e");
-		assert.match(args[5], /kstack\.ts$/);
-		assert.deepEqual(args.slice(6), [
+		assert.deepEqual(args.slice(0, 3), ["--mode", "json", "-p"]);
+		assert.equal(args.includes("--no-extensions"), false);
+		assert.equal(args.includes("--tools"), false);
+		assert.equal(args[3], "-e");
+		assert.match(args[4], /kstack\.ts$/);
+		assert.deepEqual(args.slice(5), [
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-context-files",
-			"--tools",
-			"read,grep,find,ls",
 			"--model",
 			"openai/model:high",
+			"--append-system-prompt",
+			READ_ONLY_PROMPT_FILE,
 		]);
 	});
 

@@ -8,6 +8,7 @@ import type {
 	SpawnImpl,
 	SubagentSessionStore,
 } from "../child-agent-runner.ts";
+import { READ_ONLY_PROMPT_FILE } from "../prompt-assets.ts";
 import {
 	type HeadlessAdversaryOptions,
 	headlessAdversaryArgs,
@@ -24,7 +25,7 @@ describe("selectAdversaryTransport", () => {
 });
 
 describe("headlessAdversaryArgs", () => {
-	it("runs one isolated read-only adversary with the configured model and system prompt", () => {
+	it("runs one adversary with normal discovery and the configured model and system prompt", () => {
 		const args = headlessAdversaryArgs({
 			model: "openai/gpt-6-astra:medium",
 			systemPromptFile: "/tmp/adversary.md",
@@ -32,8 +33,9 @@ describe("headlessAdversaryArgs", () => {
 		assert.ok(args.includes("--no-skills"));
 		assert.ok(args.includes("--no-context-files"));
 		assert.ok(args.includes("-p"));
+		assert.equal(args.includes("--no-extensions"), false);
+		assert.equal(args.includes("--tools"), false);
 		const pair = (flag: string) => args.slice(args.indexOf(flag), args.indexOf(flag) + 2);
-		assert.deepEqual(pair("--tools"), ["--tools", "read,grep,find,ls"]);
 		assert.deepEqual(pair("--model"), ["--model", "openai/gpt-6-astra:medium"]);
 		assert.deepEqual(pair("--append-system-prompt"), ["--append-system-prompt", "/tmp/adversary.md"]);
 	});
@@ -48,7 +50,7 @@ describe("headlessAdversaryArgs", () => {
 		for (let index = 0; index < args.length; index++) {
 			if (args[index] === "--append-system-prompt") prompts.push(args[index + 1] ?? "");
 		}
-		assert.deepEqual(prompts, ["/tmp/adversary.md", "/run/planning-session.md"]);
+		assert.deepEqual(prompts, ["/tmp/adversary.md", "/run/planning-session.md", READ_ONLY_PROMPT_FILE]);
 	});
 });
 

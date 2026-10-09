@@ -12,6 +12,7 @@ import {
 	childIsolationArgs,
 	runChildAgent,
 } from "../child-agent-runner.ts";
+import { READ_ONLY_PROMPT_FILE } from "../prompt-assets.ts";
 
 /* exported: adversary transport contract */
 export type AdversaryTransport = "pane" | "headless";
@@ -45,24 +46,23 @@ export type HeadlessAdversaryResult = (
 	| { status: "aborted"; session: ChildSession; usage: ChildUsage }
 ) & { cleanupError?: string };
 
-/** Build the isolated Pi argv for one headless adversary. */
+/** Build headless adversary argv with normal discovery and no tool allowlist. */
 export function headlessAdversaryArgs(
 	options: Pick<HeadlessAdversaryOptions, "model" | "systemPromptFile" | "extraSystemPromptFiles">,
 ): string[] {
 	const args = [
-		...childIsolationArgs({ noContextFiles: true }),
-		"--tools",
-		"read,grep,find,ls",
+		...childIsolationArgs({ noContextFiles: true, noExtensions: false }),
 		"--model",
 		options.model,
 		"--append-system-prompt",
 		options.systemPromptFile,
 	];
 	for (const file of options.extraSystemPromptFiles ?? []) args.push("--append-system-prompt", file);
+	args.push("--append-system-prompt", READ_ONLY_PROMPT_FILE);
 	return args;
 }
 
-/** Run one read-only adversary as a non-interactive Pi child when Herdr is unavailable. */
+/** Run one adversary as a non-interactive Pi child when Herdr is unavailable. */
 export async function runHeadlessAdversary(
 	options: HeadlessAdversaryOptions,
 	deps: ChildRunnerDeps = {},

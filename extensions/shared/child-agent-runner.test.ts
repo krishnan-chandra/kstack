@@ -199,6 +199,21 @@ describe("childIsolationArgs", () => {
 			"--no-context-files",
 		]);
 	});
+
+	it("loads configured extensions when noExtensions is false", () => {
+		const args = childIsolationArgs({ noContextFiles: true, noExtensions: false });
+		assert.equal(args.includes("--no-extensions"), false);
+		assert.deepEqual(args, [
+			"--mode",
+			"json",
+			"-p",
+			"-e",
+			KSTACK_ENTRY,
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+		]);
+	});
 });
 
 describe("runChildAgent", () => {

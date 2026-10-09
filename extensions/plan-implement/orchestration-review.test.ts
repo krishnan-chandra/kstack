@@ -130,7 +130,8 @@ describe("createAdversaryReview", () => {
 			});
 			assert.equal(results[0]?.status, "completed");
 			assert.equal(host.specs.length, 1);
-			assert.equal(host.specs[0]?.systemPromptFiles?.at(-1), reference);
+			assert.equal(host.specs[0]?.systemPromptFiles?.at(-2), reference);
+			assert.match(host.specs[0]?.systemPromptFiles?.at(-1) ?? "", /\/read-only\.md$/);
 			await review.dispose();
 		} finally {
 			if (previous === undefined) delete process.env.HERDR_ENV;

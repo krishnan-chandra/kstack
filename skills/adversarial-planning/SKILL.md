@@ -1,6 +1,6 @@
 ---
 name: adversarial-planning
-description: Draft an implementation plan and debate it with a distinct, read-only adversary in a visible Herdr pane until approval or a three-round limit. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan critique loop, or a planner-versus-adversary debate.
+description: Draft an implementation plan and debate it with a distinct adversary in a visible Herdr pane until approval or a three-round limit. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan critique loop, or a planner-versus-adversary debate.
 license: MIT
 compatibility: Pi running inside Herdr with the Herdr Pi integration installed and kstack.json adversary model configuration.
 disable-model-invocation: true
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # Adversarial planning
 
-Draft a repository-grounded implementation plan, then run a bounded debate with one named adversary. Keep its pane open for inspection and steering. The parent plans; the adversary has read-only repository tools.
+Draft a repository-grounded implementation plan, then run a bounded debate with one named adversary. Keep its pane open for inspection and steering. The parent plans; the adversary uses available tools for non-mutating inspection.
 
 ## Guard and resolve paths
 
@@ -38,9 +38,9 @@ Draft a repository-grounded implementation plan, then run a bounded debate with 
 
    ```sh
    herdr agent start "adversary-<slug>" --kind pi --pane "<pane-id>" -- \
-     --no-extensions -e "$KSTACK/kstack.ts" \
+     -e "$KSTACK/kstack.ts" \
      -e "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts" \
-     --no-skills --no-prompt-templates --tools read,grep,find,ls \
+     --no-skills --no-prompt-templates \
      --model "$MODEL" \
      --append-system-prompt "$KSTACK/skills/adversarial-planning/adversary-prompt.md" \
      --name "adversary/<slug>"

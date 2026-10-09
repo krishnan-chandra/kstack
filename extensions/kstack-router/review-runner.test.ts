@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { HostedAgentSpec } from "../shared/herdr/agent-host.ts";
+import { READ_ONLY_PROMPT_FILE } from "../shared/prompt-assets.ts";
 import { buildReviewArgs, buildReviewPrompt, changesetDiff, runReviewRoute } from "./review-runner.ts";
 
 const usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.5, turns: 3 };
@@ -35,15 +37,14 @@ function fakeCtx(available = true): ExtensionCommandContext {
 const missingConfig = () => ({ status: "missing" as const, path: "/tmp/kstack.json" });
 
 describe("buildReviewArgs", () => {
-	it("loads the thermo skill, read-only tools, and the pinned model", () => {
+	it("loads the thermo skill and pinned model with discovery and a read-only contract", () => {
 		const args = buildReviewArgs("anthropic/claude-opus-5-5", "high");
 		const after = (flag: string) => args.slice(args.indexOf(flag), args.indexOf(flag) + 2);
 		assert.ok(args.includes("--skill"));
 		assert.ok(args.some((arg) => arg.includes("thermo-nuclear-code-quality-review")));
-		assert.deepEqual(after("--tools"), [
-			"--tools",
-			"read,grep,find,ls,read_handoff_history,search_handoff_history,read_session_archive,search_session_archive,search_subagent_history,read_subagent_history",
-		]);
+		assert.equal(args.includes("--tools"), false);
+		assert.equal(args.includes("--no-extensions"), false);
+		assert.match(after("--append-system-prompt")[1], /\/read-only\.md$/);
 		assert.deepEqual(after("--model"), ["--model", "anthropic/claude-opus-5-5"]);
 		assert.deepEqual(after("--thinking"), ["--thinking", "high"]);
 	});
@@ -143,10 +144,15 @@ describe("runReviewRoute", () => {
 		try {
 			const hostFixture = {
 				exchangeDir: dir,
-				start: async () => ({
-					ok: true,
-					agent: { ask: async () => ({ status: "completed", output: "Pane verdict", usage }) },
-				}),
+				start: async (spec: HostedAgentSpec) => {
+					assert.deepEqual(spec.systemPromptFiles, [READ_ONLY_PROMPT_FILE]);
+					assert.equal(spec.inheritExtensions, true);
+					assert.equal(spec.tools, undefined);
+					return {
+						ok: true,
+						agent: { ask: async () => ({ status: "completed", output: "Pane verdict", usage }) },
+					};
+				},
 				dispose: async () => {},
 			};
 			// SAFETY: This test controls the fixture and exercises only the asserted contract.

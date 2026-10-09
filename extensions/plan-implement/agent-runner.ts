@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentHost, AskResult, HostedAgent, HostedAgentSpec } from "../shared/herdr/agent-host.ts";
+import { READ_ONLY_PROMPT_FILE } from "../shared/prompt-assets.ts";
 import { type AgentRole, type AgentRunResult, type DeliveryMode, LIMITS, type WorkLocation } from "./types.ts";
 
 interface BuildRoleOptions {
@@ -72,11 +73,17 @@ export function buildRoleSpec(options: RunAgentOptions, systemPromptFile: string
 		role: options.role,
 		model: options.model,
 		cwd: options.cwd,
-		systemPromptFiles: [systemPromptFile, ...(options.extraSystemPromptFiles ?? [])],
+		// Enable extension discovery for every role; read-only roles receive
+		// a system prompt contract instead of a capability restriction.
+		inheritExtensions: true,
+		systemPromptFiles: [
+			systemPromptFile,
+			...(options.extraSystemPromptFiles ?? []),
+			...(options.role === "planner" || options.role === "adversary" ? [READ_ONLY_PROMPT_FILE] : []),
+		],
 		sessionName: `plan-implement/${sessionRole}`,
 	};
 	if (options.signal) spec.signal = options.signal;
-	if (options.role === "planner" || options.role === "adversary") spec.tools = ["read", "grep", "find", "ls"];
 	if (stackMode) {
 		spec.noSkills = true;
 		if (options.skillPaths && options.skillPaths.length > 0) spec.skillPaths = options.skillPaths;

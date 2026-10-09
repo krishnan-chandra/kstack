@@ -1,10 +1,13 @@
-/** Isolated read-only review child for the kstack-router review route.
+/** Review child for the kstack-router review route.
  *
- * The review never mutates the session model or the repository. Inside Herdr it
+ * The review leaves the session model unchanged and is instructed not to
+ * mutate the repository. Inside Herdr it
  * runs in a pane split off the caller's own pane; everywhere else it runs as a
- * headless Pi child. Either way it uses a pinned frontier model, read-only
- * repository and session-history tools, the thermo-nuclear lens, and a bounded
- * diff of the current changeset, then posts the verdict back into the session.
+ * headless Pi child. Either way it enables normal extension discovery,
+ * runs on a pinned frontier model, applies the thermo-nuclear lens
+ * to a bounded diff of the current changeset, and posts the verdict back into
+ * the session. The read-only contract lives in the prompt, not in a tool
+ * allowlist.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -19,7 +22,7 @@ import { createNodeHerdrExec, type HerdrExec } from "../shared/herdr/herdr-cli.t
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { modelCliId } from "../shared/model-spec.ts";
-import { readPromptAsset } from "../shared/prompt-assets.ts";
+import { READ_ONLY_PROMPT_FILE, readPromptAsset } from "../shared/prompt-assets.ts";
 import { loadConfig, resolveReviewModel } from "./config.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -30,20 +33,6 @@ const REVIEW_OUTPUT_CAP_BYTES = 64 * 1024;
 const REVIEW_STDERR_CAP_BYTES = 8 * 1024;
 const REVIEW_IDLE_TIMEOUT_MS = 5 * 60_000;
 const REVIEW_MAX_RUNTIME_MS = 20 * 60_000;
-
-/** Read-only repository and session-history tools the review child may use. */
-const REVIEW_TOOLS = [
-	"read",
-	"grep",
-	"find",
-	"ls",
-	"read_handoff_history",
-	"search_handoff_history",
-	"read_session_archive",
-	"search_session_archive",
-	"search_subagent_history",
-	"read_subagent_history",
-].join(",");
 
 interface ReviewChangeset {
 	diff: string;
@@ -101,14 +90,14 @@ export function registerReviewRenderer(pi: ExtensionAPI): void {
 	});
 }
 
-/** Build the isolated child args for one headless review. */
+/** Build the child args for one headless review. */
 export function buildReviewArgs(model: string, thinking?: string): string[] {
 	const args = [
-		...childIsolationArgs({ noContextFiles: true }),
+		...childIsolationArgs({ noContextFiles: true, noExtensions: false }),
 		"--skill",
 		THERMO_SKILL_DIR,
-		"--tools",
-		REVIEW_TOOLS,
+		"--append-system-prompt",
+		READ_ONLY_PROMPT_FILE,
 		"--model",
 		model,
 	];
@@ -205,7 +194,8 @@ async function runPaneReview(options: ReviewRunOptions, deps: ReviewRouteDeps): 
 			role: "review",
 			model: modelCliId({ model: options.model, thinking: options.thinking }),
 			cwd: options.cwd,
-			tools: REVIEW_TOOLS.split(","),
+			inheritExtensions: true,
+			systemPromptFiles: [READ_ONLY_PROMPT_FILE],
 			skillPaths: [THERMO_SKILL_DIR],
 			noSkills: true,
 			noContextFiles: true,
@@ -265,9 +255,10 @@ function postVerdict(pi: ExtensionAPI, model: string, outcome: ReviewOutcome): R
 }
 
 /**
- * Run the review route: resolve the frontier model, run one isolated read-only
- * review in a Herdr pane when available or a headless child otherwise, and post
- * the verdict back into the session. The dispatch stays active until the review
+ * Run the review route: resolve the frontier model, run one review in a Herdr
+ * pane when available or a headless child otherwise, and post the verdict back
+ * into the session. The child uses normal tool discovery and receives the
+ * shared read-only system prompt. The dispatch stays active until the review
  * finishes, so a second `/kstack` dispatch is rejected.
  */
 export async function runReviewRoute(

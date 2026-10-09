@@ -70,6 +70,7 @@ function createHarness(
 	result: AskResult,
 	confirm: () => Promise<boolean>,
 	args = "--plan-only --no-adversary --change-kind feature Test retention",
+	beforeHostReturn?: () => void,
 ): Harness {
 	const root = mkdtempSync(join(tmpdir(), "kstack-plan-orchestration-"));
 	const agentDir = join(root, "agent");
@@ -127,11 +128,11 @@ function createHarness(
 				workspaceId: "w1",
 				callerPane: "w1:p0",
 			}),
-			openHost: async () => {
+			openPane: async () => {
 				hostOpened++;
+				beforeHostReturn?.();
 				return { ok: true, host };
 			},
-			openPane: async () => ({ ok: false, error: "openPane is not used by plan-only runs" }),
 		},
 	);
 	const registeredCommand = command;
@@ -203,6 +204,31 @@ describe("plan-implement host retention", () => {
 		harness.shutdown();
 		release?.();
 		await running;
+		assert.deepEqual(harness.host.disposeArgs, [{ closeTab: true }]);
+	});
+
+	it("closes a late-acquired host without touching stale UI", async (t) => {
+		let confirmations = 0;
+		const harness = createHarness(
+			t,
+			{ status: "completed", output: validPlan, usage },
+			async () => {
+				confirmations++;
+				return true;
+			},
+			undefined,
+			() => harness.shutdown(),
+		);
+		await harness.run();
+		assert.equal(confirmations, 0);
+		assert.deepEqual(harness.host.disposeArgs, [{ closeTab: true }]);
+	});
+
+	it("closes the owned panes when confirmation throws", async (t) => {
+		const harness = createHarness(t, { status: "completed", output: validPlan, usage }, async () => {
+			throw new Error("UI unavailable");
+		});
+		await assert.rejects(harness.run(), /UI unavailable/);
 		assert.deepEqual(harness.host.disposeArgs, [{ closeTab: true }]);
 	});
 

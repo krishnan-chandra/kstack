@@ -1,6 +1,6 @@
 # plan-implement
 
-`/plan-implement` plans a code change, optionally debates the plan with a distinct adversary, asks for approval, implements on a backend-owned workstream, runs an adversarial implementation review, addresses findings, and publishes a draft PR. Long-lived roles run as named Pi agents in a dedicated Herdr tab; review adversaries run in a pane split off the caller's pane.
+`/plan-implement` plans a code change, optionally debates the plan with a distinct adversary, asks for approval, implements on a backend-owned workstream, runs an adversarial implementation review, addresses findings, and publishes a draft PR. Every role runs as a named Pi agent in a pane split off the caller's own pane, so the run shares the caller's Herdr tab instead of opening a new one.
 
 The extension owns deterministic gates: model and repository preflight, plan and ledger validation, immutable-plan checks, recorded-work verification, stack publication, and cleanup. Hosted agents own planning and repository work.
 
@@ -49,9 +49,9 @@ Use `--` before a task that starts with a dash. The argument-less command prompt
 A full run follows these phases:
 
 1. Preflight Herdr, configuration, models, VCS, and publication skills before a model call.
-2. Create one `plan-implement: <slug>` Herdr tab with `--no-focus`.
-3. Start a read-only planner in the tab's root pane. With `--plan-file`, skip planning and load the supplied plan instead.
-4. If `adversary` is configured, start a read-only adversary and run the debate. A supplied plan skips the planning debate.
+2. Split the caller's pane with `--no-focus` and host the run in the caller's tab.
+3. Start the planner in the run pane. With `--plan-file`, skip planning and load the supplied plan instead.
+4. If `adversary` is configured, start the adversary and run the debate. A supplied plan skips the planning debate.
 5. Validate the final plan's ordered `[STEP-n]` items and `[AC-n]` criteria.
 6. Display the exact final validated plan, including verified human edits, then ask for approval. That same snapshot is persisted and supplied to the implementer.
 7. Create the backend workstream only after approval, then start the implementer.
@@ -59,7 +59,7 @@ A full run follows these phases:
 9. Run every configured implementation adversary against the exact workstream or stack base, then offer a fixer round while any adversary withholds approval.
 10. Offer a hosted review fixer, structural publication, a hosted metadata publisher, PR autopilot, and landing.
 
-Planner, adversary, implementer, fixer, and publisher agents stay visible in the run tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. Review adversaries run in a pane split off the caller's pane (or as headless children when Herdr is unavailable). The extension retains the tab after completion and reports its ID.
+Planner, adversary, implementer, fixer, and publisher agents stay visible in the caller's tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. Review adversaries run in their own pane split off the caller's pane, or as headless children when Herdr is unavailable. The extension retains its panes after completion and reports the tab ID.
 
 With `--plan-file`, phases 3–4 are replaced by a bounded read of the supplied plan. The run starts from an immutable snapshot of that file, so a later edit cannot change what the implementer and reviewers see.
 
@@ -103,7 +103,7 @@ The extension resolves the path against the current workspace, reads at most 64 
 
 ## Fast mode
 
-`--fast` opens one Herdr tab and runs one hosted implementer in the current workstream or a newly created managed worktree. It preserves change-kind and backend guidance, verifies a new recorded revision, retains the pane and workstream, and never publishes. It no longer takes over the parent Pi session. Supply `--plan-file` to carry a selected plan into that fresh session; the implementer receives a bounded immutable snapshot, not implicit access to the parent conversation.
+`--fast` splits the caller's pane and runs one hosted implementer in the current workstream or a newly created managed worktree. It preserves change-kind and backend guidance, verifies a new recorded revision, retains the pane and workstream, and never publishes. Supply `--plan-file` to carry a selected plan into the run; the implementer receives a bounded immutable snapshot, not implicit access to the parent conversation.
 
 ## Delivery modes
 
@@ -151,7 +151,7 @@ Planner thinking must be `high`, `xhigh`, or `max`. Planner and implementer mode
 
 ## Hosted-agent protocol and limits
 
-The shared module under [`../shared/herdr/`](../shared/herdr/) creates the tab, panes, agents, and protected exchange files. Terminal prompts contain only short file pointers. Task, plan, critique, and verdict inputs cross through mode-`0600` files in a mode-`0700` temporary directory. Agents return request-tagged final replies through Pi's session. The host validates successful terminal completion and writes the response artifacts, so read-only roles need no file-writing tool.
+The shared module under [`../shared/herdr/`](../shared/herdr/) creates the panes, agents, and protected exchange files in the caller's tab. Terminal prompts contain only short file pointers. Task, plan, critique, and verdict inputs cross through mode-`0600` files in a mode-`0700` temporary directory. Agents return request-tagged final replies through Pi's session. The host validates successful terminal completion and writes the response artifacts.
 
 | Item | Limit |
 | --- | --- |
@@ -161,11 +161,11 @@ The shared module under [`../shared/herdr/`](../shared/herdr/) creates the tab, 
 | Implementer, fixer, or publisher output | 32 KiB UTF-8 |
 | Debate rounds | 1–5; default 3 |
 | Role timeout | 1–60 min |
-| Hosted agents in the run tab | 5 |
+| Hosted agents per run | 5 |
 | Review adversaries per round | 1–5 (own pane split) |
 | Pointer prompt | 512 bytes |
 
-This is a capability restriction, not a sandbox. Hosted agents use the user's OS permissions. Planner and adversary tools are limited to `read,grep,find,ls`; mutation roles have Pi's normal tools after approval. Repository files, skills, context files, tasks, plans, and verdicts may contain hostile instructions.
+Hosted agents use the user's OS permissions. Every role enables normal Pi extension discovery and omits a `--tools` allowlist. This does not transfer parent-only `-e` extensions, runtime tools, or active tool selections. Project tools depend on the child's cwd and trust state, so a managed worktree may differ from the parent. Planner and adversary launches append a shared read-only system prompt; that is an instruction, not a capability boundary. Repository files, skills, context files, tasks, plans, and verdicts may contain hostile instructions.
 
 ## Failure and cleanup
 

@@ -90,7 +90,7 @@ Compose a spec JSON file at `/tmp/arena-<run-id>/spec.json`. Substitute absolute
 }
 ```
 
-Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared or overlapping writable directories. Children load only Kstack and the Herdr integration; other extensions, skills, prompt templates, and context files are disabled.
+Use `access: "read-only"` when candidates return proposals in their final reports. Use `access: "workspace"` only when a candidate must create an artifact, and set `cwd` to a distinct pre-created candidate worktree or directory for every writable task; the tool rejects shared or overlapping writable directories. Children use normal Pi tool and extension discovery from their cwd, not a snapshot of the parent's runtime; skills, prompt templates, and context files are disabled. The host appends a read-only system prompt for `access: "read-only"`. Reinforce that requirement in each read-only task prompt; it is not a capability boundary.
 
 Launch the candidates:
 
@@ -112,8 +112,9 @@ Write the judge prompt file containing:
 - The rubric (from Phase A)
 - Each candidate's output and rationale (by candidate label, not by model name — blind judging)
 - Instructions to score each criterion and recommend a base with rationale
+- A read-only contract: do not edit, create, or delete files, run mutating commands, or post anything
 
-Write a judge spec JSON (`access: "read-only"`, `tools: ["read", "grep", "find", "ls"]`) and launch via `cli.mjs fanout`. The judge tab opens independently with no fan-out transcript state.
+Write a judge spec JSON (`access: "read-only"`) and launch via `cli.mjs fanout`. The judge tab opens independently with no fan-out transcript state.
 
 Use the `crossJudge` model from `kstack.json`. If unconfigured, pick a model from a different family than the runners. If no suitable alternate model is available, the parent performs the judgment directly and notes the lack of independence.
 

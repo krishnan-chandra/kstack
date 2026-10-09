@@ -221,6 +221,97 @@ class FakeHerdr {
 	};
 }
 
+describe("fanout launch contracts", () => {
+	for (const access of [undefined, "read-only", "workspace"] as const) {
+		it(`supplies the access contract for ${access ?? "default"} tasks`, async (t) => {
+			const root = mkdtempSync(join(tmpdir(), "fanout-contract-"));
+			t.after(() => rmSync(root, { recursive: true, force: true }));
+			const repo = join(root, "repo");
+			const work = join(root, "work");
+			mkdirSync(repo);
+			mkdirSync(work);
+			mkdirSync(join(root, "extensions"));
+			writeFileSync(join(root, "extensions", "herdr-agent-state.ts"), "// fixture");
+			const promptFile = join(root, "prompt.md");
+			writeFileSync(promptFile, "Inspect this code.");
+			const parsed = parseFanoutSpec({
+				owner: "review",
+				label: "contract",
+				cwd: repo,
+				tasks: [
+					{
+						label: "worker",
+						model: "test/model",
+						cwd: access === "workspace" ? work : repo,
+						promptFile,
+						outputFile: join(root, "output.md"),
+						access,
+					},
+				],
+			});
+			assert.ok(parsed.ok);
+			const fake = new FakeHerdr(root);
+			const result = await runFanout(parsed.spec, fake.deps());
+			assert.ok(result.ok);
+			const launch = fake.calls.find(({ args }) => args[0] === "agent" && args[1] === "start");
+			assert.ok(launch);
+			assert.equal(launch.args.includes("--no-extensions"), false);
+			assert.equal(launch.args.includes("--tools"), false);
+			assert.equal(
+				launch.args.some((arg) => arg.endsWith("/read-only.md")),
+				access !== "workspace",
+			);
+		});
+	}
+
+	it("stops startup retries and queued tasks after cancellation", async (t) => {
+		const root = mkdtempSync(join(tmpdir(), "fanout-cancel-"));
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+		mkdirSync(join(root, "extensions"));
+		writeFileSync(join(root, "extensions", "herdr-agent-state.ts"), "// fixture");
+		const promptFile = join(root, "prompt.md");
+		writeFileSync(promptFile, "Inspect this code.");
+		const fake = new FakeHerdr(root);
+		const controller = new AbortController();
+		let starts = 0;
+		const deps = fake.deps();
+		deps.sleep = async () => {};
+		deps.exec = async (args, options) => {
+			if (args[0] === "agent" && args[1] === "start") {
+				starts++;
+				controller.abort();
+				return {
+					code: 1,
+					stdout: "",
+					stderr: JSON.stringify({ error: { code: "agent_pane_busy", message: "shell starting" } }),
+				};
+			}
+			return fake.exec(args, options);
+		};
+		const tasks: FanoutTask[] = ["one", "two"].map((label) => ({
+			label,
+			model: "test/model",
+			cwd: root,
+			promptFile,
+			outputFile: join(root, `${label}.md`),
+			access: "read-only",
+			noContextFiles: true,
+			timeoutMinutes: 1,
+		}));
+		const result = await runFanout(
+			{ owner: "review", label: "cancel", cwd: root, tasks, maxConcurrency: 1 },
+			deps,
+			controller.signal,
+		);
+		assert.ok(result.ok);
+		assert.deepEqual(
+			result.outcome.results.map(({ status }) => status),
+			["aborted", "aborted"],
+		);
+		assert.equal(starts, 1);
+	});
+});
+
 describe("parseFanoutSpec", () => {
 	it("parses valid spec with default and custom task settings", () => {
 		const parsed = parseFanoutSpec({
@@ -242,7 +333,6 @@ describe("parseFanoutSpec", () => {
 					promptFile: "/tmp/b.md",
 					outputFile: "/tmp/out-b.md",
 					access: "workspace",
-					tools: ["read", "bash"],
 					noContextFiles: false,
 					timeoutMinutes: 45,
 				},
@@ -266,7 +356,6 @@ describe("parseFanoutSpec", () => {
 		const task1: FanoutTask = spec.tasks[1];
 		assert.equal(task1.label, "kimi");
 		assert.equal(task1.access, "workspace");
-		assert.deepEqual(task1.tools, ["read", "bash"]);
 		assert.equal(task1.noContextFiles, false);
 		assert.equal(task1.timeoutMinutes, 45);
 	});
@@ -313,7 +402,7 @@ describe("parseFanoutSpec", () => {
 		);
 	});
 
-	it("rejects bad task properties including non-read-only tools on read-only tasks", () => {
+	it("rejects bad task properties and ignores a removed tools field", () => {
 		const baseTask = {
 			label: "t1",
 			model: "openai/gpt-5.6-terra",
@@ -348,15 +437,14 @@ describe("parseFanoutSpec", () => {
 			}).ok,
 			false,
 		);
-		assert.equal(
-			parseFanoutSpec({
-				owner: "arena",
-				label: "x",
-				cwd: "/repo",
-				tasks: [{ ...baseTask, access: "read-only", tools: ["read", "bash"] }],
-			}).ok,
-			false,
-		);
+		const ignoredTools = parseFanoutSpec({
+			owner: "arena",
+			label: "x",
+			cwd: "/repo",
+			tasks: [{ ...baseTask, access: "read-only", tools: ["read", "bash"] }],
+		});
+		assert.equal(ignoredTools.ok, true);
+		if (ignoredTools.ok) assert.equal("tools" in ignoredTools.spec.tasks[0], false);
 		assert.equal(
 			parseFanoutSpec({
 				owner: "arena",

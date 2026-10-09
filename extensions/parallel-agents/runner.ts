@@ -4,6 +4,7 @@ import {
 	childIsolationArgs,
 	runChildAgent,
 } from "../shared/child-agent-runner.ts";
+import { READ_ONLY_PROMPT_FILE } from "../shared/prompt-assets.ts";
 import type { ParallelAgentResult, ParallelAgentTask } from "./types.ts";
 
 export interface ParallelAgentRunnerDeps extends ChildRunnerDeps {
@@ -12,7 +13,13 @@ export interface ParallelAgentRunnerDeps extends ChildRunnerDeps {
 }
 
 export function buildParallelAgentArgs(task: ParallelAgentTask): string[] {
-	return [...childIsolationArgs({ noContextFiles: true }), "--tools", "read,grep,find,ls", "--model", task.model];
+	return [
+		...childIsolationArgs({ noContextFiles: true, noExtensions: false }),
+		"--model",
+		task.model,
+		"--append-system-prompt",
+		READ_ONLY_PROMPT_FILE,
+	];
 }
 
 export async function runParallelAgent(options: {

@@ -49,8 +49,8 @@ export default function parallelAgentsExtension(pi: ExtensionAPI, deps: Parallel
 		name: "parallel_agents",
 		label: "Parallel agents",
 		description:
-			"Run isolated read-only Pi subagents for the simplify skill with a live TUI dashboard. Children receive only read, grep, find, and ls; extensions, skills, prompt templates, and context files are disabled. Prompts are sent over stdin. Returns each final report in input order. Max 8 tasks and 4 concurrent by default.",
-		promptSnippet: "Run visible isolated read-only subagents for the simplify workflow",
+			"Run parallel Pi subagents for the simplify skill with a live TUI dashboard. Children use normal Pi tool and extension discovery, with a read-only system prompt rather than a tool restriction. Task prompts are sent over stdin. Returns each final report in input order. Max 8 tasks and 4 concurrent by default.",
+		promptSnippet: "Run visible parallel subagents for the simplify workflow",
 		promptGuidelines: [
 			"Use parallel_agents instead of Herdr or manually spawned Pi processes when the simplify skill calls for parallel reviewers.",
 		],

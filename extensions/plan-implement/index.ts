@@ -6,7 +6,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { CHANGE_KINDS, type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
-import { openAgentHost, openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
+import { openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
 import { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
 import { nameSessionIfUnnamed } from "../shared/session-name.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
@@ -25,7 +25,6 @@ const REVIEW_ADVERSARY_PROMPT_FILE = join(EXTENSION_DIR, "prompts", "implementat
 const defaultHerdr: HerdrEntryPoints = {
 	createExec: createNodeHerdrExec,
 	preflight: preflightHerdr,
-	openHost: openAgentHost,
 	openPane: openPaneHost,
 };
 interface PhaseDetails {
