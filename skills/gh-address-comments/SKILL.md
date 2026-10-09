@@ -1,6 +1,6 @@
 ---
 name: gh-address-comments
-description: Address actionable GitHub pull-request review feedback. Use whenever the user asks to inspect unresolved review threads, requested changes, inline comments, or PR feedback, then implement selected fixes or draft responses. Uses the authenticated GitHub CLI and a bundled GraphQL query to preserve review-thread resolution state and inline locations.
+description: Address actionable GitHub pull-request review feedback. Use whenever the user asks to inspect unresolved review threads, requested changes, inline comments, or PR feedback, then implement selected fixes, reply with evidence, and resolve completed or inapplicable threads. Uses the authenticated GitHub CLI and a bundled GraphQL query to preserve review-thread resolution state and inline locations.
 license: Apache-2.0; see LICENSE.txt
 compatibility: A git repository hosted on GitHub. Requires git and an authenticated GitHub CLI (gh) with network access.
 ---
@@ -43,12 +43,19 @@ Run `gh` commands with network access. Confirm `gh auth status` before querying 
 5. Implement the selected fixes locally.
    - Keep every code change traceable to a review thread or feedback cluster.
    - If a comment asks for explanation rather than code, draft the response instead of forcing a code change.
-6. Report the result.
-   - List addressed threads, intentionally open threads, and supporting tests or checks.
+6. Close the loop on review threads.
+   - For requests to address or fix comments, reply in each handled thread and resolve it after the reply succeeds. Read-only inspection or draft-only requests produce proposed replies instead.
+   - For fixed findings, name the change and supporting check; include the pushed commit when available. Resolve code findings only after the fix is present on the PR head.
+   - For incorrect, duplicate, or already-fixed findings, explain why the current code addresses the concern, with a concrete reference. For intentionally excluded work, explain the agreed scope rather than claiming the behavior is implemented.
+   - Leave valid unfinished or ambiguous findings open. Refresh thread state before posting, avoid duplicate replies, and verify resolution afterward. Already-resolved threads need no further action unless the user requests a reply.
+   - Use `addPullRequestReviewThreadReply` followed by `resolveReviewThread` through `gh api graphql`; pass bodies as structured input or files so quoting preserves the text.
+7. Report the result.
+   - List fixed and explained threads, confirmed resolutions, intentionally open threads, and supporting checks.
 
 ## Write safety
 
-- Do not reply on GitHub, resolve review threads, submit a review, commit, or push unless the user explicitly asks.
+- Requests to address or fix review comments include the replies and resolutions described above. Honor any user restriction to local edits, inspection, or drafts.
+- Commit, push, and submit formal reviews only when the user has authorized those actions; permission to reply and resolve alone does not authorize them.
 - Surface conflicting comments or a likely behavioral regression before editing.
 - For ambiguous feedback, ask for clarification or draft a proposed response rather than guessing.
 - Do not treat flat PR comments as a complete representation of review-thread state.
