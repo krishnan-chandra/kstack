@@ -2,17 +2,14 @@ import { type BoundaryValue, isObject, type JsonObject } from "../shared/validat
 /** Unified kstack.json configuration and role-model resolution. */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
+import { resolveCouncilRoster } from "../shared/council/roster.ts";
 import {
-	isThinkingLevel,
-	loadKstackSection,
+	loadCouncilSection,
 	loadValidatedSection,
 	type ConfigLoad as SharedConfigLoad,
 	THINKING_LEVELS,
-	validateAdversaryConfig,
 } from "../shared/kstack-config.ts";
-import { collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { splitModelRef, validateModelSpecFields } from "../shared/model-spec.ts";
-import { resolveModelRef } from "../shared/resolve-model.ts";
 import {
 	LIMITS,
 	type ModelThinkingLevel,
@@ -160,51 +157,40 @@ export function resolveRoles(
 	};
 }
 
-function modelWithoutThinking(ref: string): string {
-	const separator = ref.lastIndexOf(":");
-	if (separator < 0 || !isThinkingLevel(ref.slice(separator + 1))) return ref;
-	return ref.slice(0, separator);
-}
-
-/** Resolve the optional adversary list through the shared validator and kstack.json aliases. */
+/**
+ * Resolve the optional council seats that act as plan-implement adversaries.
+ * The planner's model sits out; the planning debate uses the first remaining
+ * seat and implementation review uses all of them.
+ */
 export function resolveAdversary(
 	enabled: boolean,
 	plannerModel: string,
 	deps: ResolveDeps,
 	env: NodeJS.ProcessEnv = process.env,
 ): AdversaryResolution {
-	const loaded = loadKstackSection("adversary", env);
-	if (loaded.status === "invalid") return { ok: false, error: `Invalid ${loaded.path}: ${loaded.error}` };
 	if (!enabled) {
+		const loaded = loadCouncilSection(env);
+		if (loaded.status === "invalid") return { ok: false, error: `Invalid ${loaded.path}: ${loaded.error}` };
 		if (loaded.status === "missing") {
-			return { ok: true, notice: "--no-adversary has no effect because no adversary is configured." };
+			return { ok: true, notice: "--no-adversary has no effect because no council is configured." };
 		}
 		return { ok: true };
 	}
-	if (loaded.status === "missing") return { ok: true };
-	const validated = validateAdversaryConfig(loaded.value);
-	if (!validated.ok) return { ok: false, error: `Invalid ${loaded.path}: ${validated.error}` };
-	const aliases = collectKstackModelAliases(loaded.root);
-	const models: string[] = [];
-	for (const configured of validated.config.adversaries) {
-		const resolved = resolveModelRef({ configured, aliases, section: "adversary", key: "adversary" });
-		if (!resolved.ok) return resolved;
-		const model = modelWithoutThinking(resolved.ref);
-		if (model === plannerModel) return { ok: false, error: "The adversary model must differ from the planner model." };
-		const { provider, modelId } = splitModelRef(model);
-		if (!deps.available(provider, modelId)) {
-			return { ok: false, error: `Configured adversary model is unavailable or unauthenticated: ${model}.` };
-		}
-		models.push(resolved.ref);
-	}
+	const resolved = resolveCouncilRoster({ env, plannerModel, whenMissing: "skip", available: deps.available });
+	if (!resolved.ok) return resolved;
+	const roster = resolved.roster;
+	if (!roster) return { ok: true };
+	const adversary: ResolvedAdversary = {
+		models: roster.seats.map((seat) => seat.model),
+		maxRounds: roster.maxRounds,
+		timeoutMinutes: roster.timeoutMinutes,
+		reviewTimeoutMinutes: roster.reviewTimeoutMinutes,
+	};
+	if (roster.excluded.length === 0) return { ok: true, adversary };
 	return {
 		ok: true,
-		adversary: {
-			models,
-			maxRounds: validated.config.maxRounds,
-			timeoutMinutes: validated.config.timeoutMinutes,
-			reviewTimeoutMinutes: validated.config.reviewTimeoutMinutes,
-		},
+		adversary,
+		notice: `Council seat ${roster.excluded.join(", ")} sits out because it uses the planner model.`,
 	};
 }
 

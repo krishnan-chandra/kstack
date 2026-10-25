@@ -163,16 +163,28 @@ describe("createHerdrCli", () => {
 		}
 	});
 
-	it("paneLayout parses the grid geometry", async () => {
+	it("paneLayout parses the grid geometry and the pane's current tab", async () => {
 		const { exec } = scriptExec(() => ({
 			code: 0,
-			stdout: '{"id":"x","result":{"type":"pane_layout","layout":{"area":{"height":60,"width":213},"panes":[]}}}',
+			stdout:
+				'{"id":"x","result":{"type":"pane_layout","layout":{"area":{"height":60,"width":213},"panes":[],"tab_id":"w5:t3"}}}',
 			stderr: "",
 		}));
 		const cli = createHerdrCli(exec);
 		const outcome = await cli.paneLayout({ paneId: "w5:p1" }, { timeoutMs: 1000 });
 		assert.ok(outcome.ok);
-		if (outcome.ok) assert.deepEqual(outcome.value, { widthColumns: 213, heightRows: 60 });
+		if (outcome.ok) assert.deepEqual(outcome.value, { widthColumns: 213, heightRows: 60, tabId: "w5:t3" });
+	});
+
+	it("paneLayout reports an empty tab when Herdr omits tab_id", async () => {
+		const { exec } = scriptExec(() => ({
+			code: 0,
+			stdout: '{"id":"x","result":{"type":"pane_layout","layout":{"area":{"height":60,"width":213},"panes":[]}}}',
+			stderr: "",
+		}));
+		const outcome = await createHerdrCli(exec).paneLayout({ paneId: "w5:p1" }, { timeoutMs: 1000 });
+		assert.ok(outcome.ok);
+		if (outcome.ok) assert.equal(outcome.value.tabId, "");
 	});
 
 	it("builds multi-key agent send-keys and wait commands with repeated --until flags", async () => {

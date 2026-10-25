@@ -7,10 +7,11 @@ import {
 	getAgentDir,
 	getKstackPath,
 	isThinkingLevel,
+	loadCouncilSection,
 	loadKstackSection,
 	loadValidatedSection,
 	MODEL_ID_RE,
-	validateAdversaryConfig,
+	validateCouncilConfig,
 } from "./kstack-config.ts";
 import { type BoundaryValue, isString } from "./validation.ts";
 
@@ -70,90 +71,98 @@ describe("shared kstack config", () => {
 	});
 });
 
-function adversaryError(value: BoundaryValue): string {
-	const result = validateAdversaryConfig(value);
+function councilError(value: BoundaryValue): string {
+	const result = validateCouncilConfig(value);
 	assert.equal(result.ok, false);
-	if (result.ok) throw new Error("expected adversary validation to fail");
+	if (result.ok) throw new Error("expected council validation to fail");
 	return result.error;
 }
 
-describe("validateAdversaryConfig", () => {
-	it("accepts an object model and applies defaults", () => {
-		assert.deepEqual(validateAdversaryConfig({ adversary: { model: "openai/gpt-6-astra", thinking: "medium" } }), {
+const DEFAULTS = { maxRounds: 3, timeoutMinutes: 15, reviewTimeoutMinutes: 10 };
+
+describe("validateCouncilConfig", () => {
+	it("accepts seat objects and aliases and applies defaults", () => {
+		assert.deepEqual(validateCouncilConfig({ seats: [{ model: "openai/gpt-6-astra", thinking: "medium" }, "argon"] }), {
 			ok: true,
-			config: {
-				adversaries: [{ model: "openai/gpt-6-astra", thinking: "medium" }],
-				maxRounds: 3,
-				timeoutMinutes: 15,
-				reviewTimeoutMinutes: 10,
-			},
+			config: { seats: [{ model: "openai/gpt-6-astra", thinking: "medium" }, "argon"], ...DEFAULTS },
 		});
 	});
 
-	it("falls back to the built-in adversary and accepts multiple entries", () => {
-		assert.deepEqual(validateAdversaryConfig({}), {
+	it("falls back to the built-in seat when seats is omitted", () => {
+		assert.deepEqual(validateCouncilConfig({}), {
 			ok: true,
-			config: {
-				adversaries: [{ model: "openai/gpt-6-astra", thinking: "xhigh" }],
-				maxRounds: 3,
-				timeoutMinutes: 15,
-				reviewTimeoutMinutes: 10,
-			},
-		});
-		assert.deepEqual(validateAdversaryConfig({ adversary: [{ model: "openai/gpt-6-astra" }, "fable"] }), {
-			ok: true,
-			config: {
-				adversaries: [{ model: "openai/gpt-6-astra" }, "fable"],
-				maxRounds: 3,
-				timeoutMinutes: 15,
-				reviewTimeoutMinutes: 10,
-			},
+			config: { seats: [{ model: "openai/gpt-6-astra", thinking: "xhigh" }], ...DEFAULTS },
 		});
 	});
 
-	it("accepts an alias and explicit bounds", () => {
+	it("accepts explicit bounds", () => {
 		assert.deepEqual(
-			validateAdversaryConfig({
-				adversary: "fable",
-				maxRounds: 5,
-				timeoutMinutes: 60,
-				reviewTimeoutMinutes: 20,
-			}),
-			{
-				ok: true,
-				config: { adversaries: ["fable"], maxRounds: 5, timeoutMinutes: 60, reviewTimeoutMinutes: 20 },
-			},
+			validateCouncilConfig({ seats: ["opus"], maxRounds: 5, timeoutMinutes: 60, reviewTimeoutMinutes: 20 }),
+			{ ok: true, config: { seats: ["opus"], maxRounds: 5, timeoutMinutes: 60, reviewTimeoutMinutes: 20 } },
 		);
 	});
 
-	it("rejects malformed models and aliases", () => {
-		assert.match(adversaryError({ adversary: {} }), /model/);
-		assert.match(adversaryError({ adversary: "not an alias" }), /alias/);
-		assert.match(adversaryError({ adversary: { model: "astra", thinking: "medium" } }), /provider\/model/);
-		assert.match(adversaryError({ adversary: { model: "openai/astra", thinking: "enormous" } }), /thinking/);
-		assert.match(adversaryError({ adversary: [] }), /1 to 5/);
-	});
-
-	it("accepts five adversaries, rejects six, and indexes malformed later entries", () => {
-		const five = [{ model: "a/b" }, { model: "c/d" }, { model: "e/f" }, { model: "g/h" }, { model: "i/j" }];
-		assert.equal(validateAdversaryConfig({ adversary: five }).ok, true);
-		assert.match(adversaryError({ adversary: [...five, { model: "k/l" }] }), /1 to 5/);
-		assert.match(adversaryError({ adversary: [{ model: "a/b" }, {}] }), /adversary\.adversary\[1\]\.model/);
+	it("rejects malformed seats", () => {
+		assert.match(councilError([]), /council must be an object/);
+		assert.match(councilError({ seats: "opus" }), /array of 1 to 5/);
+		assert.match(councilError({ seats: [] }), /array of 1 to 5/);
+		assert.match(councilError({ seats: [{}] }), /council\.seats\[0\]\.model/);
+		assert.match(councilError({ seats: ["not an alias"] }), /alias/);
+		assert.match(councilError({ seats: [{ model: "astra" }] }), /provider\/model/);
 		assert.match(
-			adversaryError({ adversary: [{ model: "a/b" }, { model: "c/d", thinking: "enormous" }] }),
-			/adversary\.adversary\[1\]\.thinking/,
+			councilError({ seats: [{ model: "a/b" }, { model: "c/d", thinking: "enormous" }] }),
+			/seats\[1\]\.thinking/,
 		);
+	});
+
+	it("accepts five seats and rejects six", () => {
+		const five = [{ model: "a/b" }, { model: "c/d" }, { model: "e/f" }, { model: "g/h" }, { model: "i/j" }];
+		assert.equal(validateCouncilConfig({ seats: five }).ok, true);
+		assert.match(councilError({ seats: [...five, { model: "k/l" }] }), /1 to 5/);
 	});
 
 	it("rejects round and timeout values outside their integer bounds", () => {
-		for (const maxRounds of [0, 6, 1.5]) {
-			assert.match(adversaryError({ adversary: "fable", maxRounds }), /maxRounds/);
-		}
-		for (const timeoutMinutes of [0, 61, 1.5]) {
-			assert.match(adversaryError({ adversary: "fable", timeoutMinutes }), /timeoutMinutes/);
-		}
+		for (const maxRounds of [0, 6, 1.5]) assert.match(councilError({ maxRounds }), /maxRounds/);
+		for (const timeoutMinutes of [0, 61, 1.5]) assert.match(councilError({ timeoutMinutes }), /timeoutMinutes/);
 		for (const reviewTimeoutMinutes of [0, 61, 1.5]) {
-			assert.match(adversaryError({ adversary: "fable", reviewTimeoutMinutes }), /reviewTimeoutMinutes/);
+			assert.match(councilError({ reviewTimeoutMinutes }), /reviewTimeoutMinutes/);
+		}
+	});
+});
+
+describe("loadCouncilSection", () => {
+	function load(root: BoundaryValue) {
+		const dir = mkdtempSync(join(tmpdir(), "kstack-council-"));
+		writeFileSync(join(dir, "kstack.json"), JSON.stringify(root));
+		return loadCouncilSection({ PI_CODING_AGENT_DIR: dir });
+	}
+
+	it("loads a valid section with the root for alias resolution", () => {
+		const result = load({ council: { seats: ["opus"] }, aliases: [] });
+		assert.equal(result.status, "found");
+		if (result.status !== "found") return;
+		assert.deepEqual(result.config.seats, ["opus"]);
+		assert.deepEqual(result.root.aliases, []);
+	});
+
+	it("reports a missing section and a missing file", () => {
+		assert.equal(load({}).status, "missing");
+		const empty = mkdtempSync(join(tmpdir(), "kstack-council-"));
+		assert.equal(loadCouncilSection({ PI_CODING_AGENT_DIR: empty }).status, "missing");
+	});
+
+	it("rejects an invalid section", () => {
+		const result = load({ council: { seats: [] } });
+		assert.equal(result.status, "invalid");
+	});
+
+	it("rejects a legacy adversary section with a migration message", () => {
+		for (const root of [{ adversary: { adversary: "astra" } }, { adversary: {}, council: { seats: ["opus"] } }]) {
+			const result = load(root);
+			assert.equal(result.status, "invalid");
+			if (result.status !== "invalid") return;
+			assert.match(result.error, /"adversary" to "council"/);
+			assert.match(result.error, /council\.seats/);
 		}
 	});
 });

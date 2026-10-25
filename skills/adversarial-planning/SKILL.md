@@ -1,56 +1,51 @@
 ---
 name: adversarial-planning
-description: Draft an implementation plan and debate it with a distinct adversary in a visible Herdr pane until approval or a three-round limit. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan critique loop, or a planner-versus-adversary debate.
+description: Draft an implementation plan and stress-test it with a council of distinct reviewer models in visible Herdr panes until the council approves or the round budget runs out. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan council, a plan critique loop, or a planner-versus-adversary debate.
 license: MIT
-compatibility: Pi running inside Herdr with the Herdr Pi integration installed and kstack.json adversary model configuration.
+compatibility: Pi running inside Herdr with the Herdr Pi integration installed and a kstack.json council section or --seats.
 disable-model-invocation: true
 ---
 
 # Adversarial planning
 
-Draft a repository-grounded implementation plan, then run a bounded debate with one named adversary. Keep its pane open for inspection and steering. The parent plans; the adversary uses available tools for non-mutating inspection.
+Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own Herdr pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. The user is the final arbiter.
 
 ## Guard and resolve paths
 
 1. Run `test "${HERDR_ENV:-}" = 1`. Stop if this is not a Pi session inside Herdr.
-2. Resolve this skill directory from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it.
-3. Check `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts`. If missing, stop with `Run herdr integration install pi`.
-4. Resolve the adversary model:
+2. Resolve symlinks before walking up, because `~/.agents/skills/adversarial-planning` is usually a symlink into the kstack checkout:
 
    ```sh
-   MODEL="$(node "$KSTACK/extensions/shared/herdr/cli.mjs" resolve-model \
-     --section adversary --key adversary)"
+   SKILL_DIR="$(cd "<directory containing this SKILL.md>" && pwd -P)"
+   KSTACK="$(dirname "$(dirname "$SKILL_DIR")")"
+   CLI="$KSTACK/extensions/shared/herdr/cli.mjs"
    ```
 
-   Append `--model '<argument>'` for an explicit model or alias. Stop on resolver failure. Use a model distinct from the parent planner.
+   Stop if `$CLI` does not exist.
+3. Check `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts`. If it is missing, stop with `Run herdr integration install pi`.
 
-## Open or reuse the adversary pane
+## Open the council
 
-1. Derive `adversary-<slug>`, matching `[a-z][a-z0-9_-]{0,31}`.
-2. Run `herdr agent list`. Reuse the exact live name when it already exists and has the intended cwd and model.
-3. Otherwise inspect `herdr pane layout --pane "$HERDR_PANE_ID"`. Split right when wide, down when narrow or tall:
+Derive a slug matching `[a-z0-9-]{1,21}` and set `COUNCIL="$PWD/plans/<slug>-council"`. Then run:
 
-   ```sh
-   herdr pane split "$HERDR_PANE_ID" --direction <right-or-down> --cwd "$PWD" --no-focus
-   ```
+```sh
+node "$CLI" council open --dir "$COUNCIL" --slug <slug> \
+  --planner-model "$PI_PROVIDER/$PI_MODEL"
+```
 
-4. Read `.result.pane.pane_id`, then start the adversary:
+Append `--seats '<ref>,<ref>'` when the user names seat models or aliases. Otherwise the seats come from `council.seats` in `kstack.json`. A seat that uses your model sits out, so you never review your own plan.
 
-   ```sh
-   herdr agent start "adversary-<slug>" --kind pi --pane "<pane-id>" -- \
-     -e "$KSTACK/kstack.ts" \
-     -e "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts" \
-     --no-skills --no-prompt-templates \
-     --model "$MODEL" \
-     --append-system-prompt "$KSTACK/skills/adversarial-planning/adversary-prompt.md" \
-     --name "adversary/<slug>"
-   ```
+The command prints JSON. Seats open in one column to the right of your pane, named `council-<slug>-<letter>`.
 
-If startup reports `agent_not_ready`, tell the user which pane contains the prompt. The user answers project-trust and approval prompts.
+- `ready` (exit 0): continue.
+- `waiting` (exit 1): a seat is at a prompt, usually project trust, including on its first start. Tell the user each waiting seat's `paneId`, wait for them to answer, then rerun the same `council open`. Rerunning adopts the waiting seat instead of starting another.
+- `failed` (exit 1): report `error` and each failed seat's `error` and `paneId`, then stop. For a missing roster, ask the user for `--seats` or a `council` section.
+
+Run every council command from this tab. The council is bound to it.
 
 ## Draft the plan
 
-Create `plans/`, then write `plans/<slug>.md`. Ground code claims in the repository and keep scope within the request:
+Write the user's request to `plans/<slug>-task.md`. Then write `plans/<slug>.md`, grounding code claims in the repository and keeping scope within the request:
 
 ```markdown
 # <plan title>
@@ -66,44 +61,66 @@ Delivery: single-pr
 
 Name the change-kind proof-obligation playbook when one applies.
 
-## Run the debate
+## Run rounds
 
-Run at most three budgeted rounds. For round N, write `plans/<slug>-round-N.md` with the task, absolute plan path, prior critique path if any, and the instruction to return a structured critique in the final reply. The adversary does not write a report file.
-
-Use the shared host request protocol against the existing agent:
+Run a round with absolute paths. Pass `--task` on the first round:
 
 ```sh
-node "$KSTACK/extensions/shared/herdr/cli.mjs" ask \
-  --agent "adversary-<slug>" \
-  --prompt "<absolute-round-instructions-path>" \
-  --out "<absolute-critique-path>"
+node "$CLI" council round --dir "$COUNCIL" \
+  --plan "$PWD/plans/<slug>.md" --task "$PWD/plans/<slug>-task.md"
 ```
 
-`ask` validates a request-specific successful final response in Pi's session, then saves it at `--out`. It has a 15-minute timeout and drains work on SIGINT/SIGTERM. SIGKILL cannot trigger cleanup. Never paste the task, plan, or critique into the terminal.
+The CLI snapshots the plan, asks every seat in parallel, publishes `round-N/ledger.md`, runs a cross-examination vote when findings are up for one, and writes `round-N/decision.md`. Never paste the task, plan, or findings into a seat's terminal.
 
-After each round:
+Act on the JSON `status` and `decision`:
 
-- On a nonzero exit, inspect the reported status and pane. A blocked CLI request is cancelled before return; ask the user to resolve input in the pane before explicitly retrying the round. An output file alone does not prove completion.
-- On success, read the critique file. Require one `Verdict: approve` or `Verdict: revise`, `## Blocking`, and `## Suggestions`. Reject unparseable nonempty blocking content; only `None.` represents an empty section. Any `[B-n]` blocker makes the verdict `revise`, even if the declared verdict says `approve`.
-- On `approve`, present the exact final plan and stop.
-- On `revise`, address every blocker by ID. Add `## Changes since last round` and run the next round.
+- **approve**: Present `approvedPlan`, the exact snapshot the council reviewed. If `planChangedSinceSnapshot` is true, tell the user the live plan has unreviewed edits; run another round if they want those edits reviewed.
+- **revise**: Read `decisionFile`. Revise the live plan for every binding finding. Write `plans/<slug>-response-<N+1>.md` that answers every binding ID exactly once, then rerun with `--response "<absolute path>"`.
+- **escalated**: The response declared a conflict, or rebutted a finding a second time. Present `escalations` to the user. Either revise the plan as the user directs and answer the findings again, or override a finding when the user decides to:
 
-After round 3 returns `revise`, stop and present open blockers and the plan path. The user can edit the plan or steer the adversary. Start another round only when the user asks.
+  ```sh
+  node "$CLI" council override --dir "$COUNCIL" --finding <ID> \
+    --reason "<the user's reason>" --plan "$PWD/plans/<slug>.md"
+  ```
+
+  Override only on the user's instruction. An override that clears the last binding finding approves the last reviewed snapshot.
+- **exhausted**: The budgeted rounds are used and findings still bind. Present them and the plan path. The user can edit the plan, steer a seat in its pane, have you override findings, or ask for a `--verify` round. A `--verify` round runs only after the budget is used, and it does not consume budget.
+- **incomplete** (exit 1): Name each seat and pane in `failures`. After the user resolves the cause, rerun the same command. The rerun asks only seats without a valid reply, against the same snapshot.
+- **failed** (exit 1): Fix the reported input, such as a response that misses a binding ID, and rerun.
+
+### Planner response
+
+Keep the response out of the plan file. Use one line per binding finding:
+
+```markdown
+## Responses
+- A/B-1: addressed — <the change, naming STEP or AC IDs>
+- C/B-2: rebutted — <repository evidence that the finding is wrong>
+- A/B-3: conflicts-with C/B-1 — <why both cannot hold>
+```
+
+A rebuttal sends the finding back to a vote. Rebut a finding at most once; a second rebuttal escalates to the user, as does `conflicts-with`.
 
 ## Hand off
 
-Leave the adversary pane open and report its name and pane ID. After the user approves a bounded plan, offer:
+Leave the seat panes open and report their panes. After the user approves, offer handoffs that target the approved snapshot, `$COUNCIL/approved-plan.md`, never the live plan:
 
 ```text
-/plan-implement --fast --plan-file <absolute-plan-path> --change-kind <kind> <task>
+/plan-implement --fast --plan-file <absolute approved-plan.md path> --change-kind <kind> <task>
 ```
 
-The path must contain no whitespace; copy the selected plan to a suitable path if necessary. Fast mode snapshots the file before workstream creation and passes it to the fresh implementer. It does not inherit this conversation.
+The path must contain no whitespace; copy the approved snapshot to a suitable path if necessary. Fast mode snapshots the file before workstream creation and passes it to a fresh implementer. It does not inherit this conversation.
 
 For a full run that keeps the adversarial implementation review and publication gates without re-planning, offer:
 
 ```text
-/plan-implement --plan-file <absolute-plan-path> --change-kind <kind> <task>
+/plan-implement --plan-file <absolute approved-plan.md path> --change-kind <kind> <task>
 ```
 
-The full handoff validates the plan's ordered `[STEP-n]`/`[AC-n]` contract and snapshots it read-only before implementation. It skips the planner and the planning debate, then runs the implementer, the adversarial implementation review, fixing, and publication. The implementer and review adversaries come from the `plan-implement` and `adversary` configuration, so planning can run on a frontier planner while implementation runs on a smaller implementer. A supplied plan has no planner session, so later roles receive no planning-session reference. Neither handoff authorizes publication or landing.
+The full handoff validates the plan's ordered `[STEP-n]` and `[AC-n]` contract and snapshots it read-only. It skips the planner and planning debate, then runs the implementer, the adversarial implementation review, fixing, and publication. Implementation and review models come from the `plan-implement` and `council` configuration. Neither handoff authorizes publication or landing.
+
+When the user is done with the seats, close their panes:
+
+```sh
+node "$CLI" council close --dir "$COUNCIL"
+```

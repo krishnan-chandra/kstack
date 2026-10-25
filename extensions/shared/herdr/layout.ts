@@ -15,6 +15,8 @@
 interface PaneGeometry {
 	/** Width of the tab in terminal columns. */
 	widthColumns: number;
+	/** Upper bound on grid columns; 1 stacks every agent in one column. */
+	maxColumns?: number;
 }
 
 /** Minimum width of any pane produced by a column split. */
@@ -35,7 +37,8 @@ export type AgentPanePlacement = {
 export function placeAgent(index: number, total: number, geometry: PaneGeometry): AgentPanePlacement | undefined {
 	if (total < 1 || total > 8 || index < 0 || index >= total) return undefined;
 	if (index === 0) return undefined;
-	const maxColumns = Math.max(1, Math.floor(geometry.widthColumns / MIN_COLUMN_COLUMNS));
+	const fitColumns = Math.floor(geometry.widthColumns / MIN_COLUMN_COLUMNS);
+	const maxColumns = Math.max(1, Math.min(fitColumns, geometry.maxColumns ?? fitColumns));
 	const columns = Math.min(ceilSqrt(total), maxColumns);
 	if (index < columns) {
 		// New column i: split the previous column's rest pane to the right.
@@ -59,9 +62,9 @@ export interface PaneSplitDecision {
 }
 
 /**
- * Decide how to split the caller's own pane for a hosted adversary. Matches the
- * adversarial-planning skill: split right when the pane is wide, down when it
- * is narrow or tall.
+ * Decide how to split the caller's own pane for a hosted adversary: right when
+ * the pane is wide, down when it is narrow or tall. Callers that need a fixed
+ * placement, such as council seats, pass `openPaneHost` a direction instead.
  */
 export function paneSplitDecision(layout: { widthColumns: number; heightRows: number }): PaneSplitDecision {
 	if (layout.heightRows > layout.widthColumns) return { direction: "down", ratio: 0.5 };

@@ -17,6 +17,19 @@ describe("placeAgent", () => {
 		assert.equal(placeAgent(-1, 2, { widthColumns: 240 }), undefined);
 	});
 
+	it("stacks agents in one column under a one-column cap", () => {
+		assert.deepEqual(placeAgent(1, 3, { widthColumns: 240, maxColumns: 1 }), {
+			splitFrom: 0,
+			direction: "down",
+			ratio: 1 / 3,
+		});
+		assert.deepEqual(placeAgent(2, 3, { widthColumns: 240, maxColumns: 1 }), {
+			splitFrom: 1,
+			direction: "down",
+			ratio: 0.5,
+		});
+	});
+
 	it("uses two columns for two agents", () => {
 		assert.deepEqual(placeAgent(1, 2, { widthColumns: 240 }), {
 			splitFrom: "root",

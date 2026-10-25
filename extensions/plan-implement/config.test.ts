@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import type { BoundaryValue } from "../shared/validation.ts";
 import {
 	DEFAULT_IMPLEMENTERS,
 	DEFAULT_PLANNERS,
@@ -112,30 +113,24 @@ describe("plan-implement config", () => {
 		}
 	});
 
-	it("resolves the configured adversaries, aliases, and skip behavior", () => {
-		const dir = mkdtempSync(join(tmpdir(), "adversary-config-"));
+	function councilEnv(root: BoundaryValue) {
+		const dir = mkdtempSync(join(tmpdir(), "council-config-"));
+		writeFileSync(join(dir, "kstack.json"), JSON.stringify(root));
+		return { env: { PI_CODING_AGENT_DIR: dir }, dir };
+	}
+
+	it("resolves council seats, aliases, and knobs as adversaries", () => {
+		const { env, dir } = councilEnv({
+			aliases: [{ label: "fable", model: "anthropic/fable", thinking: "high" }],
+			council: {
+				seats: ["fable", { model: "openai/gpt-6-astra", thinking: "medium" }],
+				maxRounds: 4,
+				timeoutMinutes: 12,
+				reviewTimeoutMinutes: 20,
+			},
+		});
 		try {
-			writeFileSync(
-				join(dir, "kstack.json"),
-				JSON.stringify({
-					aliases: [{ label: "fable", model: "anthropic/fable", thinking: "high" }],
-					adversary: {
-						adversary: ["fable", { model: "openai/gpt-6-astra", thinking: "medium" }],
-						maxRounds: 4,
-						timeoutMinutes: 12,
-						reviewTimeoutMinutes: 20,
-					},
-				}),
-			);
-			const result = resolveAdversary(
-				true,
-				"openai/planner",
-				{ available: () => true },
-				{
-					PI_CODING_AGENT_DIR: dir,
-				},
-			);
-			assert.deepEqual(result, {
+			assert.deepEqual(resolveAdversary(true, "openai/planner", { available: () => true }, env), {
 				ok: true,
 				adversary: {
 					models: ["anthropic/fable:high", "openai/gpt-6-astra:medium"],
@@ -144,81 +139,84 @@ describe("plan-implement config", () => {
 					reviewTimeoutMinutes: 20,
 				},
 			});
-			assert.deepEqual(
-				resolveAdversary(
-					false,
-					"openai/planner",
-					{ available: () => true },
-					{
-						PI_CODING_AGENT_DIR: dir,
-					},
-				),
-				{ ok: true },
-			);
+			assert.deepEqual(resolveAdversary(false, "openai/planner", { available: () => true }, env), { ok: true });
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
-	it("rejects an unavailable or planner-identical adversary", () => {
-		const dir = mkdtempSync(join(tmpdir(), "adversary-invalid-"));
+	it("seats the planner's model out with a notice", () => {
+		const { env, dir } = councilEnv({
+			council: { seats: [{ model: "a/p", thinking: "high" }, { model: "b/q" }, { model: "c/r" }] },
+		});
 		try {
-			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ adversary: { adversary: { model: "a/p" } } }));
-			const same = resolveAdversary(true, "a/p", { available: () => true }, { PI_CODING_AGENT_DIR: dir });
-			assert.equal(same.ok, false);
-			const unavailable = resolveAdversary(
-				true,
-				"other/model",
-				{ available: () => false },
-				{
-					PI_CODING_AGENT_DIR: dir,
-				},
-			);
-			assert.equal(unavailable.ok, false);
+			const result = resolveAdversary(true, "a/p", { available: () => true }, env);
+			assert.ok(result.ok);
+			assert.deepEqual(result.adversary?.models, ["b/q", "c/r"]);
+			assert.match(result.notice ?? "", /a\/p:high sits out because it uses the planner model/);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
-	it("rejects a bad later entry in the adversary list", () => {
-		const dir = mkdtempSync(join(tmpdir(), "adversary-list-invalid-"));
+	it("skips review when no council is configured", () => {
+		const { env, dir } = councilEnv({});
 		try {
-			writeFileSync(
-				join(dir, "kstack.json"),
-				JSON.stringify({
-					aliases: [{ label: "fable", model: "anthropic/fable", thinking: "high" }],
-					adversary: { adversary: ["fable", "missing-alias"] },
-				}),
-			);
-			const unknown = resolveAdversary(true, "openai/planner", { available: () => true }, { PI_CODING_AGENT_DIR: dir });
-			assert.equal(unknown.ok, false);
+			assert.deepEqual(resolveAdversary(true, "a/p", { available: () => true }, env), { ok: true });
+			assert.deepEqual(resolveAdversary(false, "a/p", { available: () => true }, env), {
+				ok: true,
+				notice: "--no-adversary has no effect because no council is configured.",
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a legacy adversary section even with --no-adversary", () => {
+		const { env, dir } = councilEnv({ adversary: { adversary: { model: "b/q" } } });
+		try {
+			for (const enabled of [true, false]) {
+				const result = resolveAdversary(enabled, "a/p", { available: () => true }, env);
+				assert.equal(result.ok, false);
+				assert.match(result.ok ? "" : result.error, /"adversary" to "council".*council\.seats/);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an invalid council section even with --no-adversary", () => {
+		const { env, dir } = councilEnv({ council: { seats: [] } });
+		try {
+			const result = resolveAdversary(false, "a/p", { available: () => true }, env);
+			assert.equal(result.ok, false);
+			assert.match(result.ok ? "" : result.error, /council\.seats must be an array of 1 to 5/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects unavailable, unknown, and planner-only seats", () => {
+		const { env, dir } = councilEnv({ council: { seats: ["missing-alias"] } });
+		try {
+			const unknown = resolveAdversary(true, "openai/planner", { available: () => true }, env);
 			assert.match(unknown.ok ? "" : unknown.error, /not found/);
 
 			writeFileSync(
 				join(dir, "kstack.json"),
-				JSON.stringify({ adversary: { adversary: [{ model: "openai/ok" }, { model: "openai/unavailable" }] } }),
+				JSON.stringify({ council: { seats: [{ model: "openai/ok" }, { model: "openai/unavailable" }] } }),
 			);
 			const unavailable = resolveAdversary(
 				true,
 				"openai/planner",
 				{ available: (_provider, model) => model !== "unavailable" },
-				{ PI_CODING_AGENT_DIR: dir },
+				env,
 			);
-			assert.equal(unavailable.ok, false);
 			assert.match(unavailable.ok ? "" : unavailable.error, /unavailable or unauthenticated/);
 
-			writeFileSync(
-				join(dir, "kstack.json"),
-				JSON.stringify({ adversary: { adversary: [{ model: "openai/ok" }, { model: "openai/planner" }] } }),
-			);
-			const identical = resolveAdversary(
-				true,
-				"openai/planner",
-				{ available: () => true },
-				{ PI_CODING_AGENT_DIR: dir },
-			);
-			assert.equal(identical.ok, false);
-			assert.match(identical.ok ? "" : identical.error, /must differ from the planner/);
+			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ council: { seats: [{ model: "openai/planner" }] } }));
+			const plannerOnly = resolveAdversary(true, "openai/planner", { available: () => true }, env);
+			assert.match(plannerOnly.ok ? "" : plannerOnly.error, /Every council seat uses the planner model/);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

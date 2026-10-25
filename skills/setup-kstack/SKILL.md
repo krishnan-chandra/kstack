@@ -1,6 +1,6 @@
 ---
 name: setup-kstack
-description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change the adversary model", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change the council seats", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
 compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); Git 2.38+ for GitHub stacks; jj 0.44+ for jj; gt 1.8.5+ and Git 2.38+ for Graphite.
 ---
@@ -111,7 +111,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | --- | --- | --- |
 | `vcs` | `backend`, Git-only `stackProvider` | Use exactly `"git"`, `"jj"`, or `"graphite"`. With Git, use `"github"` (default, Git 2.38+) or `"none"`. jj requires a colocated workspace and jj 0.44+. Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. `--fast` mode reuses this implementer and skips planning, review, and publishing. |
-| `adversary` | `adversary` (one model or an array of 1–5 models), `maxRounds`, `timeoutMinutes`, `reviewTimeoutMinutes` | Every adversary differs from the planner model. `maxRounds` is an integer from 1 to 5 (default 3). `timeoutMinutes` is an integer from 1 to 60 (default 15); `reviewTimeoutMinutes` is an integer from 1 to 60 (default 10). The first adversary debates the plan; every adversary reviews the implementation. |
+| `council` | `seats` (an array of 1–5 model objects or alias strings), `maxRounds`, `timeoutMinutes`, `reviewTimeoutMinutes` | Seat models are distinct. A seat that uses the planner's model sits out, so at least one seat must use another model. `maxRounds` is an integer from 1 to 5 (default 3). `timeoutMinutes` is an integer from 1 to 60 (default 15); `reviewTimeoutMinutes` is an integer from 1 to 60 (default 10). The adversarial-planning skill seats every remaining model; plan-implement debates with the first remaining seat and reviews the implementation with all of them. |
 | `kstack-router` | `classifier`, `timeoutSeconds`, `review.models` | `timeoutSeconds` is 1–600. `review.models` is 1–5 model specs in preference order; the review route always runs on one of them (built-in order: Opus 5.5, then Astra). |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
@@ -119,9 +119,16 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `pr-autopilot` | 2–5 labeled `models`, concurrency, idle and runtime timeouts | Labels and models are unique; thinking is at most `low`; `maxConcurrency` is 1–5; `maxRuntimeMinutes` is at least `timeoutMinutes`. Each run picks one model at random from this pool. Prefer cheap, fast models from distinct families. |
 
 Keep the current timeouts and concurrency values unless the user asks to change
-them. Prefer adversaries from different model families when more than one is
-configured, so agreement and disagreement are easier to interpret. Every
-adversary must use a different model ID from the planner.
+them. Prefer council seats from different model families, so agreement and
+disagreement are easier to interpret. A seat that uses the planner's model sits
+out rather than reviewing its own plan; with seats `["opus", "astra", "argon"]`,
+an Opus planner is reviewed by Astra and Argon.
+
+A top-level `adversary` section is the pre-council name of this section, and
+plan-implement and the skill now reject it. When the existing configuration
+has one, propose the migration in the preview: rename `adversary` to `council`,
+rename `adversary.adversary` to `council.seats` (wrapping a single model in an
+array), and keep `maxRounds`, `timeoutMinutes`, and `reviewTimeoutMinutes`.
 
 The investigation list has a stricter allowlist than the other roles. Its valid
 model IDs are currently:
@@ -155,10 +162,11 @@ Before showing the preview, check all of these conditions:
   byte-for-byte in meaning, including settings for extensions this skill does
   not know.
 - Each configured section has the shape and constraints in the table above.
-- `adversary.adversary` is one model object or kstack model alias string, or an
-  array of 1–5 models, and every model ID differs from the planner. `maxRounds`
-  is an integer from 1 to 5, `timeoutMinutes` is an integer from 1 to 60, and
-  `reviewTimeoutMinutes` is an integer from 1 to 60.
+- No top-level `adversary` section remains. `council.seats` is an array of
+  1–5 model objects or kstack model alias strings with distinct models, and at
+  least one seat differs from the planner. `maxRounds` is an integer from 1 to
+  5, `timeoutMinutes` is an integer from 1 to 60, and `reviewTimeoutMinutes` is
+  an integer from 1 to 60.
 - `kstack-router.review.models` contains 1–5 model specs in preference order.
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
   high-or-deeper thinking. `--fast` reuses the `implementer` without a planner.
@@ -174,7 +182,7 @@ an entire section and start over.
 ## 6. Preview, then write atomically
 
 Render a unified diff from the current JSON to the complete proposed JSON. State
-all warnings, including duplicate adversary models, any model whose
+all warnings, including council seats that sit out as the planner's model, any model whose
 thinking support is not fully discoverable, and exact user-requested IDs accepted
 through the catalog-lag exception. Ask for explicit approval of this
 exact preview.

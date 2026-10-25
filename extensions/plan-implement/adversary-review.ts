@@ -7,8 +7,8 @@
  * the decision logic stays testable without a live host.
  */
 
-import { parseCritique } from "./critique.ts";
-import { type AgentRunResult, type Critique, type CritiqueFinding, LIMITS } from "./types.ts";
+import { type Critique, type CritiqueFinding, parseCritique } from "../shared/critique.ts";
+import { type AgentRunResult, LIMITS } from "./types.ts";
 
 export interface ReviewAdversary {
 	/** Stable label used for the display heading and the role instance. */

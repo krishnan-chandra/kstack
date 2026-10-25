@@ -1,39 +1,45 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { validateConfig } from "./extensions/plan-implement/config.ts";
 import { validateRouterConfig } from "./extensions/kstack-router/config.ts";
-import { validateAdversaryConfig } from "./extensions/shared/kstack-config.ts";
-import { isObject } from "./extensions/shared/validation.ts";
+import { resolveCouncilRoster } from "./extensions/shared/council/roster.ts";
+import { validateCouncilConfig } from "./extensions/shared/kstack-config.ts";
 
 const REPO_ROOT = import.meta.dirname;
-const example = JSON.parse(readFileSync(join(REPO_ROOT, "kstack.example.json"), "utf8"));
+const EXAMPLE_PATH = join(REPO_ROOT, "kstack.example.json");
+const example = JSON.parse(readFileSync(EXAMPLE_PATH, "utf8"));
 
-function adversaryModelId(entry) {
-	return isObject(entry) ? entry.model : entry;
-}
-
-test("kstack.example.json passes the plan-implement and adversary validators", () => {
+test("kstack.example.json passes the plan-implement, council, and router validators", () => {
 	const planImplement = validateConfig(example["plan-implement"]);
 	assert.equal(planImplement.ok, true, planImplement.ok ? "" : planImplement.error);
 
-	const adversary = validateAdversaryConfig(example.adversary);
-	assert.equal(adversary.ok, true, adversary.ok ? "" : adversary.error);
+	const council = validateCouncilConfig(example.council);
+	assert.equal(council.ok, true, council.ok ? "" : council.error);
 
 	const router = validateRouterConfig(example["kstack-router"]);
 	assert.equal(router.ok, true, router.ok ? "" : router.error);
 });
 
-test("kstack.example.json keeps every adversary model distinct from the planner", () => {
+test("kstack.example.json leaves council seats after the example planner sits out", () => {
 	const planImplement = validateConfig(example["plan-implement"]);
-	const adversary = validateAdversaryConfig(example.adversary);
 	assert.equal(planImplement.ok, true);
-	assert.equal(adversary.ok, true);
-	if (!planImplement.ok || !adversary.ok) return;
-
-	const planner = planImplement.config.planner.model;
-	for (const entry of adversary.config.adversaries) {
-		assert.notEqual(adversaryModelId(entry), planner, "adversary model must differ from the planner model");
+	if (!planImplement.ok) return;
+	const dir = mkdtempSync(join(tmpdir(), "kstack-example-"));
+	try {
+		copyFileSync(EXAMPLE_PATH, join(dir, "kstack.json"));
+		const roster = resolveCouncilRoster({
+			env: { PI_CODING_AGENT_DIR: dir },
+			plannerModel: planImplement.config.planner.model,
+			whenMissing: "error",
+		});
+		assert.equal(roster.ok, true, roster.ok ? "" : roster.error);
+		if (!roster.ok) return;
+		assert.ok((roster.roster?.seats.length ?? 0) >= 1);
+		assert.deepEqual(roster.roster?.excluded, ["openai/gpt-6-astra:high"]);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
 	}
 });

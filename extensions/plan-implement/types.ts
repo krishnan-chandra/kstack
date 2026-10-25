@@ -1,4 +1,5 @@
 /** Shared types and limits for the plan/implement workflow. */
+import type { Critique } from "../shared/critique.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
 export type { ModelThinkingLevel };
@@ -43,24 +44,6 @@ interface UsageSummary {
 
 /** Hosted roles in the plan → debate → implement → review-fix → publish loop. */
 export type AgentRole = "planner" | "adversary" | "implementer" | "fixer" | "publisher";
-
-export interface CritiqueFinding {
-	id: string;
-	text: string;
-}
-
-export interface ResolvedCritiqueFinding {
-	id: string;
-	summary: string;
-}
-
-export interface Critique {
-	verdict: "approve" | "revise";
-	blocking: CritiqueFinding[];
-	suggestions: CritiqueFinding[];
-	resolved: ResolvedCritiqueFinding[];
-	raw: string;
-}
 
 export type CritiqueResult =
 	| { status: "completed"; critique: Critique }

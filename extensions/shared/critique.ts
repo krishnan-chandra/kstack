@@ -1,11 +1,28 @@
-/** Parse the adversary's Markdown critique into the debate domain model. */
+/** Parse an adversary's Markdown critique into the debate domain model. */
 
-import type { Critique, CritiqueFinding, ResolvedCritiqueFinding } from "./types.ts";
+export interface CritiqueFinding {
+	id: string;
+	text: string;
+}
+
+interface ResolvedCritiqueFinding {
+	id: string;
+	summary: string;
+}
+
+export interface Critique {
+	verdict: "approve" | "revise";
+	blocking: CritiqueFinding[];
+	suggestions: CritiqueFinding[];
+	resolved: ResolvedCritiqueFinding[];
+	raw: string;
+}
 
 type CritiqueParseResult = { ok: true; critique: Critique } | { ok: false; error: string };
 type SectionName = "blocking" | "suggestions" | "resolved";
 
-function withoutFencedBlocks(markdown: string): string {
+/** Replace fenced blocks with a placeholder so fenced content never parses as structure. */
+export function withoutFencedBlocks(markdown: string): string {
 	const lines = markdown.split("\n");
 	let fence: string | undefined;
 	return lines

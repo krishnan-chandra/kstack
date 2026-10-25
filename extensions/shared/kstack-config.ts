@@ -1,4 +1,5 @@
-import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } from "./validation.ts";
+import { validateBoundedNumber } from "./config-validate.ts";
+import { type BoundaryValue, isObject, isString, type JsonObject } from "./validation.ts";
 /** Shared base for sections of $PI_CODING_AGENT_DIR/kstack.json.
  *
  * Unlike the standalone installer, extension callers historically expanded
@@ -28,25 +29,26 @@ const thinkingLevelsComplete: ThinkingLevelsComplete = true;
 void thinkingLevelsComplete;
 export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 
-export type AdversaryModel = string | { model: string; thinking?: ModelThinkingLevel };
+/** A model object or a kstack.json alias label. */
+export type ConfiguredModel = string | { model: string; thinking?: ModelThinkingLevel };
 
 /* exported: shared configuration contract for plan-implement and the adversarial-planning CLI */
-export interface AdversaryConfig {
-	/** One or more adversaries, in configured order. */
-	adversaries: AdversaryModel[];
-	/** Planning debate rounds. */
+export interface CouncilConfig {
+	/** One to five council seats, in configured order, before planner exclusion. */
+	seats: ConfiguredModel[];
+	/** Budgeted planning rounds. */
 	maxRounds: number;
-	/** Wall-clock limit for one planning-round critique. */
+	/** Wall-clock limit for one seat request during a planning round. */
 	timeoutMinutes: number;
-	/** Shared deadline for the implementation review fan-out. */
+	/** Shared deadline for the plan-implement implementation review fan-out. */
 	reviewTimeoutMinutes: number;
 }
 
-/** Built-in adversary when the `adversary` section omits an explicit model. */
-const DEFAULT_ADVERSARY: AdversaryModel = { model: "openai/gpt-6-astra", thinking: "xhigh" };
+/** Built-in seat when the `council` section omits `seats`. */
+const DEFAULT_SEAT: ConfiguredModel = { model: "openai/gpt-6-astra", thinking: "xhigh" };
 
-/** Maximum number of configured adversaries. */
-const MAX_ADVERSARIES = 5;
+/** Maximum number of council seats. */
+export const MAX_COUNCIL_SEATS = 5;
 
 export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLevel {
 	return (
@@ -57,10 +59,10 @@ export function isThinkingLevel(value: BoundaryValue): value is ModelThinkingLev
 	);
 }
 
-function validateAdversaryModel(
+function validateConfiguredModel(
 	value: BoundaryValue,
 	where: string,
-): { ok: true; model: AdversaryModel } | { ok: false; error: string } {
+): { ok: true; model: ConfiguredModel } | { ok: false; error: string } {
 	if (isString(value)) {
 		if (!/^[A-Za-z0-9_-]{1,16}$/.test(value)) {
 			return {
@@ -81,54 +83,53 @@ function validateAdversaryModel(
 	if (record.thinking !== undefined && !isThinkingLevel(record.thinking)) {
 		return { ok: false, error: `${where}.thinking is not a supported thinking level.` };
 	}
-	const model: Exclude<AdversaryModel, string> = { model: record.model };
+	const model: Exclude<ConfiguredModel, string> = { model: record.model };
 	if (isThinkingLevel(record.thinking)) model.thinking = record.thinking;
 	return { ok: true, model };
 }
 
+function boundedInteger(value: BoundaryValue, min: number, max: number): value is number {
+	return validateBoundedNumber(value, { integer: true, min, max });
+}
+
 /**
- * Validate the shared adversary settings once for the skill CLI and
- * plan-implement. `adversary` accepts one model or an array of models; an
- * omitted model falls back to {@link DEFAULT_ADVERSARY}.
+ * Validate the shared council settings once for the skill CLI and
+ * plan-implement. An omitted `seats` list falls back to {@link DEFAULT_SEAT}.
  */
-export function validateAdversaryConfig(
+export function validateCouncilConfig(
 	value: BoundaryValue,
-): { ok: true; config: AdversaryConfig } | { ok: false; error: string } {
+): { ok: true; config: CouncilConfig } | { ok: false; error: string } {
 	if (!isObject(value) || value === null || Array.isArray(value)) {
-		return { ok: false, error: "adversary must be an object." };
+		return { ok: false, error: "council must be an object." };
 	}
 	// SAFETY: the object guard above establishes a string-keyed config record.
 	const record = value as JsonObject;
-	const raw = record.adversary;
-	const entries = raw === undefined ? [DEFAULT_ADVERSARY] : Array.isArray(raw) ? raw : [raw];
-	if (entries.length < 1 || entries.length > MAX_ADVERSARIES) {
-		return { ok: false, error: `adversary.adversary must contain 1 to ${MAX_ADVERSARIES} entries.` };
+	const raw = record.seats ?? [DEFAULT_SEAT];
+	if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_COUNCIL_SEATS) {
+		return {
+			ok: false,
+			error: `council.seats must be an array of 1 to ${MAX_COUNCIL_SEATS} model objects or alias strings.`,
+		};
 	}
-	const adversaries: AdversaryModel[] = [];
-	for (let index = 0; index < entries.length; index++) {
-		const where = entries.length === 1 ? "adversary.adversary" : `adversary.adversary[${index}]`;
-		const model = validateAdversaryModel(entries[index], where);
+	const seats: ConfiguredModel[] = [];
+	for (let index = 0; index < raw.length; index++) {
+		const model = validateConfiguredModel(raw[index], `council.seats[${index}]`);
 		if (!model.ok) return model;
-		adversaries.push(model.model);
+		seats.push(model.model);
 	}
 	const maxRounds = record.maxRounds ?? 3;
-	if (!isNumber(maxRounds) || !Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 5) {
-		return { ok: false, error: "adversary.maxRounds must be an integer from 1 to 5." };
+	if (!boundedInteger(maxRounds, 1, 5)) {
+		return { ok: false, error: "council.maxRounds must be an integer from 1 to 5." };
 	}
 	const timeoutMinutes = record.timeoutMinutes ?? 15;
-	if (!isNumber(timeoutMinutes) || !Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 60) {
-		return { ok: false, error: "adversary.timeoutMinutes must be an integer from 1 to 60." };
+	if (!boundedInteger(timeoutMinutes, 1, 60)) {
+		return { ok: false, error: "council.timeoutMinutes must be an integer from 1 to 60." };
 	}
 	const reviewTimeoutMinutes = record.reviewTimeoutMinutes ?? 10;
-	if (
-		!isNumber(reviewTimeoutMinutes) ||
-		!Number.isInteger(reviewTimeoutMinutes) ||
-		reviewTimeoutMinutes < 1 ||
-		reviewTimeoutMinutes > 60
-	) {
-		return { ok: false, error: "adversary.reviewTimeoutMinutes must be an integer from 1 to 60." };
+	if (!boundedInteger(reviewTimeoutMinutes, 1, 60)) {
+		return { ok: false, error: "council.reviewTimeoutMinutes must be an integer from 1 to 60." };
 	}
-	return { ok: true, config: { adversaries, maxRounds, timeoutMinutes, reviewTimeoutMinutes } };
+	return { ok: true, config: { seats, maxRounds, timeoutMinutes, reviewTimeoutMinutes } };
 }
 
 export function getAgentDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -199,4 +200,27 @@ export function loadValidatedSection<T>(
 	return result.ok
 		? { status: "loaded", config: result.config, path: raw.path }
 		: { status: "invalid", path: raw.path, error: result.error };
+}
+
+/** Migration message for a kstack.json that still carries the pre-council `adversary` section. */
+const LEGACY_ADVERSARY_ERROR =
+	'The "adversary" section was renamed to "council". Rename "adversary" to "council" and "adversary.adversary" to "council.seats".';
+
+type CouncilSectionLoad =
+	| { status: "found"; config: CouncilConfig; path: string; root: JsonObject }
+	| { status: "missing"; path: string; root?: JsonObject }
+	| { status: "invalid"; path: string; error: string };
+
+/**
+ * Load and validate the `council` section. A leftover top-level `adversary`
+ * section is invalid so a stale config never silently disables review.
+ */
+export function loadCouncilSection(env: NodeJS.ProcessEnv = process.env): CouncilSectionLoad {
+	const load = loadKstackRoot(env);
+	if (load.status !== "found") return load;
+	if (load.root.adversary !== undefined) return { status: "invalid", path: load.path, error: LEGACY_ADVERSARY_ERROR };
+	if (load.root.council === undefined) return { status: "missing", path: load.path, root: load.root };
+	const validated = validateCouncilConfig(load.root.council);
+	if (!validated.ok) return { status: "invalid", path: load.path, error: validated.error };
+	return { status: "found", config: validated.config, path: load.path, root: load.root };
 }
