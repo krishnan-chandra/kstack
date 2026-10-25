@@ -159,9 +159,14 @@ async function runLocked(input: RoundInput, deps: RoundDeps): Promise<RoundResul
 	} catch (error) {
 		return failed(`Could not read the council state: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	const started = startOrResume(state, input, deps);
-	if (!("ok" in started)) return started;
-	return driveRound(started.state, started.round, started.resumed, input, deps);
+	try {
+		const started = startOrResume(state, input, deps);
+		if (!("ok" in started)) return started;
+		return await driveRound(started.state, started.round, started.resumed, input, deps);
+	} catch (error) {
+		// Progress persisted before the failure; a rerun resumes from state.json.
+		return failed(`The council round stopped: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 function startOrResume(state: CouncilState, input: RoundInput, deps: RoundDeps): RoundStart {
