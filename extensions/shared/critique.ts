@@ -21,7 +21,8 @@ export interface Critique {
 type CritiqueParseResult = { ok: true; critique: Critique } | { ok: false; error: string };
 type SectionName = "blocking" | "suggestions" | "resolved";
 
-function withoutFencedBlocks(markdown: string): string {
+/** Replace fenced blocks with a placeholder so fenced content never parses as structure. */
+export function withoutFencedBlocks(markdown: string): string {
 	const lines = markdown.split("\n");
 	let fence: string | undefined;
 	return lines
