@@ -770,6 +770,103 @@ describe("agent-host: layout and start", () => {
 	});
 });
 
+describe("agent-host: exact names and start failures", () => {
+	function conflictOnStart(harness: Harness) {
+		let starts = 0;
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent start"),
+			(call) => {
+				starts++;
+				return {
+					code: 1,
+					stdout: "",
+					stderr: JSON.stringify({
+						id: "x",
+						error: { code: "agent_name_in_use", message: `agent name ${call.args[2]} already in use` },
+					}),
+				};
+			},
+		);
+		return { starts: () => starts };
+	}
+
+	it("uses an exact name verbatim", async () => {
+		const harness = makeHarness("exact-name");
+		const opened = await openAgentHost({ owner: "o", label: "l", cwd: "/repo", maxAgents: 1 }, harness.fake.deps());
+		assert.ok(opened.ok);
+		const started = await opened.host.start({ ...PLANNER_SPEC, exactName: "council-demo-a" });
+		assert.ok(started.ok, started.ok ? "" : started.error);
+		assert.equal(started.agent.name, "council-demo-a");
+		assert.equal(harness.fake.callsMatching("agent start")[0]?.args[2], "council-demo-a");
+	});
+
+	it("does not retry an exact-name conflict and reports the reserved pane and name", async () => {
+		const harness = makeHarness("exact-conflict");
+		const { starts } = conflictOnStart(harness);
+		const opened = await openAgentHost({ owner: "o", label: "l", cwd: "/repo", maxAgents: 1 }, harness.fake.deps());
+		assert.ok(opened.ok);
+		const started = await opened.host.start({ ...PLANNER_SPEC, exactName: "council-demo-a" });
+		assert.equal(started.ok, false);
+		if (started.ok) return;
+		assert.equal(starts(), 1);
+		assert.match(started.error, /council-demo-a is already in use/);
+		assert.equal(started.name, "council-demo-a");
+		assert.equal(started.paneId, harness.fake.rootPaneId);
+	});
+
+	it("reports the reserved pane and attempted name when readiness fails", async () => {
+		const harness = makeHarness("start-failure-pane");
+		harness.fake.on(
+			(args) => args.join(" ").startsWith("agent start"),
+			() => ({
+				code: 1,
+				stdout: "",
+				stderr: JSON.stringify({ id: "x", error: { code: "agent_not_ready", message: "trust prompt" } }),
+			}),
+		);
+		const opened = await openPaneHost(
+			{ owner: "o", label: "l", cwd: "/repo", maxAgents: 1, direction: "right" },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok);
+		const started = await opened.host.start({ ...PLANNER_SPEC, exactName: "council-demo-b" });
+		assert.equal(started.ok, false);
+		if (started.ok) return;
+		assert.equal(started.name, "council-demo-b");
+		assert.equal(started.paneId, harness.fake.callsMatching("agent start")[0]?.args[6]);
+		assert.notEqual(started.paneId, harness.fake.callerPaneId);
+	});
+
+	it("rejects an exact name outside Herdr's grammar before splitting", async () => {
+		const harness = makeHarness("exact-invalid");
+		const opened = await openAgentHost({ owner: "o", label: "l", cwd: "/repo", maxAgents: 1 }, harness.fake.deps());
+		assert.ok(opened.ok);
+		const started = await opened.host.start({ ...PLANNER_SPEC, exactName: "Bad Name" });
+		assert.equal(started.ok, false);
+		assert.equal(harness.fake.callsMatching("agent start").length, 0);
+	});
+
+	it("splits the caller right and stacks agents in one column when asked", async () => {
+		const harness = makeHarness("pane-host-column");
+		const opened = await openPaneHost(
+			{ owner: "o", label: "l", cwd: "/repo", maxAgents: 3, direction: "right", maxColumns: 1 },
+			harness.fake.deps(),
+		);
+		assert.ok(opened.ok);
+		for (const letter of ["a", "b", "c"]) {
+			const started = await opened.host.start({ ...PLANNER_SPEC, exactName: `council-demo-${letter}` });
+			assert.ok(started.ok, started.ok ? "" : started.error);
+		}
+		const splits = harness.fake.callsMatching("pane split").map((call) => call.args[4]);
+		assert.deepEqual(splits, ["right", "down", "down"]);
+		assert.equal(harness.fake.callsMatching("pane split")[0]?.args[2], harness.fake.callerPaneId);
+		assert.equal(
+			harness.fake.callsMatching("pane layout").filter((call) => call.args[3] === harness.fake.callerPaneId).length,
+			0,
+		);
+	});
+});
+
 describe("agent-host: ask protocol", () => {
 	it("runs the file-based happy path with usage from the session tail", async () => {
 		const harness = makeHarness("ask-happy");

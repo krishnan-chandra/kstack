@@ -62,6 +62,14 @@ export interface HerdrAgentInfo {
 	sessionFile?: string;
 }
 
+/** Tab geometry around a pane, and the tab that currently holds it. */
+interface HerdrPaneLayout {
+	widthColumns: number;
+	heightRows: number;
+	/** Empty when Herdr did not report `layout.tab_id`. */
+	tabId: string;
+}
+
 export const HERDR_OUTPUT_CAP_BYTES = 64 * 1024;
 
 function cap(text: string, label: string): string {
@@ -187,10 +195,7 @@ export interface HerdrCli {
 		options: { name: string; keys: readonly ("esc" | "ctrl+c")[] },
 		run: HerdrRunOptions,
 	): Promise<HerdrOutcome<null>>;
-	paneLayout(
-		options: { paneId: string },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<{ widthColumns: number; heightRows: number }>>;
+	paneLayout(options: { paneId: string }, run: HerdrRunOptions): Promise<HerdrOutcome<HerdrPaneLayout>>;
 }
 
 function expectType<T>(expected: string, project: (result: JsonObject) => T | undefined) {
@@ -389,7 +394,11 @@ export function createHerdrCli(exec: HerdrExec): HerdrCli {
 					// SAFETY: the isObject guard above establishes the area is a record.
 					const area = layout.area as JsonObject;
 					if (!isNumber(area.width) || !isNumber(area.height)) return undefined;
-					return { widthColumns: area.width, heightRows: area.height };
+					return {
+						widthColumns: area.width,
+						heightRows: area.height,
+						tabId: isString(layout.tab_id) ? layout.tab_id : "",
+					};
 				}),
 				runOptions,
 			),

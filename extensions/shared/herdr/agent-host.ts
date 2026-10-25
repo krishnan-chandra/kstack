@@ -28,7 +28,13 @@ import {
 	type HerdrExec,
 	type HerdrRunOptions,
 } from "./herdr-cli.ts";
-import { type AgentPanePlacement, paneSplitDecision, placeAgent } from "./layout.ts";
+import {
+	type AgentPanePlacement,
+	type PaneSplitDecision,
+	type PaneSplitDirection,
+	paneSplitDecision,
+	placeAgent,
+} from "./layout.ts";
 import { readResponse, responseMarker } from "./response.ts";
 import { emptyUsage, readUsageSince, type UsageSummary, usageOffset } from "./session-usage.ts";
 
@@ -37,6 +43,11 @@ const HERDR_INTEGRATION_FILE = "extensions/herdr-agent-state.ts";
 export interface HostedAgentSpec {
 	/** Role label; becomes part of the agent name: <owner>-<role>-<4 hex>. */
 	role: string;
+	/**
+	 * Use this agent name verbatim instead of <owner>-<role>-<4 hex>. A name
+	 * conflict is a start failure, never retried under another name.
+	 */
+	exactName?: string;
 	/** Pi model reference in provider/model[:thinking] form. */
 	model: string;
 	cwd: string;
@@ -99,13 +110,20 @@ export interface HostedAgent {
 	dispose(options?: { closePane?: boolean }): Promise<void>;
 }
 
+/** A failed start reports the pane it reserved and the name it tried, when known. */
+interface StartFailure {
+	ok: false;
+	error: string;
+	aborted?: boolean;
+	paneId?: string;
+	name?: string;
+}
+
 export interface AgentHost {
 	readonly tabId: string;
 	/** 0700 exchange directory for instruction and answer files. */
 	readonly exchangeDir: string;
-	start(
-		spec: HostedAgentSpec,
-	): Promise<{ ok: true; agent: HostedAgent } | { ok: false; error: string; aborted?: boolean }>;
+	start(spec: HostedAgentSpec): Promise<{ ok: true; agent: HostedAgent } | StartFailure>;
 	dispose(options?: { closeTab?: boolean }): Promise<void>;
 }
 
@@ -199,6 +217,9 @@ export async function preflightHerdr(deps: HostDeps): Promise<HerdrPreflight> {
 	if (!status.ok) return { ok: false, error: `Herdr is not reachable: ${status.message}` };
 	return { ok: true, integrationPath, workspaceId, callerPane };
 }
+
+/** Herdr's agent-name grammar. */
+const AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
 /** Agent names must match [a-z][a-z0-9_-]{0,31}. */
 export function buildAgentName(owner: string, role: string, suffix: string): string {
@@ -619,7 +640,7 @@ export async function attachHostedAgent(
 	name: string,
 	deps: HostDeps,
 ): Promise<{ ok: true; agent: HostedAgent } | { ok: false; error: string }> {
-	if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) return { ok: false, error: "Invalid hosted agent name." };
+	if (!AGENT_NAME_RE.test(name)) return { ok: false, error: "Invalid hosted agent name." };
 	const preflight = await preflightHerdr(deps);
 	if (!preflight.ok) return preflight;
 	const cli = createHerdrCli(deps.exec);
@@ -683,7 +704,7 @@ export async function openAgentHost(
  * visible for inspection and steering.
  */
 export async function openPaneHost(
-	options: { owner: string; label: string; cwd: string; maxAgents: number },
+	options: PaneHostOptions,
 	deps: HostDeps,
 ): Promise<{ ok: true; host: AgentHost } | { ok: false; error: string }> {
 	const preflight = await preflightHerdr(deps);
@@ -692,8 +713,13 @@ export async function openPaneHost(
 		return { ok: false, error: `maxAgents must be an integer from 1 to ${MAX_AGENTS_PER_HOST}.` };
 	}
 	const cli = createHerdrCli(deps.exec);
-	const callerLayout = await cli.paneLayout({ paneId: preflight.callerPane }, { timeoutMs: CONTROL_TIMEOUT_MS });
-	const decision = paneSplitDecision(callerLayout.ok ? callerLayout.value : { widthColumns: 240, heightRows: 60 });
+	let decision: PaneSplitDecision;
+	if (options.direction) {
+		decision = { direction: options.direction, ratio: 0.5 };
+	} else {
+		const callerLayout = await cli.paneLayout({ paneId: preflight.callerPane }, { timeoutMs: CONTROL_TIMEOUT_MS });
+		decision = paneSplitDecision(callerLayout.ok ? callerLayout.value : { widthColumns: 240, heightRows: 60 });
+	}
 	const split = await cli.paneSplit(
 		{ paneId: preflight.callerPane, direction: decision.direction, ratio: decision.ratio, cwd: options.cwd },
 		{ timeoutMs: CONTROL_TIMEOUT_MS },
@@ -711,11 +737,25 @@ export async function openPaneHost(
 	};
 }
 
+interface HostOptions {
+	owner: string;
+	label: string;
+	cwd: string;
+	maxAgents: number;
+	/** Cap on agent grid columns inside the host; 1 stacks agents vertically. */
+	maxColumns?: number;
+}
+
+interface PaneHostOptions extends HostOptions {
+	/** Split the caller's pane this way instead of choosing from its geometry. */
+	direction?: PaneSplitDirection;
+}
+
 /** Internal signal that a queued agent start was cancelled before or during launch. */
 class StartCancelledError extends Error {}
 
 async function buildHost(
-	options: { owner: string; label: string; cwd: string; maxAgents: number },
+	options: HostOptions,
 	deps: HostDeps,
 	cli: HerdrCli,
 	preflight: { integrationPath: string },
@@ -739,6 +779,7 @@ async function buildHost(
 			const index = panes.length;
 			const placement: AgentPanePlacement | undefined = placeAgent(index, options.maxAgents, {
 				widthColumns: base.widthColumns,
+				...(options.maxColumns ? { maxColumns: options.maxColumns } : undefined),
 			});
 			let paneId = base.rootPaneId;
 			if (placement || resolve(spec.cwd) !== resolve(options.cwd)) {
@@ -791,6 +832,9 @@ async function buildHost(
 		async start(spec) {
 			if (disposed) return { ok: false, error: "The agent host is disposed." };
 			if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
+			if (spec.exactName !== undefined && !AGENT_NAME_RE.test(spec.exactName)) {
+				return { ok: false, error: `Invalid agent name ${JSON.stringify(spec.exactName)}.` };
+			}
 			const startupTimeoutMs = spec.startupTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
 			if (
 				!Number.isSafeInteger(startupTimeoutMs) ||
@@ -810,43 +854,48 @@ async function buildHost(
 					return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
 				return { ok: false, error: errorText(error) };
 			}
+			let name: string | undefined;
+			const failure = (error: string, aborted = false): StartFailure => ({
+				ok: false,
+				error,
+				paneId,
+				...(name ? { name } : undefined),
+				...(aborted ? { aborted } : undefined),
+			});
 			try {
-				if (disposed) return { ok: false, error: "The agent host is disposed." };
-				if (spec.signal?.aborted) return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
+				if (disposed) return failure("The agent host is disposed.");
+				if (spec.signal?.aborted) return failure(`Cancelled before starting ${spec.role}.`, true);
 				const args = hostedAgentArgs(spec, preflight.integrationPath);
+				const attempts = spec.exactName === undefined ? 3 : 1;
 				let lastError: CliError | undefined;
-				for (let attempt = 0; attempt < 3; attempt++) {
-					if (disposed) return { ok: false, error: "The agent host is disposed." };
-					if (spec.signal?.aborted)
-						return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
-					const name = buildAgentName(options.owner, spec.role, randomSuffix());
+				for (let attempt = 0; attempt < attempts; attempt++) {
+					if (disposed) return failure("The agent host is disposed.");
+					if (spec.signal?.aborted) return failure(`Cancelled before starting ${spec.role}.`, true);
+					const attemptName = spec.exactName ?? buildAgentName(options.owner, spec.role, randomSuffix());
+					name = attemptName;
 					let started = await cli.agentStart(
-						{ name, paneId, timeoutMs: startupTimeoutMs, args },
+						{ name: attemptName, paneId, timeoutMs: startupTimeoutMs, args },
 						{ timeoutMs: startupTimeoutMs + 30_000 },
 					);
 					// New panes can precede the shell prompt. Only this rejection proves no agent was launched.
 					for (let retry = 0; !started.ok && started.code === "agent_pane_busy" && retry < 3; retry++) {
 						await (deps.sleep ?? delay)(1_000);
-						if (disposed) return { ok: false, error: "The agent host is disposed." };
-						if (spec.signal?.aborted)
-							return { ok: false, error: `Cancelled before starting ${spec.role}.`, aborted: true };
+						if (disposed) return failure("The agent host is disposed.");
+						if (spec.signal?.aborted) return failure(`Cancelled before starting ${spec.role}.`, true);
 						started = await cli.agentStart(
-							{ name, paneId, timeoutMs: startupTimeoutMs, args },
+							{ name: attemptName, paneId, timeoutMs: startupTimeoutMs, args },
 							{ timeoutMs: startupTimeoutMs + 30_000 },
 						);
 					}
-					if (spec.signal?.aborted) {
-						return { ok: false, error: `Cancelled while starting ${spec.role}.`, aborted: true };
-					}
+					if (spec.signal?.aborted) return failure(`Cancelled while starting ${spec.role}.`, true);
 					if (started.ok) {
 						if (!started.value.cwd || canonicalCwd(started.value.cwd) !== canonicalCwd(spec.cwd))
-							return {
-								ok: false,
-								error: `Herdr started ${spec.role} with a missing or unexpected cwd; expected ${spec.cwd}. No task was sent.`,
-							};
+							return failure(
+								`Herdr started ${spec.role} with a missing or unexpected cwd; expected ${spec.cwd}. No task was sent.`,
+							);
 						const agent = new HostedAgentImpl(
 							{
-								name: started.value.name || name,
+								name: started.value.name || attemptName,
 								role: spec.role,
 								cwd: spec.cwd,
 								paneId,
@@ -858,23 +907,24 @@ async function buildHost(
 						);
 						if (disposed) {
 							await agent.dispose();
-							return { ok: false, error: "The agent host is disposed." };
+							return failure("The agent host is disposed.");
 						}
 						agents.push(agent);
 						return { ok: true, agent };
 					}
 					lastError = { code: started.code, message: started.message };
 					if (!isNameConflict(started)) {
-						return {
-							ok: false,
-							error: `Could not start ${spec.role} in pane ${paneId}: ${started.message} (${started.code}). Answer any prompt in that pane — typically a project-trust prompt — then retry.`,
-						};
+						return failure(
+							`Could not start ${spec.role} in pane ${paneId}: ${started.message} (${started.code}). Answer any prompt in that pane — typically a project-trust prompt — then retry.`,
+						);
 					}
 				}
-				return {
-					ok: false,
-					error: `Could not start ${spec.role}: agent name conflicts persisted after 3 attempts (${lastError?.message ?? "unknown"}).`,
-				};
+				if (spec.exactName !== undefined) {
+					return failure(`Could not start ${spec.role}: the agent name ${spec.exactName} is already in use.`);
+				}
+				return failure(
+					`Could not start ${spec.role}: agent name conflicts persisted after 3 attempts (${lastError?.message ?? "unknown"}).`,
+				);
 			} finally {
 				// Readiness failures can leave a live process too. Cancellation owns
 				// the allocated pane regardless of whether Herdr returned an agent.
