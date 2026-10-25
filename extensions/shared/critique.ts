@@ -5,7 +5,7 @@ export interface CritiqueFinding {
 	text: string;
 }
 
-export interface ResolvedCritiqueFinding {
+interface ResolvedCritiqueFinding {
 	id: string;
 	summary: string;
 }

@@ -28,13 +28,13 @@ test("parseSubcommand accepts the documented subcommands", () => {
 });
 
 test("parseResolveModelArgs requires one section and key", () => {
-	assert.deepEqual(parseResolveModelArgs(["--section", "adversary", "--key", "adversary"]), {
+	assert.deepEqual(parseResolveModelArgs(["--section", "swarm", "--key", "worker"]), {
 		ok: true,
-		section: "adversary",
-		key: "adversary",
+		section: "swarm",
+		key: "worker",
 		model: undefined,
 	});
-	assert.equal(parseResolveModelArgs(["--section", "adversary"]).ok, false);
+	assert.equal(parseResolveModelArgs(["--section", "swarm"]).ok, false);
 	assert.equal(parseResolveModelArgs(["--bogus", "x"]).ok, false);
 });
 
@@ -60,7 +60,7 @@ test("the CLI exits 2 with usage on syntax errors", async () => {
 	const unknown = await runCli(["bogus"]);
 	assert.equal(unknown.code, 2);
 	assert.match(unknown.stderr, /unknown subcommand: bogus/);
-	const missing = await runCli(["resolve-model", "--section", "adversary"]);
+	const missing = await runCli(["resolve-model", "--section", "swarm"]);
 	assert.equal(missing.code, 2);
 	assert.match(missing.stderr, /--key is required/);
 	const relativeAsk = await runCli(["ask", "--agent", "adversary-x", "--prompt", "p.md", "--out", "/tmp/o.md"]);
@@ -68,41 +68,20 @@ test("the CLI exits 2 with usage on syntax errors", async () => {
 	assert.match(relativeAsk.stderr, /--prompt must be an absolute path/);
 });
 
-test("resolve-model loads aliases and the validated adversary default", async () => {
+test("resolve-model loads aliases for a configured section model", async () => {
 	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-resolve-"));
-	writeFileSync(
-		join(agentDir, "kstack.json"),
-		JSON.stringify({
-			aliases: [{ label: "fable", model: "anthropic/claude-fable-5-1", thinking: "high" }],
-			adversary: { adversary: "fable" },
-		}),
-	);
-	const result = await runCli(["resolve-model", "--section", "adversary", "--key", "adversary"], {
-		PI_CODING_AGENT_DIR: agentDir,
-	});
-	assert.deepEqual(result, { code: 0, stdout: "anthropic/claude-fable-5-1:high\n", stderr: "" });
-});
-
-test("resolve-model selects the first adversary and falls back to the built-in default", async () => {
-	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-multi-"));
 	try {
 		writeFileSync(
 			join(agentDir, "kstack.json"),
 			JSON.stringify({
 				aliases: [{ label: "fable", model: "anthropic/claude-fable-5-1", thinking: "high" }],
-				adversary: { adversary: ["fable", { model: "openai/gpt-6-astra" }] },
+				swarm: { worker: "fable" },
 			}),
 		);
-		const first = await runCli(["resolve-model", "--section", "adversary", "--key", "adversary"], {
+		const result = await runCli(["resolve-model", "--section", "swarm", "--key", "worker"], {
 			PI_CODING_AGENT_DIR: agentDir,
 		});
-		assert.deepEqual(first, { code: 0, stdout: "anthropic/claude-fable-5-1:high\n", stderr: "" });
-
-		writeFileSync(join(agentDir, "kstack.json"), JSON.stringify({ adversary: {} }));
-		const fallback = await runCli(["resolve-model", "--section", "adversary", "--key", "adversary"], {
-			PI_CODING_AGENT_DIR: agentDir,
-		});
-		assert.deepEqual(fallback, { code: 0, stdout: "openai/gpt-6-astra:xhigh\n", stderr: "" });
+		assert.deepEqual(result, { code: 0, stdout: "anthropic/claude-fable-5-1:high\n", stderr: "" });
 	} finally {
 		rmSync(agentDir, { recursive: true, force: true });
 	}
@@ -111,7 +90,7 @@ test("resolve-model selects the first adversary and falls back to the built-in d
 test("resolve-model accepts an explicit full model without config", async () => {
 	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-explicit-"));
 	const result = await runCli(
-		["resolve-model", "--section", "adversary", "--key", "adversary", "--model", "openai/gpt-5.6-astra:medium"],
+		["resolve-model", "--section", "swarm", "--key", "worker", "--model", "openai/gpt-5.6-astra:medium"],
 		{ PI_CODING_AGENT_DIR: agentDir },
 	);
 	assert.deepEqual(result, { code: 0, stdout: "openai/gpt-5.6-astra:medium\n", stderr: "" });
@@ -119,7 +98,7 @@ test("resolve-model accepts an explicit full model without config", async () => 
 
 test("resolve-model exits 1 with configuration guidance when no model exists", async () => {
 	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-missing-"));
-	const result = await runCli(["resolve-model", "--section", "adversary", "--key", "adversary"], {
+	const result = await runCli(["resolve-model", "--section", "swarm", "--key", "worker"], {
 		PI_CODING_AGENT_DIR: agentDir,
 	});
 	assert.equal(result.code, 1);

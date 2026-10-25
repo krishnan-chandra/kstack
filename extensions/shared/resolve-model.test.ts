@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ModelAlias } from "./model-aliases.ts";
-import { resolveConfiguredModel, resolveModelRef } from "./resolve-model.ts";
+import { modelWithoutThinking, resolveConfiguredModel, resolveModelRef } from "./resolve-model.ts";
 
 function failureMessage(result: ReturnType<typeof resolveModelRef>): string {
 	assert.equal(result.ok, false);
@@ -29,8 +29,8 @@ describe("resolveModelRef", () => {
 				argument: "openai/gpt-5.6-astra:medium",
 				configured: "fable",
 				aliases,
-				section: "adversary",
-				key: "adversary",
+				section: "swarm",
+				key: "worker",
 			}),
 			{ ok: true, ref: "openai/gpt-5.6-astra:medium" },
 		);
@@ -41,15 +41,15 @@ describe("resolveModelRef", () => {
 			resolveModelRef({
 				argument: "fable:medium",
 				aliases,
-				section: "adversary",
-				key: "adversary",
+				section: "swarm",
+				key: "worker",
 			}),
 			{ ok: true, ref: "anthropic/claude-fable-5-1:medium" },
 		);
 	});
 
 	it("falls back to configured alias and object forms", () => {
-		assert.deepEqual(resolveModelRef({ configured: "fable", aliases, section: "adversary", key: "adversary" }), {
+		assert.deepEqual(resolveModelRef({ configured: "fable", aliases, section: "swarm", key: "worker" }), {
 			ok: true,
 			ref: "anthropic/claude-fable-5-1:high",
 		});
@@ -57,8 +57,8 @@ describe("resolveModelRef", () => {
 			resolveModelRef({
 				configured: { model: "openai/gpt-5.6-astra", thinking: "low" },
 				aliases,
-				section: "adversary",
-				key: "adversary",
+				section: "swarm",
+				key: "worker",
 			}),
 			{ ok: true, ref: "openai/gpt-5.6-astra:low" },
 		);
@@ -78,20 +78,28 @@ describe("resolveModelRef", () => {
 	});
 });
 
+describe("modelWithoutThinking", () => {
+	it("strips only a recognized thinking suffix", () => {
+		assert.equal(modelWithoutThinking("openai/gpt-6-astra:high"), "openai/gpt-6-astra");
+		assert.equal(modelWithoutThinking("openai/gpt-6-astra"), "openai/gpt-6-astra");
+		assert.equal(modelWithoutThinking("ollama/qwen:7b"), "ollama/qwen:7b");
+	});
+});
+
 describe("resolveConfiguredModel", () => {
-	it("loads and validates the adversary default", () => {
+	it("resolves a configured alias through kstack.json aliases", () => {
 		const dir = mkdtempSync(join(tmpdir(), "kstack-resolve-model-"));
 		writeFileSync(
 			join(dir, "kstack.json"),
 			JSON.stringify({
 				aliases: [{ label: "fable", model: "anthropic/claude-fable-5-1", thinking: "high" }],
-				adversary: { adversary: "fable", maxRounds: 3, timeoutMinutes: 15 },
+				swarm: { worker: "fable", maxConcurrency: 4 },
 			}),
 		);
 		assert.deepEqual(
 			resolveConfiguredModel({
-				section: "adversary",
-				key: "adversary",
+				section: "swarm",
+				key: "worker",
 				env: { PI_CODING_AGENT_DIR: dir },
 			}),
 			{ ok: true, ref: "anthropic/claude-fable-5-1:high" },
@@ -115,8 +123,8 @@ describe("resolveConfiguredModel", () => {
 		assert.deepEqual(
 			resolveConfiguredModel({
 				argument: "openai/gpt-5.6-astra:medium",
-				section: "adversary",
-				key: "adversary",
+				section: "swarm",
+				key: "worker",
 				env: { PI_CODING_AGENT_DIR: dir },
 			}),
 			{ ok: true, ref: "openai/gpt-5.6-astra:medium" },

@@ -9,6 +9,16 @@
       "label": "opus",
       "model": "anthropic/claude-opus-5-5",
       "thinking": "high"
+    },
+    {
+      "label": "astra",
+      "model": "openai/gpt-6-astra",
+      "thinking": "high"
+    },
+    {
+      "label": "argon",
+      "model": "google/gemini-4-argon",
+      "thinking": "high"
     }
   ],
   "plan-implement": {
@@ -22,13 +32,8 @@
     },
     "timeoutMinutes": 30
   },
-  "adversary": {
-    "adversary": [
-      {
-        "model": "anthropic/claude-opus-5-5",
-        "thinking": "xhigh"
-      }
-    ],
+  "council": {
+    "seats": ["opus", "astra", "argon"],
     "maxRounds": 3,
     "timeoutMinutes": 15,
     "reviewTimeoutMinutes": 10
