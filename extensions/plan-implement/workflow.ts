@@ -1,6 +1,7 @@
 /** Testable planner → adversary debate → approval → implementer sequencing. */
 
-import type { AgentRunResult, CritiqueFinding, CritiqueResult } from "./types.ts";
+import type { CritiqueFinding } from "../shared/critique.ts";
+import type { AgentRunResult, CritiqueResult } from "./types.ts";
 
 type CompletedAgentRun = Extract<AgentRunResult, { status: "completed" }>;
 

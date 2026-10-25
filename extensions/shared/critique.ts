@@ -1,6 +1,22 @@
-/** Parse the adversary's Markdown critique into the debate domain model. */
+/** Parse an adversary's Markdown critique into the debate domain model. */
 
-import type { Critique, CritiqueFinding, ResolvedCritiqueFinding } from "./types.ts";
+export interface CritiqueFinding {
+	id: string;
+	text: string;
+}
+
+export interface ResolvedCritiqueFinding {
+	id: string;
+	summary: string;
+}
+
+export interface Critique {
+	verdict: "approve" | "revise";
+	blocking: CritiqueFinding[];
+	suggestions: CritiqueFinding[];
+	resolved: ResolvedCritiqueFinding[];
+	raw: string;
+}
 
 type CritiqueParseResult = { ok: true; critique: Critique } | { ok: false; error: string };
 type SectionName = "blocking" | "suggestions" | "resolved";

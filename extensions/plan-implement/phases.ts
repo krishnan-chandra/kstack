@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LandResult } from "../land/types.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
+import { parseCritique } from "../shared/critique.ts";
 import { extractSlug } from "../shared/slug.ts";
 import {
 	newlyCreatedDrafts,
@@ -22,7 +23,6 @@ import {
 	summarizeFindings,
 } from "./adversary-review.ts";
 import type { RoleRunner } from "./agent-runner.ts";
-import { parseCritique } from "./critique.ts";
 import { createExecutionLedger, extractExecutionLedger, validateExecutionLedger } from "./execution-ledger.ts";
 import { buildPlanningSessionReference, sessionIdFromFile } from "./handoff-reference.ts";
 import { runHostedPhase } from "./hosted-phase.ts";
