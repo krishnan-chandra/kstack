@@ -137,10 +137,10 @@ function fixture(extraEnv = {}) {
 		FIXTURE_CWD: root,
 		...extraEnv,
 	};
-	const run = (args) => {
+	const run = (args, overrides = {}) => {
 		const child = spawn(process.execPath, [CLI, "council", ...args], {
 			cwd: root,
-			env,
+			env: { ...env, ...overrides },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -307,6 +307,35 @@ test("council open reports a seat at a startup prompt as waiting and adopts it o
 		assert.equal(second.json.seats.find((seat) => seat.letter === "B").paneId, waiting.paneId);
 		assert.equal(f.calls().filter((call) => call[1] === "start").length, 3);
 		assert.equal(f.calls().filter((call) => call[1] === "split").length, 3);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("round refusals before any seat is asked still report live-plan drift", { timeout: 30000 }, async () => {
+	const f = fixture();
+	try {
+		f.setReplies({ "default/review": APPROVE });
+		const open = await f.run(["open", "--dir", f.files.dir, "--slug", "drift", "--planner-model", "openai/gpt-6-sol"])
+			.done;
+		assert.equal(open.code, 0, open.stdout + open.stderr);
+		const plan = join(f.root, "plan.md");
+		const round = await f.run(["round", "--dir", f.files.dir, "--plan", plan, "--task", join(f.root, "task.md")]).done;
+		assert.equal(round.json.decision, "approve");
+		writeFileSync(plan, "# Plan\n\nAn unreviewed edit.\n");
+		const promptsBefore = f.calls().filter((call) => call[1] === "prompt").length;
+
+		writeFileSync(join(f.root, "herdr-state", "panes", "w1:p1"), "w1:t9");
+		const crossTab = await f.run(["round", "--dir", f.files.dir, "--plan", plan]).done;
+		assert.equal(crossTab.code, 1);
+		assert.match(crossTab.json.error, /bound to tab w1:t1, but the caller is in tab w1:t9/);
+		assert.equal(crossTab.json.planChangedSinceSnapshot, true);
+
+		const outsideHerdr = await f.run(["round", "--dir", f.files.dir, "--plan", plan], { HERDR_ENV: "0" }).done;
+		assert.equal(outsideHerdr.code, 1);
+		assert.match(outsideHerdr.json.error, /HERDR_ENV/);
+		assert.equal(outsideHerdr.json.planChangedSinceSnapshot, true);
+		assert.equal(f.calls().filter((call) => call[1] === "prompt").length, promptsBefore);
 	} finally {
 		rmSync(f.root, { recursive: true, force: true });
 	}

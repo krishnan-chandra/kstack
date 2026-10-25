@@ -5,8 +5,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { acquirePublicationLock, type LockAttempt } from "../publication-lock.ts";
 import { type BoundaryValue, isObject } from "../validation.ts";
 import {
@@ -168,12 +168,16 @@ export async function withCouncilLock<T>(
 	run: () => Promise<T>,
 	pidAlive?: (pid: number) => boolean,
 ): Promise<LockResult<T>> {
-	const path = councilPaths(dir).lock;
+	let path = councilPaths(dir).lock;
 	let attempt: LockAttempt;
 	try {
+		// Every spelling of the directory, including symlinks, must share one lock identity.
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		const canonical = realpathSync(dir);
+		path = councilPaths(canonical).lock;
 		attempt = acquirePublicationLock({
-			repositoryPath: resolve(dir),
-			locksDir: dir,
+			repositoryPath: canonical,
+			locksDir: canonical,
 			fileName: basename(path),
 			...(pidAlive ? { isPidAlive: pidAlive } : undefined),
 		});

@@ -8,7 +8,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { resolveCouncilRoster } from "../council/roster.ts";
-import { overrideCouncilFinding, runCouncilRound } from "../council/round.ts";
+import { livePlanChanged, overrideCouncilFinding, runCouncilRound } from "../council/round.ts";
 import { readManifest } from "../council/store.ts";
 import { resolveConfiguredModel } from "../resolve-model.ts";
 import { isObject } from "../validation.ts";
@@ -193,6 +193,12 @@ export function parseCouncilArgs(argv) {
 	};
 }
 
+/** Every round and override result reports live-plan drift once a snapshot exists. */
+function planCheck(dir, planFile) {
+	const changed = livePlanChanged(dir, planFile);
+	return changed === undefined ? undefined : { planChangedSinceSnapshot: changed };
+}
+
 function printJson(value) {
 	process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -241,7 +247,7 @@ async function runCouncil(options) {
 		return withCancellation(async (signal) => {
 			const asker = await createSeatAsker(options.dir, deps);
 			if (!asker.ok) {
-				printJson({ status: "failed", error: asker.error });
+				printJson({ status: "failed", error: asker.error, ...planCheck(options.dir, options.plan) });
 				return 1;
 			}
 			const result = await runCouncilRound(
@@ -270,6 +276,7 @@ async function runCouncil(options) {
 			printJson({
 				status: "failed",
 				error: `Could not read the council manifest: ${error instanceof Error ? error.message : String(error)}`,
+				...planCheck(options.dir, options.plan),
 			});
 			return 1;
 		}

@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { councilPaths, withCouncilLock } from "./store.ts";
 
@@ -28,7 +38,12 @@ function seedLock(dir: string, pid: number): void {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(
 		councilPaths(dir).lock,
-		JSON.stringify({ pid, startedAt: new Date().toISOString(), repositoryPath: resolve(dir), ownerToken: "seeded" }),
+		JSON.stringify({
+			pid,
+			startedAt: new Date().toISOString(),
+			repositoryPath: realpathSync(dir),
+			ownerToken: "seeded",
+		}),
 	);
 }
 
@@ -98,6 +113,30 @@ describe("withCouncilLock", () => {
 		assert.deepEqual(await inner, { ok: true, value: "inner" });
 		assert.deepEqual(inside, ["inner"]);
 		assert.equal(existsSync(councilPaths(dir).lock), false);
+	});
+
+	it("shares one lock across symlinked spellings of the council directory", async () => {
+		const root = tempDir();
+		const dir = join(root, "council");
+		const alias = join(root, "alias");
+		mkdirSync(dir);
+		symlinkSync(dir, alias);
+		let releaseHolder: () => void = () => {};
+		const gate = new Promise<void>((resolveGate) => {
+			releaseHolder = resolveGate;
+		});
+		const holder = withCouncilLock(dir, async () => {
+			await gate;
+			return "holder";
+		});
+		// Age the live holder's lock past the corrupt-lock grace period.
+		const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+		utimesSync(councilPaths(dir).lock, old, old);
+		const contender = await withCouncilLock(alias, async () => "contender");
+		releaseHolder();
+		assert.equal(contender.ok, false, "a live holder blocks every spelling of the directory");
+		assert.match(contender.ok ? "" : contender.error, new RegExp(`pid ${process.pid}`));
+		assert.deepEqual(await holder, { ok: true, value: "holder" });
 	});
 
 	it("never lets concurrent processes share the critical section around a stale lock", {

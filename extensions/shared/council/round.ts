@@ -155,10 +155,31 @@ function describeFailure(result: Exclude<SeatAskResult, { status: "completed" }>
 	return `${result.error}${where && !result.error.includes("Inspect pane") ? where : ""}`;
 }
 
+/**
+ * Compare a live plan with the council's latest snapshot without the lock.
+ * State writes are atomic renames, so a concurrent command never exposes a
+ * partial file. Undefined before any snapshot or without readable state.
+ */
+/* exported: cli.mjs reports drift on refusals that happen before a round runs */
+export function livePlanChanged(dir: string, planFile: string | undefined): boolean | undefined {
+	try {
+		return planChanged(readState(dir), planFile);
+	} catch {
+		return undefined;
+	}
+}
+
+/** Attach the live-plan comparison to any result that does not carry one yet. */
+function withPlanCheck(result: RoundResult, dir: string, planFile: string | undefined): RoundResult {
+	if (result.planChangedSinceSnapshot !== undefined) return result;
+	const changed = livePlanChanged(dir, planFile);
+	return changed === undefined ? result : { ...result, planChangedSinceSnapshot: changed };
+}
+
 /** Run or resume one council round. Never throws for seat or input failures. */
 export async function runCouncilRound(input: RoundInput, deps: RoundDeps): Promise<RoundResult> {
 	const locked = await withCouncilLock(input.dir, () => runLocked(input, deps), deps.pidAlive);
-	return locked.ok ? locked.value : failed(locked.error);
+	return withPlanCheck(locked.ok ? locked.value : failed(locked.error), input.dir, input.planFile);
 }
 
 type RoundStart = { ok: true; state: CouncilState; round: CouncilRoundState; resumed: boolean } | RoundResult;
@@ -170,20 +191,14 @@ async function runLocked(input: RoundInput, deps: RoundDeps): Promise<RoundResul
 	} catch (error) {
 		return failed(`Could not read the council state: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	let result: RoundResult;
 	try {
 		const started = startOrResume(state, input, deps);
-		result = "ok" in started ? await driveRound(started.state, started.round, started.resumed, input, deps) : started;
+		if (!("ok" in started)) return started;
+		return await driveRound(started.state, started.round, started.resumed, input, deps);
 	} catch (error) {
 		// Progress persisted before the failure; a rerun resumes from state.json.
-		result = failed(`The council round stopped: ${error instanceof Error ? error.message : String(error)}`);
+		return failed(`The council round stopped: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	// Results that stop before a new snapshot still compare against the latest one.
-	if (result.planChangedSinceSnapshot === undefined) {
-		const changed = planChanged(state, input.planFile);
-		if (changed !== undefined) result.planChangedSinceSnapshot = changed;
-	}
-	return result;
 }
 
 function startOrResume(state: CouncilState, input: RoundInput, deps: RoundDeps): RoundStart {
@@ -581,13 +596,13 @@ export async function overrideCouncilFinding(
 				return failed(`Could not read the council state: ${error instanceof Error ? error.message : String(error)}`);
 			}
 			const result = overrideLocked(state, input);
-			const changed = planChanged(state, input.planFile);
-			if (changed !== undefined) result.planChangedSinceSnapshot = changed;
+			// The override is judged against the latest snapshot, not the reviewed round's own path check.
+			delete result.planChangedSinceSnapshot;
 			return result;
 		},
 		deps.pidAlive,
 	);
-	return locked.ok ? locked.value : failed(locked.error);
+	return withPlanCheck(locked.ok ? locked.value : failed(locked.error), input.dir, input.planFile);
 }
 
 function overrideLocked(state: CouncilState, input: OverrideInput): RoundResult {

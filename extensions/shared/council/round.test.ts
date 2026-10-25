@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { truncateHeadUtf8 } from "../child-agent-runner.ts";
 import { COUNCIL_OUTPUT_CAP_BYTES } from "./protocol.ts";
@@ -393,7 +393,12 @@ describe("runCouncilRound", () => {
 	it("takes over a stale lock and refuses a live one for rounds and overrides", async () => {
 		const c = council(["A"]);
 		const lockPayload = (pid: number) =>
-			JSON.stringify({ pid, startedAt: new Date().toISOString(), repositoryPath: resolve(c.dir), ownerToken: "t" });
+			JSON.stringify({
+				pid,
+				startedAt: new Date().toISOString(),
+				repositoryPath: realpathSync(c.dir),
+				ownerToken: "t",
+			});
 		writeFileSync(c.paths.lock, lockPayload(999999));
 		const deps = { ...new FakeSeats().deps, pidAlive: (pid: number) => pid !== 999999 };
 		const stale = await runCouncilRound(c.input(), deps);
@@ -401,10 +406,13 @@ describe("runCouncilRound", () => {
 		assert.equal(existsSync(c.paths.lock), false);
 
 		writeFileSync(c.paths.lock, lockPayload(process.pid));
+		writeFileSync(c.planFile, "# Plan v2, not reviewed\n");
 		const live = await runCouncilRound(c.input(), new FakeSeats().deps);
 		assert.match(live.error ?? "", /holds .*council\.lock/);
+		assert.equal(live.planChangedSinceSnapshot, true, "a lock refusal still reports live-plan drift");
 		const liveOverride = await overrideCouncilFinding({ dir: c.dir, id: "A/B-1", reason: "x", info: INFO });
 		assert.match(liveOverride.error ?? "", /holds .*council\.lock/);
+		assert.equal(liveOverride.planChangedSinceSnapshot, true);
 		assert.equal(existsSync(c.paths.lock), true);
 	});
 });
