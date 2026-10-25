@@ -226,7 +226,12 @@ async function runCouncil(options) {
 		);
 		const common = { dir: options.dir, excluded: resolved.excluded, maxRounds: resolved.maxRounds };
 		if (!opened.ok) {
-			printJson({ status: "failed", ...common, error: opened.error, ...(opened.seats ? { seats: opened.seats } : undefined) });
+			printJson({
+				status: "failed",
+				...common,
+				error: opened.error,
+				...(opened.seats ? { seats: opened.seats } : undefined),
+			});
 			return 1;
 		}
 		printJson({ status: opened.status, ...common, tabId: opened.tabId, seats: opened.seats });

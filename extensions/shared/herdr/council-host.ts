@@ -44,11 +44,12 @@ interface SeatReport {
 	error?: string;
 }
 
-export type CouncilOpenResult =
+type CouncilOpenResult =
 	| { ok: true; status: "ready" | "waiting"; tabId: string; seats: SeatReport[] }
 	| { ok: false; error: string; seats?: SeatReport[] };
 
 /** Host-only seat data for `record.md` and failure messages. */
+/* exported: cli.mjs builds council round and override input from the manifest */
 export function councilRecordInfo(manifest: CouncilManifest): CouncilRecordInfo {
 	const seatModels: CouncilRecordInfo["seatModels"] = {};
 	const seatPanes: CouncilRecordInfo["seatPanes"] = {};
@@ -59,7 +60,7 @@ export function councilRecordInfo(manifest: CouncilManifest): CouncilRecordInfo 
 	return { seatModels, seatPanes, plannerModel: manifest.plannerModel, excluded: manifest.excluded };
 }
 
-export function councilSeatName(slug: string, letter: SeatLetter): string {
+function councilSeatName(slug: string, letter: SeatLetter): string {
 	return `council-${slug}-${letter.toLowerCase()}`;
 }
 

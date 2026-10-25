@@ -17,7 +17,9 @@ A short, non-interactive `pi -p --mode json` process run through
 `child-agent-runner.ts`.
 
 **Adversary**:
-A read-only hosted agent that critiques an implementation plan.
+A read-only hosted agent that critiques a plan or implementation. In
+plan-implement, adversaries are the council seats left after the planner's
+model sits out.
 _Avoid_: reviewer
 
 **Critique**:
@@ -30,6 +32,45 @@ One plan, critique, and revision cycle.
 
 **Debate**:
 A bounded sequence of rounds that produces a final plan.
+
+### Planning council
+
+**Council**:
+The adversarial-planning debate with 1–5 seats. Deterministic CLI code, not a
+model, publishes the ledger, counts votes, and decides each round.
+_Avoid_: panel, committee
+
+**Seat**:
+One read-only council member, a hosted agent with a distinct model, known to
+other seats only by its letter (A–E).
+
+**Roster**:
+The configured seats after alias resolution, minus any seat that uses the
+planner's model.
+
+**Ledger**:
+The host-published list of findings after a round's reviews, attributed by
+seat letter. Seats read the ledger; they never message each other.
+
+**Cross-examination**:
+The vote that follows the ledger when findings are up for a vote.
+
+**Ballot**:
+One seat's cross-examination reply: `concur`, `object — <evidence>`, or
+`abstain` on each other seat's finding, plus withdrawals of its own findings.
+
+**Binding finding**:
+A blocking finding that survived its vote. Approval needs none.
+
+**Dismissed finding**:
+A finding that more than half of all seats objected to with evidence.
+
+**Override**:
+The user's decision to set aside one binding finding, with a recorded reason.
+
+**Escalation**:
+A round outcome that hands a conflict between findings, or a second rebuttal
+of one finding, to the user.
 
 ### Version control
 

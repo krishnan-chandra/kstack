@@ -14,7 +14,7 @@ import { modelWithoutThinking, resolveModelRef } from "../resolve-model.ts";
 export const SEAT_LETTERS = ["A", "B", "C", "D", "E"] as const;
 export type SeatLetter = (typeof SEAT_LETTERS)[number];
 
-export interface CouncilSeat {
+interface CouncilSeat {
 	letter: SeatLetter;
 	/** Resolved `provider/model[:thinking]` reference. */
 	model: string;

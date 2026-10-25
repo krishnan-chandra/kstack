@@ -95,7 +95,7 @@ export function createLedger(seats: readonly SeatLetter[]): CouncilLedger {
 	return { seats: [...seats], findings: [], suggestions: [] };
 }
 
-export function findingId(seat: SeatLetter, localId: string): string {
+function findingId(seat: SeatLetter, localId: string): string {
 	return `${seat}/${localId}`;
 }
 

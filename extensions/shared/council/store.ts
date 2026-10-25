@@ -18,7 +18,7 @@ import {
 } from "./ledger.ts";
 import type { SeatLetter } from "./roster.ts";
 
-export type RoundPhase = "review" | "cross-exam" | "tally" | "complete";
+type RoundPhase = "review" | "cross-exam" | "tally" | "complete";
 export type CouncilPhase = "review" | "cross-exam";
 
 export interface CouncilRoundState {

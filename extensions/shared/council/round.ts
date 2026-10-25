@@ -96,7 +96,7 @@ interface SeatFailure {
 	error: string;
 }
 
-export interface RoundResult {
+interface RoundResult {
 	status: "complete" | "incomplete" | "escalated" | "failed";
 	exitCode: 0 | 1;
 	round?: number;

@@ -62,9 +62,9 @@ export interface PaneSplitDecision {
 }
 
 /**
- * Decide how to split the caller's own pane for a hosted adversary. Matches the
- * adversarial-planning skill: split right when the pane is wide, down when it
- * is narrow or tall.
+ * Decide how to split the caller's own pane for a hosted adversary: right when
+ * the pane is wide, down when it is narrow or tall. Callers that need a fixed
+ * placement, such as council seats, pass `openPaneHost` a direction instead.
  */
 export function paneSplitDecision(layout: { widthColumns: number; heightRows: number }): PaneSplitDecision {
 	if (layout.heightRows > layout.widthColumns) return { direction: "down", ratio: 0.5 };

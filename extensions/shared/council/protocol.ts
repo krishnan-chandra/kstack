@@ -41,7 +41,7 @@ const RESPONSE_LINE = new RegExp(
 const NONE_LINE = /^None\.?$/i;
 
 /** The exact marker `truncateHeadUtf8` appends when a hosted reply exceeds its cap. */
-export function truncationMarker(capBytes: number = COUNCIL_OUTPUT_CAP_BYTES): string {
+function truncationMarker(capBytes: number = COUNCIL_OUTPUT_CAP_BYTES): string {
 	return `[Output truncated at ${capBytes} bytes.]`;
 }
 

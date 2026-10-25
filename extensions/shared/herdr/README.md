@@ -1,6 +1,6 @@
 # Herdr-hosted agents
 
-This directory hosts watchable, steerable Pi agents in Herdr panes. Plan-implement, Arena, Swarm, and Simplify share the host. The standalone adversarial-planning skill attaches to its named agent through the same request lifecycle. Short headless work still uses `../child-agent-runner.ts`.
+This directory hosts watchable, steerable Pi agents in Herdr panes. Plan-implement, Arena, Swarm, and Simplify share the host. The adversarial-planning skill opens its council seats through `council-host.ts` and asks them through the same request lifecycle. Short headless work still uses `../child-agent-runner.ts`.
 
 The modules use Node APIs and injected effects, with no Pi SDK runtime imports. The skill CLI loads them through Node's TypeScript stripping.
 
@@ -14,9 +14,10 @@ The modules use Node APIs and injected effects, with no Pi SDK runtime imports. 
 | `session-usage.ts` | Incremental usage accounting for one request. |
 | `layout.ts` | Pane-placement decisions. |
 | `fanout.ts` | Bounded start-and-ask lifecycles with ordered results. |
-| `cli.mjs` | Skill-facing model resolution, fanout, and asks against existing agents. |
+| `council-host.ts` | Council seat placement, tab binding, start reconciliation, the round's seat asker, and closing seat panes. |
+| `cli.mjs` | Skill-facing model resolution, fanout, asks against existing agents, and council commands. |
 
-Model resolution lives in `../resolve-model.ts`; it is independent of Herdr.
+Model resolution lives in `../resolve-model.ts`; it is independent of Herdr. The council's ledger, wire protocol, and round engine live in `../council/` and take the seat asker as an injected effect.
 
 ## Host contract
 
@@ -24,7 +25,7 @@ Preflight requires `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, `HERDR_PANE_ID`, a reach
 
 `openAgentHost` creates one no-focus tab in the caller's workspace. Pane allocation is serialized, while startup and prompting may run concurrently. Each pane uses its assigned agent cwd. If the first agent's cwd differs from the tab cwd, the host allocates another pane rather than reusing the root shell. A new pane may not have reached its shell prompt when startup begins. The host retries Herdr's pre-launch `agent_pane_busy` rejection up to three times, one second apart. It does not retry blocked or ambiguous launches. Startup failures consume their reserved pane. The host validates Herdr's reported cwd at startup and before each new request, and refuses a new request while the agent is still working on a human turn. It never focuses, splits, or closes the caller's pane.
 
-Use `openAgentHost` when Kstack creates and owns the agents in a new tab, and `openPaneHost` when the agents should share the caller's tab as panes split off the caller's own pane. Use `attachHostedAgent` only for an existing named agent in a user- or skill-owned pane. It attaches the request lifecycle without creating a tab. For these attached agents, cancellation sends Escape but never sends Ctrl+C or closes the pane. `attachHostedAgent` refuses the caller's pane. The caller is responsible for selecting an agent with the intended model, tools, and cwd.
+Use `openAgentHost` when Kstack creates and owns the agents in a new tab, and `openPaneHost` when the agents should share the caller's tab as panes split off the caller's own pane. `openPaneHost` accepts a fixed `direction` for that split and `maxColumns` for the agent grid inside it; councils use `right` and one column, so seats stack to the right of the caller. A `HostedAgentSpec.exactName` uses that agent name verbatim: no random suffix, and a name conflict fails instead of retrying. Every failed `start` reports the pane it reserved and the name it tried, when known. Use `attachHostedAgent` only for an existing named agent in a user- or skill-owned pane. It attaches the request lifecycle without creating a tab. For these attached agents, cancellation sends Escape but never sends Ctrl+C or closes the pane. `attachHostedAgent` refuses the caller's pane. The caller is responsible for selecting an agent with the intended model, tools, and cwd.
 
 Hosted Pi processes load Kstack and the Herdr integration explicitly. Extension discovery defaults to off (`--no-extensions`). `inheritExtensions: true` enables normal Pi discovery; `tools` independently controls any tool allowlist. Plan-implement, fanout, and router reviews enable discovery and omit the allowlist.
 
@@ -71,9 +72,22 @@ These controls are not a sandbox. Writable agents have the user's permissions. F
 node <kstack>/extensions/shared/herdr/cli.mjs resolve-model --section NAME --key NAME [--model REF]
 node <kstack>/extensions/shared/herdr/cli.mjs fanout --spec spec.json --out result.json [--label TEXT] [--max-concurrency N]
 node <kstack>/extensions/shared/herdr/cli.mjs ask --agent NAME --prompt instructions.md --out response.md
+node <kstack>/extensions/shared/herdr/cli.mjs council open --dir DIR --slug SLUG --planner-model REF [--seats REF,REF]
+node <kstack>/extensions/shared/herdr/cli.mjs council round --dir DIR --plan FILE [--task FILE] [--response FILE] [--verify]
+node <kstack>/extensions/shared/herdr/cli.mjs council override --dir DIR --finding ID --reason TEXT [--plan FILE]
+node <kstack>/extensions/shared/herdr/cli.mjs council close --dir DIR
 ```
 
 Fanout spec cwd, prompt, and output fields and `ask` prompt and output paths must be absolute; the hosted agent resolves the pointer from its own cwd. `ask` uses a 15-minute timeout and the default response cap. Both return nonzero on failure, blocking, or cancellation.
+
+Council commands take absolute paths and print one JSON result. They exit 0 when a round completes or escalates and when `open` leaves every seat ready, 1 when a round is incomplete, cancelled, or failed, or when a seat is still waiting, and 2 on usage errors. Every mutating command holds `council.lock` in the council directory; a lock whose process is gone is taken over.
+
+- **Exact names.** Seats are named `council-<slug>-<letter>`, so one slug has one live council.
+- **Tab binding.** `council open` records the caller's tab in `manifest.json`. `open`, `round`, and `close` refuse a caller or seat in another tab; there is no relocation.
+- **Reconciliation.** The manifest records each start attempt. A rerun of `open` adopts a seat that is still starting in its recorded pane, closes the stale pane of a seat whose agent is gone before restarting it, refuses a same-named agent outside the manifest, and splits only for seats that need a start.
+- **Complete replies.** Every council ask uses a 64 KiB cap. A reply ending in the truncation marker is rejected before parsing and gets the single repair ask.
+- **Cancellation.** A cancelled round sends seats Escape only and keeps their panes; progress in `state.json` lets the rerun ask only unfinished seats. Cancelling `open` while a seat is still starting closes that seat's new pane.
+- **Close.** `council close` closes only manifest seat panes whose agent still matches the recorded pane and tab, and never the caller pane.
 
 ## Verification
 

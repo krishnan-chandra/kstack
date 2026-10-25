@@ -38,7 +38,7 @@ routes do not create workstreams.
 | [`create-pi-extension`](skills/create-pi-extension/) | Designs and implements Pi extensions using the installed documentation, repository patterns, lifecycle/security ground rules, and an incremental verification checklist. |
 | [`create-skill`](skills/create-skill/) | Creates, tests, and improves Pi skills: draft, headless with-skill vs baseline eval runs, grading, benchmark aggregation, a static review page, and description/trigger optimization. |
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
-| [`adversarial-planning`](skills/adversarial-planning/) | Drafts an implementation plan and debates it for up to three rounds with a distinct read-only adversary in a visible Herdr pane. Explicit invocation only. |
+| [`adversarial-planning`](skills/adversarial-planning/) | Drafts an implementation plan and runs it past a council of 1–5 distinct read-only seat models in visible Herdr panes. Seats review independently, vote on each other's findings, and the CLI decides by strict-majority dismissal. Explicit invocation only. |
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
@@ -92,10 +92,12 @@ K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
 `"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
 For Git, `vcs.stackProvider` defaults to `"github"`; set it to `"none"` to
 disable stacked-PR publication and membership routing.
-Model assignments for plan-implement, adversary, arena,
+Model assignments for plan-implement, council, arena,
 swarm, and the `how` and `why` investigation skills use sections in the same
-file. `adversary` selects the planning and implementation adversaries, their
-round limits, and the implementation review timeout. The `plan-implement` section also drives `--fast` mode, which runs the same
+file. `council.seats` lists the 1–5 reviewer models for adversarial planning
+and plan-implement, with their round limits and the implementation review
+timeout. A seat that uses the planner's model sits out. The pre-council
+`adversary` section is rejected with a message that names the rename. The `plan-implement` section also drives `--fast` mode, which runs the same
 implementer while skipping planning, review, and publishing. The router's
 review route always runs on `kstack-router.review.models` (default Opus 5.5,
 then Astra). A top-level
