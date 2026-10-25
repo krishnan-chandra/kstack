@@ -97,8 +97,13 @@ function sameRoster(manifest: CouncilManifest, roster: CouncilRoster): boolean {
 
 type Reconciled = { action: "ready" | "waiting" | "start"; error?: string } | { action: "refuse"; error: string };
 
-/** Decide what one manifest seat needs without starting anything. */
-async function reconcileSeat(cli: HerdrCli, manifest: CouncilManifest, seat: ManifestSeat): Promise<Reconciled> {
+/** Decide what one manifest seat needs without starting anything. Never closes either caller pane. */
+async function reconcileSeat(
+	cli: HerdrCli,
+	manifest: CouncilManifest,
+	seat: ManifestSeat,
+	callerPane: string,
+): Promise<Reconciled> {
 	const found = await cli.agentGet({ name: seat.name }, { timeoutMs: CONTROL_TIMEOUT_MS });
 	if (found.ok) {
 		const agent = found.value;
@@ -123,7 +128,7 @@ async function reconcileSeat(cli: HerdrCli, manifest: CouncilManifest, seat: Man
 	}
 	if (found.code !== "agent_not_found")
 		return { action: "refuse", error: `Could not inspect ${seat.name}: ${found.message}` };
-	if (seat.paneId && seat.paneId !== manifest.callerPaneId) {
+	if (seat.paneId && seat.paneId !== manifest.callerPaneId && seat.paneId !== callerPane) {
 		const layout = await cli.paneLayout({ paneId: seat.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
 		if (layout.ok && layout.value.tabId === manifest.tabId) {
 			const closed = await cli.paneClose({ paneId: seat.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
@@ -133,6 +138,35 @@ async function reconcileSeat(cli: HerdrCli, manifest: CouncilManifest, seat: Man
 		}
 	}
 	return { action: "start" };
+}
+
+/**
+ * Check every manifest seat that still has an agent before a round or close.
+ * A seat in another tab refuses the command; `requireRecordedPane` also
+ * refuses an agent that moved out of its recorded pane.
+ */
+async function verifySeatPlacement(
+	cli: HerdrCli,
+	manifest: CouncilManifest,
+	requireRecordedPane: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+	for (const seat of manifest.seats) {
+		const found = await cli.agentGet({ name: seat.name }, { timeoutMs: CONTROL_TIMEOUT_MS });
+		if (!found.ok) {
+			if (found.code === "agent_not_found") continue;
+			return { ok: false, error: `Could not inspect ${seat.name}: ${found.message}` };
+		}
+		if (found.value.tabId !== manifest.tabId) {
+			return { ok: false, error: tabMismatch(manifest.tabId, `seat ${seat.letter}`, found.value.tabId) };
+		}
+		if (requireRecordedPane && found.value.paneId !== seat.paneId) {
+			return {
+				ok: false,
+				error: `Seat ${seat.letter} runs in pane ${found.value.paneId}, not its recorded pane ${seat.paneId ?? "(none)"}; rerun council open.`,
+			};
+		}
+	}
+	return { ok: true };
 }
 
 /**
@@ -207,7 +241,7 @@ async function openLocked(
 	const reports = new Map<SeatLetter, SeatReport>();
 	const toStart: ManifestSeat[] = [];
 	for (const seat of manifest.seats) {
-		const reconciled = await reconcileSeat(cli, manifest, seat);
+		const reconciled = await reconcileSeat(cli, manifest, seat, preflight.callerPane);
 		if (reconciled.action === "refuse") return { ok: false, error: reconciled.error };
 		if (reconciled.action === "start") {
 			toStart.push(seat);
@@ -252,29 +286,41 @@ async function openLocked(
 						sessionName: `council/${manifest.slug}/${seat.letter.toLowerCase()}`,
 						...(input.signal ? { signal: input.signal } : undefined),
 					});
+					let state: SeatReport["state"] = "ready";
+					let error: string | undefined;
 					if (started.ok) {
 						seat.state = "ready";
 						seat.paneId = started.agent.paneId;
 						seat.tabId = started.agent.tabId;
 					} else {
 						seat.state = "starting";
+						seat.tabId = manifest.tabId;
 						if (started.paneId && !started.aborted) seat.paneId = started.paneId;
 						else delete seat.paneId;
-						seat.tabId = manifest.tabId;
+						// agent_not_ready keeps the named agent in its pane; a rerun adopts it.
+						const survivor = seat.paneId
+							? await cli.agentGet({ name: seat.name }, { timeoutMs: CONTROL_TIMEOUT_MS })
+							: undefined;
+						const waiting = survivor?.ok === true && survivor.value.paneId === seat.paneId;
+						state = waiting ? "waiting" : "failed";
+						error = waiting
+							? `Seat ${seat.letter} is waiting at a prompt in pane ${seat.paneId}; answer it there, then rerun council open.`
+							: started.error;
 					}
 					writeManifest(input.dir, manifest);
 					reports.set(seat.letter, {
 						letter: seat.letter,
 						model: seat.model,
 						name: seat.name,
-						state: started.ok ? "ready" : "failed",
+						state,
 						...(seat.paneId ? { paneId: seat.paneId } : undefined),
-						...(started.ok ? undefined : { error: started.error }),
+						...(error ? { error } : undefined),
 					});
 				}),
 			);
 		} finally {
-			await opened.host.dispose();
+			// A cancelled start may leave the first split without a seat; never orphan it.
+			await opened.host.dispose({ closeUnassignedPanes: true });
 		}
 	}
 	const seats = manifest.seats.flatMap((seat) => reports.get(seat.letter) ?? []);
@@ -312,10 +358,13 @@ export async function createSeatAsker(
 			error: `Could not read the council manifest: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
-	const caller = await callerTab(createHerdrCli(deps.exec), preflight.callerPane);
+	const cli = createHerdrCli(deps.exec);
+	const caller = await callerTab(cli, preflight.callerPane);
 	if (!caller.ok) return caller;
 	if (caller.tabId !== manifest.tabId)
 		return { ok: false, error: tabMismatch(manifest.tabId, "the caller", caller.tabId) };
+	const placement = await verifySeatPlacement(cli, manifest, true);
+	if (!placement.ok) return placement;
 	const askSeat = async (ask: SeatAsk): Promise<SeatAskResult> => {
 		const seat = manifest.seats.find((entry) => entry.letter === ask.seat);
 		if (!seat?.paneId || seat.state !== "ready") {
@@ -374,6 +423,8 @@ export async function closeCouncilSeats(
 			if (!caller.ok) return caller;
 			if (caller.tabId !== manifest.tabId)
 				return { ok: false, error: tabMismatch(manifest.tabId, "the caller", caller.tabId) };
+			const placement = await verifySeatPlacement(cli, manifest, false);
+			if (!placement.ok) return placement;
 			const closed: string[] = [];
 			const skipped: string[] = [];
 			for (const seat of manifest.seats) {

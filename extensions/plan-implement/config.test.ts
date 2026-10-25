@@ -185,6 +185,17 @@ describe("plan-implement config", () => {
 		}
 	});
 
+	it("rejects an invalid council section even with --no-adversary", () => {
+		const { env, dir } = councilEnv({ council: { seats: [] } });
+		try {
+			const result = resolveAdversary(false, "a/p", { available: () => true }, env);
+			assert.equal(result.ok, false);
+			assert.match(result.ok ? "" : result.error, /council\.seats must be an array of 1 to 5/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects unavailable, unknown, and planner-only seats", () => {
 		const { env, dir } = councilEnv({ council: { seats: ["missing-alias"] } });
 		try {

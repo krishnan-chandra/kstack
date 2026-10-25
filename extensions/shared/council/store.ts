@@ -5,8 +5,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { acquirePublicationLock, type LockAttempt } from "../publication-lock.ts";
 import { type BoundaryValue, isObject } from "../validation.ts";
 import {
 	type CouncilDecision,
@@ -25,6 +26,8 @@ export interface CouncilRoundState {
 	number: number;
 	kind: "budgeted" | "verify";
 	phase: RoundPhase;
+	/** The live plan path this round snapshotted, for later change checks. */
+	planFile: string;
 	planSha256: string;
 	taskSha256: string;
 	responseSha256?: string;
@@ -153,54 +156,37 @@ export function writeManifest(dir: string, manifest: CouncilManifest): void {
 	writeFileAtomic(councilPaths(dir).manifest, `${JSON.stringify(manifest, null, "\t")}\n`);
 }
 
-function defaultPidAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return isObject(error) && "code" in error && error.code === "EPERM";
-	}
-}
-
-function tryCreateLock(path: string): boolean {
-	try {
-		writeFileSync(path, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
-		return true;
-	} catch (error) {
-		if (isObject(error) && "code" in error && error.code === "EEXIST") return false;
-		throw error;
-	}
-}
-
 type LockResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * Run `run` while holding `council.lock`. A lock whose pid is no longer
- * running is taken over; a live holder is refused.
+ * Run `run` while holding `council.lock`. Acquisition, stale-holder
+ * reclamation, and owner-checked release reuse the shared publication lock,
+ * so concurrent contenders never share the critical section.
  */
 export async function withCouncilLock<T>(
 	dir: string,
 	run: () => Promise<T>,
-	pidAlive: (pid: number) => boolean = defaultPidAlive,
+	pidAlive?: (pid: number) => boolean,
 ): Promise<LockResult<T>> {
 	const path = councilPaths(dir).lock;
-	mkdirSync(dir, { recursive: true });
-	if (!tryCreateLock(path)) {
-		let holder = Number.NaN;
-		try {
-			holder = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-		} catch {
-			/* a vanished lock is retried below */
-		}
-		if (Number.isInteger(holder) && holder > 0 && pidAlive(holder)) {
-			return { ok: false, error: `Another council command (pid ${holder}) holds ${path}.` };
-		}
-		rmSync(path, { force: true });
-		if (!tryCreateLock(path)) return { ok: false, error: `Could not take over the stale lock ${path}.` };
+	let attempt: LockAttempt;
+	try {
+		attempt = acquirePublicationLock({
+			repositoryPath: resolve(dir),
+			locksDir: dir,
+			fileName: basename(path),
+			...(pidAlive ? { isPidAlive: pidAlive } : undefined),
+		});
+	} catch (error) {
+		return { ok: false, error: `Could not take ${path}: ${error instanceof Error ? error.message : String(error)}` };
+	}
+	if (!attempt.ok) {
+		const holder = attempt.holder ? ` (pid ${attempt.holder.pid})` : "";
+		return { ok: false, error: `Another council command${holder} holds ${path}.` };
 	}
 	try {
 		return { ok: true, value: await run() };
 	} finally {
-		rmSync(path, { force: true });
+		attempt.lock.release();
 	}
 }

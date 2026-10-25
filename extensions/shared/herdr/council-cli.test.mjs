@@ -28,7 +28,7 @@ const tabOf = (pane) => { try { return fs.readFileSync(path.join(panes, pane), '
 const agentOf = (name) => { try { return JSON.parse(fs.readFileSync(path.join(agents, name), 'utf8')); } catch { return undefined; } };
 const ok = (result) => process.stdout.write(JSON.stringify({ id: 'x', result }));
 const fail = (code, message) => { process.stderr.write(JSON.stringify({ id: 'x', error: { code, message } })); process.exit(1); };
-const record = (name, agent) => ({ name, agent: 'pi', cwd: process.env.FIXTURE_CWD, agent_status: 'idle', pane_id: agent.pane,
+const record = (name, agent) => ({ name, agent: 'pi', cwd: process.env.FIXTURE_CWD, agent_status: agent.status ?? 'idle', pane_id: agent.pane,
   tab_id: tabOf(agent.pane) ?? '', agent_session: { kind: 'path', value: agent.session } });
 if (command === 'status server') {
   process.stdout.write('running\\n');
@@ -51,10 +51,12 @@ if (command === 'status server') {
 } else if (command === 'agent start') {
   const name = args[2];
   const session = path.join(process.env.FIXTURE_SESSIONS, name + '.jsonl');
-  const agent = { pane: args[6], session };
+  const notReady = (process.env.FIXTURE_NOT_READY ?? '').split(',').includes(name);
+  const agent = { pane: args[6], session, ...(notReady ? { status: 'blocked' } : {}) };
   try { fs.writeFileSync(path.join(agents, name), JSON.stringify(agent), { flag: 'wx' }); }
   catch { fail('agent_name_in_use', 'agent name ' + name + ' already in use'); }
   fs.writeFileSync(session, '');
+  if (notReady) fail('agent_not_ready', 'agent ' + name + ' is waiting at a prompt');
   ok({ type: 'agent_started', agent: record(name, agent), argv: ['pi'] });
 } else if (command === 'agent get' || command === 'agent wait') {
   const agent = agentOf(args[2]);
@@ -91,7 +93,7 @@ if (command === 'status server') {
 
 const APPROVE = "Verdict: approve\n\n## Blocking\nNone.\n\n## Suggestions\nNone.\n";
 
-function fixture() {
+function fixture(extraEnv = {}) {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "kstack-council-cli-")));
 	mkdirSync(join(root, "extensions"));
 	mkdirSync(join(root, "sessions"));
@@ -133,6 +135,7 @@ function fixture() {
 		FIXTURE_REPLIES: files.replies,
 		FIXTURE_HANG: files.hang,
 		FIXTURE_CWD: root,
+		...extraEnv,
 	};
 	const run = (args) => {
 		const child = spawn(process.execPath, [CLI, "council", ...args], {
@@ -279,6 +282,32 @@ test("SIGTERM leaves a round incomplete and a rerun asks only the unfinished sea
 		);
 	} finally {
 		child?.kill("SIGKILL");
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("council open reports a seat at a startup prompt as waiting and adopts it on rerun", {
+	timeout: 30000,
+}, async () => {
+	const f = fixture({ FIXTURE_NOT_READY: "council-trust-b" });
+	try {
+		const args = ["open", "--dir", f.files.dir, "--slug", "trust", "--planner-model", "openai/gpt-6-sol"];
+		const first = await f.run(args).done;
+		assert.equal(first.code, 1, first.stdout + first.stderr);
+		assert.equal(first.json.status, "waiting");
+		const waiting = first.json.seats.find((seat) => seat.letter === "B");
+		assert.equal(waiting.state, "waiting");
+		assert.match(waiting.error, new RegExp(`waiting at a prompt in pane ${waiting.paneId}`));
+
+		const agentFile = join(f.root, "herdr-state", "agents", "council-trust-b");
+		writeFileSync(agentFile, JSON.stringify({ ...JSON.parse(readFileSync(agentFile, "utf8")), status: "idle" }));
+		const second = await f.run(args).done;
+		assert.equal(second.code, 0, second.stdout + second.stderr);
+		assert.equal(second.json.status, "ready");
+		assert.equal(second.json.seats.find((seat) => seat.letter === "B").paneId, waiting.paneId);
+		assert.equal(f.calls().filter((call) => call[1] === "start").length, 3);
+		assert.equal(f.calls().filter((call) => call[1] === "split").length, 3);
+	} finally {
 		rmSync(f.root, { recursive: true, force: true });
 	}
 });

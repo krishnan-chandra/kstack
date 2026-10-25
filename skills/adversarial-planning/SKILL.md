@@ -38,8 +38,8 @@ Append `--seats '<ref>,<ref>'` when the user names seat models or aliases. Other
 The command prints JSON. Seats open in one column to the right of your pane, named `council-<slug>-<letter>`.
 
 - `ready` (exit 0): continue.
-- `waiting` (exit 1): a seat is at a prompt, usually project trust. Tell the user the pane from `seats[].paneId`, wait for them to answer, then rerun the same `council open`. Rerunning adopts the waiting seat instead of starting another.
-- `failed` (exit 1): report `error` and stop. For a missing roster, ask the user for `--seats` or a `council` section.
+- `waiting` (exit 1): a seat is at a prompt, usually project trust, including on its first start. Tell the user each waiting seat's `paneId`, wait for them to answer, then rerun the same `council open`. Rerunning adopts the waiting seat instead of starting another.
+- `failed` (exit 1): report `error` and each failed seat's `error` and `paneId`, then stop. For a missing roster, ask the user for `--seats` or a `council` section.
 
 Run every council command from this tab. The council is bound to it.
 

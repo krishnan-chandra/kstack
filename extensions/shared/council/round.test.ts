@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { after, describe, it } from "node:test";
 import { truncateHeadUtf8 } from "../child-agent-runner.ts";
 import { COUNCIL_OUTPUT_CAP_BYTES } from "./protocol.ts";
@@ -357,15 +357,50 @@ describe("runCouncilRound", () => {
 		assert.match(readFileSync(c.paths.record, "utf8"), /B\/B-1 \(round 1\): the user accepts this risk/);
 	});
 
+	it("reports live-plan edits on escalations, refusals, and overrides", async () => {
+		const c = council(["A", "B"], 1);
+		await runCouncilRound(c.input(), new FakeSeats().script("review", "A", revise("B-1", "B-2")).deps);
+		writeFileSync(c.planFile, "# Plan v2, not reviewed\n");
+
+		writeFileSync(
+			c.responseFile,
+			"## Responses\n- A/B-1: conflicts-with A/B-2 — both cannot hold\n- A/B-2: addressed — y\n",
+		);
+		const escalated = await runCouncilRound(
+			c.input({ responseFile: c.responseFile, verify: true }),
+			new FakeSeats().deps,
+		);
+		assert.equal(escalated.status, "escalated");
+		assert.equal(escalated.planChangedSinceSnapshot, true);
+
+		writeFileSync(c.responseFile, "## Responses\n- A/B-1: addressed — x\n- A/B-2: addressed — y\n");
+		const refused = await runCouncilRound(c.input({ responseFile: c.responseFile }), new FakeSeats().deps);
+		assert.match(refused.error ?? "", /budgeted rounds are used/);
+		assert.equal(refused.planChangedSinceSnapshot, true);
+
+		await overrideCouncilFinding({ dir: c.dir, id: "A/B-1", reason: "accepted", info: INFO });
+		const approved = await overrideCouncilFinding({ dir: c.dir, id: "A/B-2", reason: "accepted", info: INFO });
+		assert.equal(approved.decision, "approve");
+		assert.equal(approved.planChangedSinceSnapshot, true, "override compares the round's recorded plan path");
+		assert.equal(readFileSync(c.paths.approvedPlan, "utf8"), "# Plan v1\n");
+
+		writeFileSync(c.planFile, "# Plan v1\n");
+		const failedOverride = await overrideCouncilFinding({ dir: c.dir, id: "A/B-1", reason: "again", info: INFO });
+		assert.equal(failedOverride.status, "failed");
+		assert.equal(failedOverride.planChangedSinceSnapshot, false);
+	});
+
 	it("takes over a stale lock and refuses a live one for rounds and overrides", async () => {
 		const c = council(["A"]);
-		writeFileSync(c.paths.lock, "999999\n");
+		const lockPayload = (pid: number) =>
+			JSON.stringify({ pid, startedAt: new Date().toISOString(), repositoryPath: resolve(c.dir), ownerToken: "t" });
+		writeFileSync(c.paths.lock, lockPayload(999999));
 		const deps = { ...new FakeSeats().deps, pidAlive: (pid: number) => pid !== 999999 };
 		const stale = await runCouncilRound(c.input(), deps);
 		assert.equal(stale.status, "complete");
 		assert.equal(existsSync(c.paths.lock), false);
 
-		writeFileSync(c.paths.lock, `${process.pid}\n`);
+		writeFileSync(c.paths.lock, lockPayload(process.pid));
 		const live = await runCouncilRound(c.input(), new FakeSeats().deps);
 		assert.match(live.error ?? "", /holds .*council\.lock/);
 		const liveOverride = await overrideCouncilFinding({ dir: c.dir, id: "A/B-1", reason: "x", info: INFO });

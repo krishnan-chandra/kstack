@@ -29,6 +29,8 @@ class StatefulHerdr {
 	readonly agents = new Map<string, FakeAgent>();
 	readonly startBehavior = new Map<string, StartBehavior>();
 	readonly callerPane = "w1:p1";
+	/** Runs before a split completes, for example to cancel an open in flight. */
+	onSplit: ((source: string) => void) | undefined;
 	private nextPane = 10;
 
 	readonly root: string;
@@ -72,6 +74,7 @@ class StatefulHerdr {
 			return this.ok({ type: "pane_layout", layout: { area: { width: 240, height: 60 }, tab_id: tabId } });
 		}
 		if (group === "pane" && command === "split") {
+			this.onSplit?.(args[2] ?? "");
 			const tabId = this.paneTabs.get(args[2] ?? "");
 			if (!tabId) return this.error("pane_not_found", "pane not found");
 			const paneId = `w1:p${this.nextPane++}`;
@@ -134,8 +137,18 @@ function setup() {
 		env: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: herdr.callerPane, PI_CODING_AGENT_DIR: root },
 		sleep: async () => {},
 	};
-	const open = (roster: CouncilRoster = ROSTER) =>
-		openCouncilSeats({ dir, slug: "demo", cwd: root, roster, plannerModel: "anthropic/claude-opus-5-5" }, deps);
+	const open = (roster: CouncilRoster = ROSTER, options: { deps?: HostDeps; signal?: AbortSignal } = {}) =>
+		openCouncilSeats(
+			{
+				dir,
+				slug: "demo",
+				cwd: root,
+				roster,
+				plannerModel: "anthropic/claude-opus-5-5",
+				...(options.signal ? { signal: options.signal } : undefined),
+			},
+			options.deps ?? deps,
+		);
 	return { root, herdr, dir, deps, open };
 }
 
@@ -184,10 +197,19 @@ describe("openCouncilSeats", () => {
 		const { herdr, dir, open } = setup();
 		herdr.startBehavior.set("council-demo-b", "not-ready");
 		const first = await open();
-		assert.equal(first.ok, false);
+		assert.ok(first.ok, first.ok ? "" : first.error);
+		assert.equal(first.status, "waiting");
 		const waitingPane = readManifest(dir).seats[1]?.paneId;
 		assert.ok(waitingPane);
-		assert.equal(first.ok ? undefined : first.seats?.[1]?.paneId, waitingPane);
+		assert.deepEqual(
+			first.seats.map((seat) => [seat.letter, seat.state]),
+			[
+				["A", "ready"],
+				["B", "waiting"],
+			],
+		);
+		assert.equal(first.seats[1]?.paneId, waitingPane);
+		assert.match(first.seats[1]?.error ?? "", new RegExp(`waiting at a prompt in pane ${waitingPane}`));
 
 		const stillWaiting = await open();
 		assert.ok(stillWaiting.ok);
@@ -244,19 +266,49 @@ describe("openCouncilSeats", () => {
 		assert.match(closed.ok ? "" : closed.error, /bound to tab w1:t1/);
 
 		herdr.paneTabs.set(herdr.callerPane, "w1:t1");
-		const seatPane = readManifest(dir).seats[0]?.paneId ?? "";
+		// A seat that already answered is never asked again, so the asker checks every seat up front.
+		const seatPane = readManifest(dir).seats[1]?.paneId ?? "";
 		herdr.paneTabs.set(seatPane, "w1:t7");
 		const seatAsker = await createSeatAsker(dir, deps);
-		assert.ok(seatAsker.ok);
-		const asked = await seatAsker.askSeat({
-			seat: "A",
-			promptFile: join(dir, "p.md"),
-			outputFile: join(dir, "o.md"),
-			timeoutMs: 60_000,
-			outputCapBytes: 65_536,
-		});
-		assert.equal(asked.status, "failed");
-		assert.match(asked.status === "failed" ? asked.error : "", /seat A is in tab w1:t7/);
+		assert.match(seatAsker.ok ? "" : seatAsker.error, /seat B is in tab w1:t7/);
+		const closesBefore = herdr.count("pane", "close");
+		const crossTabClose = await closeCouncilSeats(dir, deps);
+		assert.match(crossTabClose.ok ? "" : crossTabClose.error, /seat B is in tab w1:t7/);
+		assert.equal(herdr.count("pane", "close"), closesBefore, "a refused close closes no pane");
+	});
+
+	it("never closes the invoking pane when it is a vanished seat's recorded pane", async () => {
+		const { herdr, dir, deps, open } = setup();
+		assert.ok((await open()).ok);
+		const formerSeatPane = readManifest(dir).seats[0]?.paneId ?? "";
+		herdr.agents.delete("council-demo-a");
+		const fromSeatPane: HostDeps = { ...deps, env: { ...deps.env, HERDR_PANE_ID: formerSeatPane } };
+		const reopened = await open(ROSTER, { deps: fromSeatPane });
+		assert.ok(reopened.ok, reopened.ok ? "" : reopened.error);
+		assert.equal(
+			herdr.calls.some((call) => call[1] === "close" && call[2] === formerSeatPane),
+			false,
+		);
+		assert.ok(herdr.paneTabs.has(formerSeatPane));
+		assert.notEqual(readManifest(dir).seats[0]?.paneId, formerSeatPane);
+	});
+
+	it("closes the first split when cancellation lands during it, so a retry leaves no orphan", async () => {
+		const { herdr, dir, open } = setup();
+		const controller = new AbortController();
+		herdr.onSplit = (source) => {
+			if (source === herdr.callerPane) controller.abort();
+		};
+		const cancelled = await open(ROSTER, { signal: controller.signal });
+		assert.equal(cancelled.ok, false);
+		assert.deepEqual([...herdr.paneTabs.keys()], [herdr.callerPane]);
+		assert.equal(herdr.count("agent", "start"), 0);
+		assert.ok(readManifest(dir).seats.every((seat) => seat.paneId === undefined));
+
+		herdr.onSplit = undefined;
+		const retried = await open();
+		assert.ok(retried.ok, retried.ok ? "" : retried.error);
+		assert.equal(herdr.paneTabs.size, 3, "caller plus two seats, no orphan split");
 	});
 
 	it("closes only manifest seat panes and never the caller pane", async () => {

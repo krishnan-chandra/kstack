@@ -124,7 +124,12 @@ export interface AgentHost {
 	/** 0700 exchange directory for instruction and answer files. */
 	readonly exchangeDir: string;
 	start(spec: HostedAgentSpec): Promise<{ ok: true; agent: HostedAgent } | StartFailure>;
-	dispose(options?: { closeTab?: boolean }): Promise<void>;
+	/**
+	 * `closeTab` closes the host tab, or every pane a pane host split off.
+	 * `closeUnassignedPanes` closes only owned panes no agent start ever
+	 * reserved, such as a pane host's first split after a cancelled start.
+	 */
+	dispose(options?: { closeTab?: boolean; closeUnassignedPanes?: boolean }): Promise<void>;
 }
 
 export interface HostDeps {
@@ -945,6 +950,16 @@ async function buildHost(
 			// not left behind after dispose snapshots ownedPanes.
 			await allocation;
 			await Promise.all(agents.map((agent) => agent.dispose()));
+			if (disposeOptions?.closeUnassignedPanes && !disposeOptions.closeTab) {
+				for (const paneId of [...ownedPanes].filter((pane) => !panes.includes(pane)).reverse()) {
+					try {
+						const closed = await cli.paneClose({ paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+						if (closed.ok) ownedPanes.delete(paneId);
+					} catch {
+						/* best effort */
+					}
+				}
+			}
 			if (disposeOptions?.closeTab) {
 				if (base.kind === "tab") {
 					try {

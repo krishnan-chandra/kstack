@@ -129,6 +129,17 @@ function liveSha(path: string): string | undefined {
 	}
 }
 
+/**
+ * Compare a live plan with the snapshot it would be judged against: the
+ * latest round's plan, or the approved round's plan when one is current.
+ * Undefined before any snapshot exists.
+ */
+function planChanged(state: CouncilState, planFile: string | undefined): boolean | undefined {
+	const round = lastRound(state);
+	if (!round) return undefined;
+	return liveSha(planFile ?? round.planFile) !== round.planSha256;
+}
+
 function lastRound(state: CouncilState): CouncilRoundState | undefined {
 	return state.rounds.at(-1);
 }
@@ -159,14 +170,20 @@ async function runLocked(input: RoundInput, deps: RoundDeps): Promise<RoundResul
 	} catch (error) {
 		return failed(`Could not read the council state: ${error instanceof Error ? error.message : String(error)}`);
 	}
+	let result: RoundResult;
 	try {
 		const started = startOrResume(state, input, deps);
-		if (!("ok" in started)) return started;
-		return await driveRound(started.state, started.round, started.resumed, input, deps);
+		result = "ok" in started ? await driveRound(started.state, started.round, started.resumed, input, deps) : started;
 	} catch (error) {
 		// Progress persisted before the failure; a rerun resumes from state.json.
-		return failed(`The council round stopped: ${error instanceof Error ? error.message : String(error)}`);
+		result = failed(`The council round stopped: ${error instanceof Error ? error.message : String(error)}`);
 	}
+	// Results that stop before a new snapshot still compare against the latest one.
+	if (result.planChangedSinceSnapshot === undefined) {
+		const changed = planChanged(state, input.planFile);
+		if (changed !== undefined) result.planChangedSinceSnapshot = changed;
+	}
+	return result;
 }
 
 function startOrResume(state: CouncilState, input: RoundInput, deps: RoundDeps): RoundStart {
@@ -240,6 +257,7 @@ function startOrResume(state: CouncilState, input: RoundInput, deps: RoundDeps):
 		number,
 		kind,
 		phase: "review",
+		planFile: input.planFile,
 		planSha256: sha256(plan),
 		taskSha256: sha256(taskText),
 		...(responseText !== undefined ? { responseSha256: sha256(responseText) } : undefined),
@@ -562,36 +580,41 @@ export async function overrideCouncilFinding(
 			} catch (error) {
 				return failed(`Could not read the council state: ${error instanceof Error ? error.message : String(error)}`);
 			}
-			const current = lastRound(state);
-			if (current && current.phase !== "complete") {
-				return failed(`Round ${current.number} is incomplete; rerun it before overriding a finding.`);
-			}
-			const round = lastCompleteRound(state);
-			if (!round) return failed("No completed round has findings to override.");
-			const result = overrideFinding(state.ledger, input.id, input.reason, round.number);
-			if (!result.ok) return failed(result.error);
-			state.ledger = result.ledger;
-			state.overrides = [...state.overrides, { id: input.id, reason: input.reason.trim(), round: round.number }];
-			const decision = decide(state.ledger, {
-				allSeatsReplied: true,
-				budgetRemaining: state.budgetUsed < state.maxRounds,
-			});
-			if (decision === "incomplete") return failed("The council has pending findings; rerun the round.");
-			state.decision = { round: round.number, decision };
-			settleApproval(state, round, decision, input.dir);
-			writeState(input.dir, state);
-			const recordInput: RoundInput = {
-				dir: input.dir,
-				planFile: input.planFile ?? "",
-				timeoutMs: 0,
-				info: input.info,
-			};
-			writeRecord(state, recordInput);
-			const outcome = completedResult(state, round, false, recordInput);
-			if (input.planFile === undefined) delete outcome.planChangedSinceSnapshot;
-			return outcome;
+			const result = overrideLocked(state, input);
+			const changed = planChanged(state, input.planFile);
+			if (changed !== undefined) result.planChangedSinceSnapshot = changed;
+			return result;
 		},
 		deps.pidAlive,
 	);
 	return locked.ok ? locked.value : failed(locked.error);
+}
+
+function overrideLocked(state: CouncilState, input: OverrideInput): RoundResult {
+	const current = lastRound(state);
+	if (current && current.phase !== "complete") {
+		return failed(`Round ${current.number} is incomplete; rerun it before overriding a finding.`);
+	}
+	const round = lastCompleteRound(state);
+	if (!round) return failed("No completed round has findings to override.");
+	const result = overrideFinding(state.ledger, input.id, input.reason, round.number);
+	if (!result.ok) return failed(result.error);
+	state.ledger = result.ledger;
+	state.overrides = [...state.overrides, { id: input.id, reason: input.reason.trim(), round: round.number }];
+	const decision = decide(state.ledger, {
+		allSeatsReplied: true,
+		budgetRemaining: state.budgetUsed < state.maxRounds,
+	});
+	if (decision === "incomplete") return failed("The council has pending findings; rerun the round.");
+	state.decision = { round: round.number, decision };
+	settleApproval(state, round, decision, input.dir);
+	writeState(input.dir, state);
+	const recordInput: RoundInput = {
+		dir: input.dir,
+		planFile: input.planFile ?? round.planFile,
+		timeoutMs: 0,
+		info: input.info,
+	};
+	writeRecord(state, recordInput);
+	return completedResult(state, round, false, recordInput);
 }

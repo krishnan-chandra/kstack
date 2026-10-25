@@ -27,6 +27,8 @@ export type LockAttempt =
 interface LockDeps {
 	repositoryPath: string;
 	locksDir?: string;
+	/** Lock file name inside `locksDir`; defaults to a hash of `repositoryPath`. */
+	fileName?: string;
 	pid?: number;
 	isPidAlive?: (pid: number) => boolean;
 	now?: () => Date;
@@ -195,7 +197,7 @@ export function acquirePublicationLock(deps: LockDeps): LockAttempt {
 
 	mkdirSync(locksDir, { recursive: true, mode: 0o700 });
 
-	const lockPath = join(locksDir, lockFileName(repositoryPath));
+	const lockPath = join(locksDir, deps.fileName ?? lockFileName(repositoryPath));
 	const payload: OwnerPayload = {
 		pid,
 		startedAt: acquiredAt.toISOString(),

@@ -80,13 +80,13 @@ node <kstack>/extensions/shared/herdr/cli.mjs council close --dir DIR
 
 Fanout spec cwd, prompt, and output fields and `ask` prompt and output paths must be absolute; the hosted agent resolves the pointer from its own cwd. `ask` uses a 15-minute timeout and the default response cap. Both return nonzero on failure, blocking, or cancellation.
 
-Council commands take absolute paths and print one JSON result. They exit 0 when a round completes or escalates and when `open` leaves every seat ready, 1 when a round is incomplete, cancelled, or failed, or when a seat is still waiting, and 2 on usage errors. Every mutating command holds `council.lock` in the council directory; a lock whose process is gone is taken over.
+Council commands take absolute paths and print one JSON result. They exit 0 when a round completes or escalates and when `open` leaves every seat ready, 1 when a round is incomplete, cancelled, or failed, or when a seat is still waiting, and 2 on usage errors. Every mutating command holds `council.lock` in the council directory. It reuses the shared publication lock: atomic creation, serialized reclamation of a lock whose process is gone, and owner-checked release.
 
 - **Exact names.** Seats are named `council-<slug>-<letter>`, so one slug has one live council.
-- **Tab binding.** `council open` records the caller's tab in `manifest.json`. `open`, `round`, and `close` refuse a caller or seat in another tab; there is no relocation.
-- **Reconciliation.** The manifest records each start attempt. A rerun of `open` adopts a seat that is still starting in its recorded pane, closes the stale pane of a seat whose agent is gone before restarting it, refuses a same-named agent outside the manifest, and splits only for seats that need a start.
+- **Tab binding.** `council open` records the caller's tab in `manifest.json`. Before acting, `open`, `round`, and `close` refuse a caller in another tab or any seat agent in another tab, including a seat a resumed round will not ask again. There is no relocation.
+- **Reconciliation.** The manifest records each start attempt. A first start that stops at a prompt reports the seat as `waiting`. A rerun of `open` adopts a seat that is still starting in its recorded pane, closes the stale pane of a seat whose agent is gone before restarting it (never the caller's pane), refuses a same-named agent outside the manifest, and splits only for seats that need a start.
 - **Complete replies.** Every council ask uses a 64 KiB cap. A reply ending in the truncation marker is rejected before parsing and gets the single repair ask.
-- **Cancellation.** A cancelled round sends seats Escape only and keeps their panes; progress in `state.json` lets the rerun ask only unfinished seats. Cancelling `open` while a seat is still starting closes that seat's new pane.
+- **Cancellation.** A cancelled round sends seats Escape only and keeps their panes; progress in `state.json` lets the rerun ask only unfinished seats. Cancelling `open` while a seat is still starting closes that seat's new pane, including a first split that no seat reached.
 - **Close.** `council close` closes only manifest seat panes whose agent still matches the recorded pane and tab, and never the caller pane.
 
 ## Verification
