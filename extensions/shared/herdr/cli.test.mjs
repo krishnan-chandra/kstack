@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { parseAskArgs, parseFanoutArgs, parseResolveModelArgs, parseSubcommand } from "./cli.mjs";
+import { councilPaths, initialCouncilState, writeManifest, writeState } from "../council/store.ts";
+import { parseAskArgs, parseCouncilArgs, parseFanoutArgs, parseResolveModelArgs, parseSubcommand } from "./cli.mjs";
 
 const execFileAsync = promisify(execFile);
 const CLI = join(import.meta.dirname, "cli.mjs");
@@ -23,6 +24,7 @@ function runCli(args, env = {}) {
 test("parseSubcommand accepts the documented subcommands", () => {
 	assert.deepEqual(parseSubcommand(["resolve-model"]), { ok: true, subcommand: "resolve-model" });
 	assert.deepEqual(parseSubcommand(["fanout"]), { ok: true, subcommand: "fanout" });
+	assert.deepEqual(parseSubcommand(["council"]), { ok: true, subcommand: "council" });
 	assert.equal(parseSubcommand([]).ok, false);
 	assert.equal(parseSubcommand(["bogus"]).ok, false);
 });
@@ -201,4 +203,104 @@ test("fanout exits 1 when preflight fails outside Herdr", async () => {
 	});
 	assert.equal(result.code, 1);
 	assert.match(result.stderr, /HERDR_ENV/);
+});
+
+test("parseCouncilArgs parses each action and requires absolute paths", () => {
+	const open = parseCouncilArgs([
+		"open",
+		"--dir",
+		"/c",
+		"--slug",
+		"demo",
+		"--planner-model",
+		"anthropic/claude-opus-5-5",
+		"--seats",
+		"astra, argon",
+	]);
+	assert.equal(open.ok, true);
+	assert.deepEqual([open.action, open.dir, open.slug, open.seats], ["open", "/c", "demo", ["astra", "argon"]]);
+	const round = parseCouncilArgs(["round", "--dir", "/c", "--plan", "/p.md", "--response", "/r.md", "--verify"]);
+	assert.equal(round.ok, true);
+	assert.deepEqual([round.plan, round.response, round.verify, round.task], ["/p.md", "/r.md", true, undefined]);
+	const override = parseCouncilArgs(["override", "--dir", "/c", "--finding", "A/B-1", "--reason", "accepted risk"]);
+	assert.deepEqual([override.finding, override.reason], ["A/B-1", "accepted risk"]);
+	assert.equal(parseCouncilArgs(["close", "--dir", "/c"]).ok, true);
+
+	assert.match(parseCouncilArgs([]).error, /unknown council action/);
+	assert.match(parseCouncilArgs(["vote"]).error, /unknown council action: vote/);
+	assert.match(parseCouncilArgs(["round", "--dir", "/c"]).error, /--plan is required/);
+	assert.match(parseCouncilArgs(["round", "--dir", "c", "--plan", "/p"]).error, /--dir must be an absolute path/);
+	assert.match(parseCouncilArgs(["round", "--dir", "/c", "--plan", "p.md"]).error, /--plan must be an absolute path/);
+	assert.match(parseCouncilArgs(["round", "--dir", "/c", "--plan", "/p", "--verify", "--verify"]).error, /only once/);
+	assert.match(parseCouncilArgs(["close", "--dir", "/c", "--plan", "/p"]).error, /unknown council close option/);
+	assert.match(
+		parseCouncilArgs(["open", "--dir", "/c", "--slug", "x", "--planner-model", "a/b", "--seats", ","]).error,
+		/at least one/,
+	);
+});
+
+test("council exits 2 on syntax errors", async () => {
+	const missing = await runCli(["council", "round", "--dir", "/c"]);
+	assert.equal(missing.code, 2);
+	assert.match(missing.stderr, /--plan is required/);
+	const unknown = await runCli(["council"]);
+	assert.equal(unknown.code, 2);
+	assert.match(unknown.stderr, /usage:/);
+});
+
+test("council override records the reason and exits 1 on a non-binding finding", async () => {
+	const root = mkdtempSync(join(tmpdir(), "kstack-cli-council-"));
+	try {
+		const dir = join(root, "council");
+		const state = initialCouncilState(["A"], 3);
+		state.budgetUsed = 1;
+		state.ledger.findings.push({
+			id: "A/B-1",
+			seat: "A",
+			text: "needs a test",
+			status: "binding",
+			raisedRound: 1,
+			updatedRound: 1,
+			rebuttals: 0,
+			votes: [],
+		});
+		state.rounds.push({
+			number: 1,
+			kind: "budgeted",
+			phase: "complete",
+			planSha256: "x",
+			taskSha256: "y",
+			reviews: {},
+			ballots: {},
+			decision: "revise",
+			startedAt: "2026-10-25T12:00:00.000Z",
+		});
+		writeState(dir, state);
+		mkdirSync(councilPaths(dir).round(1).dir, { recursive: true });
+		writeFileSync(councilPaths(dir).round(1).plan, "# Plan\n");
+		writeManifest(dir, {
+			version: 1,
+			slug: "demo",
+			cwd: root,
+			tabId: "w1:t1",
+			callerPaneId: "w1:p1",
+			plannerModel: "anthropic/claude-opus-5-5",
+			excluded: [],
+			timeoutMinutes: 15,
+			seats: [
+				{ letter: "A", model: "openai/gpt-6-astra:high", name: "council-demo-a", state: "ready", paneId: "w1:p2" },
+			],
+		});
+		const bad = await runCli(["council", "override", "--dir", dir, "--finding", "A/B-9", "--reason", "x"]);
+		assert.equal(bad.code, 1);
+		assert.match(JSON.parse(bad.stdout).error, /No finding A\/B-9/);
+		const good = await runCli(["council", "override", "--dir", dir, "--finding", "A/B-1", "--reason", "accepted risk"]);
+		assert.equal(good.code, 0, good.stdout);
+		const result = JSON.parse(good.stdout);
+		assert.equal(result.decision, "approve");
+		assert.equal(result.approvedPlan, councilPaths(dir).approvedPlan);
+		assert.match(readFileSync(councilPaths(dir).record, "utf8"), /A\/B-1 \(round 1\): accepted risk/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });

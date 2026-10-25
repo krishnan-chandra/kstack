@@ -12,7 +12,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CouncilRoster, SeatLetter } from "../council/roster.ts";
-import type { SeatAsk, SeatAskResult } from "../council/round.ts";
+import type { CouncilRecordInfo, SeatAsk, SeatAskResult } from "../council/round.ts";
 import {
 	type CouncilManifest,
 	councilPaths,
@@ -47,6 +47,17 @@ interface SeatReport {
 export type CouncilOpenResult =
 	| { ok: true; status: "ready" | "waiting"; tabId: string; seats: SeatReport[] }
 	| { ok: false; error: string; seats?: SeatReport[] };
+
+/** Host-only seat data for `record.md` and failure messages. */
+export function councilRecordInfo(manifest: CouncilManifest): CouncilRecordInfo {
+	const seatModels: CouncilRecordInfo["seatModels"] = {};
+	const seatPanes: CouncilRecordInfo["seatPanes"] = {};
+	for (const seat of manifest.seats) {
+		seatModels[seat.letter] = seat.model;
+		if (seat.paneId) seatPanes[seat.letter] = seat.paneId;
+	}
+	return { seatModels, seatPanes, plannerModel: manifest.plannerModel, excluded: manifest.excluded };
+}
 
 export function councilSeatName(slug: string, letter: SeatLetter): string {
 	return `council-${slug}-${letter.toLowerCase()}`;
@@ -170,6 +181,7 @@ async function openLocked(
 			callerPaneId: preflight.callerPane,
 			plannerModel: input.plannerModel,
 			excluded: input.roster.excluded,
+			timeoutMinutes: input.roster.timeoutMinutes,
 			seats: input.roster.seats.map((seat) => ({
 				letter: seat.letter,
 				model: seat.model,

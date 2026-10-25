@@ -80,6 +80,8 @@ export interface CouncilManifest {
 	callerPaneId: string;
 	plannerModel: string;
 	excluded: string[];
+	/** Per-request seat timeout for council rounds. */
+	timeoutMinutes: number;
 	seats: ManifestSeat[];
 }
 

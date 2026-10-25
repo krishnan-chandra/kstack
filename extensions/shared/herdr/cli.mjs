@@ -7,9 +7,13 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
+import { resolveCouncilRoster } from "../council/roster.ts";
+import { overrideCouncilFinding, runCouncilRound } from "../council/round.ts";
+import { readManifest } from "../council/store.ts";
 import { resolveConfiguredModel } from "../resolve-model.ts";
 import { isObject } from "../validation.ts";
 import { attachHostedAgent } from "./agent-host.ts";
+import { closeCouncilSeats, councilRecordInfo, createSeatAsker, openCouncilSeats } from "./council-host.ts";
 import { parseFanoutSpec, runFanout } from "./fanout.ts";
 import { createNodeHerdrExec } from "./herdr-cli.ts";
 
@@ -18,9 +22,30 @@ const USAGE = `usage: cli.mjs <subcommand> [options]
 subcommands:
   resolve-model --section NAME --key NAME [--model REF]
   fanout --spec FILE --out FILE [--label TEXT] [--max-concurrency N]
-  ask --agent NAME --prompt FILE --out FILE   (FILE paths must be absolute)`;
+  ask --agent NAME --prompt FILE --out FILE   (FILE paths must be absolute)
+  council open --dir DIR --slug SLUG --planner-model REF [--seats REF,REF,...]
+  council round --dir DIR --plan FILE [--task FILE] [--response FILE] [--verify]
+  council override --dir DIR --finding ID --reason TEXT [--plan FILE]
+  council close --dir DIR
+    (council DIR and FILE paths must be absolute; results print as JSON)`;
 
-const SUBCOMMANDS = new Set(["resolve-model", "fanout", "ask"]);
+const SUBCOMMANDS = new Set(["resolve-model", "fanout", "ask", "council"]);
+
+const COUNCIL_FLAGS = {
+	open: {
+		values: ["--dir", "--slug", "--planner-model", "--seats"],
+		booleans: [],
+		required: ["--dir", "--slug", "--planner-model"],
+	},
+	round: { values: ["--dir", "--plan", "--task", "--response"], booleans: ["--verify"], required: ["--dir", "--plan"] },
+	override: {
+		values: ["--dir", "--finding", "--reason", "--plan"],
+		booleans: [],
+		required: ["--dir", "--finding", "--reason"],
+	},
+	close: { values: ["--dir"], booleans: [], required: ["--dir"] },
+};
+const COUNCIL_PATH_FLAGS = ["--dir", "--plan", "--task", "--response"];
 
 async function withCancellation(run) {
 	const controller = new AbortController();
@@ -117,6 +142,152 @@ export function parseAskArgs(argv) {
 	return { ok: true, agent: values["--agent"], prompt: values["--prompt"], out: values["--out"] };
 }
 
+export function parseCouncilArgs(argv) {
+	const [action, ...rest] = argv;
+	const spec = action === undefined ? undefined : COUNCIL_FLAGS[action];
+	if (!spec) return { ok: false, error: `unknown council action: ${action ?? "(missing)"}` };
+	const values = {};
+	for (let index = 0; index < rest.length; index++) {
+		const flag = rest[index];
+		if (spec.booleans.includes(flag)) {
+			if (values[flag] !== undefined) return { ok: false, error: `${flag} may be provided only once` };
+			values[flag] = true;
+			continue;
+		}
+		if (!spec.values.includes(flag)) return { ok: false, error: `unknown council ${action} option: ${flag}` };
+		const value = rest[index + 1];
+		if (value === undefined || value.startsWith("--")) return { ok: false, error: `${flag} requires a value` };
+		if (values[flag] !== undefined) return { ok: false, error: `${flag} may be provided only once` };
+		values[flag] = value;
+		index++;
+	}
+	for (const flag of spec.required) {
+		if (values[flag] === undefined) return { ok: false, error: `${flag} is required` };
+	}
+	for (const flag of COUNCIL_PATH_FLAGS) {
+		if (values[flag] !== undefined && !isAbsolute(values[flag])) {
+			return { ok: false, error: `${flag} must be an absolute path` };
+		}
+	}
+	let seats;
+	if (values["--seats"] !== undefined) {
+		seats = values["--seats"]
+			.split(",")
+			.map((seat) => seat.trim())
+			.filter(Boolean);
+		if (seats.length === 0) return { ok: false, error: "--seats needs at least one model or alias" };
+	}
+	return {
+		ok: true,
+		action,
+		dir: values["--dir"],
+		slug: values["--slug"],
+		plannerModel: values["--planner-model"],
+		seats,
+		plan: values["--plan"],
+		task: values["--task"],
+		response: values["--response"],
+		verify: values["--verify"] === true,
+		finding: values["--finding"],
+		reason: values["--reason"],
+	};
+}
+
+function printJson(value) {
+	process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function runCouncil(options) {
+	const deps = { exec: createNodeHerdrExec() };
+	if (options.action === "open") {
+		const roster = resolveCouncilRoster({
+			env: process.env,
+			plannerModel: options.plannerModel,
+			whenMissing: "error",
+			...(options.seats ? { seatsOverride: options.seats } : undefined),
+		});
+		if (!roster.ok || !roster.roster) {
+			printJson({ status: "failed", error: roster.ok ? "No council roster resolved." : roster.error });
+			return 1;
+		}
+		const resolved = roster.roster;
+		const opened = await withCancellation((signal) =>
+			openCouncilSeats(
+				{
+					dir: options.dir,
+					slug: options.slug,
+					cwd: process.cwd(),
+					roster: resolved,
+					plannerModel: options.plannerModel,
+					signal,
+				},
+				deps,
+			),
+		);
+		const common = { dir: options.dir, excluded: resolved.excluded, maxRounds: resolved.maxRounds };
+		if (!opened.ok) {
+			printJson({ status: "failed", ...common, error: opened.error, ...(opened.seats ? { seats: opened.seats } : undefined) });
+			return 1;
+		}
+		printJson({ status: opened.status, ...common, tabId: opened.tabId, seats: opened.seats });
+		return opened.status === "ready" ? 0 : 1;
+	}
+	if (options.action === "round") {
+		return withCancellation(async (signal) => {
+			const asker = await createSeatAsker(options.dir, deps);
+			if (!asker.ok) {
+				printJson({ status: "failed", error: asker.error });
+				return 1;
+			}
+			const result = await runCouncilRound(
+				{
+					dir: options.dir,
+					planFile: options.plan,
+					...(options.task ? { taskFile: options.task } : undefined),
+					...(options.response ? { responseFile: options.response } : undefined),
+					verify: options.verify,
+					timeoutMs: asker.manifest.timeoutMinutes * 60_000,
+					info: councilRecordInfo(asker.manifest),
+					signal,
+				},
+				{ askSeat: asker.askSeat },
+			);
+			const { exitCode, ...json } = result;
+			printJson(json);
+			return exitCode;
+		});
+	}
+	if (options.action === "override") {
+		let manifest;
+		try {
+			manifest = readManifest(options.dir);
+		} catch (error) {
+			printJson({
+				status: "failed",
+				error: `Could not read the council manifest: ${error instanceof Error ? error.message : String(error)}`,
+			});
+			return 1;
+		}
+		const result = await overrideCouncilFinding({
+			dir: options.dir,
+			id: options.finding,
+			reason: options.reason,
+			...(options.plan ? { planFile: options.plan } : undefined),
+			info: councilRecordInfo(manifest),
+		});
+		const { exitCode, ...json } = result;
+		printJson(json);
+		return exitCode;
+	}
+	const closed = await closeCouncilSeats(options.dir, deps);
+	printJson(
+		closed.ok
+			? { status: "closed", closed: closed.closed, skipped: closed.skipped }
+			: { status: "failed", error: closed.error },
+	);
+	return closed.ok ? 0 : 1;
+}
+
 async function main(argv) {
 	const parsed = parseSubcommand(argv);
 	if (!parsed.ok) {
@@ -169,6 +340,14 @@ async function main(argv) {
 				await attached.agent.dispose();
 			}
 		});
+	}
+	if (parsed.subcommand === "council") {
+		const options = parseCouncilArgs(argv.slice(1));
+		if (!options.ok) {
+			process.stderr.write(`${options.error}\n\n${USAGE}\n`);
+			return 2;
+		}
+		return runCouncil(options);
 	}
 	if (parsed.subcommand === "fanout") {
 		const options = parseFanoutArgs(argv.slice(1));
