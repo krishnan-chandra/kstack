@@ -113,6 +113,7 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | `plan-implement` | `planner`, `implementer`, `timeoutMinutes` | The planner uses `high`, `xhigh`, or `max`; planner and implementer use different model IDs. `--fast` mode reuses this implementer and skips planning, review, and publishing. |
 | `council` | `seats` (an array of 1–5 model objects or alias strings), `maxRounds`, `timeoutMinutes`, `reviewTimeoutMinutes` | Seat models are distinct. A seat that uses the planner's model sits out, so at least one seat must use another model. `maxRounds` is an integer from 1 to 5 (default 3). `timeoutMinutes` is an integer from 1 to 60 (default 15); `reviewTimeoutMinutes` is an integer from 1 to 60 (default 10). The adversarial-planning skill seats every remaining model; plan-implement debates with the first remaining seat and reviews the implementation with all of them. |
 | `kstack-router` | `classifier`, `timeoutSeconds`, `review.models` | `timeoutSeconds` is 1–600. `review.models` is 1–5 model specs in preference order; the review route always runs on one of them (built-in order: Opus 5.5, then Astra). |
+| `openrouter-floor` | `default`, `models` | Values are `floor`, `nitro`, or `none`. Model keys are exact `openrouter/<model-id>` IDs without a variant suffix, including slashless IDs such as `openrouter/auto`. Omit the section to use floor everywhere. |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
 | `swarm` | `worker`, `maxConcurrency` | Use a fast worker for broad coverage work. |
@@ -167,6 +168,10 @@ Before showing the preview, check all of these conditions:
   least one seat differs from the planner. `maxRounds` is an integer from 1 to
   5, `timeoutMinutes` is an integer from 1 to 60, and `reviewTimeoutMinutes` is
   an integer from 1 to 60.
+- `openrouter-floor` contains only optional `default` and `models` fields. Values
+  are `floor`, `nitro`, or `none`; model keys are exact `openrouter/<model-id>`
+  IDs without variant suffixes. Slashless IDs such as `openrouter/auto` are valid. Use `validateRoutingConfig` from
+  `extensions/openrouter-floor/routing-policy.ts` to check the section.
 - `kstack-router.review.models` contains 1–5 model specs in preference order.
 - `plan-implement.planner` and `implementer` are distinct, and the planner has
   high-or-deeper thinking. `--fast` reuses the `implementer` without a planner.

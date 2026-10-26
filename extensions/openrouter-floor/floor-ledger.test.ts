@@ -47,6 +47,39 @@ function createTestLedger(rootDirectory: string, options: TestLedgerOptions = {}
 }
 
 describe("floor ledger", () => {
+	it("round-trips variants, preserves legacy records, and rejects invalid variants", async () => {
+		const scope = await tempScope();
+		const root = await tempRoot();
+		const ledger = createTestLedger(root, { processId: "p-variants", now: () => now });
+		for (const variant of ["floor", "nitro"] as const) {
+			await ledger.append(scope, { kind: "rewrite", eventId: `r-${variant}`, at: now.toISOString(), variant });
+		}
+		for (const variant of ["floor", "nitro", "none"] as const) {
+			await ledger.append(scope, {
+				kind: "generation",
+				eventId: `g-${variant}`,
+				at: now.toISOString(),
+				variant,
+				state: "observed",
+				tier: "unknown",
+			});
+		}
+		await ledger.append(scope, { kind: "rewrite", eventId: "legacy", at: now.toISOString() });
+		const path = join(ledgerDirectoryFor(root, workingDirectoryKey(scope)), "p-variants.2026-09-07.jsonl");
+		const common = { version: 1, processId: "p-variants", scopeKey: workingDirectoryKey(scope), at: now.toISOString() };
+		for (const variant of ["invalid", "none", null]) {
+			await appendFile(path, `${JSON.stringify({ ...common, kind: "rewrite", eventId: "bad-rewrite", variant })}\n`);
+		}
+		await appendFile(
+			path,
+			`${JSON.stringify({ ...common, kind: "generation", eventId: "bad-generation", state: "observed", tier: "unknown", variant: "bad" })}\n`,
+		);
+		const { events } = await ledger.read(scope);
+		assert.deepEqual(
+			events.map((event) => event.variant),
+			["floor", "nitro", "floor", "nitro", "none", undefined],
+		);
+	});
 	it("derives the default ledger root from the Pi agent directory", () => {
 		assert.equal(defaultLedgerRoot({ PI_CODING_AGENT_DIR: "/tmp/agent-x" }), "/tmp/agent-x/openrouter-floor/ledger-v1");
 	});

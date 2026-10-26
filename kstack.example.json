@@ -21,6 +21,13 @@
       "thinking": "high"
     }
   ],
+  "openrouter-floor": {
+    "default": "floor",
+    "models": {
+      "openrouter/google/gemini-3.8-flash": "nitro",
+      "openrouter/mistralai/mistral-small-2603": "none"
+    }
+  },
   "plan-implement": {
     "planner": {
       "model": "openai/gpt-6-astra",

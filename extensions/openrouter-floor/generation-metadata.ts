@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { AuthResult } from "@earendil-works/pi-ai";
 import { isRecord } from "../shared/narrow.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
-import type { ServiceTier, UnknownReason } from "./floor-ledger.ts";
+import { isServiceTier, type ServiceTier, type UnknownReason } from "./floor-ledger.ts";
 
 export type MetadataTierResult =
 	| { kind: "known"; tier: Exclude<ServiceTier, "unknown"> }
@@ -103,7 +103,7 @@ function generationUrl(auth: AuthResult, responseId: string): string | undefined
 function normalizeTier(value: BoundaryValue): MetadataTierResult {
 	if (!isString(value)) return { kind: "unknown", reason: "null-or-unrecognized-tier" };
 	const normalized = value.toLowerCase();
-	if (normalized === "flex" || normalized === "default" || normalized === "priority") {
+	if (isServiceTier(normalized) && normalized !== "unknown") {
 		return { kind: "known", tier: normalized };
 	}
 	return { kind: "unknown", reason: "null-or-unrecognized-tier" };

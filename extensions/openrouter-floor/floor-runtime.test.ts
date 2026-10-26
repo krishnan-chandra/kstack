@@ -3,11 +3,139 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { createFloorLedger, type FloorLedger } from "./floor-ledger.ts";
-import { createFloorRuntime, parseCompletedOpenRouterMessage } from "./floor-runtime.ts";
+import { createFloorLedger, type FloorLedger, type LedgerInput } from "./floor-ledger.ts";
+import { createFloorRuntime as createRuntime, parseCompletedOpenRouterMessage } from "./floor-runtime.ts";
+import { BUILT_IN_ROUTING, resolveVariant } from "./routing-policy.ts";
+
+function createFloorRuntime(deps: Omit<Parameters<typeof createRuntime>[0], "resolveVariant">) {
+	return createRuntime({
+		...deps,
+		resolveVariant: (model) => resolveVariant({ model, config: BUILT_IN_ROUTING, sessionOverride: undefined }),
+	});
+}
 
 const now = new Date("2026-09-07T12:00:00.000Z");
 const scopes: string[] = [];
+
+it("leaves virtual, mismatched, and missing session models unattributed", async () => {
+	const inputs: LedgerInput[] = [];
+	const ledger: FloorLedger = {
+		processId: "p-mismatch",
+		append: async (_scope, input) => {
+			inputs.push(input);
+		},
+		read: async () => ({ events: [], scopeLabel: "repository" }),
+		flush: async () => {},
+	};
+	const runtime = createFloorRuntime({ ledger });
+	const message = { role: "assistant", provider: "openrouter", model: "author/model", stopReason: "stop" };
+	for (const current of [
+		undefined,
+		{ provider: "router", id: "auto" },
+		{ provider: "openrouter", id: "other/model" },
+	]) {
+		await runtime.observeCompletion(message, async () => undefined, "scope", current);
+	}
+	assert.equal(inputs.length, 3);
+	assert.deepEqual(
+		inputs.map((event) => event.variant),
+		[undefined, undefined, undefined],
+	);
+	await runtime.shutdown();
+});
+
+it("keeps the completion variant on delayed tier resolutions across midnight", async () => {
+	const scope = await tempScope();
+	let time = new Date(2026, 8, 6, 23, 59, 55);
+	const ledger = createFloorLedger({
+		rootDirectory: scope,
+		processId: "p-midnight",
+		now: () => time,
+		resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
+	});
+	const runtime = createFloorRuntime({
+		ledger,
+		clock: { now: () => time },
+		lookup: async () => {
+			time = new Date(2026, 8, 7, 0, 0, 15);
+			return { kind: "known", tier: "flex" };
+		},
+	});
+	const current = { provider: "openrouter", id: "author/model" };
+	await runtime.observeCompletion(
+		{ role: "assistant", provider: "openrouter", model: current.id, stopReason: "stop", responseId: "gen-midnight" },
+		async () => undefined,
+		scope,
+		current,
+	);
+	await runtime.shutdown();
+	const { events } = await ledger.read(scope);
+	assert.deepEqual(
+		events.map((event) => event.variant),
+		["floor", "floor"],
+	);
+	const report = await runtime.report({ scope, range: "today" });
+	assert.equal(report.generationsByVariant.floor.flex, 1);
+	assert.equal(report.generationsByVariant.unattributed.flex, 0);
+	assert.equal(report.flexAmongFloorKnown, 1);
+});
+
+for (const variant of ["floor", "nitro", "none"] as const) {
+	it(`records ${variant} policy on rewrites and observed generations`, async () => {
+		const scope = await tempScope();
+		const ledger = createFloorLedger({
+			rootDirectory: scope,
+			processId: "p-variants",
+			now: () => now,
+			resolveScope: async () => ({ key: "a".repeat(64), label: "repository" }),
+		});
+		const runtime = createRuntime({
+			ledger,
+			clock: { now: () => now },
+			resolveVariant: () => ({ variant, source: "session-override" }),
+			lookup: async () => ({ kind: "known", tier: "default" }),
+		});
+		const model = { provider: "openrouter", id: "mistralai/test" };
+		const replacement = await runtime.rewrite({ model: model.id }, model, scope);
+		assert.equal(replacement?.model, variant === "none" ? undefined : `${model.id}:${variant}`);
+		await runtime.observeCompletion(
+			{ role: "assistant", provider: "openrouter", model: model.id, stopReason: "stop", responseId: `gen-${variant}` },
+			async () => undefined,
+			scope,
+			model,
+		);
+		await runtime.shutdown();
+		const { events } = await ledger.read(scope);
+		assert.equal(events.length, variant === "none" ? 2 : 3);
+		for (const event of events) assert.equal(event.variant, variant);
+	});
+}
+it("does not rewrite or attribute a model with an explicit suffix", async () => {
+	const inputs: LedgerInput[] = [];
+	const ledger: FloorLedger = {
+		processId: "p-suffix",
+		append: async (_scope, input) => {
+			inputs.push(input);
+		},
+		read: async () => ({ events: [], scopeLabel: "repository" }),
+		flush: async () => {},
+	};
+	const runtime = createRuntime({ ledger, resolveVariant: () => ({ variant: "free", source: "model-suffix" }) });
+	assert.equal(
+		await runtime.rewrite({ model: "author/model:free" }, { provider: "openrouter", id: "author/model:free" }, "scope"),
+		undefined,
+	);
+	assert.equal(inputs.length, 0);
+	await runtime.observeCompletion(
+		{ role: "assistant", provider: "openrouter", model: "author/model:free", stopReason: "stop" },
+		async () => undefined,
+		"scope",
+		{ provider: "openrouter", id: "author/model:free" },
+	);
+	assert.equal(inputs.length, 1);
+	assert.equal(inputs[0]?.variant, undefined);
+	await runtime.shutdown();
+});
 
 afterEach(async () => {
 	await Promise.all(scopes.splice(0).map((scope) => rm(scope, { recursive: true, force: true })));
@@ -54,11 +182,11 @@ describe("parseCompletedOpenRouterMessage", () => {
 				responseId: "gen-123",
 				content: "sensitive response",
 			}),
-			{ responseId: "gen-123" },
+			{ responseId: "gen-123", model: undefined },
 		);
 		assert.deepEqual(
 			parseCompletedOpenRouterMessage({ role: "assistant", provider: "openrouter", stopReason: "stop" }),
-			{ responseId: undefined },
+			{ responseId: undefined, model: undefined },
 		);
 	});
 
@@ -178,23 +306,26 @@ describe("floor runtime", () => {
 			{ role: "assistant", provider: "openrouter", stopReason: "stop", responseId: "gen-123" },
 			async () => undefined,
 			scope,
+			undefined,
 		);
 		await runtime.observeCompletion(
 			{ role: "assistant", provider: "openrouter", stopReason: "stop" },
 			async () => undefined,
 			scope,
+			undefined,
 		);
 		await runtime.observeCompletion(
 			{ role: "assistant", provider: "openrouter", stopReason: "error", responseId: "gen-error" },
 			async () => undefined,
 			scope,
+			undefined,
 		);
 
 		const report = await runtime.report({ range: "process", scope });
 		assert.deepEqual(seenResponseIds, ["gen-123"]);
 		assert.equal(report.rewrites, 1);
 		assert.equal(report.completedGenerations, 2);
-		assert.deepEqual(report.tiers, { flex: 1, default: 0, priority: 0, unknown: 1 });
+		assert.deepEqual(report.tiers, { flex: 1, default: 0, priority: 0, ultrafast: 0, unknown: 1 });
 	});
 
 	it("does not delay completion handling while generation metadata propagates", async () => {
@@ -228,6 +359,7 @@ describe("floor runtime", () => {
 				{ role: "assistant", provider: "openrouter", stopReason: "stop", responseId: "gen-delayed" },
 				async () => undefined,
 				scope,
+				undefined,
 			)
 			.then(() => {
 				completionSettled = true;
@@ -267,6 +399,7 @@ describe("floor runtime", () => {
 			{ role: "assistant", provider: "openrouter", stopReason: "toolUse", responseId: "gen-turn-abort" },
 			async () => undefined,
 			scope,
+			undefined,
 		);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -278,7 +411,7 @@ describe("floor runtime", () => {
 		const report = await runtime.report({ range: "process", scope });
 
 		assert.equal(lookupSignal?.aborted, true);
-		assert.deepEqual(report.tiers, { flex: 1, default: 0, priority: 0, unknown: 0 });
+		assert.deepEqual(report.tiers, { flex: 1, default: 0, priority: 0, ultrafast: 0, unknown: 0 });
 	});
 
 	it("aborts pending metadata work during shutdown without recording a failed resolution", async () => {
@@ -314,6 +447,7 @@ describe("floor runtime", () => {
 			{ role: "assistant", provider: "openrouter", stopReason: "stop", responseId: "gen-shutdown" },
 			async () => undefined,
 			scope,
+			undefined,
 		);
 		await lookupStarted;
 		await runtime.shutdown();
@@ -341,6 +475,7 @@ describe("floor runtime", () => {
 			{ role: "assistant", provider: "openrouter", stopReason: "length", responseId: "gen-failed" },
 			async () => undefined,
 			scope,
+			undefined,
 		);
 		const report = await runtime.report({ range: "30d", scope });
 		assert.equal(report.completedGenerations, 1);

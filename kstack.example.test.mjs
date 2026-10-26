@@ -3,6 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { validateRoutingConfig } from "./extensions/openrouter-floor/routing-policy.ts";
 import { validateConfig } from "./extensions/plan-implement/config.ts";
 import { validateRouterConfig } from "./extensions/kstack-router/config.ts";
 import { resolveCouncilRoster } from "./extensions/shared/council/roster.ts";
@@ -12,12 +13,15 @@ const REPO_ROOT = import.meta.dirname;
 const EXAMPLE_PATH = join(REPO_ROOT, "kstack.example.json");
 const example = JSON.parse(readFileSync(EXAMPLE_PATH, "utf8"));
 
-test("kstack.example.json passes the plan-implement, council, and router validators", () => {
+test("kstack.example.json passes the plan-implement, council, router, and routing policy validators", () => {
 	const planImplement = validateConfig(example["plan-implement"]);
 	assert.equal(planImplement.ok, true, planImplement.ok ? "" : planImplement.error);
 
 	const council = validateCouncilConfig(example.council);
 	assert.equal(council.ok, true, council.ok ? "" : council.error);
+
+	const routing = validateRoutingConfig(example["openrouter-floor"]);
+	assert.equal(routing.ok, true, routing.ok ? "" : routing.error);
 
 	const router = validateRouterConfig(example["kstack-router"]);
 	assert.equal(router.ok, true, router.ok ? "" : router.error);

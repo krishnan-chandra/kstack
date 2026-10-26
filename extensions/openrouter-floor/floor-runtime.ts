@@ -13,11 +13,13 @@ import {
 	type FloorReport,
 	type StatsRange,
 } from "./floor-report.ts";
-import { applyFloor, type CurrentModel } from "./floor-rewrite.ts";
+import { applyRewrite, type CurrentModel } from "./floor-rewrite.ts";
 import { type AuthResolver, lookupGenerationTier, type MetadataTierResult } from "./generation-metadata.ts";
+import type { ResolvedVariant, RoutingVariant } from "./routing-policy.ts";
 
 interface CompletedOpenRouterMessage {
 	readonly responseId: string | undefined;
+	readonly model: string | undefined;
 }
 
 interface TierLookupOptions {
@@ -27,6 +29,7 @@ interface TierLookupOptions {
 
 interface FloorRuntimeDependencies {
 	ledger: FloorLedger;
+	resolveVariant: (model: CurrentModel | undefined) => ResolvedVariant | undefined;
 	clock?: { now(): Date };
 	lookup?: (responseId: string, authResolver: AuthResolver, options: TierLookupOptions) => Promise<MetadataTierResult>;
 	onDiagnostic?: (diagnostic: string) => void;
@@ -37,8 +40,13 @@ interface FloorRuntime {
 		payload: BoundaryValue,
 		model: CurrentModel | undefined,
 		scope: string,
-	): Promise<ReturnType<typeof applyFloor>>;
-	observeCompletion(message: BoundaryValue, authResolver: AuthResolver, scope: string): Promise<void>;
+	): Promise<ReturnType<typeof applyRewrite>>;
+	observeCompletion(
+		message: BoundaryValue,
+		authResolver: AuthResolver,
+		scope: string,
+		current: CurrentModel | undefined,
+	): Promise<void>;
 	report(input: { range: StatsRange; scope: string }): Promise<FloorReport>;
 	flush(): Promise<void>;
 	shutdown(): Promise<void>;
@@ -63,14 +71,15 @@ export function parseCompletedOpenRouterMessage(value: BoundaryValue): Completed
 	if (!isRecord(value)) return undefined;
 	if (value.role !== "assistant" || value.provider !== "openrouter") return undefined;
 	if (!isString(value.stopReason) || !COMPLETED_STOP_REASONS.has(value.stopReason)) return undefined;
+	const model = isString(value.model) ? value.model : undefined;
 	if (
 		isString(value.responseId) &&
 		value.responseId.length <= MAX_RESPONSE_ID_LENGTH &&
 		value.responseId.trim().length > 0
 	) {
-		return { responseId: value.responseId };
+		return { responseId: value.responseId, model };
 	}
-	return { responseId: undefined };
+	return { responseId: undefined, model };
 }
 
 function tierInput(
@@ -78,6 +87,7 @@ function tierInput(
 	responseIdHash: GenerationKeyHash,
 	eventId: string,
 	at: string,
+	variant: RoutingVariant | undefined,
 ): LedgerInput {
 	if (result.kind === "known") {
 		return {
@@ -86,6 +96,7 @@ function tierInput(
 			at,
 			generationKeyHash: responseIdHash,
 			state: "resolved",
+			variant,
 			tier: result.tier,
 		};
 	}
@@ -95,6 +106,7 @@ function tierInput(
 		at,
 		generationKeyHash: responseIdHash,
 		state: "resolved",
+		variant,
 		tier: "unknown",
 		reason: result.reason,
 	};
@@ -153,6 +165,7 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 		authResolver: AuthResolver,
 		scope: string,
 		signal: AbortSignal,
+		variant: RoutingVariant | undefined,
 	): Promise<void> {
 		let result: MetadataTierResult;
 		try {
@@ -165,17 +178,20 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 		// result during abort is indistinguishable from cancellation, so leave the
 		// generation pending instead of recording a failure the lookup never saw.
 		if (signal.aborted && result.kind !== "known") return;
-		await append(scope, tierInput(result, responseIdHash, eventId, clock.now().toISOString()));
+		await append(scope, tierInput(result, responseIdHash, eventId, clock.now().toISOString(), variant));
 	}
 
 	return {
 		async rewrite(payload, model, scope) {
-			const replacement = applyFloor(payload, model);
-			if (replacement !== undefined) {
+			const resolved = dependencies.resolveVariant(model);
+			if (resolved === undefined || resolved.source === "model-suffix") return undefined;
+			const replacement = applyRewrite(payload, model, resolved.variant);
+			if (replacement !== undefined && resolved.variant !== "none") {
 				// Persistence runs on the ledger queue; flush() drains it at shutdown.
 				// Waiting here would put filesystem latency on every provider request.
 				void append(scope, {
 					kind: "rewrite",
+					variant: resolved.variant,
 					eventId: nextEventId(),
 					at: clock.now().toISOString(),
 				});
@@ -183,9 +199,16 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 			return replacement;
 		},
 
-		async observeCompletion(message, authResolver, scope) {
+		async observeCompletion(message, authResolver, scope, current) {
 			const completion = parseCompletedOpenRouterMessage(message);
 			if (completion === undefined) return;
+			// Mirror the rewrite's provider/model guards. Virtual or mismatched model
+			// completions have no evidence that this extension routed their request.
+			let resolved: ResolvedVariant | undefined;
+			if (current?.provider === "openrouter" && completion.model === current.id) {
+				resolved = dependencies.resolveVariant(current);
+			}
+			const variant = resolved?.source === "model-suffix" ? undefined : resolved?.variant;
 			const at = clock.now().toISOString();
 			const eventId = nextEventId();
 			const responseId = completion.responseId;
@@ -196,6 +219,7 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 				at,
 				generationKeyHash: responseIdHash,
 				state: "observed",
+				variant,
 				tier: "unknown",
 				reason: responseId === undefined ? "no-response-id" : "pending",
 			});
@@ -204,7 +228,9 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 			// The lookup deliberately ignores the turn abort signal. It is background
 			// telemetry with its own deadline, and cancelling it when the user presses
 			// Esc would discard exactly the coverage this extension exists to measure.
-			trackLookup(resolveTier(responseId, responseIdHash, eventId, authResolver, scope, shutdownController.signal));
+			trackLookup(
+				resolveTier(responseId, responseIdHash, eventId, authResolver, scope, shutdownController.signal, variant),
+			);
 		},
 
 		async report(input) {
@@ -230,6 +256,6 @@ export function createFloorRuntime(dependencies: FloorRuntimeDependencies): Floo
 	};
 }
 
-export function createDefaultFloorRuntime(): FloorRuntime {
-	return createFloorRuntime({ ledger: createFloorLedger() });
+export function createDefaultFloorRuntime(resolveVariant: FloorRuntimeDependencies["resolveVariant"]): FloorRuntime {
+	return createFloorRuntime({ ledger: createFloorLedger(), resolveVariant });
 }

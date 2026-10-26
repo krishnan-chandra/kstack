@@ -9,8 +9,10 @@ import { isRecord } from "../shared/narrow.ts";
 import { resolveRepositoryIdentity } from "../shared/repository-identity.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
 import { loadVcsBackend } from "../shared/vcs/config.ts";
+import { isRoutingVariant, type RoutingVariant } from "./routing-policy.ts";
 
-export type ServiceTier = "flex" | "default" | "priority" | "unknown";
+export type ServiceTier = "flex" | "default" | "priority" | "ultrafast" | "unknown";
+type RecordedVariant = RoutingVariant;
 export type StatsRange = "process" | "today" | "7d" | "30d";
 export type UnknownReason =
 	| "pending"
@@ -24,6 +26,7 @@ export type LedgerEvent =
 	| {
 			version: 1;
 			kind: "rewrite";
+			variant?: Exclude<RecordedVariant, "none">;
 			eventId: string;
 			processId: string;
 			scopeKey: string;
@@ -32,6 +35,7 @@ export type LedgerEvent =
 	| {
 			version: 1;
 			kind: "generation";
+			variant?: RecordedVariant;
 			eventId: string;
 			processId: string;
 			scopeKey: string;
@@ -45,11 +49,13 @@ export type LedgerEvent =
 export type LedgerInput =
 	| {
 			kind: "rewrite";
+			variant?: Exclude<RecordedVariant, "none">;
 			eventId: string;
 			at: string;
 	  }
 	| {
 			kind: "generation";
+			variant?: RecordedVariant;
 			eventId: string;
 			at: string;
 			generationKeyHash?: GenerationKeyHash;
@@ -160,8 +166,10 @@ function isNotFound(error: BoundaryValue): boolean {
 	return isRecord(error) && error.code === "ENOENT";
 }
 
-function isServiceTier(value: BoundaryValue): value is ServiceTier {
-	return value === "flex" || value === "default" || value === "priority" || value === "unknown";
+export function isServiceTier(value: BoundaryValue): value is ServiceTier {
+	return (
+		value === "flex" || value === "default" || value === "priority" || value === "ultrafast" || value === "unknown"
+	);
 }
 
 function isUnknownReason(value: BoundaryValue): value is UnknownReason {
@@ -201,7 +209,8 @@ function parseLedgerEvent(value: BoundaryValue, expectedScopeKey: string): Ledge
 		return undefined;
 
 	if (value.kind === "rewrite") {
-		return {
+		if (value.variant !== undefined && value.variant !== "floor" && value.variant !== "nitro") return undefined;
+		const event: LedgerEvent = {
 			version: 1,
 			kind: "rewrite",
 			eventId: value.eventId,
@@ -209,10 +218,13 @@ function parseLedgerEvent(value: BoundaryValue, expectedScopeKey: string): Ledge
 			scopeKey: value.scopeKey,
 			at: value.at,
 		};
+		if (value.variant !== undefined) event.variant = value.variant;
+		return event;
 	}
 
 	if (value.kind !== "generation" || (value.state !== "observed" && value.state !== "resolved")) return undefined;
 	if (!isServiceTier(value.tier)) return undefined;
+	if (value.variant !== undefined && !isRoutingVariant(value.variant)) return undefined;
 	if (value.reason !== undefined && !isUnknownReason(value.reason)) return undefined;
 	if (value.tier !== "unknown" && value.reason !== undefined) return undefined;
 	if (value.state === "observed" && value.tier !== "unknown") return undefined;
@@ -231,12 +243,13 @@ function parseLedgerEvent(value: BoundaryValue, expectedScopeKey: string): Ledge
 	};
 	if (value.generationKeyHash !== undefined) event.generationKeyHash = value.generationKeyHash;
 	if (value.reason !== undefined) event.reason = value.reason;
+	if (value.variant !== undefined) event.variant = value.variant;
 	return event;
 }
 
 function materializeEvent(input: LedgerInput, processId: string, scopeKey: string): LedgerEvent {
 	if (input.kind === "rewrite") {
-		return {
+		const event: LedgerEvent = {
 			version: 1,
 			kind: "rewrite",
 			eventId: input.eventId,
@@ -244,6 +257,8 @@ function materializeEvent(input: LedgerInput, processId: string, scopeKey: strin
 			scopeKey,
 			at: input.at,
 		};
+		if (input.variant !== undefined) event.variant = input.variant;
+		return event;
 	}
 
 	const event: LedgerEvent = {
@@ -258,6 +273,7 @@ function materializeEvent(input: LedgerInput, processId: string, scopeKey: strin
 	};
 	if (input.generationKeyHash !== undefined) event.generationKeyHash = input.generationKeyHash;
 	if (input.reason !== undefined) event.reason = input.reason;
+	if (input.variant !== undefined) event.variant = input.variant;
 	return event;
 }
 

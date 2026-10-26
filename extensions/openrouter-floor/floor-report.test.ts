@@ -35,6 +35,65 @@ function generation(
 }
 
 describe("aggregateFloorReport", () => {
+	it("aggregates inferred variants and includes ultrafast in known denominators", () => {
+		const events: LedgerEvent[] = [];
+		for (const [index, variant, tier] of [
+			[0, "floor", "flex"],
+			[1, "floor", "default"],
+			[2, "nitro", "priority"],
+			[3, "nitro", "ultrafast"],
+			[4, "none", "default"],
+			[5, undefined, "flex"],
+		] as const) {
+			const eventId = `g-${index}`;
+			const key = hashGenerationId(eventId);
+			events.push({
+				version: 1,
+				kind: "generation",
+				eventId,
+				processId,
+				scopeKey,
+				at: now.toISOString(),
+				generationKeyHash: key,
+				state: "observed",
+				tier: "unknown",
+				variant,
+			});
+			events.push({
+				version: 1,
+				kind: "generation",
+				eventId,
+				processId,
+				scopeKey,
+				at: now.toISOString(),
+				generationKeyHash: key,
+				state: "resolved",
+				tier,
+			});
+		}
+		const floorRewrite: LedgerEvent = { ...rewrite("r-floor", now.toISOString()), variant: "floor" };
+		events.push(
+			floorRewrite,
+			floorRewrite,
+			{ ...rewrite("r-nitro", now.toISOString()), variant: "nitro" },
+			rewrite("r-legacy", now.toISOString()),
+		);
+		const report = aggregateFloorReport(events, { range: "today", scopeLabel: "repository", now });
+		assert.deepEqual(report.rewritesByVariant, { floor: 1, nitro: 1, unattributed: 1 });
+		assert.equal(report.generationsByVariant.unattributed.flex, 1);
+		assert.equal(report.generationsByVariant.none.default, 1);
+		assert.equal(report.generationsByVariant.nitro.ultrafast, 1);
+		assert.equal(report.flexAmongFloorKnown, 0.5);
+		assert.equal(report.priorityAmongNitroKnown, 0.5);
+		assert.equal(report.metadataCoverage, 1);
+		assert.equal(report.flexAmongKnownTiers, 2 / 6);
+		const formatted = formatFloorReport(report);
+		assert.match(formatted, /Flex among floor known\s+50\.0% \(1\/2\)/);
+		assert.match(formatted, /Priority among nitro known\s+50\.0% \(1\/2\)/);
+		const empty = aggregateFloorReport([], { range: "today", scopeLabel: "repository", now });
+		assert.equal(empty.flexAmongFloorKnown, undefined);
+		assert.equal(empty.priorityAmongNitroKnown, undefined);
+	});
 	it("keeps rewrite coverage separate and prefers a known resolution", () => {
 		const key = hashGenerationId("gen-flex");
 		const events: LedgerEvent[] = [
@@ -50,7 +109,7 @@ describe("aggregateFloorReport", () => {
 		const report = aggregateFloorReport(events, { range: "today", scopeLabel: "repository", now });
 		assert.equal(report.rewrites, 2);
 		assert.equal(report.completedGenerations, 3);
-		assert.deepEqual(report.tiers, { flex: 1, default: 1, priority: 0, unknown: 1 });
+		assert.deepEqual(report.tiers, { flex: 1, default: 1, priority: 0, ultrafast: 0, unknown: 1 });
 		assert.deepEqual(report.unknownReasons, {
 			pending: 0,
 			"no-response-id": 1,
@@ -111,7 +170,16 @@ describe("stats command helpers", () => {
 			scopeLabel: "repository",
 			rewrites: 2,
 			completedGenerations: 3,
-			tiers: { flex: 1, default: 1, priority: 0, unknown: 1 },
+			tiers: { flex: 1, default: 1, priority: 0, ultrafast: 0, unknown: 1 },
+			rewritesByVariant: { floor: 0, nitro: 0, unattributed: 2 },
+			generationsByVariant: {
+				floor: { flex: 0, default: 0, priority: 0, ultrafast: 0, unknown: 0 },
+				nitro: { flex: 0, default: 0, priority: 0, ultrafast: 0, unknown: 0 },
+				none: { flex: 0, default: 0, priority: 0, ultrafast: 0, unknown: 0 },
+				unattributed: { flex: 1, default: 1, priority: 0, ultrafast: 0, unknown: 1 },
+			},
+			flexAmongFloorKnown: undefined,
+			priorityAmongNitroKnown: undefined,
 			unknownReasons: {
 				pending: 0,
 				"no-response-id": 0,
@@ -123,9 +191,11 @@ describe("stats command helpers", () => {
 			flexAmongKnownTiers: 1 / 2,
 		});
 		assert.match(text, /scope: repository/);
-		assert.match(text, /Floor rewrites observed\s+2/);
+		assert.match(text, /Rewrites observed\s+2/);
 		assert.match(text, /lookup failed\s+1/);
 		assert.match(text, /Unknown includes missing response IDs/);
+		assert.match(text, /ultrafast[^\n]*\n {2}unknown[^\n]*\n {4}lookup failed/);
+		assert.match(text, /explicit model suffixes, and mismatched session models are unattributed/);
 		assert.doesNotMatch(text, /generation-id|Authorization|prompt/i);
 	});
 });

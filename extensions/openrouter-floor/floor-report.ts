@@ -18,17 +18,27 @@ export function parseStatsRange(args: string): StatsRangeParseResult {
 	return { ok: false, error: "Usage: /openrouter-floor-stats [process|today|7d|30d]" };
 }
 
+type TierCounts = Record<ServiceTier, number>;
+function emptyTiers() {
+	return { flex: 0, default: 0, priority: 0, ultrafast: 0, unknown: 0 } satisfies TierCounts;
+}
+function knownCount(tiers: TierCounts): number {
+	return tiers.flex + tiers.default + tiers.priority + tiers.ultrafast;
+}
+function share(part: number, total: number): number | undefined {
+	return total === 0 ? undefined : part / total;
+}
+
 export interface FloorReport {
 	range: StatsRange;
 	scopeLabel: FloorScopeLabel;
 	rewrites: number;
 	completedGenerations: number;
-	tiers: Readonly<{
-		flex: number;
-		default: number;
-		priority: number;
-		unknown: number;
-	}>;
+	tiers: Readonly<TierCounts>;
+	rewritesByVariant: Record<"floor" | "nitro" | "unattributed", number>;
+	generationsByVariant: Record<"floor" | "nitro" | "none" | "unattributed", TierCounts>;
+	flexAmongFloorKnown: number | undefined;
+	priorityAmongNitroKnown: number | undefined;
 	unknownReasons: Readonly<Record<UnknownReason, number>>;
 	metadataCoverage: number;
 	flexAmongKnownTiers: number | undefined;
@@ -103,10 +113,18 @@ function percentage(part: number, total: number): string {
 export function aggregateFloorReport(events: readonly LedgerEvent[], input: AggregateFloorReportInput): FloorReport {
 	const inRange = events.filter((event) => isInRange(event, input));
 	const rewriteIds = new Set<string>();
+	const rewritesByVariant = { floor: 0, nitro: 0, unattributed: 0 };
+	const generationsByVariant = {
+		floor: emptyTiers(),
+		nitro: emptyTiers(),
+		none: emptyTiers(),
+		unattributed: emptyTiers(),
+	};
 	const groups = new Map<string, GenerationGroup>();
 
 	for (const event of inRange) {
 		if (event.kind === "rewrite") {
+			if (!rewriteIds.has(event.eventId)) rewritesByVariant[event.variant ?? "unattributed"] += 1;
 			rewriteIds.add(event.eventId);
 			continue;
 		}
@@ -119,7 +137,7 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 		groups.set(key, { events: [event] });
 	}
 
-	const tiers = { flex: 0, default: 0, priority: 0, unknown: 0 };
+	const tiers = emptyTiers();
 	const unknownReasons = {
 		pending: 0,
 		"no-response-id": 0,
@@ -137,16 +155,22 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 	for (const group of groups.values()) {
 		const outcome = generationOutcome(group.events, onDiagnostic);
 		tiers[outcome.tier] += 1;
+		const attributed = latestEvent(group.events.filter((event) => event.variant !== undefined));
+		generationsByVariant[attributed?.variant ?? "unattributed"][outcome.tier] += 1;
 		if (outcome.tier === "unknown") unknownReasons[outcome.reason] += 1;
 	}
-	const completedGenerations = tiers.flex + tiers.default + tiers.priority + tiers.unknown;
-	const known = tiers.flex + tiers.default + tiers.priority;
+	const known = knownCount(tiers);
+	const completedGenerations = known + tiers.unknown;
 	return {
 		range: input.range,
 		scopeLabel: input.scopeLabel,
 		rewrites: rewriteIds.size,
 		completedGenerations,
 		tiers,
+		rewritesByVariant,
+		generationsByVariant,
+		flexAmongFloorKnown: share(generationsByVariant.floor.flex, knownCount(generationsByVariant.floor)),
+		priorityAmongNitroKnown: share(generationsByVariant.nitro.priority, knownCount(generationsByVariant.nitro)),
 		unknownReasons,
 		metadataCoverage: completedGenerations === 0 ? 0 : known / completedGenerations,
 		flexAmongKnownTiers: known === 0 ? undefined : tiers.flex / known,
@@ -154,7 +178,13 @@ export function aggregateFloorReport(events: readonly LedgerEvent[], input: Aggr
 }
 
 export function formatFloorReport(report: FloorReport): string {
-	const known = report.tiers.flex + report.tiers.default + report.tiers.priority;
+	const known = knownCount(report.tiers);
+	const variantLines = Object.entries(report.generationsByVariant).map(
+		([variant, tiers]) =>
+			`  ${variant}: flex ${tiers.flex}, default ${tiers.default}, priority ${tiers.priority}, ultrafast ${tiers.ultrafast}, unknown ${tiers.unknown}`,
+	);
+	const floorKnown = knownCount(report.generationsByVariant.floor);
+	const nitroKnown = knownCount(report.generationsByVariant.nitro);
 	const unknownReasonLabels: readonly (readonly [UnknownReason, string])[] = [
 		["pending", "pending"],
 		["no-response-id", "no response ID"],
@@ -166,20 +196,27 @@ export function formatFloorReport(report: FloorReport): string {
 		.filter(([reason]) => report.unknownReasons[reason] > 0)
 		.map(([reason, label]) => `    ${label.padEnd(24)}${report.unknownReasons[reason].toString().padStart(4)}`);
 	const lines = [
-		`OpenRouter floor routing (scope: ${report.scopeLabel}, range: ${report.range})`,
+		`OpenRouter variant routing (scope: ${report.scopeLabel}, range: ${report.range})`,
 		"",
-		`Floor rewrites observed       ${report.rewrites}`,
+		`Rewrites observed             ${report.rewrites}`,
+		`  floor ${report.rewritesByVariant.floor}, nitro ${report.rewritesByVariant.nitro}, unattributed ${report.rewritesByVariant.unattributed}`,
 		`Completed generations         ${report.completedGenerations}`,
 		`  flex                       ${report.tiers.flex.toString().padStart(4)}  ${percentage(report.tiers.flex, report.completedGenerations)}`,
 		`  default                    ${report.tiers.default.toString().padStart(4)}  ${percentage(report.tiers.default, report.completedGenerations)}`,
 		`  priority                   ${report.tiers.priority.toString().padStart(4)}  ${percentage(report.tiers.priority, report.completedGenerations)}`,
+		`  ultrafast                  ${report.tiers.ultrafast.toString().padStart(4)}  ${percentage(report.tiers.ultrafast, report.completedGenerations)}`,
 		`  unknown                    ${report.tiers.unknown.toString().padStart(4)}  ${percentage(report.tiers.unknown, report.completedGenerations)}`,
 		...unknownReasonLines,
+		"Generations by inferred variant:",
+		...variantLines,
 		"",
 		`Tier metadata coverage        ${percentage(known, report.completedGenerations)} (${known}/${report.completedGenerations})`,
 		`Flex among known tiers        ${report.flexAmongKnownTiers === undefined ? "n/a" : percentage(report.tiers.flex, known)} (${report.tiers.flex}/${known})`,
 		"",
+		`Flex among floor known        ${report.flexAmongFloorKnown === undefined ? "n/a" : percentage(report.generationsByVariant.floor.flex, floorKnown)} (${report.generationsByVariant.floor.flex}/${floorKnown})`,
+		`Priority among nitro known    ${report.priorityAmongNitroKnown === undefined ? "n/a" : percentage(report.generationsByVariant.nitro.priority, nitroKnown)} (${report.generationsByVariant.nitro.priority}/${nitroKnown})`,
 		"Rewrite attempts and completed generations are separate populations.",
+		"Generation variants are inferred from routing policy at completion. Older records, explicit model suffixes, and mismatched session models are unattributed.",
 		"Unknown includes missing response IDs and failed or unavailable metadata lookups.",
 	];
 	return lines.join("\n");
