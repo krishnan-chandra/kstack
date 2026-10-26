@@ -19,6 +19,7 @@ import {
 } from "../shared/stack/manifest.ts";
 import type { FailedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { planIdFor } from "../shared/stack/plan-id.ts";
+import { createPrTransitions } from "../shared/stack/pr-transitions.ts";
 import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
@@ -364,6 +365,13 @@ async function applyPublication(
 					draft: slice.draft,
 				})),
 	});
+	const transitions = createPrTransitions({
+		repository: plan.repository,
+		cwd: plan.repositoryRoot,
+		signal: deps.signal,
+		gateway: deps.gateway,
+		completed: progress.completed,
+	});
 	const plannedActions = plan.slices.flatMap((slice, index) => slice.actions.map((action) => ({ action, index })));
 	const orderedActions = [
 		...plannedActions.filter(({ action }) => action.kind === "push-bookmark"),
@@ -396,24 +404,15 @@ async function applyPublication(
 				}
 				progress.completed({ kind: "push-bookmark", ref: action.ref });
 			} else if (action.kind === "create-draft-pr") {
-				const created = await deps.gateway.createDraftPr({
-					repo: plan.repository,
-					ref: action.ref,
+				const created = await transitions.create({
+					row: published[index],
 					base: action.targetBase,
 					title: action.title,
 					body: `Stack slice \`${action.ref}\` published by kstack.`,
-					cwd: plan.repositoryRoot,
-					signal: deps.signal,
 				});
-				published[index].prNumber = created.number;
-				published[index].url = created.url;
-				published[index].draft = created.draft;
-				progress.completed({ kind: "create-draft-pr", ref: action.ref, prNumber: created.number, url: created.url });
 				if (ready && created.draft) {
 					attemptedAction = { kind: "mark-pr-ready", ref: action.ref, prNumber: created.number };
-					await deps.gateway.markPrReady(plan.repository, created.number, plan.repositoryRoot, deps.signal);
-					published[index].draft = false;
-					progress.completed({ kind: "mark-pr-ready", ref: action.ref, prNumber: created.number });
+					await transitions.ready(published[index]);
 				}
 			} else if (action.kind === "repair-pr-base") {
 				await deps.gateway.updatePrBase({
@@ -424,15 +423,13 @@ async function applyPublication(
 					signal: deps.signal,
 				});
 				progress.completed({
-					kind: "repair-pr-base",
+					kind: action.kind,
 					ref: action.ref,
 					prNumber: action.prNumber,
 					targetBase: action.targetBase,
 				});
 			} else {
-				await deps.gateway.markPrReady(plan.repository, action.prNumber, plan.repositoryRoot, deps.signal);
-				published[index].draft = false;
-				progress.completed({ kind: "mark-pr-ready", ref: action.ref, prNumber: action.prNumber });
+				await transitions.ready(published[index]);
 			}
 		} catch (error) {
 			const failed = failedAction(attemptedAction, error);
@@ -446,7 +443,7 @@ async function applyPublication(
 		(slice): slice is typeof slice & { prNumber: number; url: string } =>
 			slice.prNumber !== undefined && slice.url !== undefined,
 	);
-	if (proven.length !== published.length) {
+	if (proven.length !== plan.slices.length) {
 		return progress.partial({ kind: "create-draft-pr", error: "A published PR could not be proven." });
 	}
 	const comments = await createNavigationCommentStore(deps.gateway).reconcile({

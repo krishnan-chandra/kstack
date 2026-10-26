@@ -126,6 +126,117 @@ function gateway(overrides: Partial<GitHubGateway> = {}): GitHubGateway {
 	return { ...base, ...overrides };
 }
 
+describe("GitHub publication transition traces", () => {
+	for (const scenario of [
+		"create",
+		"create-ready",
+		"two-slices",
+		"proven-gap",
+		"ready-fails",
+		"create-indeterminate",
+		"repair",
+		"repair-rejected",
+		"repair-indeterminate",
+		"existing-draft",
+		"existing-ready",
+		"cancel-before",
+		"cancel-after-push",
+		"cancel-after-create",
+	]) {
+		it(scenario, async (t) => {
+			const events: unknown[] = [];
+			const controller = new AbortController();
+			const twoSlices = scenario === "two-slices" || scenario === "proven-gap";
+			const secondSha = "d".repeat(40);
+			const secondPr = {
+				...existingPr,
+				number: 13,
+				headRef: "kstack/two",
+				headCommitId: secondSha,
+				baseRef: "kstack/one",
+				url: "https://github.com/o/r/pull/13",
+			};
+			const inputManifest = {
+				...manifest,
+				slices: twoSlices
+					? [...manifest.slices, { branch: "kstack/two", baseBranch: "kstack/one", headSha: secondSha, subject: "Two" }]
+					: manifest.slices,
+			};
+			const fixture = execFixture(
+				twoSlices
+					? {
+							"git branch --show-current": { stdout: "kstack/two\n" },
+							"git rev-parse --verify refs/heads/kstack/two^{commit}": { stdout: `${secondSha}\n` },
+							[`git diff --quiet ${local} ${secondSha} --`]: { code: 1 },
+						}
+					: {},
+			);
+			const hasExisting = scenario.startsWith("repair") || scenario.startsWith("existing");
+			const result = await publishGitHubStack({
+				cwd: "/repo",
+				manifest: inputManifest,
+				remote: "origin",
+				ready: scenario !== "create" && !scenario.startsWith("repair"),
+				authorization: "interactive-confirmation",
+				deps: {
+					exec: async (command, args, options) => {
+						if (args[0] === "push") {
+							events.push([command, args]);
+							if (scenario === "cancel-after-push") controller.abort();
+						}
+						return fixture.exec(command, args, options);
+					},
+					gateway: gateway({
+						getRemoteBranchSha: async (_repo, branch) => {
+							if (hasExisting) return local;
+							if (scenario === "proven-gap" && branch === "kstack/two") return secondSha;
+							return undefined;
+						},
+						listOpenPrs: async () => {
+							if (hasExisting)
+								return [
+									{
+										...existingPr,
+										baseRef: scenario.startsWith("repair") ? "old" : "main",
+										draft: scenario !== "existing-ready",
+									},
+								];
+							if (scenario === "proven-gap") return [secondPr];
+							return [];
+						},
+						createDraftPr: async ({ signal: _signal, ...input }) => {
+							events.push(["create", input]);
+							if (scenario === "create-indeterminate" || scenario === "proven-gap")
+								throw new GitHubError("create uncertain", "indeterminate");
+							if (scenario === "cancel-after-create") controller.abort();
+							return input.ref === "kstack/two" ? secondPr : existingPr;
+						},
+						updatePrBase: async ({ signal: _signal, ...input }) => {
+							events.push(["repair", input]);
+							if (scenario === "repair-rejected") throw new GitHubError("repair rejected");
+							if (scenario === "repair-indeterminate") throw new GitHubError("repair uncertain", "indeterminate");
+						},
+						markPrReady: async (...args) => {
+							events.push(["ready", args.slice(0, 3)]);
+							if (scenario === "ready-fails") throw new GitHubError("ready rejected");
+						},
+						getAuthenticatedUser: async () => undefined,
+					}),
+					confirm: async () => {
+						if (scenario === "cancel-before") controller.abort();
+						return true;
+					},
+					acquireLock: publicationLockFixture().acquireLock,
+					realpath: (path) => path,
+					signal: controller.signal,
+				},
+			});
+			assert.notEqual(result.status, "blocked");
+			t.assert.snapshot({ events, result });
+		});
+	}
+});
+
 describe("GitHub stack publication", () => {
 	it("blocks a dirty tree during stack preflight", async () => {
 		const { exec } = execFixture({

@@ -205,6 +205,11 @@ npm run check:exports
 ```
 
 General GitHub effects use the shared gateway in `extensions/shared/github.ts`.
+Publication uses `extensions/shared/stack/pr-transitions.ts` to create and ready
+PRs, update provider-owned rows, and record completion. `orchestrator.ts` retains
+base repairs, metadata preparation, freshness checks, interleaved slice pushes,
+native linking before readiness, cancellation checkpoints, and outcome
+classification. Outbound base normalization stays explicit in the jj provider.
 The validated public-preview adapter for `gh stack` and the Stacks REST API is
 `native-stack.ts`. Full-stack merge and queue settlement live in
 `native-land.ts`; shared empty-working-copy preservation lives in

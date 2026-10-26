@@ -74,6 +74,106 @@ function kstackComment(entries: readonly NavigationEntry[], id = 1) {
 	return { id, body: buildNavigationComment(entries, "main"), user: "publisher" };
 }
 
+describe("jj publication transition traces", () => {
+	for (const scenario of [
+		"create",
+		"create-ready",
+		"create-qualified-base",
+		"repair-qualified-base",
+		"repair",
+		"repair-rejected",
+		"repair-indeterminate",
+		"existing-draft",
+		"existing-ready",
+		"existing-ready-abort",
+		"link-fails",
+		"ready-fails",
+		"create-indeterminate",
+		"prefix-gap",
+		"cancel-before",
+		"cancel-after-push",
+		"cancel-after-create",
+	]) {
+		it(scenario, async (t) => {
+			const events: unknown[] = [];
+			const controller = new AbortController();
+			const hasExisting = scenario.startsWith("repair") || scenario.startsWith("existing");
+			const github = fakeGithub();
+			const native = fakeNativeStack();
+			const result = await publishStack(
+				{
+					cwd: "/repo",
+					top: "feat2",
+					remote: "origin",
+					ready: scenario !== "create" && !scenario.startsWith("repair"),
+				},
+				{
+					run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+					ui: {
+						...ui(),
+						confirm: async () => {
+							if (scenario === "cancel-before") controller.abort();
+							return true;
+						},
+					},
+					jj: fakeJj({
+						pushBookmark: async (...args) => {
+							events.push(["push", args.slice(0, 3)]);
+							if (scenario === "cancel-after-push") controller.abort();
+						},
+					}),
+					github: fakeGithub({
+						getDefaultBranch: async () => (scenario.endsWith("qualified-base") ? "refs/heads/main" : "main"),
+						listOpenPrs: async () => {
+							if (hasExisting)
+								return linearPrs(2).map((pr) => ({
+									...pr,
+									baseRef: scenario.startsWith("repair") && pr.number === 11 ? "old" : pr.baseRef,
+									draft: !scenario.startsWith("existing-ready"),
+								}));
+							if (scenario === "prefix-gap") return [linearPrs(2)[1]];
+							return [];
+						},
+						createDraftPr: async (input) => {
+							const { signal: _signal, ...args } = input;
+							events.push(["create", args]);
+							if (scenario === "create-indeterminate" || scenario === "prefix-gap")
+								throw new GitHubError("create uncertain", "indeterminate");
+							if (scenario === "cancel-after-create") controller.abort();
+							return github.createDraftPr(input);
+						},
+						updatePrBase: async ({ signal: _signal, ...input }) => {
+							events.push(["repair", input]);
+							if (scenario === "repair-rejected") throw new GitHubError("repair rejected");
+							if (scenario === "repair-indeterminate") throw new GitHubError("repair uncertain", "indeterminate");
+						},
+						markPrReady: async (...args) => {
+							events.push(["ready", args.slice(0, 3)]);
+							if (scenario === "ready-fails") throw new GitHubError("ready rejected");
+						},
+						getAuthenticatedUser: async () => undefined,
+					}),
+					nativeStack: fakeNativeStack({
+						link: async (input) => {
+							const { signal: _signal, ...args } = input;
+							events.push(["link", args]);
+							if (scenario === "link-fails") throw new NativeStackError("link rejected", "failed");
+							if (scenario === "existing-ready-abort") controller.abort();
+							return native.link(input);
+						},
+					}),
+					generatePrMetadata: async ({ bookmark }) => ({ title: `Title ${bookmark}`, body: `Body ${bookmark}` }),
+					loadRepositoryPrTemplate: () => undefined,
+					acquirePublicationLock: permissiveLock(),
+					signal: controller.signal,
+				},
+			);
+			assert.notEqual(result.status, "blocked");
+			t.assert.snapshot({ events, result });
+		});
+	}
+});
+
 describe("inspect and plan", () => {
 	it("inspects an injected stack that is independent of this repository's trunk", async () => {
 		const model = await inspectStack(

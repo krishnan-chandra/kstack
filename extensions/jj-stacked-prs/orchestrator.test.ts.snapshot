@@ -1,0 +1,1620 @@
+exports[`jj publication transition traces > cancel-after-create 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat1",
+        "prNumber": 11,
+        "url": "https://example/feat1"
+      }
+    ],
+    "publication": {
+      "topRef": "feat1",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/feat1",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "failedAction": {
+      "kind": "push-bookmark",
+      "ref": "feat2",
+      "error": "Publication was cancelled before this action started."
+    }
+  }
+}
+`;
+
+exports[`jj publication transition traces > cancel-after-push 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      }
+    ],
+    "failedAction": {
+      "kind": "create-draft-pr",
+      "ref": "feat1",
+      "error": "Publication was cancelled before this action started."
+    }
+  }
+}
+`;
+
+exports[`jj publication transition traces > cancel-before 1`] = `
+{
+  "events": [],
+  "result": {
+    "status": "cancelled"
+  }
+}
+`;
+
+exports[`jj publication transition traces > create 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat2",
+        "base": "feat1",
+        "title": "Title feat2",
+        "body": "Body feat2",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/feat1",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/feat2",
+          "draft": true
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat1",
+        "prNumber": 11,
+        "url": "https://example/feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat2",
+        "prNumber": 12,
+        "url": "https://example/feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > create-indeterminate 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "indeterminate",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "inFlight": {
+      "kind": "create-draft-pr",
+      "ref": "feat1",
+      "error": "create uncertain"
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      }
+    ],
+    "recovery": "Re-run /jj-stack plan and inspect remote state before retrying."
+  }
+}
+`;
+
+exports[`jj publication transition traces > create-qualified-base 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat2",
+        "base": "feat1",
+        "title": "Title feat2",
+        "body": "Body feat2",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "refs/heads/main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        11,
+        "/repo"
+      ]
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "1bac58724425e2c2b3220243c0eb0e7432d613eed8c867cb336b5e66ec59e41e",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/feat1",
+          "draft": false
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/feat2",
+          "draft": false
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat1",
+        "prNumber": 11,
+        "url": "https://example/feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat2",
+        "prNumber": 12,
+        "url": "https://example/feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "feat1",
+        "prNumber": 11
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "feat2",
+        "prNumber": 12
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > create-ready 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat2",
+        "base": "feat1",
+        "title": "Title feat2",
+        "body": "Body feat2",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        11,
+        "/repo"
+      ]
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/feat1",
+          "draft": false
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/feat2",
+          "draft": false
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat1",
+        "prNumber": 11,
+        "url": "https://example/feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat2",
+        "prNumber": 12,
+        "url": "https://example/feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "feat1",
+        "prNumber": 11
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "feat2",
+        "prNumber": 12
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > existing-draft 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        11,
+        "/repo"
+      ]
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "8bc75d5a2f4bc70fbf896e17a38839d37569015f07f3859f980dad18a0f5b0b7",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": false
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": false
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "feat1",
+        "prNumber": 11
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "feat2",
+        "prNumber": 12
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > existing-ready 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "e3ef8c7866c3b477a2795c59bf91fe2cc12556b25d2d28b5633e48a8a7eea5da",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": false
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": false
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > existing-ready-abort 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "e3ef8c7866c3b477a2795c59bf91fe2cc12556b25d2d28b5633e48a8a7eea5da",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": false
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": false
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > link-fails 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat2",
+        "base": "feat1",
+        "title": "Title feat2",
+        "body": "Body feat2",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat1",
+        "prNumber": 11,
+        "url": "https://example/feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat2",
+        "prNumber": 12,
+        "url": "https://example/feat2"
+      }
+    ],
+    "publication": {
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/feat1",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/feat2",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "failedAction": {
+      "kind": "link-native-stack",
+      "error": "link rejected"
+    }
+  }
+}
+`;
+
+exports[`jj publication transition traces > prefix-gap 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "indeterminate",
+    "planId": "10e9fafd5be5f356c16d096047fab583da830ae69ebb954b56f66e864caecc75",
+    "inFlight": {
+      "kind": "create-draft-pr",
+      "ref": "feat1",
+      "error": "create uncertain"
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      }
+    ],
+    "recovery": "Re-run /jj-stack plan and inspect remote state before retrying."
+  }
+}
+`;
+
+exports[`jj publication transition traces > ready-fails 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat1",
+        "base": "main",
+        "title": "Title feat1",
+        "body": "Body feat1",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "feat2",
+        "base": "feat1",
+        "title": "Title feat2",
+        "body": "Body feat2",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        11,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "8fbd0c0e09a54f0b3af97c25306ed6f33e1b659fa996055a3a879144fdca94a2",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat1",
+        "prNumber": 11,
+        "url": "https://example/feat1"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "feat2",
+        "prNumber": 12,
+        "url": "https://example/feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    "publication": {
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/feat1",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/feat2",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "failedAction": {
+      "kind": "mark-pr-ready",
+      "ref": "feat1",
+      "prNumber": 11,
+      "error": "ready rejected"
+    }
+  }
+}
+`;
+
+exports[`jj publication transition traces > repair 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 11,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "7b854cbcae7a602e1fe3e9fa2fc18e263138921ef6239d04e7d46af1cdb0cb0e",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": true
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "repair-pr-base",
+        "ref": "feat1",
+        "prNumber": 11,
+        "targetBase": "main"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > repair-indeterminate 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 11,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "indeterminate",
+    "planId": "7b854cbcae7a602e1fe3e9fa2fc18e263138921ef6239d04e7d46af1cdb0cb0e",
+    "inFlight": {
+      "kind": "repair-pr-base",
+      "ref": "feat1",
+      "error": "repair uncertain"
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      }
+    ],
+    "publication": {
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "recovery": "Re-run /jj-stack plan and inspect remote state before retrying."
+  }
+}
+`;
+
+exports[`jj publication transition traces > repair-qualified-base 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 11,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat2"
+      ]
+    ],
+    [
+      "link",
+      {
+        "cwd": "/repo",
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "base": "refs/heads/main",
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "56b26c00a7aba63548d10128ebd9e7e12aebf2f8a3d83ac65017bfc38108e555",
+    "publication": {
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "remote": "origin",
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": true
+        }
+      ],
+      "nativeStackNumber": 17
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      },
+      {
+        "kind": "repair-pr-base",
+        "ref": "feat1",
+        "prNumber": 11,
+        "targetBase": "refs/heads/main"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "feat2"
+      },
+      {
+        "kind": "link-native-stack",
+        "stackNumber": 17,
+        "prNumbers": [
+          11,
+          12
+        ]
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`jj publication transition traces > repair-rejected 1`] = `
+{
+  "events": [
+    [
+      "push",
+      [
+        "/repo",
+        "origin",
+        "feat1"
+      ]
+    ],
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 11,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "7b854cbcae7a602e1fe3e9fa2fc18e263138921ef6239d04e7d46af1cdb0cb0e",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "feat1"
+      }
+    ],
+    "publication": {
+      "topRef": "feat2",
+      "pullRequests": [
+        {
+          "ref": "feat1",
+          "baseRef": null,
+          "changeIds": [
+            "aaa"
+          ],
+          "prNumber": 11,
+          "url": "https://example/11",
+          "draft": true
+        },
+        {
+          "ref": "feat2",
+          "baseRef": "feat1",
+          "changeIds": [
+            "bbb"
+          ],
+          "prNumber": 12,
+          "url": "https://example/12",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "failedAction": {
+      "kind": "repair-pr-base",
+      "ref": "feat1",
+      "error": "repair rejected"
+    }
+  }
+}
+`;
