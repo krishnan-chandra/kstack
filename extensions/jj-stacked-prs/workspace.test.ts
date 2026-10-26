@@ -70,7 +70,7 @@ for (const colocated of [true, false]) {
 			await jj(primary, "config", "set", "--repo", 'revset-aliases."trunk()"', "main");
 			await jj(primary, "git", "remote", "add", "origin", "git@github.com:acme/widgets.git");
 			await jj(primary, "new", "main");
-			await jj(primary, "workspace", "add", "--name", "secondary", "-r", "main", secondary);
+			await jj(primary, "workspace", "add", "--no-colocate", "--name", "secondary", "-r", "main", secondary);
 			assert.equal(existsSync(join(secondary, ".git")), false);
 			const ambient = await run(["git", "rev-parse", "--show-toplevel"], { cwd: secondary });
 			assert.equal(ambient.kind, "nonzero");
