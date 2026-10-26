@@ -229,9 +229,12 @@ describe("subagent history refresh and search", () => {
 			writeSession(fx.sourceRoot, TWO);
 			const leaseFor = (session: SyntheticSession) => join(fx.sourceRoot, ".active", `${session.id}.json`);
 			writeFileSync(leaseFor(TWO), JSON.stringify({ state: "spawned", pid: process.pid, createdAt: TWO.timestamp }));
-			const targeted = await discoverSubagentHistory({ root: fx.sourceRoot, leaseCheckSessionId: ONE.id });
+			const targeted = await discoverSubagentHistory({ root: fx.sourceRoot, targetSessionId: ONE.id });
 			assert.deepEqual(targeted.activeSessionIds, []);
-			assert.deepEqual(targeted.files.map((file) => file.sessionId).sort(), [ONE.id, TWO.id]);
+			assert.deepEqual(
+				targeted.files.map((file) => file.sessionId),
+				[ONE.id],
+			);
 			const full = await discoverSubagentHistory({ root: fx.sourceRoot });
 			assert.deepEqual(full.activeSessionIds, [TWO.id]);
 
@@ -412,6 +415,99 @@ describe("subagent history refresh and search", () => {
 });
 
 describe("exact retained subagent reads", () => {
+	it("preserves exact failure messages and retryability", async () => {
+		const fx = fixture();
+		try {
+			writeSession(fx.sourceRoot, ONE);
+			const base = { sourceRoot: fx.sourceRoot, dbPath: fx.dbPath };
+			for (const complete of [true, false]) {
+				const history = createSubagentHistory({
+					...base,
+					deps: {
+						discover: async () => ({
+							root: fx.sourceRoot,
+							complete,
+							inspectedEntries: 0,
+							files: [],
+							activeSessionIds: [],
+							skipped: [],
+						}),
+					},
+				});
+				assert.deepEqual(await history.read({ sessionId: ONE.id }), {
+					kind: "unavailable",
+					sessionId: ONE.id,
+					retryable: !complete,
+					message: complete
+						? "No retained source is currently available for this session ID. It may have expired or been removed."
+						: "The retained source was not found within the bounded directory scan. Repeat after reducing directory pressure.",
+				});
+			}
+			writeSession(fx.sourceRoot, { ...ONE, timestamp: TWO.timestamp });
+			assert.deepEqual(await createSubagentHistory(base).read({ sessionId: ONE.id }), {
+				kind: "invalid",
+				sessionId: ONE.id,
+				message: `duplicate retained filenames claim session ${ONE.id}`,
+			});
+			rmSync(join(fx.sourceRoot, filename({ ...ONE, timestamp: TWO.timestamp })));
+			assert.deepEqual(
+				await createSubagentHistory({ ...base, limits: { maxSessionBytes: 1 } }).read({ sessionId: ONE.id }),
+				{
+					kind: "invalid",
+					sessionId: ONE.id,
+					message: "source exceeds the 1-byte per-session limit",
+				},
+			);
+			for (const limits of [{ refreshBytes: 0 }, { refreshSessions: 0 }, { refreshBudgetMs: 0 }]) {
+				assert.deepEqual(await createSubagentHistory({ ...base, limits }).read({ sessionId: ONE.id }), {
+					kind: "unavailable",
+					sessionId: ONE.id,
+					retryable: true,
+					message: "The refresh work budget was reached before this source could be indexed. Repeat the read.",
+				});
+			}
+			for (const kind of ["active", "invalid", "changed", "unavailable"] as const) {
+				const result = await createSubagentHistory({
+					...base,
+					deps: { readStable: async () => ({ kind, reason: "pinned failure" }) },
+				}).read({ sessionId: ONE.id });
+				const expected = {
+					active: {
+						kind: "active",
+						sessionId: ONE.id,
+						message: "This retained child session is still active or its lease state is uncertain.",
+					},
+					invalid: { kind: "invalid", sessionId: ONE.id, message: "pinned failure" },
+					changed: {
+						kind: "unavailable",
+						sessionId: ONE.id,
+						message: "The retained source changed while it was being read. Repeat the read to refresh it.",
+						retryable: true,
+					},
+					unavailable: {
+						kind: "unavailable",
+						sessionId: ONE.id,
+						message: "The retained source is unavailable. It may have expired, moved, or been removed.",
+						retryable: false,
+					},
+				};
+				assert.deepEqual(result, expected[kind]);
+			}
+			const db = openSubagentHistoryStore(fx.dbPath);
+			db.exec(
+				"CREATE TRIGGER mismatch_index AFTER INSERT ON subagent_sessions BEGIN UPDATE subagent_sessions SET file_size = -1 WHERE session_id = NEW.session_id; END",
+			);
+			db.close();
+			assert.deepEqual(await createSubagentHistory(base).read({ sessionId: ONE.id }), {
+				kind: "unavailable",
+				sessionId: ONE.id,
+				retryable: true,
+				message: "The retained source could not be indexed stably. Repeat the read.",
+			});
+		} finally {
+			fx.cleanup();
+		}
+	});
 	it("reads normalized and exact raw pages with UTF-8-safe chunk continuation", async () => {
 		const fx = fixture();
 		let fullReads = 0;
@@ -463,6 +559,204 @@ describe("exact retained subagent reads", () => {
 			if (beyond.kind === "page") assert.equal(beyond.pageEntries, 0);
 			const invalidChunk = await history.read({ sessionId: ONE.id, chunk: 999 });
 			assert.equal(invalidChunk.kind, "invalid");
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("leaves unrelated deleted, replaced and active rows untouched until search reconciles them", async () => {
+		const fx = fixture();
+		try {
+			const onePath = writeSession(fx.sourceRoot, ONE);
+			const twoPath = writeSession(fx.sourceRoot, TWO);
+			writeSession(fx.sourceRoot, THREE);
+			const fourth = { ...ONE, id: "44444444-4444-4444-8444-444444444444" };
+			writeSession(fx.sourceRoot, fourth);
+			const reads: string[] = [];
+			const history = createSubagentHistory({
+				sourceRoot: fx.sourceRoot,
+				dbPath: fx.dbPath,
+				limits: { readBodyBytes: 20 },
+				deps: {
+					readStable: async (file, options) => {
+						reads.push(file.sessionId);
+						return readStableSubagentHistoryFile(file, options);
+					},
+				},
+			});
+			await history.search({ query: "needle" });
+			const rows = () => {
+				const db = openSubagentHistoryStore(fx.dbPath);
+				try {
+					return listIndexedSubagentSessions(db).filter((row) => row.sessionId !== ONE.id);
+				} finally {
+					db.close();
+				}
+			};
+			const before = rows();
+			rmSync(twoPath);
+			writeSession(fx.sourceRoot, { ...THREE, text: "changed corpus source" });
+			writeFileSync(join(fx.sourceRoot, ".active", `${fourth.id}.json`), "malformed");
+			reads.length = 0;
+			assert.equal((await history.read({ sessionId: ONE.id })).kind, "page");
+			assert.equal((await history.read({ sessionId: ONE.id, chunk: 1 })).kind, "page");
+			assert.equal((await history.read({ sessionId: ONE.id, format: "raw", chunk: 1 })).kind, "page");
+			assert.deepEqual(rows(), before);
+			const concurrentReads = await Promise.all([
+				history.read({ sessionId: ONE.id }),
+				history.read({ sessionId: ONE.id, format: "raw" }),
+			]);
+			assert.ok(concurrentReads.every((result) => result.kind === "page"));
+			assert.deepEqual(rows(), before, "concurrent exact reads must also preserve unrelated rows");
+			assert.deepEqual(reads, []);
+			await history.search({ query: "needle" });
+			assert.deepEqual(
+				rows().map((row) => row.sessionId),
+				[THREE.id],
+			);
+			assert.deepEqual(reads, [THREE.id]);
+			assert.ok(existsSync(onePath));
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("retains an unseen target row after incomplete enumeration but purges it after a complete scan", async () => {
+		const fx = fixture();
+		try {
+			writeSession(fx.sourceRoot, ONE);
+			const base = { sourceRoot: fx.sourceRoot, dbPath: fx.dbPath };
+			await createSubagentHistory(base).read({ sessionId: ONE.id });
+			for (const complete of [false, true]) {
+				const history = createSubagentHistory({
+					...base,
+					deps: {
+						discover: async () => ({
+							root: fx.sourceRoot,
+							complete,
+							inspectedEntries: 0,
+							files: [],
+							activeSessionIds: [],
+							skipped: [],
+						}),
+					},
+				});
+				const result = await history.read({ sessionId: ONE.id });
+				assert.equal(result.kind, "unavailable");
+				if (result.kind === "unavailable") assert.equal(result.retryable, !complete);
+				const db = openSubagentHistoryStore(fx.dbPath);
+				try {
+					assert.equal(getIndexedSubagentSession(db, ONE.id) !== undefined, !complete);
+				} finally {
+					db.close();
+				}
+			}
+			const partialFound = createSubagentHistory({
+				...base,
+				deps: { discover: async (options) => ({ ...(await discoverSubagentHistory(options)), complete: false }) },
+			});
+			assert.equal((await partialFound.read({ sessionId: ONE.id })).kind, "page");
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("reindexes replacement between pages and rejects mutations or activation at final validation", async () => {
+		const fx = fixture();
+		try {
+			const path = writeSession(fx.sourceRoot, { ...ONE, text: "語".repeat(200) });
+			const base = { sourceRoot: fx.sourceRoot, dbPath: fx.dbPath, limits: { readBodyBytes: 80 } };
+			const history = createSubagentHistory(base);
+			assert.equal((await history.read({ sessionId: ONE.id, format: "raw" })).kind, "page");
+			rmSync(path);
+			writeSession(fx.sourceRoot, { ...ONE, text: "replacement".repeat(100) });
+			const next = await history.read({ sessionId: ONE.id, format: "raw", chunk: 1 });
+			assert.equal(next.kind, "page");
+			if (next.kind === "page") assert.ok(!next.body.includes("語"));
+			for (const mutation of ["replace", "activate"] as const) {
+				const racing = createSubagentHistory({
+					...base,
+					deps: {
+						revalidate: async (file, options) => {
+							if (mutation === "replace") writeSession(fx.sourceRoot, { ...ONE, text: "changed again" });
+							else writeFileSync(join(fx.sourceRoot, ".active", `${ONE.id}.json`), "malformed");
+							return revalidateSubagentHistoryFile(file, options);
+						},
+					},
+				});
+				const result = await racing.read({ sessionId: ONE.id });
+				assert.equal(result.kind, mutation === "replace" ? "unavailable" : "active");
+				const db = openSubagentHistoryStore(fx.dbPath);
+				try {
+					assert.equal(getIndexedSubagentSession(db, ONE.id), undefined);
+				} finally {
+					db.close();
+				}
+			}
+			rmSync(join(fx.sourceRoot, ".active", `${ONE.id}.json`));
+			const abort = new AbortController();
+			const aborting = createSubagentHistory({
+				...base,
+				deps: {
+					readStable: async (...args) => {
+						const result = await readStableSubagentHistoryFile(...args);
+						abort.abort();
+						return result;
+					},
+				},
+			});
+			await assert.rejects(aborting.read({ sessionId: ONE.id }, abort.signal), /abort/i);
+			const results = await Promise.all([
+				history.read({ sessionId: ONE.id }),
+				history.search({ query: "changed" }),
+				history.read({ sessionId: ONE.id, format: "raw" }),
+			]);
+			assert.equal(results[0].kind, "page");
+			assert.equal(results[2].kind, "page");
+			rmSync(path);
+			assert.equal((await history.read({ sessionId: ONE.id })).kind, "unavailable");
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("keeps internal uppercase reads unavailable while discovery canonicalizes filename UUIDs", async () => {
+		const fx = fixture();
+		try {
+			const session = { ...ONE, id: "abcdefab-abcd-4abc-8abc-abcdefabcdef" };
+			writeSession(fx.sourceRoot, session);
+			const history = createSubagentHistory({ sourceRoot: fx.sourceRoot, dbPath: fx.dbPath });
+			assert.equal((await history.read({ sessionId: session.id.toUpperCase() })).kind, "unavailable");
+			assert.equal((await history.read({ sessionId: session.id })).kind, "page");
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("invalidates a warm raw row when the source changes before range validation", async () => {
+		const fx = fixture();
+		try {
+			const path = writeSession(fx.sourceRoot, ONE);
+			const base = { sourceRoot: fx.sourceRoot, dbPath: fx.dbPath };
+			await createSubagentHistory(base).read({ sessionId: ONE.id });
+			const racing = createSubagentHistory({
+				...base,
+				deps: {
+					readRanges: async (...args) => {
+						writeFileSync(path, content({ ...ONE, text: "mutated before raw range read" }));
+						return readStableSubagentHistoryRanges(...args);
+					},
+				},
+			});
+			const result = await racing.read({ sessionId: ONE.id, format: "raw" });
+			assert.equal(result.kind, "unavailable");
+			if (result.kind === "unavailable") assert.equal(result.retryable, true);
+			const db = openSubagentHistoryStore(fx.dbPath);
+			try {
+				assert.equal(getIndexedSubagentSession(db, ONE.id), undefined);
+			} finally {
+				db.close();
+			}
 		} finally {
 			fx.cleanup();
 		}

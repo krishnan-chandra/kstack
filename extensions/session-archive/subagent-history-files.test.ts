@@ -11,6 +11,7 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
+import { opendir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -51,6 +52,94 @@ function lease(root: string, id: string, value: string): string {
 }
 
 describe("retained subagent file discovery", () => {
+	it("filters unsafe unrelated candidates before validation but preserves full discovery classifications", async () => {
+		const fx = fixture();
+		try {
+			const link = `2026-08-11T08-48-03-226Z_${OTHER_ID}.jsonl`;
+			const directory = `2026-08-11T08-48-04-226Z_${OTHER_ID}.jsonl`;
+			symlinkSync(fx.path, join(fx.root, link));
+			mkdirSync(join(fx.root, directory));
+			writeFileSync(join(fx.root, "invalid.jsonl"), "not a session");
+			const target = await discoverSubagentHistory({ root: fx.root, targetSessionId: ID });
+			assert.equal(target.files.length, 1);
+			assert.deepEqual(target.skipped, []);
+			const full = await discoverSubagentHistory({ root: fx.root });
+			assert.deepEqual(new Set(full.skipped.map((skip) => skip.filename)), new Set([link, directory, "invalid.jsonl"]));
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("keeps target duplicate, symlink and non-regular policies with lowercase UUID matching", async () => {
+		const fx = fixture();
+		try {
+			const id = "abcdefab-abcd-4abc-8abc-abcdefabcdef";
+			const name = `2026-08-11T08-48-03-226Z_${id.toUpperCase()}.jsonl`;
+			const path = join(fx.root, name);
+			writeFileSync(path, "candidate");
+			let inventory = await discoverSubagentHistory({ root: fx.root, targetSessionId: id.toUpperCase() });
+			assert.deepEqual(
+				inventory.files.map((file) => file.sessionId),
+				[id],
+			);
+			const second = join(fx.root, `2026-08-11T08-48-04-226Z_${id}.jsonl`);
+			writeFileSync(second, "duplicate");
+			inventory = await discoverSubagentHistory({ root: fx.root, targetSessionId: id });
+			assert.equal(inventory.files.length, 0);
+			assert.equal(inventory.skipped.length, 2);
+			assert.ok(inventory.skipped.every((skip) => skip.reason === `duplicate retained filenames claim session ${id}`));
+			rmSync(second);
+			symlinkSync(path, second);
+			inventory = await discoverSubagentHistory({ root: fx.root, targetSessionId: id });
+			assert.equal(inventory.files.length, 1, "unsafe duplicate does not exclude a valid candidate");
+			rmSync(path);
+			mkdirSync(path);
+			inventory = await discoverSubagentHistory({ root: fx.root, targetSessionId: id });
+			assert.equal(inventory.files.length, 0);
+			assert.equal(inventory.skipped.length, 2);
+		} finally {
+			fx.cleanup();
+		}
+	});
+
+	it("preserves target partial-scan acceptance, missing roots, leases and cancellation", async () => {
+		const fx = fixture();
+		try {
+			const absent = await discoverSubagentHistory({ root: fx.root, targetSessionId: ID, directoryLimit: 0 });
+			assert.equal(absent.complete, false);
+			assert.deepEqual(absent.files, []);
+			// Use the real iterator order, not an assumption about filesystem sorting.
+			writeFileSync(join(fx.root, "extra"), "");
+			const ordered: string[] = [];
+			for await (const entry of await opendir(fx.root)) ordered.push(entry.name);
+			const found = await discoverSubagentHistory({
+				root: fx.root,
+				targetSessionId: ID,
+				directoryLimit: ordered.indexOf(FILENAME) + 1,
+			});
+			assert.equal(found.files.length, 1);
+			assert.equal(found.complete, ordered.indexOf(FILENAME) === ordered.length - 1);
+			assert.deepEqual(
+				(await discoverSubagentHistory({ root: join(fx.parent, "missing"), targetSessionId: ID })).files,
+				[],
+			);
+			lease(fx.root, ID, "malformed");
+			assert.deepEqual((await discoverSubagentHistory({ root: fx.root, targetSessionId: ID })).activeSessionIds, [ID]);
+			const abort = new AbortController();
+			abort.abort();
+			await assert.rejects(
+				discoverSubagentHistory({ root: fx.root, targetSessionId: ID, signal: abort.signal }),
+				/abort/i,
+			);
+			const during = new AbortController();
+			const pending = discoverSubagentHistory({ root: fx.root, targetSessionId: ID, signal: during.signal });
+			setImmediate(() => during.abort());
+			await assert.rejects(pending, /abort/i);
+			assert.equal((await discoverSubagentHistory({ root: fx.root, targetSessionId: ID })).complete, true);
+		} finally {
+			fx.cleanup();
+		}
+	});
 	it("discovers and parses realistic v3 history without changing source or lease bytes", async () => {
 		const fx = fixture();
 		const leasePath = lease(

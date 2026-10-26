@@ -115,7 +115,6 @@ interface RefreshState {
 	inventory: SubagentHistoryInventory;
 	coverage: SubagentHistoryCoverage;
 	filesById: Map<string, SubagentHistoryFile>;
-	outcomes: Map<string, Exclude<StableSubagentRead, { kind: "read" }> | { kind: "deferred" }>;
 }
 
 function boundedReason(reason: string): string {
@@ -195,7 +194,7 @@ function classifyRefreshFailure(
 function checkFailureResult(
 	sessionId: string,
 	check: Exclude<SubagentFileCheck, { kind: "eligible" }>,
-): SubagentHistoryReadResult {
+): Exclude<SubagentHistoryReadResult, SubagentHistoryReadPage> {
 	if (check.kind === "active") {
 		return {
 			kind: "active",
@@ -237,13 +236,9 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 		signal,
 	});
 
-	async function refresh(
-		db: DatabaseSync,
-		signal: AbortSignal | undefined,
-		targetSessionId?: string,
-	): Promise<RefreshState> {
+	async function refresh(db: DatabaseSync, signal: AbortSignal | undefined): Promise<RefreshState> {
 		signal?.throwIfAborted();
-		const inventory = await discover({ ...fileOptions(signal), leaseCheckSessionId: targetSessionId });
+		const inventory = await discover(fileOptions(signal));
 		const filesById = new Map(inventory.files.map((file) => [file.sessionId, file]));
 		const rows = listIndexedSubagentSessions(db);
 		const existingRowsById = new Map(rows.map((row) => [row.sessionId, row]));
@@ -265,9 +260,7 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 
 		const currentRows = listIndexedSubagentSessions(db);
 		const rowsById = new Map(currentRows.map((row) => [row.sessionId, row]));
-		let pending = inventory.files.filter((file) => !matchingRow(rowsById.get(file.sessionId), file));
-		if (targetSessionId !== undefined) pending = pending.filter((file) => file.sessionId === targetSessionId);
-		const outcomes: RefreshState["outcomes"] = new Map();
+		const pending = inventory.files.filter((file) => !matchingRow(rowsById.get(file.sessionId), file));
 		const extraSkips: SubagentHistorySkip[] = [];
 		const active = new Set(inventory.activeSessionIds);
 		let processedSessions = 0;
@@ -281,7 +274,6 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 				processedBytes + file.signature.size > refreshBytes ||
 				now() >= deadline
 			) {
-				outcomes.set(file.sessionId, { kind: "deferred" });
 				continue;
 			}
 			if (file.signature.size > maxSessionBytes) {
@@ -289,7 +281,6 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 					kind: "invalid" as const,
 					reason: `source exceeds the ${maxSessionBytes}-byte per-session limit`,
 				};
-				outcomes.set(file.sessionId, failure);
 				extraSkips.push({
 					sessionId: file.sessionId,
 					filename: file.filename,
@@ -302,7 +293,6 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 			processedBytes += file.signature.size;
 			const stable = await readStable(file, fileOptions(signal));
 			if (stable.kind !== "read") {
-				outcomes.set(file.sessionId, stable);
 				const classified = classifyRefreshFailure(stable, file);
 				if (classified.kind === "active") active.add(file.sessionId);
 				else if (classified.kind === "skip") extraSkips.push(classified.skip);
@@ -325,7 +315,6 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 			inventory,
 			coverage: coverageFrom({ inventory, rows: finalRows, extraSkips }),
 			filesById,
-			outcomes,
 		};
 	}
 
@@ -392,6 +381,89 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 		}
 	}
 
+	async function refreshTarget(
+		db: DatabaseSync,
+		sessionId: string,
+		signal: AbortSignal | undefined,
+	): Promise<
+		| { kind: "ready"; file: SubagentHistoryFile; session: IndexedSubagentSession }
+		| Exclude<SubagentHistoryReadResult, SubagentHistoryReadPage>
+	> {
+		signal?.throwIfAborted();
+		const inventory = await discover({ ...fileOptions(signal), targetSessionId: sessionId });
+		signal?.throwIfAborted();
+		const invalidate = () => deleteIndexedSubagentSessions(db, [sessionId]);
+		if (inventory.activeSessionIds.includes(sessionId)) {
+			invalidate();
+			return {
+				kind: "active",
+				sessionId,
+				message: "This retained child session is still active or its lease state is uncertain.",
+			};
+		}
+		const file = inventory.files.find((candidate) => candidate.sessionId === sessionId);
+		if (!file) {
+			const invalid = inventory.skipped.find((skip) => skip.sessionId === sessionId);
+			if (invalid) {
+				invalidate();
+				return { kind: "invalid", sessionId, message: boundedReason(invalid.reason) };
+			}
+			if (inventory.complete) invalidate();
+			return {
+				kind: "unavailable",
+				sessionId,
+				message: inventory.complete
+					? "No retained source is currently available for this session ID. It may have expired or been removed."
+					: "The retained source was not found within the bounded directory scan. Repeat after reducing directory pressure.",
+				retryable: !inventory.complete,
+			};
+		}
+		let session = getIndexedSubagentSession(db, sessionId);
+		if (!matchingRow(session, file)) {
+			invalidate();
+			const deadline = now() + refreshBudgetMs;
+			if (refreshSessions <= 0 || file.signature.size > refreshBytes || now() >= deadline) {
+				return {
+					kind: "unavailable",
+					sessionId,
+					retryable: true,
+					message: "The refresh work budget was reached before this source could be indexed. Repeat the read.",
+				};
+			}
+			if (file.signature.size > maxSessionBytes) {
+				return { kind: "invalid", sessionId, message: `source exceeds the ${maxSessionBytes}-byte per-session limit` };
+			}
+			const stable = await readStable(file, fileOptions(signal));
+			signal?.throwIfAborted();
+			if (stable.kind === "active") {
+				return {
+					kind: "active",
+					sessionId,
+					message: "This retained child session is still active or its lease state is uncertain.",
+				};
+			}
+			if (stable.kind !== "read") return checkFailureResult(sessionId, stable);
+			replaceIndexedSubagentSession(db, {
+				sessionId,
+				header: stable.parsed.header,
+				entries: stable.parsed.entries,
+				relativeFilename: file.filename,
+				signature: file.signature,
+				name: stable.name,
+			});
+			session = getIndexedSubagentSession(db, sessionId);
+		}
+		if (!session || !matchingRow(session, file)) {
+			return {
+				kind: "unavailable",
+				sessionId,
+				retryable: true,
+				message: "The retained source could not be indexed stably. Repeat the read.",
+			};
+		}
+		return { kind: "ready", file, session };
+	}
+
 	async function read(
 		params: {
 			sessionId: string;
@@ -404,46 +476,9 @@ export function createSubagentHistory(options: HistoryOptions = {}) {
 	): Promise<SubagentHistoryReadResult> {
 		const db = openSubagentHistoryStore(dbPath);
 		try {
-			const state = await refresh(db, signal, params.sessionId);
-			if (state.inventory.activeSessionIds.includes(params.sessionId)) {
-				return {
-					kind: "active",
-					sessionId: params.sessionId,
-					message: "This retained child session is still active or its lease state is uncertain.",
-				};
-			}
-			const file = state.filesById.get(params.sessionId);
-			if (!file) {
-				const invalid = state.inventory.skipped.find((skip) => skip.sessionId === params.sessionId);
-				if (invalid) return { kind: "invalid", sessionId: params.sessionId, message: boundedReason(invalid.reason) };
-				return {
-					kind: "unavailable",
-					sessionId: params.sessionId,
-					message: state.inventory.complete
-						? "No retained source is currently available for this session ID. It may have expired or been removed."
-						: "The retained source was not found within the bounded directory scan. Repeat after reducing directory pressure.",
-					retryable: !state.inventory.complete,
-				};
-			}
-			const outcome = state.outcomes.get(params.sessionId);
-			if (outcome?.kind === "deferred") {
-				return {
-					kind: "unavailable",
-					sessionId: params.sessionId,
-					message: "The refresh work budget was reached before this source could be indexed. Repeat the read.",
-					retryable: true,
-				};
-			}
-			if (outcome) return checkFailureResult(params.sessionId, outcome);
-			const session = getIndexedSubagentSession(db, params.sessionId);
-			if (!session || !matchingRow(session, file)) {
-				return {
-					kind: "unavailable",
-					sessionId: params.sessionId,
-					message: "The retained source could not be indexed stably. Repeat the read.",
-					retryable: true,
-				};
-			}
+			const state = await refreshTarget(db, params.sessionId, signal);
+			if (state.kind !== "ready") return state;
+			const { file, session } = state;
 
 			const offset = params.offset ?? 0;
 			const limit = params.limit ?? 50;

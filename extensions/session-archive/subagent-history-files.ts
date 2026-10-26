@@ -72,12 +72,8 @@ interface FileOptions {
 }
 
 interface DiscoverOptions extends FileOptions {
-	/**
-	 * When set, only this session's lease is classified. Other candidates are listed
-	 * for signature comparison without an eligibility claim; callers must revalidate
-	 * any file they read. Exact reads use this to avoid classifying every lease.
-	 */
-	leaseCheckSessionId?: string;
+	/** Enumerate bounded names, but validate and classify only this canonical UUID. */
+	targetSessionId?: string;
 }
 
 function errorCode(error: BoundaryValue): string | undefined {
@@ -219,6 +215,8 @@ async function classifyLease(options: {
 }
 
 export async function discoverSubagentHistory(options: DiscoverOptions = {}): Promise<SubagentHistoryInventory> {
+	options.signal?.throwIfAborted();
+	const targetSessionId = options.targetSessionId?.toLowerCase();
 	const root = resolve(options.root ?? getSubagentSessionsRoot());
 	const limit = options.directoryLimit ?? SUBAGENT_HISTORY_DIRECTORY_LIMIT;
 	const inventory: SubagentHistoryInventory = {
@@ -254,6 +252,7 @@ export async function discoverSubagentHistory(options: DiscoverOptions = {}): Pr
 			if (!entry.name.endsWith(".jsonl")) continue;
 			const parsedName = parseFilename(entry.name);
 			if (!parsedName) {
+				if (targetSessionId !== undefined) continue;
 				inventory.skipped.push({
 					filename: entry.name,
 					reason: "filename has no valid timestamp and UUID",
@@ -261,6 +260,7 @@ export async function discoverSubagentHistory(options: DiscoverOptions = {}): Pr
 				});
 				continue;
 			}
+			if (targetSessionId !== undefined && parsedName.sessionId !== targetSessionId) continue;
 			const path = join(root, entry.name);
 			try {
 				const stat = await lstat(path);
@@ -314,6 +314,7 @@ export async function discoverSubagentHistory(options: DiscoverOptions = {}): Pr
 		}
 	}
 
+	options.signal?.throwIfAborted();
 	const byId = new Map<string, SubagentHistoryFile[]>();
 	for (const candidate of candidates) {
 		const list = byId.get(candidate.sessionId);
@@ -334,10 +335,6 @@ export async function discoverSubagentHistory(options: DiscoverOptions = {}): Pr
 			continue;
 		}
 		const candidate = matches[0];
-		if (options.leaseCheckSessionId !== undefined && options.leaseCheckSessionId !== sessionId) {
-			inventory.files.push(candidate);
-			continue;
-		}
 		const lease = await classifyLease({
 			root,
 			rootCanonical: checkedRoot,

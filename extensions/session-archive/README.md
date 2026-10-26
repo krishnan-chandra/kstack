@@ -131,7 +131,17 @@ Each operation opens its SQLite connection on demand and closes it before
 returning. Startup does not scan child sessions. One refresh inspects at most
 5,000 directory entries, reads at most 32 MiB from one session, and reads at
 most 64 MiB across 32 changed sessions. New refresh work has a cooperative
-5-second budget. One file is parsed at a time.
+5-second budget for content indexing, separate from bounded directory enumeration.
+One file is parsed at a time.
+
+Exact reads and chunk continuations refresh only the requested UUID's cache row.
+Discovery still enumerates up to 5,000 names, but only matching filenames undergo
+per-file metadata and lease checks. It scans past the first match to reject
+duplicate eligible claims within that bound; it cannot prove global uniqueness
+beyond the scan cap. An unseen target remains retryable after an incomplete scan,
+and its cached row is retained without being served. Search still refreshes the
+corpus, reconciles unrelated stale rows, and computes coverage. Every read keeps
+source revalidation, including stable byte-range reads for raw pages.
 
 Search returns at most 100 hits. Read returns at most 100 entries per page and
 splits large pages into UTF-8-safe chunks. Every complete tool response stays
