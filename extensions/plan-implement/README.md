@@ -85,6 +85,8 @@ Adversaries run in parallel and share `council.reviewTimeoutMinutes` as a wall-c
 
 Implementation adversaries are hosted agents that share a pane split off the caller's pane. The command requires TUI mode and successful Herdr preflight before any model work.
 
+Successful rounds reuse their role runner. The pane-acquisition owner settles cancelled acquisition promptly and closes any host that arrives later without starting agents. After an active round is cancelled, the controller discards its host and acquires a fresh one for the next round. Controller disposal joins active runs before the owner joins pending opens and teardown. Only cancelled or discarded hosts request `closeTab:true`; successful hosts retain their panes by default.
+
 The previously documented direct-helper headless contract is retired: `createAdversaryReview` now uses only the hosted runner, and `shared/herdr/adversary-runner.ts` is removed. Direct callers must provide a Herdr host; there is no headless fallback. This is an intentional helper compatibility change, not a change to normal command behavior. The separate [`kstack-router` review route](../kstack-router/README.md) still supports headless review outside Herdr.
 
 ## Plan-only mode

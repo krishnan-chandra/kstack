@@ -10,6 +10,7 @@ The modules use Node APIs and injected effects, with no Pi SDK runtime imports. 
 | --- | --- |
 | `herdr-cli.ts` | Bounded, validated gateway over the Herdr CLI. |
 | `agent-host.ts` | Pane allocation, startup, pending requests, resume, cancellation, and disposal. |
+| `pane-acquisition.ts` | Implementation-review acquisition, late-host cleanup, and joined disposal. |
 | `response.ts` | Validates a request-tagged terminal response from Pi's session JSONL. |
 | `session-usage.ts` | Incremental usage accounting for one request. |
 | `layout.ts` | Pane-placement decisions. |
@@ -52,6 +53,8 @@ Cancellation stays connected across blocked returns and takes precedence over co
 A settled agent in the unseen host tab reports `done` rather than `idle`; both count as settled. Abort is idempotent within one request and resets for the next request. A pane closed during escalation cannot be reused.
 
 Disposal cancels pending work. Idle panes and tabs are retained unless `closePane` or `closeTab` is requested. An owned exchange directory is removed when no request is outstanding; a concurrent outstanding request keeps its files available. Retained panes are not permission to leave cancelled tasks running.
+
+Implementation review uses `createPaneAcquisitionOwner` to acquire hosts. Cancellation settles the acquisition result without interrupting an in-flight split's bounded control call. The owner closes late or discarded hosts with `closeTab:true`; successful hosts keep default retention. Its idempotent `dispose()` joins pending opens and cleanup, then reports any cleanup rejections. A construction exception after `openPaneHost` splits rolls back only the new pane. If rollback fails, the exception includes both errors. A failed layout result still uses default geometry. Council startup keeps its separate lifecycle and explicit unassigned-pane cleanup.
 
 The CLI handles SIGINT and SIGTERM, stops scheduling queued tasks, drains active requests, and writes ordered partial fanout outcomes. A blocked task is cancelled before the CLI returns; resolve its dialog and explicitly retry if needed. SIGKILL and machine failure cannot run cleanup. If Herdr itself is unreachable during escalation, inspect the panes before assuming work stopped.
 

@@ -8,8 +8,9 @@ import { requestLand } from "../land/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { type ChangeKind, changeKindLabel, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { findOpenPullRequestByHead } from "../shared/github.ts";
-import type { openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
+import type { AgentHost, openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
 import type { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
+import { createPaneAcquisitionOwner } from "../shared/herdr/pane-acquisition.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
 import { readPromptAsset } from "../shared/prompt-assets.ts";
 import { extractSlug } from "../shared/slug.ts";
@@ -90,23 +91,26 @@ interface AdversaryReviewController {
 	dispose: () => Promise<void>;
 }
 
-/** Resolve with `promise`, or with `onTimeout()` once `deadline` aborts first. */
-function raceDeadline<T>(promise: Promise<T>, deadline: AbortSignal, onTimeout: () => T): Promise<T> {
-	if (deadline.aborted) return Promise.resolve(onTimeout());
-	return new Promise<T>((resolve) => {
-		const onAbort = () => resolve(onTimeout());
-		deadline.addEventListener("abort", onAbort, { once: true });
-		promise.then(
-			(value) => {
-				deadline.removeEventListener("abort", onAbort);
-				resolve(value);
-			},
-			() => {
-				deadline.removeEventListener("abort", onAbort);
-				resolve(onTimeout());
-			},
-		);
-	});
+/** Finish both host lifecycles even when review cleanup rejects. */
+export async function disposeReviewWorkflow(effects: {
+	review: Pick<AdversaryReviewController, "dispose">;
+	runner: Pick<RoleRunner, "dispose">;
+	reportError: (message: string) => void;
+	finish: () => void;
+}): Promise<void> {
+	try {
+		try {
+			await effects.review.dispose();
+		} catch (error) {
+			effects.reportError(`Review cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	} finally {
+		try {
+			await effects.runner.dispose();
+		} finally {
+			effects.finish();
+		}
+	}
 }
 
 /**
@@ -116,48 +120,27 @@ function raceDeadline<T>(promise: Promise<T>, deadline: AbortSignal, onTimeout: 
  */
 /* exported: adversary review transport contract */
 export function createAdversaryReview(effects: AdversaryReviewEffects): AdversaryReviewController {
-	let pending: Promise<RoleRunner | undefined> | undefined;
-	const discarded: Array<Promise<void>> = [];
-	// A pane host is single-use per attempt: a cancelled or never-ready host is closed
-	// (including the panes it split off) and a later round opens a fresh one. The cleanup
-	// promise is tracked so the controller's dispose() waits for late hosts to settle.
-	const discardHost = (): void => {
-		const host = pending;
-		pending = undefined;
-		if (!host) return;
-		discarded.push(
-			host.then(
-				async (runner) => {
-					await runner?.dispose({ closeTab: true });
-				},
-				() => undefined,
-			),
-		);
-	};
-	const runnerFor = (cwd: string, maxAgents: number): Promise<RoleRunner | undefined> => {
-		pending ??= (async () => {
-			const opened = await effects.openPane(
-				{ owner: "plan-implement", label: effects.label, cwd, maxAgents },
-				{ exec: effects.createExec() },
+	const owner = createPaneAcquisitionOwner({
+		openPane: effects.openPane,
+		hostDeps: () => ({ exec: effects.createExec() }),
+	});
+	let cached: { host: AgentHost; runner: RoleRunner } | undefined;
+	let completion: Promise<void> | undefined;
+	const shutdown = new AbortController();
+	let active: Promise<AgentRunResult[]> | undefined;
+	const run = async (request: AdversaryReviewRequest): Promise<AgentRunResult[]> => {
+		const deadline = AbortSignal.any([
+			...(request.signal ? [request.signal] : []),
+			AbortSignal.timeout(request.timeoutMs),
+		]);
+		let record = cached;
+		if (!record) {
+			const opened = await owner.acquire(
+				{ owner: "plan-implement", label: effects.label, cwd: request.cwd, maxAgents: request.adversaries.length },
+				AbortSignal.any([deadline, shutdown.signal]),
 			);
 			if (!opened.ok) {
 				effects.notify(opened.error, "error");
-				return undefined;
-			}
-			return createRoleRunner(opened.host, { onStarted: effects.onStarted, onBlocked: effects.onBlocked });
-		})();
-		return pending;
-	};
-
-	return {
-		async run(request) {
-			const deadline = AbortSignal.any([
-				...(request.signal ? [request.signal] : []),
-				AbortSignal.timeout(request.timeoutMs),
-			]);
-			const runner = await raceDeadline(runnerFor(request.cwd, request.adversaries.length), deadline, () => undefined);
-			if (!runner) {
-				discardHost();
 				return request.adversaries.map((adversary) => ({
 					status: "failed" as const,
 					role: "adversary" as const,
@@ -165,45 +148,81 @@ export function createAdversaryReview(effects: AdversaryReviewEffects): Adversar
 					error: "the adversary pane host was not ready before the review deadline.",
 				}));
 			}
-			const instructions = buildReviewInstructions(request);
-			// The deadline signal cancels any queued allocation or in-flight ask. Awaiting every
-			// settled run means no cancelled work outlives the round's bundle, and a rejected run
-			// becomes a failure instead of rejecting the whole round.
-			const settled = await Promise.allSettled(
-				request.adversaries.map((adversary, index) =>
-					runner.run({
-						role: "adversary",
-						instance: `${index + 1}`,
+			record = cached = {
+				host: opened.host,
+				runner: createRoleRunner(opened.host, { onStarted: effects.onStarted, onBlocked: effects.onBlocked }),
+			};
+		}
+		const instructions = buildReviewInstructions(request);
+		// The deadline signal cancels any queued allocation or in-flight ask. Awaiting every
+		// settled run means no cancelled work outlives the round's bundle, and a rejected run
+		// becomes a failure instead of rejecting the whole round.
+		const settled = await Promise.allSettled(
+			request.adversaries.map((adversary, index) =>
+				record.runner.run({
+					role: "adversary",
+					instance: `${index + 1}`,
+					model: adversary.model,
+					promptFile: request.systemPromptFile,
+					taskFile: request.taskFile,
+					planFile: request.planFile,
+					ledgerFile: request.ledgerFile,
+					cwd: request.cwd,
+					timeoutMs: request.timeoutMs,
+					instructions,
+					extraSystemPromptFiles: request.extraSystemPromptFiles,
+					signal: deadline,
+				}),
+			),
+		);
+		if (deadline.aborted) {
+			cached = undefined;
+			owner.discard(record.host);
+		}
+		return settled.map((entry, index) => {
+			if (entry.status === "fulfilled") return entry.value;
+			return {
+				status: "failed" as const,
+				role: "adversary" as const,
+				model: request.adversaries[index].model,
+				error: `the review run rejected: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`,
+			};
+		});
+	};
+	return {
+		run(request) {
+			if (shutdown.signal.aborted || active)
+				return Promise.resolve(
+					request.adversaries.map((adversary) => ({
+						status: "failed" as const,
+						role: "adversary" as const,
 						model: adversary.model,
-						promptFile: request.systemPromptFile,
-						taskFile: request.taskFile,
-						planFile: request.planFile,
-						ledgerFile: request.ledgerFile,
-						cwd: request.cwd,
-						timeoutMs: request.timeoutMs,
-						instructions,
-						extraSystemPromptFiles: request.extraSystemPromptFiles,
-						signal: deadline,
-					}),
-				),
+						error: "The review controller is disposed or already running a round.",
+					})),
+				);
+			const running = run(request);
+			active = running;
+			void running.then(
+				() => {
+					active = undefined;
+				},
+				() => {
+					active = undefined;
+				},
 			);
-			if (deadline.aborted) discardHost();
-			return settled.map((entry, index) => {
-				if (entry.status === "fulfilled") return entry.value;
-				return {
-					status: "failed" as const,
-					role: "adversary" as const,
-					model: request.adversaries[index].model,
-					error: `the review run rejected: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`,
-				};
-			});
+			return running;
 		},
-		async dispose() {
-			const runner = await pending;
-			await runner?.dispose();
-			// Wait for every discarded late host to open and close its panes before the
-			// workflow finishes, so cleanup cannot outlive the session.
-			await Promise.allSettled(discarded);
+		dispose() {
+			if (completion) return completion;
+			shutdown.abort();
+			completion = (async () => {
+				await Promise.allSettled(active ? [active] : []);
+				// RoleRunner.dispose only delegates to host.dispose; it has no private
+				// cleanup. Join runs first, then let the owner alone dispose each host,
+				// avoiding racing teardown or a second close of a cancelled host.
+				await owner.dispose();
+			})();
+			return completion;
 		},
 	};
 }
@@ -513,12 +532,19 @@ export function createPlanImplementOrchestration(deps: OrchestrationDeps): PlanI
 					},
 				);
 			} finally {
-				await adversaryReview.dispose();
-				await runner.dispose();
-				if (deps.lifecycle.isSessionCurrent(token)) {
-					notify(`Hosted agents retained in Herdr tab ${runner.tabId}.`, "info");
-				}
-				deps.lifecycle.finishWorkflow(token);
+				await disposeReviewWorkflow({
+					review: adversaryReview,
+					runner,
+					reportError: (message) => notify(message, "error"),
+					finish: () => {
+						try {
+							if (deps.lifecycle.isSessionCurrent(token))
+								notify(`Hosted agents retained in Herdr tab ${runner.tabId}.`, "info");
+						} finally {
+							deps.lifecycle.finishWorkflow(token);
+						}
+					},
+				});
 			}
 		} finally {
 			if (!workflowStarted) await host.dispose({ closeTab: true });
