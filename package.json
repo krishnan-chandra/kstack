@@ -20,6 +20,9 @@
 		"oxlint": "^1.80.0",
 		"typescript": "^7.0.2"
 	},
+	"overrides": {
+		"undici": "^8.12.3"
+	},
 	"scripts": {
 		"benchmark:startup": "node scripts/startup-benchmark/index.mjs",
 		"check:exports": "node scripts/check-exports/index.mjs",
