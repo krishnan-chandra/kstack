@@ -174,6 +174,11 @@ for every retained shard when enforcing the scope limit. Malformed records and
 over-budget shards are ignored and surfaced only through secret-free internal
 diagnostics. A process shutdown flushes its pending append queue.
 
+For retained dated shards, pruning uses the filename date without a metadata
+lookup. Appends still list shards again and stat their current sizes before
+checking the byte limit; reports stat each retained shard before reading it.
+These cross-process limits remain best-effort, not atomic quotas.
+
 ## Security and failure behavior
 
 The ledger stores timestamps, process IDs, event IDs, scope hashes, generation-ID
