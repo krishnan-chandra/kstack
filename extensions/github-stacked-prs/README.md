@@ -45,6 +45,13 @@ pushes branches bottom-up. Existing branches use
 PRs, repairs bases, optionally marks drafts ready, and reconciles navigation
 comments. Comment failures are warnings after core publication succeeds.
 
+The shared [`pr-transitions.ts`](../shared/stack/pr-transitions.ts) keeps PR
+creation and readiness together with updates to provider-owned rows and completion
+accounting. `delivery.ts` retains base repairs, planning, push-first scheduling,
+exact leases, cancellation checkpoints, and outcome classification. Newly created
+drafts can become ready immediately after creation, without another cancellation
+checkpoint.
+
 ## Land a stack prefix
 
 With `vcs.backend: "git"` and the default `vcs.stackProvider: "github"`,

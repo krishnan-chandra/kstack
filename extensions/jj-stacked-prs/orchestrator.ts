@@ -12,6 +12,7 @@ import type {
 	StackPublishedPullRequest,
 	StackPublishOutcome,
 } from "../shared/stack/outcome.ts";
+import { createPrTransitions } from "../shared/stack/pr-transitions.ts";
 import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import { errorMessage, isIndeterminate } from "./errors.ts";
@@ -554,6 +555,7 @@ async function applyPublication(
 		}
 	}
 	const published = plan.slices.map((slice) => ({
+		ref: slice.bookmark,
 		bookmark: slice.bookmark,
 		baseBookmark: slice.baseBookmark,
 		changeIds: slice.changeIds,
@@ -569,6 +571,13 @@ async function applyPublication(
 		remote: plan.remote.name,
 		repository: plan.repository,
 		pullRequests: () => provenPullRequests(published),
+	});
+	const transitions = createPrTransitions({
+		repository: plan.repository,
+		cwd: options.cwd,
+		signal: deps.signal,
+		gateway: github,
+		completed: progress.completed,
 	});
 
 	for (const [index, slice] of plan.slices.entries()) {
@@ -589,23 +598,11 @@ async function applyPublication(
 				} else if (action.kind === "create-draft-pr") {
 					const metadata = metadataByBookmark.get(action.bookmark);
 					if (!metadata) throw new Error(`No PR metadata was prepared for ${JSON.stringify(action.bookmark)}.`);
-					const created = await github.createDraftPr({
-						repo: plan.repository,
-						ref: action.bookmark,
+					await transitions.create({
+						row: published[index],
 						base: action.targetBase.replace(/^refs\/heads\//, ""),
 						title: metadata.title,
 						body: metadata.body,
-						cwd: options.cwd,
-						signal: deps.signal,
-					});
-					published[index].prNumber = created.number;
-					published[index].url = created.url;
-					published[index].draft = created.draft;
-					progress.completed({
-						kind: "create-draft-pr",
-						ref: action.bookmark,
-						prNumber: created.number,
-						url: created.url,
 					});
 				} else {
 					await github.updatePrBase({
@@ -616,7 +613,7 @@ async function applyPublication(
 						signal: deps.signal,
 					});
 					progress.completed({
-						kind: "repair-pr-base",
+						kind: action.kind,
 						ref: action.bookmark,
 						prNumber: action.prNumber,
 						targetBase: action.targetBase,
@@ -634,7 +631,7 @@ async function applyPublication(
 
 	let nativeStackNumber: number | undefined;
 	const nativeGateway = deps.nativeStack ?? createNativeStackGateway(deps.run);
-	if (published.length >= 2) {
+	if (plan.slices.length >= 2) {
 		const prNumbers = published.map((slice) => slice.prNumber);
 		if (prNumbers.some((number) => number === undefined)) {
 			return progress.partial({
@@ -677,9 +674,7 @@ async function applyPublication(
 				});
 			}
 			try {
-				await github.markPrReady(plan.repository, slice.prNumber, options.cwd, deps.signal);
-				slice.draft = false;
-				progress.completed({ kind: "mark-pr-ready", ref: slice.bookmark, prNumber: slice.prNumber });
+				await transitions.ready(slice);
 			} catch (error) {
 				const failed = {
 					kind: "mark-pr-ready" as const,
@@ -698,7 +693,7 @@ async function applyPublication(
 	const comments = await createNavigationCommentStore(github).reconcile({
 		repo: plan.repository,
 		defaultBranch: plan.defaultBranch,
-		published: published.map((slice) => ({ ...slice, ref: slice.bookmark })),
+		published,
 		cwd: options.cwd,
 		signal: deps.signal,
 	});

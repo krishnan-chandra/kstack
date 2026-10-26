@@ -1,0 +1,801 @@
+exports[`GitHub publication transition traces > cancel-after-create 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "b674f7febdb95c1a1e2e976bc8a34ee9141394a5815c5f5496e7feefd78ec878",
+    "publication": {
+      "topRef": "kstack/one",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": false
+        }
+      ]
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "kstack/one",
+        "prNumber": 12,
+        "url": "https://github.com/o/r/pull/12"
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "kstack/one",
+        "prNumber": 12
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > cancel-after-push 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "b674f7febdb95c1a1e2e976bc8a34ee9141394a5815c5f5496e7feefd78ec878",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      }
+    ],
+    "failedAction": {
+      "kind": "create-draft-pr",
+      "ref": "kstack/one",
+      "error": "Publication was cancelled before this action started."
+    }
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > cancel-before 1`] = `
+{
+  "events": [],
+  "result": {
+    "status": "cancelled"
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > create 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "b674f7febdb95c1a1e2e976bc8a34ee9141394a5815c5f5496e7feefd78ec878",
+    "publication": {
+      "topRef": "kstack/one",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": true
+        }
+      ]
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "kstack/one",
+        "prNumber": 12,
+        "url": "https://github.com/o/r/pull/12"
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > create-indeterminate 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "indeterminate",
+    "planId": "b674f7febdb95c1a1e2e976bc8a34ee9141394a5815c5f5496e7feefd78ec878",
+    "inFlight": {
+      "kind": "create-draft-pr",
+      "ref": "kstack/one",
+      "error": "create uncertain"
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      }
+    ],
+    "recovery": "Inspect remote branches and PRs, then publish again from a fresh plan."
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > create-ready 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "b674f7febdb95c1a1e2e976bc8a34ee9141394a5815c5f5496e7feefd78ec878",
+    "publication": {
+      "topRef": "kstack/one",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": false
+        }
+      ]
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "kstack/one",
+        "prNumber": 12,
+        "url": "https://github.com/o/r/pull/12"
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "kstack/one",
+        "prNumber": 12
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > existing-draft 1`] = `
+{
+  "events": [
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "64415819402def5aaac2f3ae3ee0ff544629ed6e8836ea5092500a71abce5da8",
+    "publication": {
+      "topRef": "kstack/one",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": false
+        }
+      ]
+    },
+    "completedActions": [
+      {
+        "kind": "mark-pr-ready",
+        "ref": "kstack/one",
+        "prNumber": 12
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > existing-ready 1`] = `
+{
+  "events": [],
+  "result": {
+    "status": "completed",
+    "planId": "f29a07d153c135c41d890987b6b17573a7784bcae4320f04e388eb6a2c4a6d36",
+    "publication": {
+      "topRef": "kstack/one",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": false
+        }
+      ]
+    },
+    "completedActions": [],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > proven-gap 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "indeterminate",
+    "planId": "9f68324be0bd3735c7eae8098761072d462d5a3414417e4ada209b1ff2e55dab",
+    "inFlight": {
+      "kind": "create-draft-pr",
+      "ref": "kstack/one",
+      "error": "create uncertain"
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      }
+    ],
+    "publication": {
+      "topRef": "kstack/two",
+      "pullRequests": [
+        {
+          "ref": "kstack/two",
+          "baseRef": "kstack/one",
+          "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+          "prNumber": 13,
+          "url": "https://github.com/o/r/pull/13",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "recovery": "Inspect remote branches and PRs, then publish again from a fresh plan."
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > ready-fails 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "partial",
+    "planId": "b674f7febdb95c1a1e2e976bc8a34ee9141394a5815c5f5496e7feefd78ec878",
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "kstack/one",
+        "prNumber": 12,
+        "url": "https://github.com/o/r/pull/12"
+      }
+    ],
+    "publication": {
+      "topRef": "kstack/one",
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "failedAction": {
+      "kind": "mark-pr-ready",
+      "ref": "kstack/one",
+      "prNumber": 12,
+      "error": "ready rejected"
+    }
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > repair 1`] = `
+{
+  "events": [
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 12,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "e51eb838bec10a36bb55eb5f44844a58302bc6c5a7e449e8bf1e9331ce006626",
+    "publication": {
+      "topRef": "kstack/one",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": true
+        }
+      ]
+    },
+    "completedActions": [
+      {
+        "kind": "repair-pr-base",
+        "ref": "kstack/one",
+        "prNumber": 12,
+        "targetBase": "main"
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > repair-indeterminate 1`] = `
+{
+  "events": [
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 12,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "indeterminate",
+    "planId": "e51eb838bec10a36bb55eb5f44844a58302bc6c5a7e449e8bf1e9331ce006626",
+    "inFlight": {
+      "kind": "repair-pr-base",
+      "ref": "kstack/one",
+      "prNumber": 12,
+      "error": "repair uncertain"
+    },
+    "completedActions": [],
+    "publication": {
+      "topRef": "kstack/one",
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": true
+        }
+      ],
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      }
+    },
+    "recovery": "Inspect remote branches and PRs, then publish again from a fresh plan."
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > repair-rejected 1`] = `
+{
+  "events": [
+    [
+      "repair",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "prNumber": 12,
+        "base": "main",
+        "cwd": "/repo"
+      }
+    ]
+  ],
+  "result": {
+    "status": "failed",
+    "error": "repair rejected",
+    "completedActions": []
+  }
+}
+`;
+
+exports[`GitHub publication transition traces > two-slices 1`] = `
+{
+  "events": [
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/one:refs/heads/kstack/one"
+      ]
+    ],
+    [
+      "git",
+      [
+        "push",
+        "origin",
+        "kstack/two:refs/heads/kstack/two"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/one",
+        "base": "main",
+        "title": "One",
+        "body": "Stack slice \`kstack/one\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        12,
+        "/repo"
+      ]
+    ],
+    [
+      "create",
+      {
+        "repo": {
+          "owner": "o",
+          "repo": "r"
+        },
+        "ref": "kstack/two",
+        "base": "kstack/one",
+        "title": "Two",
+        "body": "Stack slice \`kstack/two\` published by kstack.",
+        "cwd": "/repo"
+      }
+    ],
+    [
+      "ready",
+      [
+        {
+          "owner": "o",
+          "repo": "r"
+        },
+        13,
+        "/repo"
+      ]
+    ]
+  ],
+  "result": {
+    "status": "completed",
+    "planId": "d527ebab789ca7bf7b559fd4872306e65bae443e8de80238a9e4beed83b1fa9d",
+    "publication": {
+      "topRef": "kstack/two",
+      "remote": "origin",
+      "repository": {
+        "owner": "o",
+        "repo": "r"
+      },
+      "pullRequests": [
+        {
+          "ref": "kstack/one",
+          "baseRef": "main",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "prNumber": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "draft": false
+        },
+        {
+          "ref": "kstack/two",
+          "baseRef": "kstack/one",
+          "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+          "prNumber": 13,
+          "url": "https://github.com/o/r/pull/13",
+          "draft": false
+        }
+      ]
+    },
+    "completedActions": [
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/one"
+      },
+      {
+        "kind": "push-bookmark",
+        "ref": "kstack/two"
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "kstack/one",
+        "prNumber": 12,
+        "url": "https://github.com/o/r/pull/12"
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "kstack/one",
+        "prNumber": 12
+      },
+      {
+        "kind": "create-draft-pr",
+        "ref": "kstack/two",
+        "prNumber": 13,
+        "url": "https://github.com/o/r/pull/13"
+      },
+      {
+        "kind": "mark-pr-ready",
+        "ref": "kstack/two",
+        "prNumber": 13
+      }
+    ],
+    "commentErrors": [
+      "Navigation comments skipped: could not determine the authenticated GitHub user."
+    ]
+  }
+}
+`;

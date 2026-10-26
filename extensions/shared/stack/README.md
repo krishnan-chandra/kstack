@@ -8,6 +8,22 @@ from [`../vcs/`](../vcs/README.md), which mutates the local repository.
 Git-fact checks used by Graphite and GitHub. `plan-implement` and `land` consume
 these contracts directly.
 
+## PR transitions during publication
+
+`pr-transitions.ts` keeps successful create and ready mutations together with
+updates to caller-owned PR rows and completion accounting. `create` adopts the
+returned identity, records completion, and returns the created PR. `ready`
+updates draft state and records completion. Neither method updates the row or
+records completion if the gateway rejects.
+
+Providers retain their planners, schedules, cancellation checkpoints, and error
+classification. Git pushes all refs first and can ready each new PR immediately.
+jj interleaves pushes with PR transitions, links the native stack, then readies
+PRs. Providers keep identity and slice facts in the same rows and handle base
+repairs directly. Git reports individually proven rows with head SHAs; jj reports
+a contiguous proven prefix with change IDs. The transition module neither retries
+mutations nor wraps adapter errors.
+
 ## Stack topology
 
 `topology.ts` owns the remote stack-membership record. Callers reconcile or
