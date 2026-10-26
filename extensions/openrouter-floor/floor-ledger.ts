@@ -389,9 +389,13 @@ export function createFloorLedger(options: FloorLedgerOptions = {}): FloorLedger
 		for (const name of names) {
 			const shardDate = shardDateFromName(name);
 			if (shardDate === undefined) continue;
+			const bucketExpired = shardDate !== "" && Date.parse(`${shardDate}T23:59:59.999Z`) < cutoff;
+			if (shardDate !== "" && !bucketExpired) {
+				retained.push(name);
+				continue;
+			}
 			try {
 				const metadata = await fileSystem.stat(join(directory, name));
-				const bucketExpired = shardDate !== "" && Date.parse(`${shardDate}T23:59:59.999Z`) < cutoff;
 				if (bucketExpired || (shardDate === "" && metadata.mtimeMs < cutoff)) {
 					await fileSystem.unlink(join(directory, name));
 					diagnostic(onDiagnostic, "ledger shard pruned: retention");
