@@ -11,7 +11,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
-| [`openrouter-floor`](extensions/openrouter-floor/) | Sends every OpenRouter request as the model's `:floor` variant and records bounded, redacted rewrite and service-tier observations. Users keep selecting plain model IDs; models that already carry a variant pass through. |
+| [`openrouter-floor`](extensions/openrouter-floor/) | Uses `:floor` by default, with `floor`, `nitro`, or `none` configurable per model or per session via `/openrouter-route`. Records bounded, redacted variant and service-tier observations; existing model suffixes pass through. |
 | [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
@@ -229,9 +229,9 @@ authoritative:
   Enter and Alt+Enter in the main editor while Pi is working, so Enter queues
   follow-up messages and Alt+Enter steers. Enter keeps stock behavior for idle
   submission, autocomplete, inline prompts, and selectors.
-- OpenRouter requests use the `:floor` variant automatically through the
-  `openrouter-floor` extension, so no per-model `:floor` entries are needed in
-  `models.json`.
+- OpenRouter requests use `:floor` by default through `openrouter-floor`.
+  Configure `floor`, `nitro`, or `none` per model in `kstack.json` or per session
+  with `/openrouter-route`; no per-model variant entries are needed in `models.json`.
 
 The installer keeps user-defined providers and models. It removes the `:floor`
 custom models that earlier Kstack releases installed, since they now duplicate

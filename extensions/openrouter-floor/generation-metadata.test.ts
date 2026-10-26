@@ -23,6 +23,12 @@ function auth(overrides: Partial<AuthResult["auth"]> = {}): AuthResult {
 }
 
 describe("lookupGenerationTier", () => {
+	it("normalizes ultrafast as a known tier", async () => {
+		const result = await lookupGenerationTier("gen-fast", async () => auth(), {
+			fetch: async () => response('{"data":{"service_tier":"ULTRAFAST"}}'),
+		});
+		assert.deepEqual(result, { kind: "known", tier: "ultrafast" });
+	});
 	it("uses the authenticated configured origin and normalizes a known tier", async () => {
 		let requestUrl = "";
 		let requestHeaders: Readonly<Record<string, string>> | undefined;

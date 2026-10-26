@@ -1,19 +1,83 @@
 # openrouter-floor
 
-Sends every OpenRouter request as the model's [`:floor`
-variant](https://openrouter.ai/docs/guides/routing/model-variants/floor) and
-records bounded observations about the rewrite and the service tier that served
+Routes OpenRouter requests through `:floor` by default. Choose `floor`, `nitro`,
+or `none` per model in config, or override the route for the current session.
+Records bounded observations about rewrites and the service tiers that served
 completed generations.
 
 ## What it does
 
-`:floor` makes OpenRouter sort a model's endpoints by price and admits each
-provider's discounted flex service tier into that sort. The cheapest endpoint
-serves the request, and standard endpoints remain as fallback when flex
-capacity is unavailable. The variant exists only as a model-ID suffix. A
-request-body parameter cannot reproduce it (`provider.sort: "price"` sorts but
-does not admit flex endpoints, and `service_tier: "flex"` removes the standard
-fallback).
+[`floor`](https://openrouter.ai/docs/guides/routing/model-variants/floor) sorts
+endpoints by price and admits flex capacity without preferring it.
+[`nitro`](https://openrouter.ai/docs/guides/routing/model-variants/nitro) sorts
+by throughput and admits priority capacity without preferring it. `none` sends
+the plain model ID.
+
+Only the model-ID suffix expresses these variants exactly. `provider.sort`
+sorts without admitting the extra tier. `service_tier: "priority"` prefers
+priority regardless of speed; `service_tier: "flex"` prefers flex and bounds
+fallback by price, which can surface capacity errors. This extension changes
+only `payload.model`, never body routing parameters.
+
+The first matching policy wins:
+
+1. An existing model suffix, including `:free` or an unknown variant, passes through.
+2. The session override from `/openrouter-route`.
+3. An exact model entry in `kstack.json`.
+4. The config default.
+5. Built-in `floor`.
+
+### Configuration
+
+Add this section to `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
+
+```json
+"openrouter-floor": {
+  "default": "floor",
+  "models": {
+    "openrouter/google/gemini-3.8-flash": "nitro",
+    "openrouter/mistralai/mistral-small-2603": "none"
+  }
+}
+```
+
+Keys are exact `openrouter/<model-id>` IDs without a variant suffix. Most IDs
+include an author, such as `openrouter/google/gemini-3.8-flash`. Slashless IDs
+such as `openrouter/auto` are also accepted.
+Wildcards and unknown section fields are rejected. An invalid config warns once
+per runtime when a UI is available and falls back to floor. `/openrouter-route`
+continues to show the load error until the config loads successfully or is removed.
+Headless runs have no UI warning. Reload to read changes. Session overrides and
+explicit model suffixes still take precedence.
+
+### Session override
+
+```text
+/openrouter-route
+/openrouter-route nitro
+/openrouter-route floor
+/openrouter-route none
+/openrouter-route reset
+```
+
+No argument shows the effective route and source. A choice overrides config for
+all OpenRouter models in this session. `reset` restores config policy. Custom
+`openrouter-floor/route` entries persist the override on the active session
+branch, outside model context. It survives reload and resume, follows `/tree`,
+and is copied with the selected history on fork. Fresh child agents use config
+only; they do not inherit the parent's session override.
+
+The TUI and RPC status shows the policy for the selected OpenRouter model and
+clears for other providers. It is not proof of a rewrite. For virtual models,
+the selected model can differ from the physical model that serves a request.
+
+### Settings that can neutralize a variant
+
+Explicit provider routing can override OpenRouter's variant behavior. Check
+`compat.openRouterRouting.order` in `models.json`, explicit
+`service_tier: "default"`, and your OpenRouter workspace's default service tier.
+This extension does not remove those settings. Service-tier telemetry helps
+show their effect.
 
 The extension listens to Pi's `before_provider_request` event. When the session
 model belongs to the `openrouter` provider and the payload names exactly that
@@ -34,7 +98,8 @@ It leaves a request alone when:
 Pi loads it with the rest of Kstack. Kstack child agents (plan-implement,
 pr-autopilot, kstack-router) run with
 `--no-extensions -e <kstack>/kstack.ts`, so they load Kstack alone and their
-OpenRouter calls are floor-routed without booting the user's other extensions.
+OpenRouter calls use the configured routing policy without booting the user's
+other extensions.
 
 ## View routing observations
 
@@ -53,19 +118,27 @@ runtime; the other ranges include all retained shards under the current scope.
 The command reads the local ledger and performs no network lookup. It reports
 two separate populations:
 
-- **Floor rewrites observed** counts payload replacements from
+- **Rewrites observed** counts floor and nitro payload replacements from
   `before_provider_request`.
 - **Completed generations** counts finalized OpenRouter assistant messages.
   For messages with a `responseId`, the extension queries the authenticated
   OpenRouter `/api/v1/generation?id=...` endpoint and records `flex`,
-  `default`, or `priority`. OpenRouter publishes generation metadata after the
+  `default`, `priority`, or `ultrafast`. OpenRouter publishes generation metadata after the
   stream completes, so the lookup starts after a 15-second delay and retries a
   still-missing record. Missing IDs and failed or unavailable lookups stay in
   `unknown`. The report breaks unknown results down by reason.
 
 The command does not claim that a particular rewrite produced a particular
 generation. Pi does not expose a request identity shared by those two events.
-Metadata coverage and flex usage among known tiers are shown separately.
+The report shows per-variant rewrites and generation tiers, overall metadata
+coverage, flex share among known floor tiers, and priority share among known
+nitro tiers. Generation variants are inferred from routing policy at completion,
+not correlated with a request. Attribution requires the selected session model
+to be on OpenRouter and match the completion's model ID. Mismatched or missing
+session models, explicitly suffixed models, and older records are unattributed.
+A policy or model change during a request can still misattribute a completion.
+The resolved tier event carries the same inferred variant as the initial
+observation, so the attribution survives date-range boundaries.
 
 ## Storage and scope
 
@@ -90,6 +163,11 @@ The ledger does not prune that orphaned directory.
 Shards written by earlier versions under `<cwd>/.pi/openrouter-floor/` are
 not read or migrated; delete them by hand if they were committed.
 
+Older Kstack readers ignore `ultrafast` records because they do not recognize
+that tier. If you downgrade or share an agent directory with an older version,
+those generations can appear pending. The records remain on disk and current
+readers can still use them. The ledger format remains version 1.
+
 The ledger rotates each process into daily shards and keeps at most 30 days of
 events, 10,000 lines per process-day shard, and 5 MiB across a scope. It accounts
 for every retained shard when enforcing the scope limit. Malformed records and
@@ -99,7 +177,7 @@ diagnostics. A process shutdown flushes its pending append queue.
 ## Security and failure behavior
 
 The ledger stores timestamps, process IDs, event IDs, scope hashes, generation-ID
-hashes, normalized tiers, and lookup reasons. It does not store prompts,
+hashes, routing variants, normalized tiers, and lookup reasons. It does not store prompts,
 responses, payloads, headers, API keys, raw generation IDs, or provider response
 bodies.
 
@@ -110,7 +188,7 @@ completed message and allows three attempts, five seconds apart, within a
 new generation record is still propagating; a record typically becomes
 queryable about eight seconds after the stream ends. The lookup does not follow
 redirects. Failed lookups stay in `unknown`, and telemetry failures do not
-change the `:floor` request or the provider response.
+change the routed request or the provider response.
 
 `message_end` waits only for the initial ledger append. The network lookup runs
 in the background, so metadata propagation does not delay tools or the next
@@ -135,7 +213,8 @@ permanently, and that undercount is the intended trade for not persisting
 provider-side identifiers.
 
 Pi's catalog cost still uses the base model rate. The footer and session cost
-can overstate spend when OpenRouter serves a flex endpoint.
+can overstate spend at flex rates and understate spend at priority rates.
+
 ## Tests
 
 ```bash
