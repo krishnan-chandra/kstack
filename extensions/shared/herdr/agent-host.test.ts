@@ -343,6 +343,57 @@ describe("preflightHerdr", () => {
 });
 
 describe("openPaneHost", () => {
+	for (const rollbackFails of [false, true]) {
+		it(`rolls back only its split after construction fails (rollback fails: ${rollbackFails})`, async (t) => {
+			const harness = makeHarness("pane-construction-failure");
+			if (rollbackFails)
+				harness.fake.on(
+					(args) => args[0] === "pane" && args[1] === "close",
+					async () => ({ code: 1, stdout: "", stderr: "close refused" }),
+				);
+			const previous = process.env.TMPDIR;
+			const notDirectory = join(harness.root, "not-a-directory");
+			writeFileSync(notDirectory, "fixture");
+			process.env.TMPDIR = notDirectory;
+			t.after(() => {
+				if (previous === undefined) delete process.env.TMPDIR;
+				else process.env.TMPDIR = previous;
+			});
+			await assert.rejects(
+				openPaneHost({ owner: "review", label: "failure", cwd: "/repo", maxAgents: 1 }, harness.fake.deps()),
+				// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Assertion callback validates an arbitrary rejected value.
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /ENOTDIR/);
+					if (rollbackFails) {
+						assert.ok(error instanceof AggregateError);
+						assert.match(error.message, /rollback.*close refused/);
+						assert.equal(error.cause, error.errors[0]);
+					}
+					return true;
+				},
+			);
+			assert.deepEqual(harness.fake.paneIdsTouched("pane close"), ["w5:p100"]);
+			assert.equal(harness.fake.callsMatching("tab close").length, 0);
+		});
+	}
+
+	it("preserves layout-result fallback and injected exchange directories", async () => {
+		const harness = makeHarness("pane-layout-fallback");
+		harness.fake.on(
+			(args) => args[0] === "pane" && args[1] === "layout",
+			async () => ({ code: 1, stdout: "", stderr: "layout unavailable" }),
+		);
+		const opened = await openPaneHost(
+			{ owner: "review", label: "fallback", cwd: "/repo", maxAgents: 1 },
+			{ ...harness.fake.deps(), exchangeDir: harness.root },
+		);
+		assert.ok(opened.ok);
+		await opened.host.dispose({ closeTab: true });
+		assert.ok(existsSync(harness.instructionsFile));
+		assert.equal(harness.fake.callsMatching("pane close").length, 1);
+	});
+
 	it("splits the caller's pane and starts the agent there without a tab", async () => {
 		const harness = makeHarness("pane-host");
 		const opened = await openPaneHost(

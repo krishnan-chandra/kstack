@@ -730,16 +730,30 @@ export async function openPaneHost(
 		{ timeoutMs: CONTROL_TIMEOUT_MS },
 	);
 	if (!split.ok) return { ok: false, error: `Could not split the caller's Herdr pane: ${split.message}` };
-	const layout = await cli.paneLayout({ paneId: split.value.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
-	return {
-		ok: true,
-		host: await buildHost(options, deps, cli, preflight, {
-			kind: "pane",
-			tabId: split.value.tabId,
-			rootPaneId: split.value.paneId,
-			widthColumns: layout.ok ? layout.value.widthColumns : 240,
-		}),
-	};
+	try {
+		const layout = await cli.paneLayout({ paneId: split.value.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+		return {
+			ok: true,
+			host: await buildHost(options, deps, cli, preflight, {
+				kind: "pane",
+				tabId: split.value.tabId,
+				rootPaneId: split.value.paneId,
+				widthColumns: layout.ok ? layout.value.widthColumns : 240,
+			}),
+		};
+	} catch (error) {
+		try {
+			const closed = await cli.paneClose({ paneId: split.value.paneId }, { timeoutMs: CONTROL_TIMEOUT_MS });
+			if (!closed.ok) throw new Error(closed.message);
+		} catch (cleanupError) {
+			throw new AggregateError(
+				[error, cleanupError],
+				`Pane host construction failed: ${errorText(error)}; rollback of ${split.value.paneId} also failed: ${errorText(cleanupError)}`,
+				{ cause: error },
+			);
+		}
+		throw error;
+	}
 }
 
 interface HostOptions {
