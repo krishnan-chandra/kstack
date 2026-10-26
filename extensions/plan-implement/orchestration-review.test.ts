@@ -3,7 +3,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { AgentHost, AskResult, HostedAgent, HostedAgentSpec } from "../shared/herdr/agent-host.ts";
+import {
+	type AgentHost,
+	type AskResult,
+	type HostedAgent,
+	type HostedAgentSpec,
+	openPaneHost,
+} from "../shared/herdr/agent-host.ts";
 import { createAdversaryReview } from "./orchestration.ts";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
@@ -57,10 +63,39 @@ class FakeLateHost implements AgentHost {
 	}
 }
 
-describe("createAdversaryReview", () => {
-	it("bounds transport setup with the shared deadline and still disposes the late host", async () => {
+describe("createAdversaryReview", { concurrency: false }, () => {
+	it("reports real hosted preflight failure for direct use outside Herdr without spawning a child", async () => {
+		const notices: string[] = [];
+		const review = createAdversaryReview({
+			openPane: (options, deps) => openPaneHost(options, { ...deps, env: {} }),
+			createExec: () => async () => {
+				throw new Error("must refuse before executing Herdr");
+			},
+			notify: (message) => notices.push(message),
+			onStarted: () => assert.fail("must not start an adversary"),
+			onBlocked: async () => false,
+			label: "test",
+		});
+		try {
+			const results = await review.run({
+				adversaries: [{ label: "adversary-1", model: "test/adversary" }],
+				cwd: "/repo",
+				taskFile: "/task.md",
+				planFile: "/plan.md",
+				ledgerFile: "/ledger.md",
+				diffFile: "/diff",
+				systemPromptFile: "/prompt.md",
+				timeoutMs: 1000,
+			});
+			assert.equal(results[0]?.status, "failed");
+			assert.match(notices.join("\n"), /Herdr is required/);
+		} finally {
+			await review.dispose();
+		}
+	});
+	it("bounds hosted setup without HERDR_ENV and still disposes the late host", async () => {
 		const previous = process.env.HERDR_ENV;
-		process.env.HERDR_ENV = "1";
+		delete process.env.HERDR_ENV;
 		try {
 			const host = new FakeLateHost();
 			const review = createAdversaryReview({

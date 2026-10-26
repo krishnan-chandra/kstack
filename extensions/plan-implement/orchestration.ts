@@ -8,7 +8,6 @@ import { requestLand } from "../land/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
 import { type ChangeKind, changeKindLabel, changeKindPlaybookFile } from "../shared/change-kind.ts";
 import { findOpenPullRequestByHead } from "../shared/github.ts";
-import { runHeadlessAdversary, selectAdversaryTransport } from "../shared/herdr/adversary-runner.ts";
 import type { openPaneHost, preflightHerdr } from "../shared/herdr/agent-host.ts";
 import type { createNodeHerdrExec } from "../shared/herdr/herdr-cli.ts";
 import { isChildModelAvailable } from "../shared/model-availability.ts";
@@ -85,40 +84,6 @@ interface AdversaryReviewEffects {
 	label: string;
 }
 
-function headlessToAgentRun(
-	adversary: { model: string },
-	result: Awaited<ReturnType<typeof runHeadlessAdversary>>,
-): AgentRunResult {
-	const session = result.session.kind === "persisted" ? result.session.file : undefined;
-	const cleanup = result.cleanupError ? { cleanupError: result.cleanupError } : undefined;
-	if (result.status === "completed")
-		return {
-			status: "completed",
-			role: "adversary",
-			model: adversary.model,
-			output: result.output,
-			usage: result.usage,
-			...(session ? { session } : undefined),
-			...cleanup,
-		};
-	if (result.status === "aborted")
-		return {
-			status: "aborted",
-			role: "adversary",
-			model: adversary.model,
-			...(session ? { session } : undefined),
-			...cleanup,
-		};
-	return {
-		status: "failed",
-		role: "adversary",
-		model: adversary.model,
-		error: result.error,
-		...(session ? { session } : undefined),
-		...cleanup,
-	};
-}
-
 /* exported: adversary review transport contract */
 interface AdversaryReviewController {
 	run: (request: AdversaryReviewRequest) => Promise<AgentRunResult[]>;
@@ -145,40 +110,12 @@ function raceDeadline<T>(promise: Promise<T>, deadline: AbortSignal, onTimeout: 
 }
 
 /**
- * Build the implementation-review transport. Inside Herdr the adversaries share
- * one pane split off the caller's pane; otherwise each is a headless Pi child.
+ * Build the hosted implementation review. Adversaries share one pane split
+ * off the caller's pane; callers must pass the command's TUI/Herdr preflight.
  * The pane host is created lazily on the first round and reused across rounds.
  */
 /* exported: adversary review transport contract */
 export function createAdversaryReview(effects: AdversaryReviewEffects): AdversaryReviewController {
-	if (selectAdversaryTransport() === "headless") {
-		return {
-			async run(request) {
-				const deadline = AbortSignal.any([
-					...(request.signal ? [request.signal] : []),
-					AbortSignal.timeout(request.timeoutMs),
-				]);
-				return Promise.all(
-					request.adversaries.map(async (adversary) => {
-						const result = await runHeadlessAdversary({
-							model: adversary.model,
-							cwd: request.cwd,
-							prompt: buildReviewInstructions(request),
-							systemPromptFile: request.systemPromptFile,
-							extraSystemPromptFiles: request.extraSystemPromptFiles,
-							owner: "plan-implement",
-							label: adversary.label,
-							timeoutMs: request.timeoutMs,
-							signal: deadline,
-						});
-						return headlessToAgentRun(adversary, result);
-					}),
-				);
-			},
-			async dispose() {},
-		};
-	}
-
 	let pending: Promise<RoleRunner | undefined> | undefined;
 	const discarded: Array<Promise<void>> = [];
 	// A pane host is single-use per attempt: a cancelled or never-ready host is closed

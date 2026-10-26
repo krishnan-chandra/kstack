@@ -3,8 +3,8 @@
  * Every configured adversary returns the same structured critique as the
  * planning debate. This module owns the pure parts: how N results combine into
  * one decision, what the fixer and publisher read, and which findings stay
- * open. Running the adversaries (Herdr pane or headless child) is injected so
- * the decision logic stays testable without a live host.
+ * open. Running the hosted adversaries is injected so the decision logic
+ * stays testable without a live host.
  */
 
 import { type Critique, type CritiqueFinding, parseCritique } from "../shared/critique.ts";
