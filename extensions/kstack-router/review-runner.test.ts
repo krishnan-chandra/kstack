@@ -94,6 +94,44 @@ describe("buildReviewPrompt", () => {
 	});
 });
 
+describe("runReviewRoute default transport", { concurrency: false }, () => {
+	for (const env of [undefined, "0", "1"]) {
+		it(`selects ${env === "1" ? "pane" : "headless"} for HERDR_ENV=${String(env)}`, async () => {
+			const previous = process.env.HERDR_ENV;
+			if (env === undefined) delete process.env.HERDR_ENV;
+			else process.env.HERDR_ENV = env;
+			const calls: string[] = [];
+			const sent: Array<{ customType: string; content: string }> = [];
+			try {
+				const result = await runReviewRoute(fakePi({ sent }), fakeCtx(), "Review", undefined, {
+					loadConfig: missingConfig,
+					readAsset: () => "PLAYBOOK",
+					runChild: async () => {
+						calls.push("headless");
+						return { status: "completed", output: "Headless verdict", usage, session: missingSession };
+					},
+					createExec: () => async () => {
+						throw new Error("unexpected real Herdr command");
+					},
+					openPane: async () => {
+						calls.push("pane");
+						return { ok: false, error: "injected pane reached" };
+					},
+				});
+				assert.deepEqual(calls, [env === "1" ? "pane" : "headless"]);
+				assert.deepEqual(
+					result,
+					env === "1" ? { status: "failed", error: "injected pane reached" } : { status: "dispatched" },
+				);
+				if (env !== "1") assert.ok(sent.some((message) => message.content === "Headless verdict"));
+			} finally {
+				if (previous === undefined) delete process.env.HERDR_ENV;
+				else process.env.HERDR_ENV = previous;
+			}
+		});
+	}
+});
+
 describe("runReviewRoute", () => {
 	it("runs an isolated child and posts the verdict", async () => {
 		const sent: Array<{ customType: string; content: string }> = [];

@@ -16,7 +16,6 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { childIsolationArgs, runChildAgent, truncateHeadUtf8 } from "../shared/child-agent-runner.ts";
-import { selectAdversaryTransport } from "../shared/herdr/adversary-runner.ts";
 import { openPaneHost } from "../shared/herdr/agent-host.ts";
 import { createNodeHerdrExec, type HerdrExec } from "../shared/herdr/herdr-cli.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
@@ -61,6 +60,10 @@ interface ReviewRouteDeps {
 	selectTransport?: () => "pane" | "headless";
 	openPane?: typeof openPaneHost;
 	createExec?: () => HerdrExec;
+}
+
+function selectReviewTransport(env: NodeJS.ProcessEnv = process.env): "pane" | "headless" {
+	return env.HERDR_ENV === "1" ? "pane" : "headless";
 }
 
 interface ReviewMessageDetails {
@@ -281,7 +284,7 @@ export async function runReviewRoute(
 
 	const changeset = await changesetDiff(pi, ctx.cwd);
 	const prompt = buildReviewPrompt({ task, ...changeset, readAsset: deps.readAsset });
-	const transport = (deps.selectTransport ?? selectAdversaryTransport)();
+	const transport = (deps.selectTransport ?? selectReviewTransport)();
 	pi.sendMessage({
 		customType: "kstack-route",
 		content:

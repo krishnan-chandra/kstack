@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { AgentHost, AskOptions, AskResult, HostedAgent, HostedAgentSpec } from "../shared/herdr/agent-host.ts";
+import {
+	type AgentHost,
+	type AskOptions,
+	type AskResult,
+	type HostedAgent,
+	type HostedAgentSpec,
+	preflightHerdr,
+} from "../shared/herdr/agent-host.ts";
 import planImplementExtension from "./index.ts";
 
 const usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 };
@@ -39,6 +46,7 @@ class FakeHost implements AgentHost {
 	readonly tabId = "w1:t1";
 	readonly exchangeDir: string;
 	readonly disposeArgs: Array<{ closeTab?: boolean } | undefined> = [];
+	readonly roles: string[] = [];
 	private readonly result: AskResult;
 
 	constructor(root: string, result: AskResult) {
@@ -47,8 +55,14 @@ class FakeHost implements AgentHost {
 		mkdirSync(this.exchangeDir);
 	}
 
-	async start(_spec: HostedAgentSpec) {
-		return { ok: true as const, agent: new FakeAgent(this.result) };
+	async start(spec: HostedAgentSpec) {
+		this.roles.push(spec.role);
+		const output =
+			spec.role === "adversary"
+				? "Verdict: approve\n\n## Blocking\nNone.\n\n## Suggestions\nNone.\n"
+				: "## Execution Ledger\n- [STEP-1] Make the change. — done\n- [AC-1] Tests pass. — done\n";
+		const result = spec.role === "planner" ? this.result : { status: "completed" as const, output, usage };
+		return { ok: true as const, agent: new FakeAgent(result) };
 	}
 
 	async dispose(options?: { closeTab?: boolean }): Promise<void> {
@@ -61,6 +75,7 @@ interface Harness {
 	notices: string[];
 	cwd: string;
 	hostOpened(): number;
+	activity: { execCreated: number; preflightCalls: number; modelChecks: number; vcsCalls: number };
 	run(): Promise<void>;
 	shutdown(): void;
 }
@@ -71,6 +86,7 @@ function createHarness(
 	confirm: () => Promise<boolean>,
 	args = "--plan-only --no-adversary --change-kind feature Test retention",
 	beforeHostReturn?: () => void,
+	options: { mode?: ExtensionCommandContext["mode"]; herdrEnv?: string | null; review?: boolean } = {},
 ): Harness {
 	const root = mkdtempSync(join(tmpdir(), "kstack-plan-orchestration-"));
 	const agentDir = join(root, "agent");
@@ -83,9 +99,15 @@ function createHarness(
 				implementer: { model: "test/implementer", thinking: "medium" },
 				timeoutMinutes: 1,
 			},
+			council: options.review ? { seats: [{ model: "test/adversary", thinking: "medium" }] } : undefined,
 			vcs: { backend: "git", stackProvider: "none" },
 		}),
 	);
+	const integrationDir = join(agentDir, "extensions");
+	mkdirSync(integrationDir);
+	writeFileSync(join(integrationDir, "herdr-agent-state.ts"), "// fixture\n");
+	const activity = { execCreated: 0, preflightCalls: 0, modelChecks: 0, vcsCalls: 0 };
+	let head = "a".repeat(40);
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	t.after(() => {
@@ -114,20 +136,37 @@ function createHarness(
 		setSessionName() {},
 		sendMessage() {},
 		events: { on: () => () => {}, emit() {} },
-		exec: async () => ({ code: 0, stdout: `${root}\n`, stderr: "", killed: false }),
+		exec: async (_command, argv) => {
+			activity.vcsCalls++;
+			let stdout = "";
+			if (argv.includes("--show-toplevel")) stdout = root;
+			else if (argv[0] === "rev-parse") stdout = head;
+			else if (argv[0] === "branch") stdout = "kstack/test-retention";
+			else if (argv[0] === "switch") head = "b".repeat(40);
+			return { code: argv[0] === "show-ref" ? 1 : 0, stdout, stderr: "", killed: false };
+		},
 	};
 	const host = new FakeHost(root, result);
 	let hostOpened = 0;
 	planImplementExtension(
 		/* SAFETY: This host supplies every Pi capability used by the exercised command path. */ piHost as ExtensionAPI,
 		{
-			createExec: () => async () => ({ code: 0, stdout: "", stderr: "" }),
-			preflight: async () => ({
-				ok: true,
-				integrationPath: join(agentDir, "extensions", "herdr-agent-state.ts"),
-				workspaceId: "w1",
-				callerPane: "w1:p0",
-			}),
+			createExec: () => {
+				activity.execCreated++;
+				return async () => ({ code: 0, stdout: "", stderr: "" });
+			},
+			preflight: async ({ exec }) => {
+				activity.preflightCalls++;
+				return preflightHerdr({
+					exec,
+					env: {
+						PI_CODING_AGENT_DIR: agentDir,
+						HERDR_ENV: options.herdrEnv === null ? undefined : (options.herdrEnv ?? "1"),
+						HERDR_WORKSPACE_ID: "w1",
+						HERDR_PANE_ID: "w1:p0",
+					},
+				});
+			},
 			openPane: async () => {
 				hostOpened++;
 				beforeHostReturn?.();
@@ -142,7 +181,7 @@ function createHarness(
 		/* SAFETY: The assigned fixture supplies every Pi capability used by the exercised command path. */ {} as ExtensionCommandContext;
 	Object.assign(commandContext, {
 		cwd: root,
-		mode: "tui",
+		mode: options.mode ?? "tui",
 		hasUI: true,
 		ui: {
 			confirm,
@@ -156,9 +195,21 @@ function createHarness(
 			},
 		},
 		waitForIdle: async () => {},
-		getSystemPromptOptions: () => ({ skills: [] }),
+		getSystemPromptOptions: () => ({
+			skills: options.review
+				? ["write-pr", "find-reviewers"].map((name) => ({
+						name,
+						filePath: `/skills/${name}/SKILL.md`,
+						baseDir: `/skills/${name}`,
+						source: "test",
+					}))
+				: [],
+		}),
 		modelRegistry: {
-			find: () => ({}),
+			find: () => {
+				activity.modelChecks++;
+				return {};
+			},
 			hasConfiguredAuth: () => true,
 			getRegisteredProviderIds: () => [],
 		},
@@ -168,6 +219,7 @@ function createHarness(
 		host,
 		notices,
 		cwd: root,
+		activity,
 		hostOpened: () => hostOpened,
 		run: () => registeredCommand.handler(args, commandContext),
 		shutdown: () => {
@@ -177,6 +229,65 @@ function createHarness(
 		},
 	};
 }
+
+describe("plan-implement environment gate", { concurrency: false }, () => {
+	it("refuses non-TUI before host, preflight, VCS or model work", async (t) => {
+		const harness = createHarness(
+			t,
+			{ status: "completed", output: validPlan, usage },
+			async () => true,
+			undefined,
+			undefined,
+			{ mode: "json" },
+		);
+		await harness.run();
+		assert.equal(harness.hostOpened(), 0);
+		assert.deepEqual(harness.activity, { execCreated: 0, preflightCalls: 0, modelChecks: 0, vcsCalls: 0 });
+		assert.match(harness.notices.join("\n"), /requires interactive TUI/);
+	});
+
+	for (const herdrEnv of [null, "0"]) {
+		it(`refuses failed real Herdr preflight (${JSON.stringify(herdrEnv)}) before review or model work`, async (t) => {
+			const harness = createHarness(
+				t,
+				{ status: "completed", output: validPlan, usage },
+				async () => true,
+				undefined,
+				undefined,
+				{ herdrEnv },
+			);
+			await harness.run();
+			assert.equal(harness.hostOpened(), 0);
+			assert.deepEqual(harness.host.roles, []);
+			assert.deepEqual(harness.activity, { execCreated: 1, preflightCalls: 1, modelChecks: 0, vcsCalls: 0 });
+			assert.match(harness.notices.join("\n"), /Herdr is required/);
+		});
+	}
+
+	it("runs hosted implementation review after successful real Herdr preflight", async (t) => {
+		const previous = process.env.HERDR_ENV;
+		delete process.env.HERDR_ENV;
+		try {
+			const harness = createHarness(
+				t,
+				{ status: "completed", output: validPlan, usage },
+				async () => true,
+				"--plan-file approved.md --change-kind refactor Test retention",
+				undefined,
+				{ review: true },
+			);
+			writeFileSync(join(harness.cwd, "approved.md"), validPlan);
+			await harness.run();
+			assert.equal(harness.activity.preflightCalls, 1);
+			assert.equal(harness.hostOpened(), 2, harness.notices.join("\n"));
+			assert.ok(harness.host.roles.includes("adversary"), harness.notices.join("\n"));
+			assert.match(harness.notices.join("\n"), /Adversarial review approved/);
+		} finally {
+			if (previous === undefined) delete process.env.HERDR_ENV;
+			else process.env.HERDR_ENV = previous;
+		}
+	});
+});
 
 describe("plan-implement host retention", () => {
 	it("closes the tab when confirmation is declined", async (t) => {

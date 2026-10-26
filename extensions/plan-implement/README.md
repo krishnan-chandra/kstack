@@ -59,7 +59,7 @@ A full run follows these phases:
 9. Run every council seat as an implementation adversary against the exact workstream or stack base, then offer a fixer round while any adversary withholds approval.
 10. Offer a hosted review fixer, structural publication, a hosted metadata publisher, PR autopilot, and landing.
 
-Planner, adversary, implementer, fixer, and publisher agents stay visible in the caller's tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. Review adversaries run in their own pane split off the caller's pane, or as headless children when Herdr is unavailable. The extension retains its panes after completion and reports the tab ID.
+Planner, adversary, implementer, fixer, and publisher agents stay visible in the caller's tab. A full run uses at most five panes. Each role starts once; planner revisions reuse the same planner session. Review adversaries run in their own pane split off the caller's pane. The extension retains its panes after completion and reports the tab ID.
 
 With `--plan-file`, phases 3–4 are replaced by a bounded read of the supplied plan. The run starts from an immutable snapshot of that file, so a later edit cannot change what the implementer and reviewers see.
 
@@ -83,7 +83,9 @@ When the planner reported a session file, the implementer, the review fixer, and
 
 Adversaries run in parallel and share `council.reviewTimeoutMinutes` as a wall-clock deadline. Each returns the same `Verdict`/`Blocking`/`Suggestions` critique as the planning debate. The run combines every critique into one verdict; the implementer fixer reads all reports verbatim and addresses every blocking finding. The loop re-reviews until every adversary approves or `maxRounds` is reached. An `approve` verdict requires every adversary to approve.
 
-When the run is started inside Herdr, the adversaries share a pane split off the caller's pane, keeping them visible for inspection. When Herdr is not available, each adversary is a headless Pi child that reports its output and cleanup diagnostic. A full run still requires Herdr for its core roles today, so this headless path is the transport contract for the reviewer when the reviewers are launched without a Herdr host.
+Implementation adversaries are hosted agents that share a pane split off the caller's pane. The command requires TUI mode and successful Herdr preflight before any model work.
+
+The previously documented direct-helper headless contract is retired: `createAdversaryReview` now uses only the hosted runner, and `shared/herdr/adversary-runner.ts` is removed. Direct callers must provide a Herdr host; there is no headless fallback. This is an intentional helper compatibility change, not a change to normal command behavior. The separate [`kstack-router` review route](../kstack-router/README.md) still supports headless review outside Herdr.
 
 ## Plan-only mode
 
