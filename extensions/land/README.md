@@ -12,7 +12,6 @@ GitHub or Graphite to merge it.
 /land --pr 42 --method squash
 /land --pr 42 --readiness watch
 /land
-/kstack --route land --pr 42 --readiness watch --method squash
 ```
 
 Tab-completion offers `--pr`, `--method`, and `--readiness`. `--method` and
@@ -78,7 +77,7 @@ verified SHA before confirmation.
 If you omit `--method`, Land uses the repository's only enabled merge method
 without another selection or merge-confirmation prompt. When both squash and
 rebase are enabled, Land asks you to choose and then confirm. Merge commits are
-never allowed by kstack policy. `/kstack --route land` follows the same rules.
+never allowed by kstack policy.
 
 ### Per-repository merge method config
 

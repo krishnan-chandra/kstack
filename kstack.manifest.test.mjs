@@ -9,7 +9,6 @@ const EXPECTED_EXTENSIONS = [
 	"github-stacked-prs",
 	"handoff",
 	"jj-stacked-prs",
-	"kstack-router",
 	"land",
 	"openrouter-floor",
 	"parallel-agents",

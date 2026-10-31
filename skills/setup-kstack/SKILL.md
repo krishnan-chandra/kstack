@@ -111,7 +111,6 @@ as `"thinking"`. Use only `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
 | --- | --- | --- |
 | `vcs` | `backend`, Git-only `stackProvider` | Use exactly `"git"`, `"jj"`, or `"graphite"`. With Git, use `"github"` (default, Git 2.38+) or `"none"`. jj requires a colocated workspace and jj 0.44+. Graphite requires initialized gt 1.8.5+ and Git 2.38+. |
 | `council` | `seats` (an array of 1–5 model objects or alias strings), `maxRounds`, `timeoutMinutes`, `reviewTimeoutMinutes` | Seat models are distinct. A seat that uses the planner's model sits out, so at least one seat must use another model. `maxRounds` is an integer from 1 to 5 (default 3). `timeoutMinutes` is an integer from 1 to 60 (default 15); `reviewTimeoutMinutes` is an integer from 1 to 60 (default 10). The adversarial-planning skill seats every remaining model for planning and implementation review. |
-| `kstack-router` | `classifier`, `timeoutSeconds`, `review.models` | `timeoutSeconds` is 1–600. `review.models` is 1–5 model specs in preference order; the review route always runs on one of them (built-in order: Opus 5.5, then Astra). |
 | `openrouter-floor` | `default`, `models` | Values are `floor`, `nitro`, or `none`. Model keys are exact `openrouter/<model-id>` IDs without a variant suffix, including slashless IDs such as `openrouter/auto`. Omit the section to use floor everywhere. |
 | `investigation` | fast `allowedModels`, `defaultModel` | Every entry is one of K-Stack's curated fast investigation models and has at least `medium` thinking. `defaultModel` appears in the list. |
 | `arena` | `runners`, `crossJudge`, `maxConcurrency` | Give runners short, unique labels. Prefer a cross-judge from a different model family than the runners. |
@@ -171,7 +170,6 @@ Before showing the preview, check all of these conditions:
   are `floor`, `nitro`, or `none`; model keys are exact `openrouter/<model-id>`
   IDs without variant suffixes. Slashless IDs such as `openrouter/auto` are valid. Use `validateRoutingConfig` from
   `extensions/openrouter-floor/routing-policy.ts` to check the section.
-- `kstack-router.review.models` contains 1–5 model specs in preference order.
 - The investigation rules above hold.
 - `pr-autopilot.models` contains 2–5 unique labels and model IDs, every thinking
   level is `off`, `minimal`, or `low`, concurrency is 1–5, idle timeout is

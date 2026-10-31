@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { councilPaths, initialCouncilState, writeManifest, writeState } from "../council/store.ts";
-import { parseAskArgs, parseCouncilArgs, parseFanoutArgs, parseResolveModelArgs, parseSubcommand } from "./cli.mjs";
+import { parseCouncilArgs, parseFanoutArgs, parseSubcommand } from "./cli.mjs";
 
 const execFileAsync = promisify(execFile);
 const CLI = join(import.meta.dirname, "cli.mjs");
@@ -22,37 +22,12 @@ function runCli(args, env = {}) {
 }
 
 test("parseSubcommand accepts the documented subcommands", () => {
-	assert.deepEqual(parseSubcommand(["resolve-model"]), { ok: true, subcommand: "resolve-model" });
 	assert.deepEqual(parseSubcommand(["fanout"]), { ok: true, subcommand: "fanout" });
 	assert.deepEqual(parseSubcommand(["council"]), { ok: true, subcommand: "council" });
+	assert.equal(parseSubcommand(["resolve-model"]).ok, false);
+	assert.equal(parseSubcommand(["ask"]).ok, false);
 	assert.equal(parseSubcommand([]).ok, false);
 	assert.equal(parseSubcommand(["bogus"]).ok, false);
-});
-
-test("parseResolveModelArgs requires one section and key", () => {
-	assert.deepEqual(parseResolveModelArgs(["--section", "swarm", "--key", "worker"]), {
-		ok: true,
-		section: "swarm",
-		key: "worker",
-		model: undefined,
-	});
-	assert.equal(parseResolveModelArgs(["--section", "swarm"]).ok, false);
-	assert.equal(parseResolveModelArgs(["--bogus", "x"]).ok, false);
-});
-
-test("parseAskArgs requires an agent and absolute prompt and output paths", () => {
-	assert.deepEqual(parseAskArgs(["--agent", "adversary-x", "--prompt", "/tmp/p.md", "--out", "/tmp/o.md"]), {
-		ok: true,
-		agent: "adversary-x",
-		prompt: "/tmp/p.md",
-		out: "/tmp/o.md",
-	});
-	const relative = parseAskArgs(["--agent", "adversary-x", "--prompt", "local/p.md", "--out", "/tmp/o.md"]);
-	assert.equal(relative.ok, false);
-	assert.match(relative.error, /--prompt must be an absolute path/);
-	assert.equal(parseAskArgs(["--agent", "adversary-x", "--prompt", "/tmp/p.md"]).ok, false);
-	assert.equal(parseAskArgs(["--agent", "a", "--agent", "b", "--prompt", "/p", "--out", "/o"]).ok, false);
-	assert.equal(parseAskArgs(["--bogus", "x"]).ok, false);
 });
 
 test("the CLI exits 2 with usage on syntax errors", async () => {
@@ -62,49 +37,6 @@ test("the CLI exits 2 with usage on syntax errors", async () => {
 	const unknown = await runCli(["bogus"]);
 	assert.equal(unknown.code, 2);
 	assert.match(unknown.stderr, /unknown subcommand: bogus/);
-	const missing = await runCli(["resolve-model", "--section", "swarm"]);
-	assert.equal(missing.code, 2);
-	assert.match(missing.stderr, /--key is required/);
-	const relativeAsk = await runCli(["ask", "--agent", "adversary-x", "--prompt", "p.md", "--out", "/tmp/o.md"]);
-	assert.equal(relativeAsk.code, 2);
-	assert.match(relativeAsk.stderr, /--prompt must be an absolute path/);
-});
-
-test("resolve-model loads aliases for a configured section model", async () => {
-	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-resolve-"));
-	try {
-		writeFileSync(
-			join(agentDir, "kstack.json"),
-			JSON.stringify({
-				aliases: [{ label: "fable", model: "anthropic/claude-fable-5-1", thinking: "high" }],
-				swarm: { worker: "fable" },
-			}),
-		);
-		const result = await runCli(["resolve-model", "--section", "swarm", "--key", "worker"], {
-			PI_CODING_AGENT_DIR: agentDir,
-		});
-		assert.deepEqual(result, { code: 0, stdout: "anthropic/claude-fable-5-1:high\n", stderr: "" });
-	} finally {
-		rmSync(agentDir, { recursive: true, force: true });
-	}
-});
-
-test("resolve-model accepts an explicit full model without config", async () => {
-	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-explicit-"));
-	const result = await runCli(
-		["resolve-model", "--section", "swarm", "--key", "worker", "--model", "openai/gpt-5.6-astra:medium"],
-		{ PI_CODING_AGENT_DIR: agentDir },
-	);
-	assert.deepEqual(result, { code: 0, stdout: "openai/gpt-5.6-astra:medium\n", stderr: "" });
-});
-
-test("resolve-model exits 1 with configuration guidance when no model exists", async () => {
-	const agentDir = mkdtempSync(join(tmpdir(), "kstack-cli-missing-"));
-	const result = await runCli(["resolve-model", "--section", "swarm", "--key", "worker"], {
-		PI_CODING_AGENT_DIR: agentDir,
-	});
-	assert.equal(result.code, 1);
-	assert.match(result.stderr, /Set it in kstack\.json or pass --model/);
 });
 
 test("parseFanoutArgs accepts documented flags and validates inputs", () => {

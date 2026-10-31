@@ -10,9 +10,7 @@ import { dirname, isAbsolute } from "node:path";
 import { resolveCouncilRoster } from "../council/roster.ts";
 import { livePlanChanged, overrideCouncilFinding, runCouncilRound } from "../council/round.ts";
 import { readManifest } from "../council/store.ts";
-import { resolveConfiguredModel } from "../resolve-model.ts";
 import { isObject } from "../validation.ts";
-import { attachHostedAgent } from "./agent-host.ts";
 import { closeCouncilSeats, councilRecordInfo, createSeatAsker, openCouncilSeats } from "./council-host.ts";
 import { parseFanoutSpec, runFanout } from "./fanout.ts";
 import { createNodeHerdrExec } from "./herdr-cli.ts";
@@ -20,16 +18,14 @@ import { createNodeHerdrExec } from "./herdr-cli.ts";
 const USAGE = `usage: cli.mjs <subcommand> [options]
 
 subcommands:
-  resolve-model --section NAME --key NAME [--model REF]
   fanout --spec FILE --out FILE [--label TEXT] [--max-concurrency N]
-  ask --agent NAME --prompt FILE --out FILE   (FILE paths must be absolute)
   council open --dir DIR --slug SLUG --planner-model REF [--seats REF,REF,...]
   council round --dir DIR --plan FILE [--task FILE] [--response FILE] [--verify]
   council override --dir DIR --finding ID --reason TEXT [--plan FILE]
   council close --dir DIR
     (council DIR and FILE paths must be absolute; results print as JSON)`;
 
-const SUBCOMMANDS = new Set(["resolve-model", "fanout", "ask", "council"]);
+const SUBCOMMANDS = new Set(["fanout", "council"]);
 
 const COUNCIL_FLAGS = {
 	open: {
@@ -67,28 +63,6 @@ export function parseSubcommand(argv) {
 	return { ok: true, subcommand };
 }
 
-export function parseResolveModelArgs(argv) {
-	const values = {};
-	for (let index = 0; index < argv.length; index += 2) {
-		const flag = argv[index];
-		const value = argv[index + 1];
-		if (flag !== "--section" && flag !== "--key" && flag !== "--model") {
-			return { ok: false, error: `unknown resolve-model option: ${flag ?? "(missing)"}` };
-		}
-		if (value === undefined || value.startsWith("--")) return { ok: false, error: `${flag} requires a value` };
-		if (values[flag] !== undefined) return { ok: false, error: `${flag} may be provided only once` };
-		values[flag] = value;
-	}
-	if (values["--section"] === undefined) return { ok: false, error: "--section is required" };
-	if (values["--key"] === undefined) return { ok: false, error: "--key is required" };
-	return {
-		ok: true,
-		section: values["--section"],
-		key: values["--key"],
-		model: values["--model"],
-	};
-}
-
 export function parseFanoutArgs(argv) {
 	const values = {};
 	for (let index = 0; index < argv.length; index += 2) {
@@ -118,28 +92,6 @@ export function parseFanoutArgs(argv) {
 		label: values["--label"],
 		maxConcurrency,
 	};
-}
-
-export function parseAskArgs(argv) {
-	const values = {};
-	for (let index = 0; index < argv.length; index += 2) {
-		const flag = argv[index];
-		const value = argv[index + 1];
-		if (flag !== "--agent" && flag !== "--prompt" && flag !== "--out") {
-			return { ok: false, error: `unknown ask option: ${flag ?? "(missing)"}` };
-		}
-		if (value === undefined || value.startsWith("--")) return { ok: false, error: `${flag} requires a value` };
-		if (values[flag] !== undefined) return { ok: false, error: `${flag} may be provided only once` };
-		values[flag] = value;
-	}
-	for (const flag of ["--agent", "--prompt", "--out"]) {
-		if (values[flag] === undefined) return { ok: false, error: `${flag} is required` };
-	}
-	// The hosted agent resolves the pointer path from its own cwd, so relative paths would silently miss.
-	for (const flag of ["--prompt", "--out"]) {
-		if (!isAbsolute(values[flag])) return { ok: false, error: `${flag} must be an absolute path` };
-	}
-	return { ok: true, agent: values["--agent"], prompt: values["--prompt"], out: values["--out"] };
 }
 
 export function parseCouncilArgs(argv) {
@@ -305,53 +257,6 @@ async function main(argv) {
 	if (!parsed.ok) {
 		process.stderr.write(`${parsed.error}\n\n${USAGE}\n`);
 		return 2;
-	}
-	if (parsed.subcommand === "resolve-model") {
-		const options = parseResolveModelArgs(argv.slice(1));
-		if (!options.ok) {
-			process.stderr.write(`${options.error}\n\n${USAGE}\n`);
-			return 2;
-		}
-		const result = resolveConfiguredModel({
-			argument: options.model,
-			section: options.section,
-			key: options.key,
-			env: process.env,
-		});
-		if (!result.ok) {
-			process.stderr.write(`${result.error}\n`);
-			return 1;
-		}
-		process.stdout.write(`${result.ref}\n`);
-		return 0;
-	}
-	if (parsed.subcommand === "ask") {
-		const options = parseAskArgs(argv.slice(1));
-		if (!options.ok) {
-			process.stderr.write(`${options.error}\n\n${USAGE}\n`);
-			return 2;
-		}
-		return withCancellation(async (signal) => {
-			const attached = await attachHostedAgent(options.agent, { exec: createNodeHerdrExec() });
-			if (!attached.ok) {
-				process.stderr.write(`${attached.error}\n`);
-				return 1;
-			}
-			try {
-				const result = await attached.agent.ask({
-					promptFile: options.prompt,
-					outputFile: options.out,
-					timeoutMs: 900000,
-					signal,
-				});
-				process.stdout.write(
-					`${JSON.stringify({ status: result.status, outputFile: options.out, paneId: attached.agent.paneId, usage: result.usage, ...(result.status === "failed" ? { error: result.error } : undefined) })}\n`,
-				);
-				return result.status === "completed" ? 0 : 1;
-			} finally {
-				await attached.agent.dispose();
-			}
-		});
 	}
 	if (parsed.subcommand === "council") {
 		const options = parseCouncilArgs(argv.slice(1));

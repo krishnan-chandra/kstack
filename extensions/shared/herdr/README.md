@@ -15,7 +15,7 @@ The modules use Node APIs and injected effects, with no Pi SDK runtime imports. 
 | `layout.ts` | Pane-placement decisions. |
 | `fanout.ts` | Bounded start-and-ask lifecycles with ordered results. |
 | `council-host.ts` | Council seat placement, tab binding, start reconciliation, the round's seat asker, and closing seat panes. |
-| `cli.mjs` | Skill-facing model resolution, fanout, asks against existing agents, and council commands. |
+| `cli.mjs` | Skill-facing fanout and council commands. |
 
 Model resolution lives in `../resolve-model.ts`; it is independent of Herdr. The council's ledger, wire protocol, and round engine live in `../council/` and take the seat asker as an injected effect.
 
@@ -27,7 +27,7 @@ Preflight requires `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, `HERDR_PANE_ID`, a reach
 
 Use `openAgentHost` when Kstack creates and owns the agents in a new tab, and `openPaneHost` when the agents should share the caller's tab as panes split off the caller's own pane. `openPaneHost` accepts a fixed `direction` for that split and `maxColumns` for the agent grid inside it; councils use `right` and one column, so seats stack to the right of the caller. A `HostedAgentSpec.exactName` uses that agent name verbatim: no random suffix, and a name conflict fails instead of retrying. Every failed `start` reports the pane it reserved and the name it tried, when known. Use `attachHostedAgent` only for an existing named agent in a user- or skill-owned pane. It attaches the request lifecycle without creating a tab. For these attached agents, cancellation sends Escape but never sends Ctrl+C or closes the pane. `attachHostedAgent` refuses the caller's pane. The caller is responsible for selecting an agent with the intended model, tools, and cwd.
 
-Hosted Pi processes load Kstack and the Herdr integration explicitly. Extension discovery defaults to off (`--no-extensions`). `inheritExtensions: true` enables normal Pi discovery; `tools` independently controls any tool allowlist. The adversarial-planning skill, fanout, and router reviews enable discovery and omit the allowlist.
+Hosted Pi processes load Kstack and the Herdr integration explicitly. Extension discovery defaults to off (`--no-extensions`). `inheritExtensions: true` enables normal Pi discovery; `tools` independently controls any tool allowlist. The adversarial-planning skill and fanout enable discovery and omit the allowlist.
 
 Discovery is not a snapshot of the parent's tools. Pi resolves user configuration and trusted project resources from the child's cwd. Parent-only `-e` paths, process-only trust approval, runtime tool registrations, and active tool selections are not forwarded. A managed worktree may lack the parent's untracked project configuration. Exact parent-tool inheritance remains unsupported.
 
@@ -71,16 +71,14 @@ These controls are not a sandbox. Writable agents have the user's permissions. F
 ## CLI
 
 ```sh
-node <kstack>/extensions/shared/herdr/cli.mjs resolve-model --section NAME --key NAME [--model REF]
 node <kstack>/extensions/shared/herdr/cli.mjs fanout --spec spec.json --out result.json [--label TEXT] [--max-concurrency N]
-node <kstack>/extensions/shared/herdr/cli.mjs ask --agent NAME --prompt instructions.md --out response.md
 node <kstack>/extensions/shared/herdr/cli.mjs council open --dir DIR --slug SLUG --planner-model REF [--seats REF,REF]
 node <kstack>/extensions/shared/herdr/cli.mjs council round --dir DIR --plan FILE [--task FILE] [--response FILE] [--verify]
 node <kstack>/extensions/shared/herdr/cli.mjs council override --dir DIR --finding ID --reason TEXT [--plan FILE]
 node <kstack>/extensions/shared/herdr/cli.mjs council close --dir DIR
 ```
 
-Fanout spec cwd, prompt, and output fields and `ask` prompt and output paths must be absolute; the hosted agent resolves the pointer from its own cwd. `ask` uses a 15-minute timeout and the default response cap. Both return nonzero on failure, blocking, or cancellation.
+Fanout spec cwd, prompt, and output fields must be absolute; the hosted agent resolves the pointer from its own cwd. Fanout returns nonzero on failure, blocking, or cancellation.
 
 Council commands take absolute paths and print one JSON result. They exit 0 when a round completes or escalates and when `open` leaves every seat ready, 1 when a round is incomplete, cancelled, or failed, or when a seat is still waiting, and 2 on usage errors. Every mutating command holds `council.lock` in the council directory. It reuses the shared publication lock: atomic creation, serialized reclamation of a lock whose process is gone, and owner-checked release.
 

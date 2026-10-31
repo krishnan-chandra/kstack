@@ -15,7 +15,7 @@ Create isolated Git linked worktrees without changing files or uncommitted work 
 
 The repository hash comes from the canonical common Git directory, so unrelated repositories with the same basename do not collide. Branches use `kstack/<task-slug>`.
 
-This workflow manages **Git worktrees only**. A Jujutsu workspace (`jj workspace`) is a different isolation mechanism and is not interchangeable with a Git linked worktree. The router and plan workflows no longer define stack/worktree flags; managed worktrees are requested explicitly.
+This workflow manages **Git worktrees only**. A Jujutsu workspace (`jj workspace`) is a different isolation mechanism and is not interchangeable with a Git linked worktree. Managed worktrees are requested explicitly.
 
 ## Start with inspection
 

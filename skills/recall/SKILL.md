@@ -13,7 +13,7 @@ Two records hold the context. The user's own session history holds what they did
 
 ## Routing
 
-- One specific prior session to resume, or the immediately linked `/handoff` parent: use the `session-pickup` router route or the `read_handoff_history` / `search_handoff_history` tools directly, not this skill.
+- One specific prior session to resume, or the immediately linked `/handoff` parent: use the `read_handoff_history` / `search_handoff_history` tools directly, not this skill.
 - Turning habits into durable preferences: [`personalize`](../personalize/SKILL.md).
 - Extracting lessons from one completed session: [`reflect`](../reflect/SKILL.md).
 - The user already gave a full state capsule (paths, branch, the change): use it and skip the mining.

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ModelAlias } from "./model-aliases.ts";
-import { modelWithoutThinking, resolveConfiguredModel, resolveModelRef } from "./resolve-model.ts";
+import { modelWithoutThinking, resolveModelRef } from "./resolve-model.ts";
 
 function failureMessage(result: ReturnType<typeof resolveModelRef>): string {
 	assert.equal(result.ok, false);
@@ -23,11 +20,10 @@ const aliases: ModelAlias[] = [
 ];
 
 describe("resolveModelRef", () => {
-	it("gives an explicit full reference precedence over configuration", () => {
+	it("resolves a configured full reference", () => {
 		assert.deepEqual(
 			resolveModelRef({
-				argument: "openai/gpt-5.6-astra:medium",
-				configured: "fable",
+				configured: "openai/gpt-5.6-astra:medium",
 				aliases,
 				section: "swarm",
 				key: "worker",
@@ -36,10 +32,10 @@ describe("resolveModelRef", () => {
 		);
 	});
 
-	it("resolves an explicit alias with a thinking override", () => {
+	it("resolves a configured alias with a thinking override", () => {
 		assert.deepEqual(
 			resolveModelRef({
-				argument: "fable:medium",
+				configured: "fable:medium",
 				aliases,
 				section: "swarm",
 				key: "worker",
@@ -48,7 +44,7 @@ describe("resolveModelRef", () => {
 		);
 	});
 
-	it("falls back to configured alias and object forms", () => {
+	it("resolves configured alias and object forms", () => {
 		assert.deepEqual(resolveModelRef({ configured: "fable", aliases, section: "swarm", key: "worker" }), {
 			ok: true,
 			ref: "anthropic/claude-fable-5-1:high",
@@ -67,12 +63,12 @@ describe("resolveModelRef", () => {
 	it("reports missing, unknown, and ambiguous aliases", () => {
 		assert.match(failureMessage(resolveModelRef({ aliases, section: "s", key: "k" })), /No model configured/);
 		assert.match(
-			failureMessage(resolveModelRef({ argument: "missing", aliases, section: "s", key: "k" })),
+			failureMessage(resolveModelRef({ configured: "missing", aliases, section: "s", key: "k" })),
 			/not found/,
 		);
 		const ambiguous = [...aliases, { ...aliases[0], modelRef: "openai/gpt-5.6-astra" }];
 		assert.match(
-			failureMessage(resolveModelRef({ argument: "fable", aliases: ambiguous, section: "s", key: "k" })),
+			failureMessage(resolveModelRef({ configured: "fable", aliases: ambiguous, section: "s", key: "k" })),
 			/ambiguous/,
 		);
 	});
@@ -83,51 +79,5 @@ describe("modelWithoutThinking", () => {
 		assert.equal(modelWithoutThinking("openai/gpt-6-astra:high"), "openai/gpt-6-astra");
 		assert.equal(modelWithoutThinking("openai/gpt-6-astra"), "openai/gpt-6-astra");
 		assert.equal(modelWithoutThinking("ollama/qwen:7b"), "ollama/qwen:7b");
-	});
-});
-
-describe("resolveConfiguredModel", () => {
-	it("resolves a configured alias through kstack.json aliases", () => {
-		const dir = mkdtempSync(join(tmpdir(), "kstack-resolve-model-"));
-		writeFileSync(
-			join(dir, "kstack.json"),
-			JSON.stringify({
-				aliases: [{ label: "fable", model: "anthropic/claude-fable-5-1", thinking: "high" }],
-				swarm: { worker: "fable", maxConcurrency: 4 },
-			}),
-		);
-		assert.deepEqual(
-			resolveConfiguredModel({
-				section: "swarm",
-				key: "worker",
-				env: { PI_CODING_AGENT_DIR: dir },
-			}),
-			{ ok: true, ref: "anthropic/claude-fable-5-1:high" },
-		);
-	});
-
-	it("supports generic model-valued sections for later fanout skills", () => {
-		const dir = mkdtempSync(join(tmpdir(), "kstack-resolve-model-generic-"));
-		writeFileSync(
-			join(dir, "kstack.json"),
-			JSON.stringify({ arena: { crossJudge: { model: "openai/gpt-5.6-astra", thinking: "high" } } }),
-		);
-		assert.deepEqual(
-			resolveConfiguredModel({ section: "arena", key: "crossJudge", env: { PI_CODING_AGENT_DIR: dir } }),
-			{ ok: true, ref: "openai/gpt-5.6-astra:high" },
-		);
-	});
-
-	it("allows an explicit full reference without a config file", () => {
-		const dir = mkdtempSync(join(tmpdir(), "kstack-resolve-model-missing-"));
-		assert.deepEqual(
-			resolveConfiguredModel({
-				argument: "openai/gpt-5.6-astra:medium",
-				section: "swarm",
-				key: "worker",
-				env: { PI_CODING_AGENT_DIR: dir },
-			}),
-			{ ok: true, ref: "openai/gpt-5.6-astra:medium" },
-		);
 	});
 });

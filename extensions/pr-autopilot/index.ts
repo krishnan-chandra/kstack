@@ -326,7 +326,7 @@ export default function prAutopilotExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	// Listen for in-process API requests from the router or other extensions.
+	// Listen for in-process API requests from other extensions (e.g. land, jj-stacked-prs).
 	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (data) => {
 		claimPrAutopilotRequest(data, (mode, prNumber, ctx, cwd, confirmation, signal, repository) =>
 			runAutopilotCommand(mode, prNumber, ctx, cwd, confirmation, signal, repository),
