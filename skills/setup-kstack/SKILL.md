@@ -1,6 +1,6 @@
 ---
 name: setup-kstack
-description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change the council seats", "change planner or implementer model", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
+description: Configure K-Stack's VCS backend, models, and thinking levels. Use for /setup-kstack, "set up kstack", "switch K-Stack to git, jj, or Graphite", "configure kstack models", "change the council seats", "configure pr-autopilot models", or when kstack.json contains stale, unavailable, or manually edited settings. Detects the repository, discovers Pi's model catalog, previews a validated user-level kstack.json update, and writes only after approval.
 license: MIT
 compatibility: Pi CLI with `pi --list-models` and `pi auth check`; write access to $PI_CODING_AGENT_DIR (default ~/.pi/agent); Git 2.38+ for GitHub stacks; jj 0.44+ for jj; gt 1.8.5+ and Git 2.38+ for Graphite.
 ---

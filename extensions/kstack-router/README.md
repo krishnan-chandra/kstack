@@ -80,30 +80,9 @@ before it merges.
 Plan → implement → adversarial review → publish workflows live in the
 [`adversarial-planning`](../../skills/adversarial-planning/SKILL.md) skill, not
 in the router. The classifier sends such requests to `investigate` or points
-the user at the skill.
-```
-
-`--worktree` is valid only for a change route and dispatches single-PR work
-to a managed Git linked worktree beneath `~/.pi/kstack/worktrees`. It cannot be
-combined with `--stack`. `--no-adversary` skips the configured debate, and
-`--plan-only` returns the final plan without a workstream. Both flags apply
-only to the `change` route. `fast-change` always uses single delivery; use
-`change --stack` for a decomposed stack.
-
-The classifier recommends `fast-change` when the task explicitly says an approved plan already exists and implementation is bounded and low risk. The route selection UI also offers **Fast implement** as an override after a `change` recommendation. Security, authentication, concurrency, persistence, schemas, migrations, dependency updates, public APIs, multi-package changes, architectural choices, and unclear scope remain on the higher-assurance `change` or `investigate` routes.
-
-Writable workstreams (`change`, and other routes after they become writable)
-create a dedicated `kstack/<task-slug>` branch before the first repository
-write and commit coherent increments as work proceeds. They stop on a dirty
-current working tree and never push or publish. Read-only routes
-(`investigate`, `review`, `session-pickup`) do not create branches.
-
-Non-generic kinds attach a concise proof-obligation playbook to hosted
-planning and implementation roles. Bug fixes reproduce and rerun the same regression check; refactors pin
-and preserve behavior; performance work records matching baseline and
-post-change measurements; features exercise observable user behavior; and
-prototypes remain isolated and answer a decision question. `generic` retains
-the existing general workflow without an added specialized playbook.
+the user at the skill. The router no longer offers `change`, `fast-change`, or
+their flags (`--single`, `--stack`, `--worktree`, `--change-kind`,
+`--no-adversary`, `--plan-only`).
 
 ## Configuration
 

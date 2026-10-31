@@ -4,7 +4,6 @@
 
 | Module | Purpose |
 | --- | --- |
-| `change-kind.ts` | Defines the change-kind taxonomy, labels, and proof-obligation playbook names. |
 | `child-agent-runner.ts` | Runs bounded Pi child processes, builds the shared isolation-arg prefix, persists native sessions, and parses their JSONL event streams. |
 | `child-process-stop.ts` | Coordinates bounded process-group termination, SIGTERM/SIGKILL escalation, and absence observation for cancelled child processes. |
 | `subagent-sessions.ts` | Owns native child-session identity, active leases, file resolution, and retention. |

@@ -99,74 +99,6 @@ describe("JjBackend references and workstreams", () => {
 			snapshot: { ref: "feature", token: `feature@stable-change-id/parents:${parent}` },
 		});
 	});
-
-	it("creates a trunk-based change with a collision-safe task bookmark", async () => {
-		const base = "1".repeat(40);
-		const exec = scriptedExec([
-			{
-				command: "jj",
-				args: noPager(["log", "-r", "trunk()", "--no-graph", "-T", commitTemplate]),
-				result: { stdout: `${base}\n` },
-			},
-			{
-				command: "jj",
-				args: noPager(["bookmark", "list", "--all-remotes", "exact:kstack/add-search", "-T", 'name ++ "\\n"']),
-				result: { stdout: "kstack/add-search\n" },
-			},
-			{
-				command: "jj",
-				args: noPager(["bookmark", "list", "--all-remotes", "exact:kstack/add-search-2", "-T", 'name ++ "\\n"']),
-			},
-			{ command: "jj", args: noPager(["new", "trunk()", "-m", "Add search"]) },
-			{ command: "jj", args: noPager(["bookmark", "create", "kstack/add-search-2", "-r", "@"]) },
-		]);
-		assert.deepEqual(await new JjBackend(exec).createWorkstream("/repo", "Add search"), {
-			ok: true,
-			ref: "kstack/add-search-2",
-			baseSha: base,
-		});
-	});
-
-	it("verifies bookmark ancestry, a non-empty change, and an empty working-copy commit", async () => {
-		const base = "1".repeat(40);
-		const bookmark = "2".repeat(40);
-		const head = "3".repeat(40);
-		const exec = scriptedExec([
-			{
-				command: "jj",
-				args: noPager(["bookmark", "list", "exact:add-search", "-T", bookmarkTargetTemplate]),
-				result: { stdout: `add-search\t${bookmark}\n` },
-			},
-			{
-				command: "jj",
-				args: noPager(["log", "-r", `${bookmark} & ::@`, "--no-graph", "-T", commitTemplate]),
-				result: { stdout: `${bookmark}\n` },
-			},
-			{
-				command: "jj",
-				args: noPager(["log", "-r", `${base}..@ & ~empty()`, "--no-graph", "-T", commitTemplate]),
-				result: { stdout: `${bookmark}\n` },
-			},
-			{
-				command: "jj",
-				args: noPager(["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")']),
-				result: { stdout: "true" },
-			},
-			{
-				command: "jj",
-				args: noPager(["log", "-r", "@", "--no-graph", "-T", commitTemplate]),
-				result: { stdout: `${head}\n` },
-			},
-		]);
-		assert.deepEqual(
-			await new JjBackend(exec).verifyRecordedWorkstream("/repo", {
-				ref: "add-search",
-				baseSha: base,
-				requireNewCommit: true,
-			}),
-			{ ok: true, headSha: head },
-		);
-	});
 });
 
 describe("JjBackend mutations", () => {
@@ -452,37 +384,5 @@ describe("configured VCS child policy", () => {
 		const exec = scriptedExec([]);
 		assert.equal(createVcsBackend("git", exec).id, "git");
 		assert.equal(createVcsBackend("jj", exec).id, "jj");
-	});
-});
-
-describe("JjBackend reviewDiff", () => {
-	const base = "a".repeat(40);
-
-	it("returns the git-format diff from the base to the working copy", async () => {
-		const exec = scriptedExec([
-			{
-				command: "jj",
-				args: noPager(["diff", "--git", "--from", base, "--to", "@"]),
-				result: { stdout: "diff --git a/a.ts b/a.ts\n" },
-			},
-		]);
-		assert.deepEqual(await new JjBackend(exec).reviewDiff("/repo", base), {
-			ok: true,
-			diff: "diff --git a/a.ts b/a.ts\n",
-		});
-	});
-
-	it("surfaces diff diagnostics", async () => {
-		const exec = scriptedExec([
-			{
-				command: "jj",
-				args: noPager(["diff", "--git", "--from", base, "--to", "@"]),
-				result: { code: 1, stderr: "unknown revision\n" },
-			},
-		]);
-		assert.deepEqual(await new JjBackend(exec).reviewDiff("/repo", base), {
-			ok: false,
-			error: `Could not diff the workstream against ${base.slice(0, 8)}: unknown revision`,
-		});
 	});
 });

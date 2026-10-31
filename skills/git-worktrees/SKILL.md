@@ -1,6 +1,6 @@
 ---
 name: git-worktrees
-description: Create, inspect, reuse, repair, and safely remove local Git linked worktrees managed under ~/.pi/kstack/worktrees. Use whenever the user asks to work in a worktree, isolate a change from the current checkout, list or clean up worktrees, prune stale worktree records, or mentions kstack/planning workflows with --worktree. This skill is for Git worktrees, not Jujutsu workspaces.
+description: Create, inspect, reuse, repair, and safely remove local Git linked worktrees managed under ~/.pi/kstack/worktrees. Use whenever the user asks to work in a worktree, isolate a change from the current checkout, list or clean up worktrees, prune stale worktree records, or mentions planning/implementation workflows that use managed worktrees. This skill is for Git worktrees, not Jujutsu workspaces.
 license: MIT
 compatibility: Requires Git with `git worktree` support and Node 22+ for the bundled read-only planner and inspector. Managed worktrees default to ~/.pi/kstack/worktrees. Mutations require confirmation in interactive use.
 ---
@@ -15,7 +15,7 @@ Create isolated Git linked worktrees without changing files or uncommitted work 
 
 The repository hash comes from the canonical common Git directory, so unrelated repositories with the same basename do not collide. Branches use `kstack/<task-slug>`.
 
-This workflow manages **Git worktrees only**. A Jujutsu workspace (`jj workspace`) is a different isolation mechanism and is not interchangeable with a Git linked worktree. Do not combine `--stack` and `--worktree` in kstack workflows.
+This workflow manages **Git worktrees only**. A Jujutsu workspace (`jj workspace`) is a different isolation mechanism and is not interchangeable with a Git linked worktree. The router and plan workflows no longer define stack/worktree flags; managed worktrees are requested explicitly.
 
 ## Start with inspection
 

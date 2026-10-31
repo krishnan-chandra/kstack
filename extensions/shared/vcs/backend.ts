@@ -8,11 +8,6 @@ export type CurrentRef =
 	| { kind: "detached" }
 	| { kind: "no-bookmark"; changeId: string };
 
-export interface WorkstreamCheckpoint {
-	ref: string;
-	baseSha: string;
-}
-
 export interface IsolationPlan {
 	sourceRepoRoot: string;
 	ref: string;
@@ -70,14 +65,7 @@ export interface VcsBackend {
 	captureWorkstream(cwd: string): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>>;
 	assertWorkstreamUnchanged(cwd: string, expected: WorkstreamSnapshot): Promise<VcsResult>;
 	changedPaths(cwd: string): Promise<VcsResult<{ paths: string[] }>>;
-	/** Unified diff of the recorded workstream against an immutable base commit. */
-	reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>>;
 	isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>>;
-	createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>>;
-	verifyRecordedWorkstream(
-		cwd: string,
-		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
-	): Promise<VcsResult<{ headSha: string }>>;
 	recordPaths(cwd: string, paths: string[], message: string): Promise<VcsResult>;
 	restorePaths(cwd: string, paths: string[]): Promise<VcsResult>;
 	publishRecordedChanges(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult>;

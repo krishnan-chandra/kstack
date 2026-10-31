@@ -14,7 +14,7 @@ Available routes:
 
 Rules:
 - Ambiguous "figure it out" requests → investigate.
-- Code implementation (plan → implement → adversarial review) is not a router route: recommend `investigate` for understanding, or tell the user to run `/skill:adversarial-planning` only the request is to plan and implement a change.
+- Code implementation (plan → implement → adversarial review) is not a router route: recommend `investigate` for understanding, or tell the user to run `/skill:adversarial-planning` only if the request is to plan and implement a change.
 - "review this diff/branch" (strict code-quality review) → `review`. Explain/diagnose/research without a review verdict → `investigate`. "get PR 42 merge-ready / address review threads" → `pr-autopilot`. "merge/land PR 42" → `land`.
 - Do not invent a PR number, autopilot mode, readiness, or merge method. Those are collected later.
 - Ambiguous destructive merge requests without a concrete PR may be `unsupported`.

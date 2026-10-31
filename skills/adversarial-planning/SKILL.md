@@ -51,6 +51,7 @@ Write the user's request to `plans/<slug>-task.md`. Then write `plans/<slug>.md`
 # <plan title>
 
 Delivery: single-pr
+Change kind: <bug-fix|feature|refactor|performance|prototype|generic>
 
 ## Ordered implementation steps
 1. [STEP-1] <bounded change and verification>
@@ -59,7 +60,10 @@ Delivery: single-pr
 - [AC-1] <observable result>
 ```
 
-Name the change-kind proof-obligation playbook when one applies.
+The `Change kind` line is optional; when present it names the proof-obligation
+playbook at `$KSTACK/extensions/shared/playbooks/<kind>.md` (omit for
+`generic`). The implementation adversaries receive the playbook path so
+missing proof obligations are blocking.
 
 If the user already supplies an approved plan file (for example `plans/<slug>.md` with the `[STEP-n]`/`[AC-n]` contract), copy it to `plans/<slug>.md`, skip the planning debate, and go to [Implement](#implement). You still open the council: the implementation review needs its seats.
 
@@ -105,12 +109,14 @@ A rebuttal sends the finding back to a vote. Rebut a finding at most once; a sec
 
 ## Implement
 
-After approval, `$COUNCIL/approved-plan.md` holds the exact reviewed snapshot. Implement it in this session, in the working repository, on a dedicated workstream.
+Council approval alone is not authorization to edit. Show the user `$COUNCIL/approved-plan.md` and ask explicitly for permission to implement it on a dedicated workstream; stop until they confirm. Their confirmation authorizes the local VCS mutations this workflow requires — it does not authorize pushing, publishing, or creating PRs.
 
 1. Prepare the implementation bundle in `plans/<slug>-implement/`:
    - copy `$COUNCIL/approved-plan.md` → `plans/<slug>-implement/approved-plan.md`;
    - write `plans/<slug>-implement/task.md` (the user's request);
-   - write `plans/<slug>-implement/execution-ledger.md` copying every `[STEP-n]` and `[AC-n]` line verbatim from the approved plan.
+   - write `plans/<slug>-implement/execution-ledger.md` copying every `[STEP-n]` and `[AC-n]` line verbatim from the approved plan;
+   - write `plans/<slug>-implement/vcs-policy.md` naming the configured backend (`git` | `jj` | `graphite`) and its rules: use only that backend for version-control state and mutations; never push, publish, force-push, or create PRs; include only workstream files; Git requires a clean tree and finishes clean, jj keeps an empty working-copy change above the bookmark, and Graphite records through `gt`. The implementer, fixer, and publisher roles read this file;
+   - if the plan names a change kind, write the resolved playbook path (`$KSTACK/extensions/shared/playbooks/<kind>.md`) to `plans/<slug>-implement/playbook-path.txt`.
 2. Create the workstream for the configured backend (`vcs.backend` in `kstack.json`, or inferred: jj workspace → jj; Graphite branch → graphite; else git):
    - Git: require a clean tree. Create branch `kstack/<slug>` from the remote trunk (origin-first `main`/`master`, else local `main`/`master`, else `HEAD`). If the branch exists, append `-2`, `-3`, … until it does not.
    - jj: create a change off `trunk()` and a bookmark `kstack/<slug>`. Leave the working copy above the bookmark empty.
@@ -126,14 +132,37 @@ After approval, `$COUNCIL/approved-plan.md` holds the exact reviewed snapshot. I
 
 Run every remaining council seat (from the open output's `seats`) as a read-only implementation adversary in parallel:
 
-1. Create one prompt file per seat: copy `references/implementation-adversary.md` and append an `## Inputs` section listing absolute paths for that seat's `task.md`, `approved-plan.md`, `execution-ledger.md`, and `diff.patch`.
+1. Create one prompt file per seat: copy `references/implementation-adversary.md` and append an `## Inputs` section listing absolute paths for that seat's `task.md`, `approved-plan.md`, `execution-ledger.md`, `diff.patch`, and `vcs-policy.md`; if `playbook-path.txt` exists, include the playbook path too.
 2. Write a fanout spec JSON (one task per seat) with:
-   - `owner`: `adversarial-planning`
-   - `label`: `<slug>-impl-review`
+   - `owner`: `adv-planning` (owner and task labels are capped at 16 characters)
+   - `label`: `impl-review`
    - `cwd`: the repository root (absolute)
    - `maxConcurrency`: the number of seats (≤ 8)
    - per task: `label` (`seat-a`, …), `model` (the seat's model ref from the open output), `cwd` (repository root), `promptFile` (the per-seat prompt), `outputFile` (`plans/<slug>-implement/review-<letter>.md`), `access`: `"read-only"`, `noContextFiles`: true, `timeoutMinutes`: `council.reviewTimeoutMinutes` or 10.
-   Save it as `local/<slug>-review-spec.json` (absolute paths).
+   `promptFile` and `outputFile` must be absolute paths. Save the spec as `local/<slug>-review-spec.json`.
+
+   For example:
+
+   ```json
+   {
+     "owner": "adv-planning",
+     "label": "impl-review",
+     "cwd": "/fixture/repo",
+     "maxConcurrency": 2,
+     "tasks": [
+       {
+         "label": "seat-a",
+         "model": "provider/model",
+         "cwd": "/fixture/repo",
+         "promptFile": "/fixture/repo/plans/example-implement/review-prompt-a.md",
+         "outputFile": "/fixture/repo/plans/example-implement/review-a.md",
+         "access": "read-only",
+         "noContextFiles": true,
+         "timeoutMinutes": 10
+       }
+     ]
+   }
+   ```
 3. Run:
 
    ```sh
@@ -141,22 +170,22 @@ Run every remaining council seat (from the open output's `seats`) as a read-only
      --out "<abs>/plans/<slug>-implement/review-summary.json"
    ```
 
-4. Interpret each seat's output file: `Verdict: approve` or `Verdict: revise`, with `## Blocking` (`[B-n]`), `## Suggestions` (`[S-n]`), and `## Resolved from previous round`. All seats must approve for the implementation to pass.
+4. After the fanout returns, build `plans/<slug>-implement/verdict.md` from every seat's output file: first line `Decision: approve` (all seats approved) or `Decision: revise` (any seat revised), then one section per seat (`Verdict`, `## Blocking`, `## Suggestions`, `## Resolved from previous round`). This file is the fixer's and publisher's input.
 
 ## Fix
 
-If any seat reports blocking findings, address them in this session:
+If the verdict file says `Decision: revise`, address the blocking findings in this session (the user already approved this implementation run when they approved starting it):
 
-1. Read `references/review-fixer.md` and follow its contract: verify each finding in the live repository, fix every `[B-n]`, skip or dispute only with evidence, record verified commits on the same workstream, and never push or publish.
-2. Regenerate the diff, rebuild the per-seat prompt files (appending the previous verdicts as `## Resolved from previous round` context), and rerun the same fanout.
-3. Loop until all seats approve or the council's `maxRounds` budget (from the open/roster output) is exhausted. If exhausted, present the open findings to the user and let them decide: steer a seat, override with their direction, or stop.
+1. Read `references/review-fixer.md` and follow its contract: read `plans/<slug>-implement/verdict.md`, verify each finding in the live repository, fix every `[B-n]`, skip or dispute only with evidence, record verified commits on the same workstream, and never push or publish.
+2. Regenerate the diff, rebuild the per-seat prompt files (appending the previous verdicts as `## Resolved from previous round` context), and rerun the same fanout, then rebuild `verdict.md`.
+3. Loop until the verdict is `Decision: approve` or the council's `maxRounds` budget (from the open/roster output) is exhausted. If exhausted, present the open findings to the user and let them decide: steer a seat, override with their direction, or stop.
 
 ## Publish
 
 Publishing requires explicit user approval — never publish, push, or create a PR unprompted.
 
-1. Read `references/publisher.md` and follow its contract: consult `write-pr` and `my-voice` for the title and body from the actual diff, create or update a **draft** PR (with the jj empty-checkpoint push for jj backends), and consult `find-reviewers` for 2–5 prioritized reviewers.
-2. Return the PR URL (or base-to-top table for stacks) and the full reviewer recommendation; never mark the PR ready and never merge.
+1. Read `references/publisher.md` and follow its contract: consult `write-pr` and `my-voice` for the title and body from the actual diff, read `plans/<slug>-implement/verdict.md` for the risk/testing note, create or update a **draft** PR (with the jj empty-checkpoint push for jj backends), and consult `find-reviewers` for 2–5 prioritized reviewers.
+2. Return the PR URL and the full reviewer recommendation; never mark the PR ready and never merge.
 
 ## Close
 

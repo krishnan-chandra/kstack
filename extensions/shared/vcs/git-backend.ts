@@ -5,14 +5,12 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
-import { extractSlug } from "../slug.ts";
 import type {
 	CurrentRef,
 	IsolationPlan,
 	MergeBaseResult,
 	VcsBackend,
 	VcsResult,
-	WorkstreamCheckpoint,
 	WorkstreamSnapshot,
 } from "./backend.ts";
 import { gitStatusChangedPaths } from "./git-status.ts";
@@ -20,7 +18,6 @@ import { preflightVcs } from "./preflight.ts";
 import { parseWorktreeInventory } from "./worktree-inventory.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
 
-const MAX_COLLISION_ATTEMPTS = 100;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 interface GitBackendDeps {
@@ -178,68 +175,11 @@ export class GitBackend implements VcsBackend {
 			: { ok: false, error: `Could not inspect working-copy changes: ${status.stderr.trim()}` };
 	}
 
-	async reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>> {
-		const result = await this.git(cwd, ["diff", "--no-color", "--find-renames", `${baseSha}..HEAD`], 30_000);
-		return result.code === 0
-			? { ok: true, diff: result.stdout }
-			: { ok: false, error: `Could not diff the workstream against ${baseSha.slice(0, 8)}: ${result.stderr.trim()}` };
-	}
-
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {
 		const status = await this.git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"], 5_000);
 		if (status.code !== 0) return { ok: false, error: `Could not inspect the working tree: ${status.stderr.trim()}` };
 		const details = output(status);
 		return details ? { ok: true, empty: false, details } : { ok: true, empty: true };
-	}
-
-	async createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>> {
-		const clean = await this.isWorkingCopyEmpty(cwd);
-		if (!clean.ok) return clean;
-		if (!clean.empty) {
-			return {
-				ok: false,
-				error: `The current working tree is dirty; no task branch was created. Rerun with --worktree.\n${clean.details ?? ""}`,
-			};
-		}
-		const base = await this.headSha(cwd);
-		if (!base.ok) return base;
-		const slug = extractSlug(task);
-		for (let attempt = 1; attempt <= MAX_COLLISION_ATTEMPTS; attempt++) {
-			const ref = `kstack/${slug}${attempt === 1 ? "" : `-${attempt}`}`;
-			const exists = await this.git(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${ref}`]);
-			if (exists.code === 0) continue;
-			const created = await this.git(cwd, ["switch", "-c", ref]);
-			if (created.code !== 0) {
-				return {
-					ok: false,
-					error: `Could not create task branch ${ref}: ${created.stderr.trim() || created.stdout.trim()}`,
-				};
-			}
-			return { ok: true, ref, baseSha: base.sha };
-		}
-		return { ok: false, error: `Could not allocate a unique task branch after ${MAX_COLLISION_ATTEMPTS} attempts.` };
-	}
-
-	async verifyRecordedWorkstream(
-		cwd: string,
-		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
-	): Promise<VcsResult<{ headSha: string }>> {
-		const current = await this.currentRef(cwd);
-		const actual = current.ok && current.ref.kind === "branch" ? current.ref.name : "detached HEAD";
-		if (!current.ok || actual !== expected.ref) {
-			return { ok: false, error: `Workstream postcondition failed: expected branch ${expected.ref}, found ${actual}.` };
-		}
-		const head = await this.headSha(cwd);
-		if (!head.ok) return { ok: false, error: `Workstream postcondition failed: ${head.error}` };
-		if (expected.requireNewCommit && head.sha === expected.baseSha) {
-			return { ok: false, error: "Workstream postcondition failed: implementation created no commits." };
-		}
-		const clean = await this.isWorkingCopyEmpty(cwd);
-		if (!clean.ok) return clean;
-		if (!clean.empty) {
-			return { ok: false, error: `Workstream postcondition failed: uncommitted files remain.\n${clean.details ?? ""}` };
-		}
-		return { ok: true, headSha: head.sha };
 	}
 
 	private async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {

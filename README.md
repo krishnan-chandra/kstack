@@ -156,7 +156,7 @@ subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Session names in development workflows
 
-Kstack names an unnamed session as soon as `/skill:adversarial-planning` or `/kstack` knows
+Kstack names an unnamed session as soon as `/kstack` knows
 the task, before waiting, preflight, classification, or child-model work.
 Automatically derived names are short lowercase slugs, such as
 `archive-multiple-sessions`. `/handoff` gives its replacement session the same

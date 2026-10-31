@@ -5,14 +5,12 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../publication-lock.ts";
-import { extractSlug } from "../slug.ts";
 import type {
 	CurrentRef,
 	IsolationPlan,
 	MergeBaseResult,
 	VcsBackend,
 	VcsResult,
-	WorkstreamCheckpoint,
 	WorkstreamSnapshot,
 } from "./backend.ts";
 import { removeManagedGitWorktree } from "./git-backend.ts";
@@ -21,7 +19,6 @@ import { verifyGraphiteDryRunAffectedRefs } from "./graphite-dry-run.ts";
 import { preflightVcs } from "./preflight.ts";
 import { planManagedWorktree } from "./worktree-plan.ts";
 
-const MAX_COLLISION_ATTEMPTS = 100;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 interface GraphiteBackendDeps {
@@ -131,65 +128,12 @@ export class GraphiteBackend implements VcsBackend {
 		return { ok: true, paths: gitStatusChangedPaths(status.stdout) };
 	}
 
-	async reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>> {
-		const result = await this.git(cwd, ["diff", "--no-color", "--find-renames", `${baseSha}..HEAD`], 30_000);
-		return result.code === 0
-			? { ok: true, diff: result.stdout }
-			: { ok: false, error: `Could not diff the workstream against ${baseSha.slice(0, 8)}: ${diagnostic(result)}` };
-	}
-
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {
 		const status = await this.git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"], 5_000);
 		if (status.code !== 0)
 			return { ok: false, error: `Could not inspect the Graphite working copy: ${diagnostic(status)}` };
 		const details = output(status);
 		return details ? { ok: true, empty: false, details } : { ok: true, empty: true };
-	}
-
-	async createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>> {
-		const clean = await this.isWorkingCopyEmpty(cwd);
-		if (!clean.ok) return clean;
-		if (!clean.empty)
-			return { ok: false, error: "The current working tree is dirty; no Graphite task branch was created." };
-		const base = await this.headSha(cwd);
-		if (!base.ok) return base;
-		const slug = extractSlug(task);
-		for (let attempt = 1; attempt <= MAX_COLLISION_ATTEMPTS; attempt++) {
-			const ref = `kstack/${slug}${attempt === 1 ? "" : `-${attempt}`}`;
-			const exists = await this.git(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${ref}`]);
-			if (exists.code === 0) continue;
-			const created = await this.gt(cwd, ["--no-ai", "create", ref, "--message", task], 30_000);
-			if (created.code !== 0) return { ok: false, error: `gt create ${ref} failed: ${diagnostic(created)}` };
-			const current = await this.currentRef(cwd);
-			if (!current.ok || current.ref.kind !== "branch" || current.ref.name !== ref) {
-				return { ok: false, error: `gt create succeeded but did not check out ${ref}.` };
-			}
-			return { ok: true, ref, baseSha: base.sha };
-		}
-		return {
-			ok: false,
-			error: `Could not allocate a unique Graphite branch after ${MAX_COLLISION_ATTEMPTS} attempts.`,
-		};
-	}
-
-	async verifyRecordedWorkstream(
-		cwd: string,
-		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
-	): Promise<VcsResult<{ headSha: string }>> {
-		const current = await this.currentRef(cwd);
-		const actual = current.ok && current.ref.kind === "branch" ? current.ref.name : "detached HEAD";
-		if (!current.ok || actual !== expected.ref)
-			return { ok: false, error: `Expected Graphite branch ${expected.ref}, found ${actual}.` };
-		const head = await this.headSha(cwd);
-		if (!head.ok) return head;
-		if (expected.requireNewCommit && head.sha === expected.baseSha) {
-			return { ok: false, error: "Graphite workstream postcondition failed: implementation created no commits." };
-		}
-		const clean = await this.isWorkingCopyEmpty(cwd);
-		if (!clean.ok) return clean;
-		return clean.empty
-			? { ok: true, headSha: head.sha }
-			: { ok: false, error: `Uncommitted files remain.\n${clean.details ?? ""}` };
 	}
 
 	async recordPaths(cwd: string, paths: string[], message: string): Promise<VcsResult> {

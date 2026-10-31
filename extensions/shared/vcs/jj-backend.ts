@@ -2,18 +2,9 @@ import type { BoundaryValue } from "../validation.ts";
 /** Jujutsu implementation of K-Stack's repository-mutation contract. */
 
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
-import { extractSlug, MAX_SLUG_LENGTH } from "../slug.ts";
-import type {
-	CurrentRef,
-	MergeBaseResult,
-	VcsBackend,
-	VcsResult,
-	WorkstreamCheckpoint,
-	WorkstreamSnapshot,
-} from "./backend.ts";
+import type { CurrentRef, MergeBaseResult, VcsBackend, VcsResult, WorkstreamSnapshot } from "./backend.ts";
 import { preflightVcs } from "./preflight.ts";
 
-const MAX_COLLISION_ATTEMPTS = 100;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const COMMIT_ID_TEMPLATE = 'commit_id ++ "\\n"';
 const CHANGE_ID_TEMPLATE = 'change_id ++ "\\n"';
@@ -114,83 +105,12 @@ export class JjBackend implements VcsBackend {
 			: { ok: false, error: `Could not inspect jj working-copy changes: ${diagnostic(result)}` };
 	}
 
-	async reviewDiff(cwd: string, baseSha: string): Promise<VcsResult<{ diff: string }>> {
-		const result = await this.jj(cwd, ["diff", "--git", "--from", baseSha, "--to", "@"], 30_000);
-		return result.code === 0
-			? { ok: true, diff: result.stdout }
-			: { ok: false, error: `Could not diff the workstream against ${baseSha.slice(0, 8)}: ${diagnostic(result)}` };
-	}
-
 	async isWorkingCopyEmpty(cwd: string): Promise<VcsResult<{ empty: boolean; details?: string }>> {
 		const result = await this.jj(cwd, ["log", "-r", "@", "--no-graph", "-T", 'if(empty, "true", "false")'], 5_000);
 		if (result.code !== 0) return { ok: false, error: `Could not inspect the jj working copy: ${diagnostic(result)}` };
 		if (output(result) === "true") return { ok: true, empty: true };
 		const summary = await this.jj(cwd, ["diff", "-r", "@", "--summary"], 5_000);
 		return { ok: true, empty: false, ...(output(summary) ? { details: output(summary) } : undefined) };
-	}
-
-	async createWorkstream(cwd: string, task: string): Promise<VcsResult<WorkstreamCheckpoint>> {
-		const trunk = await this.resolveOne(cwd, "trunk()");
-		if (!trunk.ok) return { ok: false, error: `Could not create a jj workstream: ${trunk.error}` };
-		const slug = extractSlug(task);
-		for (let attempt = 1; attempt <= MAX_COLLISION_ATTEMPTS; attempt++) {
-			const suffix = attempt === 1 ? "" : `-${attempt}`;
-			const ref = `kstack/${slug.slice(0, MAX_SLUG_LENGTH - suffix.length)}${suffix}`;
-			const lookup = await this.jj(cwd, ["bookmark", "list", "--all-remotes", `exact:${ref}`, "-T", 'name ++ "\\n"']);
-			if (lookup.code !== 0) return { ok: false, error: `Could not inspect jj bookmarks: ${diagnostic(lookup)}` };
-			if (lines(lookup.stdout).length > 0) continue;
-			const created = await this.jj(cwd, ["new", "trunk()", "-m", task]);
-			if (created.code !== 0) return { ok: false, error: `jj new failed: ${diagnostic(created)}` };
-			const bookmarked = await this.jj(cwd, ["bookmark", "create", ref, "-r", "@"]);
-			if (bookmarked.code !== 0) {
-				return {
-					ok: false,
-					error: `Created the jj change but could not create bookmark ${ref}: ${diagnostic(bookmarked)}. Inspect the current change before retrying.`,
-				};
-			}
-			return { ok: true, ref, baseSha: trunk.sha };
-		}
-		return { ok: false, error: `Could not allocate a unique task bookmark after ${MAX_COLLISION_ATTEMPTS} attempts.` };
-	}
-
-	async verifyRecordedWorkstream(
-		cwd: string,
-		expected: WorkstreamCheckpoint & { requireNewCommit: boolean },
-	): Promise<VcsResult<{ headSha: string }>> {
-		const target = await this.bookmarkTarget(cwd, expected.ref);
-		if (!target.ok) return { ok: false, error: `Workstream postcondition failed: ${target.error}` };
-		const ancestry = await this.jj(cwd, ["log", "-r", `${target.sha} & ::@`, "--no-graph", "-T", COMMIT_ID_TEMPLATE]);
-		if (ancestry.code !== 0 || lines(ancestry.stdout).length !== 1) {
-			return {
-				ok: false,
-				error: `Workstream postcondition failed: bookmark ${expected.ref} does not target an ancestor of the current change.`,
-			};
-		}
-		if (expected.requireNewCommit) {
-			const nonempty = await this.jj(cwd, [
-				"log",
-				"-r",
-				`${expected.baseSha}..@ & ~empty()`,
-				"--no-graph",
-				"-T",
-				COMMIT_ID_TEMPLATE,
-			]);
-			if (nonempty.code !== 0 || lines(nonempty.stdout).length === 0) {
-				return { ok: false, error: "Workstream postcondition failed: implementation created no non-empty jj commit." };
-			}
-		}
-		const clean = await this.isWorkingCopyEmpty(cwd);
-		if (!clean.ok) return clean;
-		if (!clean.empty) {
-			return {
-				ok: false,
-				error: `Workstream postcondition failed: the jj working-copy commit is not empty.\n${clean.details ?? ""}`,
-			};
-		}
-		const head = await this.headSha(cwd);
-		return head.ok
-			? { ok: true, headSha: head.sha }
-			: { ok: false, error: `Workstream postcondition failed: ${head.error}` };
 	}
 
 	async recordPaths(cwd: string, paths: string[], _message: string): Promise<VcsResult> {

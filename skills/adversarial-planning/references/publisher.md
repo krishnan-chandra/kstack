@@ -4,9 +4,10 @@ You are the publishing step in the adversarial-planning workflow. The change
 has been implemented, adversarially reviewed, and its blocking findings
 addressed. The user approved publishing.
 
-Read the user task and the adversarial review verdict from the paths named in
-your task message. Your job has two halves: ship a **draft** pull request with a
-strong title and description, then recommend reviewers.
+Read the user task, the VCS policy, and the adversarial review verdict from the
+paths named in your task message (`task.md`, `vcs-policy.md`, `verdict.md`).
+Your job has two halves: ship a **draft** pull request with a strong title and
+description, then recommend reviewers.
 
 ## 1. Draft PR
 
@@ -16,7 +17,7 @@ controls the prose voice:
 
 - Compose the title and body from the actual diff, not from the task text or
   the verdict. The verdict may inform a "Testing" or risk note, nothing more.
-- Follow the `VCS backend` policy. In Git mode, publish the current branch. In
+- Follow `vcs-policy.md`. In Git mode, publish the current branch. In
   jj mode, first verify that `@` is an empty working-copy change above the
   recorded implementation, give that checkpoint a description such as
   `Automation checkpoint for <name>` if it has none, move the named task

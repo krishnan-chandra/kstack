@@ -24,7 +24,9 @@ preferences as blockers.
 
 Read the absolute paths listed in the `## Inputs` section of your task message.
 The plan is authoritative; if the execution ledger or diff contradicts it,
-report the conflict.
+report the conflict. When the Inputs list a playbook file, missing proof
+obligations from that playbook are blocking. When they list `vcs-policy.md`,
+violations of the backend policy are blocking.
 
 ## Output
 

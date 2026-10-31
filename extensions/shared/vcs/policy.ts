@@ -13,10 +13,7 @@ interface VcsPolicy {
 	readonly baseUpdateDisclosure: string;
 	readonly fixPublicationDisclosure: string;
 	readonly conflictRuleSuffix: string;
-	readonly taskWorkstreamSummary: string;
-	readonly approvalSummary: string;
 	readonly currentWorkspaceLabel: string;
-	readonly currentModeDisclosure: string;
 	readonly cleanupCompleteNotice: string;
 }
 
@@ -39,8 +36,6 @@ const graphiteChildGuidance = [
 	"Use read-only Git inspection when needed. The parent alone submits or lands work unless a later prompt explicitly authorizes publication.",
 ].join(" ");
 
-const standardCurrentModeDisclosure =
-	"Current-mode implementation requires a clean working tree, creates a dedicated kstack/<task-slug> branch, and commits verified increments. If this checkout is dirty, stop and rerun with --worktree. ";
 const standardCleanupNotice = "PR autopilot cleanup complete. Managed worktree removed; session archive is manual.";
 
 export function vcsPolicy(id: VcsBackendId): VcsPolicy {
@@ -56,10 +51,7 @@ export function vcsPolicy(id: VcsBackendId): VcsPolicy {
 				baseUpdateDisclosure: "No rebase is performed.",
 				fixPublicationDisclosure: "The autopilot will NOT rebase, restack, merge the PR, or touch merge settings.",
 				conflictRuleSuffix: " (never rebase)",
-				taskWorkstreamSummary: "creates a dedicated branch and incremental Git commits",
-				approvalSummary: "creates a dedicated branch and incremental local commits",
 				currentWorkspaceLabel: "current Git checkout",
-				currentModeDisclosure: standardCurrentModeDisclosure,
 				cleanupCompleteNotice: standardCleanupNotice,
 			};
 		case "jj":
@@ -73,11 +65,7 @@ export function vcsPolicy(id: VcsBackendId): VcsPolicy {
 				baseUpdateDisclosure: "No rebase is performed.",
 				fixPublicationDisclosure: "The autopilot will NOT rebase, restack, merge the PR, or touch merge settings.",
 				conflictRuleSuffix: " (never rebase)",
-				taskWorkstreamSummary: "creates a dedicated jj change and task bookmark",
-				approvalSummary: "creates a trunk-based jj change and task bookmark",
 				currentWorkspaceLabel: "current jj workspace",
-				currentModeDisclosure:
-					"The parent creates a trunk()-based jj change and task bookmark after plan approval. jj snapshots the current workspace state, so Git dirty-tree rules do not apply. ",
 				cleanupCompleteNotice: "PR autopilot cleanup complete. jj mode has no managed Git worktree to remove.",
 			};
 		case "graphite":
@@ -92,10 +80,7 @@ export function vcsPolicy(id: VcsBackendId): VcsPolicy {
 				fixPublicationDisclosure:
 					"Graphite may rewrite the selected branch; Kstack rechecks that it has no descendants immediately before recording. It will not merge the PR or change merge settings.",
 				conflictRuleSuffix: "; Graphite mutations proceed only when no local descendants exist",
-				taskWorkstreamSummary: "creates a dedicated branch and incremental Git commits",
-				approvalSummary: "creates a dedicated branch and incremental local commits",
 				currentWorkspaceLabel: "current Git checkout",
-				currentModeDisclosure: standardCurrentModeDisclosure,
 				cleanupCompleteNotice: standardCleanupNotice,
 			};
 		default: {

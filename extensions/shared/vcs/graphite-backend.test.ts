@@ -32,22 +32,6 @@ function publicationDeps(onRelease: () => void = () => {}) {
 }
 
 describe("GraphiteBackend", () => {
-	it("creates a collision-safe workstream with native gt", async () => {
-		const { exec, calls } = scripted({
-			"git status --porcelain=v1 --untracked-files=all": {},
-			"git rev-parse HEAD": { stdout: `${sha}\n` },
-			"git show-ref --verify --quiet refs/heads/kstack/fix-search": { code: 1 },
-			"git branch --show-current": { stdout: "kstack/fix-search\n" },
-		});
-		const result = await new GraphiteBackend(exec).createWorkstream("/repo", "Fix search");
-		assert.deepEqual(result, { ok: true, ref: "kstack/fix-search", baseSha: sha });
-		assert.ok(calls.includes("gt --no-interactive --no-ai create kstack/fix-search --message Fix search"));
-		assert.equal(
-			calls.some((call) => call.startsWith("git switch")),
-			false,
-		);
-	});
-
 	it("records and publishes through native Graphite commands", async () => {
 		const nextSha = "b".repeat(40);
 		let headReads = 0;
@@ -287,29 +271,5 @@ describe("GraphiteBackend", () => {
 			calls.some((call) => call.includes("worktree remove") || call.includes("gt --no-interactive delete")),
 			false,
 		);
-	});
-});
-
-describe("GraphiteBackend reviewDiff", () => {
-	it("returns the unified diff of the recorded workstream against the base", async () => {
-		const base = "b".repeat(40);
-		const { exec } = scripted({
-			[`git diff --no-color --find-renames ${base}..HEAD`]: { stdout: "diff --git a/a.ts b/a.ts\n" },
-		});
-		assert.deepEqual(await new GraphiteBackend(exec).reviewDiff("/repo", base), {
-			ok: true,
-			diff: "diff --git a/a.ts b/a.ts\n",
-		});
-	});
-
-	it("surfaces diff diagnostics", async () => {
-		const base = "b".repeat(40);
-		const { exec } = scripted({
-			[`git diff --no-color --find-renames ${base}..HEAD`]: { code: 128, stderr: "bad revision\n" },
-		});
-		assert.deepEqual(await new GraphiteBackend(exec).reviewDiff("/repo", base), {
-			ok: false,
-			error: `Could not diff the workstream against ${base.slice(0, 8)}: bad revision`,
-		});
 	});
 });
