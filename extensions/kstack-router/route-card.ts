@@ -3,16 +3,12 @@ import { isString } from "../shared/validation.ts";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { type ChangeKind, changeKindLabel } from "../shared/change-kind.ts";
-import type { DeliveryRecommendation, RouteId } from "./types.ts";
+import type { RouteId } from "./types.ts";
 
 export interface RouteCardDetails {
 	schemaVersion: 1;
 	route: RouteId;
 	routeLabel: string;
-	delivery: DeliveryRecommendation;
-	worktree?: boolean;
-	changeKind?: ChangeKind;
 	modelSource?: string;
 	confidence?: string;
 	overrode: boolean;
@@ -44,9 +40,6 @@ export function registerRouteCardRenderer(pi: ExtensionAPI): void {
 			theme.fg("accent", "◆ Kstack Router"),
 			"",
 			`Route: ${details?.routeLabel ?? "unknown"} (${details?.route ?? "?"})`,
-			...(details?.delivery ? [`Delivery: ${details.delivery === "stack" ? "stacked PRs" : "single PR"}`] : []),
-			...(details?.worktree ? ["Location: managed Git worktree"] : []),
-			...(details?.changeKind ? [`Change kind: ${changeKindLabel(details.changeKind)}`] : []),
 			...(details?.modelSource ? [`Classifier: ${details.modelSource}`] : []),
 			...(details?.confidence ? [`Confidence: ${details.confidence}`] : []),
 			...(details?.overrode ? [theme.fg("warning", "User overrode recommendation")] : []),

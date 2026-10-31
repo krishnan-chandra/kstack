@@ -24,46 +24,6 @@ describe("kstack-router args parser", () => {
 		assert.equal(r.args.task, "What is the archive strategy?");
 	});
 
-	it("parses --single flag", () => {
-		const r = parseArgs("--single Add feature X");
-		assert.ok(r.ok);
-		assert.equal(r.args.delivery, "single");
-		assert.equal(r.args.task, "Add feature X");
-	});
-
-	it("parses --stack flag", () => {
-		const r = parseArgs("--stack Split feature");
-		assert.ok(r.ok);
-		assert.equal(r.args.delivery, "stack");
-		assert.equal(r.args.task, "Split feature");
-	});
-
-	it("parses --worktree and rejects stack composition", () => {
-		const r = parseArgs("--route change --worktree Add isolated search");
-		assert.ok(r.ok);
-		assert.equal(r.args.worktree, true);
-		assert.equal(r.args.delivery, "single");
-		assert.ok(!parseArgs("--stack --worktree Add isolated search").ok);
-		assert.ok(!parseArgs("--worktree --worktree Add isolated search").ok);
-	});
-
-	it("parses --route with --stack", () => {
-		const r = parseArgs("--route change --stack Implement CI pipeline");
-		assert.ok(r.ok);
-		assert.equal(r.args.route, "change");
-		assert.equal(r.args.delivery, "stack");
-		assert.equal(r.args.task, "Implement CI pipeline");
-	});
-
-	it("passes adversary and plan-only options to the change route", () => {
-		const r = parseArgs("--route change --no-adversary --plan-only Draft the migration");
-		assert.ok(r.ok);
-		assert.equal(r.args.adversary, false);
-		assert.equal(r.args.planOnly, true);
-		assert.equal(r.args.task, "Draft the migration");
-		assert.equal(parseArgs("--route investigate --plan-only Research it").ok, false);
-	});
-
 	it("accepts the review route", () => {
 		const r = parseArgs("--route review Review the latest changes");
 		assert.ok(r.ok);
@@ -73,32 +33,25 @@ describe("kstack-router args parser", () => {
 		}
 	});
 
-	it("parses an explicit change-kind override", () => {
-		const r = parseArgs("--route change --change-kind refactor Simplify the loader");
-		assert.ok(r.ok);
-		assert.equal(r.args.changeKind, "refactor");
-		assert.equal(r.args.task, "Simplify the loader");
-	});
-
-	it("rejects an invalid change-kind override", () => {
-		assert.ok(!parseArgs("--change-kind rewrite Update the loader").ok);
+	it("rejects removed implementation flags", () => {
+		assert.ok(!parseArgs("--single Add feature X").ok);
+		assert.ok(!parseArgs("--stack Split feature").ok);
+		assert.ok(!parseArgs("--worktree Add isolated search").ok);
+		assert.ok(!parseArgs("--change-kind refactor Simplify the loader").ok);
+		assert.ok(!parseArgs("--no-adversary Draft the migration").ok);
+		assert.ok(!parseArgs("--plan-only Draft the migration").ok);
 	});
 
 	it("uses -- to terminate flag parsing", () => {
-		const r = parseArgs("--route change --single -- --task-with-dashes");
+		const r = parseArgs("--route land --pr 7 -- --task-with-dashes");
 		assert.ok(r.ok);
-		assert.equal(r.args.route, "change");
-		assert.equal(r.args.delivery, "single");
+		assert.equal(r.args.route, "land");
+		assert.equal(r.args.prNumber, 7);
 		assert.equal(r.args.task, "--task-with-dashes");
 	});
 
 	it("rejects duplicate --route", () => {
-		const r = parseArgs("--route investigate --route change");
-		assert.ok(!r.ok);
-	});
-
-	it("rejects duplicate delivery flags", () => {
-		const r = parseArgs("--single --stack");
+		const r = parseArgs("--route investigate --route land");
 		assert.ok(!r.ok);
 	});
 
@@ -126,16 +79,16 @@ describe("kstack-router args parser", () => {
 	});
 
 	it("supports quoted values", () => {
-		const r = parseArgs('--route change "Add feature X"');
+		const r = parseArgs('--route review "Add feature X"');
 		assert.ok(r.ok);
-		assert.equal(r.args.route, "change");
+		assert.equal(r.args.route, "review");
 		assert.equal(r.args.task, "Add feature X");
 	});
 
 	it("handles single-quoted values", () => {
-		const r = parseArgs("--route change 'Add feature X'");
+		const r = parseArgs("--route review 'Add feature X'");
 		assert.ok(r.ok);
-		assert.equal(r.args.route, "change");
+		assert.equal(r.args.route, "review");
 		assert.equal(r.args.task, "Add feature X");
 	});
 

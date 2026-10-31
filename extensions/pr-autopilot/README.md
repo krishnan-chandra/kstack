@@ -4,8 +4,9 @@ Drives an open PR through the check → triage → fix → push → recheck loop
 **one configured model per run**, chosen at random from the configured pool. Stops at
 merge-ready — never auto-merges. Git and jj never rebase or restack; Graphite uses native restack only after proving the selected branch has no local descendants.
 
-This is the bounded post-PR companion to `plan-implement`. Where
-`plan-implement` publishes a draft PR, `pr-autopilot` owns getting that PR (and
+This is the bounded post-PR companion to the adversarial-planning skill's
+publish step. Where that workflow publishes a draft PR, `pr-autopilot` owns
+getting that PR (and
 the lowest unmerged PR in a stack) to merge-ready with one cheap, fast child
 model.
 
@@ -311,8 +312,8 @@ push.
 
 ## Integration
 
-The autopilot is designed to be invoked after `plan-implement` publishes a
-draft PR. `/kstack` can also dispatch it:
+The autopilot is designed to be invoked after a plan → implement workflow
+publishes a draft PR. `/kstack` can also dispatch it:
 
 ```text
 /kstack --route pr-autopilot --mode drive

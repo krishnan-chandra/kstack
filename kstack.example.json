@@ -28,17 +28,6 @@
       "openrouter/mistralai/mistral-small-2603": "none"
     }
   },
-  "plan-implement": {
-    "planner": {
-      "model": "openai/gpt-6-astra",
-      "thinking": "high"
-    },
-    "implementer": {
-      "model": "openrouter/google/gemini-3.8-flash",
-      "thinking": "high"
-    },
-    "timeoutMinutes": 30
-  },
   "council": {
     "seats": ["opus", "astra", "argon"],
     "maxRounds": 3,

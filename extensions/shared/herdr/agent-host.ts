@@ -88,7 +88,7 @@ export interface AskOptions {
 	signal?: AbortSignal;
 }
 
-/* exported: hosted-agent interface contract consumed by plan-implement and fanout adapters */
+/* exported: hosted-agent interface contract consumed by adversarial-planning and fanout adapters */
 export type AskResult =
 	| { status: "completed"; output: string; usage: UsageSummary; session?: string }
 	| { status: "blocked"; paneId: string; usage: UsageSummary }

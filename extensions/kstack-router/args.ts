@@ -4,10 +4,7 @@ import { isString } from "../shared/validation.ts";
 import { isMergeMethod } from "../shared/github.ts";
 import {
 	type AutopilotModeFlag,
-	type ChangeKind,
 	DEFAULTS,
-	type DeliveryRecommendation,
-	isChangeKind,
 	isRouteId,
 	type LandMethodFlag,
 	type LandReadinessFlag,
@@ -27,21 +24,18 @@ function isLandMethod(value: string): value is LandMethodFlag {
 function isReadiness(value: string): value is LandReadinessFlag {
 	return value === "check" || value === "watch";
 }
-const VALID_ROUTES =
-	"investigate, change, fast-change, arena, swarm, skill-authoring, session-pickup, review, pr-autopilot, land";
-const SUPPORTED_FLAGS =
-	"--route <id>, --single, --stack, --worktree, --change-kind <kind>, --no-adversary, --plan-only, --mode <mode>, --pr <n>, --method <method>, --readiness <mode>";
+const VALID_ROUTES = "investigate, arena, swarm, skill-authoring, session-pickup, review, pr-autopilot, land";
+const SUPPORTED_FLAGS = "--route <id>, --mode <mode>, --pr <n>, --method <method>, --readiness <mode>";
 
 /**
  * Parse /kstack leading options. Supports:
  *   /kstack --route investigate Refactor the widget
- *   /kstack --single Refactor the widget
- *   /kstack --route change --stack Implement CI pipeline
- *   /kstack --route change --change-kind feature --plan-only "Add feature X"
  *   /kstack --route pr-autopilot --mode drive --pr 42
  *   /kstack --route land --pr 42 --readiness watch --method squash
- *   /kstack --route change --single -- "Add feature X"
  *   /kstack investigate (flag-less task with no leading --)
+ *
+ * Plan + implement workflows live in the adversarial-planning skill; the
+ * router has no implementation route.
  *
  * Uses `--` to terminate flag parsing so tasks starting with dashes work.
  */
@@ -53,11 +47,6 @@ export function parseArgs(input: string): ArgsParse {
 	if (isString(tokens)) return { ok: false, error: tokens };
 
 	let route: string | undefined;
-	let delivery: DeliveryRecommendation;
-	let worktree = false;
-	let changeKind: ChangeKind | undefined;
-	let adversary = true;
-	let planOnly = false;
 	let autopilotMode: AutopilotModeFlag | undefined;
 	let prNumber: number | undefined;
 	let landMethod: LandMethodFlag | undefined;
@@ -80,44 +69,6 @@ export function parseArgs(input: string): ArgsParse {
 			if (!route || route.startsWith("--")) {
 				return { ok: false, error: "--route requires a value (e.g. --route investigate)." };
 			}
-			continue;
-		}
-
-		if (token === "--single" || token === "--stack") {
-			if (delivery) return { ok: false, error: "Specify at most one of --single or --stack." };
-			delivery = token === "--stack" ? "stack" : "single";
-			continue;
-		}
-
-		if (token === "--worktree") {
-			if (worktree) return { ok: false, error: "Duplicate --worktree flag." };
-			worktree = true;
-			continue;
-		}
-
-		if (token === "--no-adversary") {
-			if (!adversary) return { ok: false, error: "Duplicate --no-adversary flag." };
-			adversary = false;
-			continue;
-		}
-
-		if (token === "--plan-only") {
-			if (planOnly) return { ok: false, error: "Duplicate --plan-only flag." };
-			planOnly = true;
-			continue;
-		}
-
-		if (token === "--change-kind") {
-			if (changeKind !== undefined) return { ok: false, error: "Duplicate --change-kind flag." };
-			i++;
-			const value = tokens[i];
-			if (!value || value.startsWith("--") || !isChangeKind(value)) {
-				return {
-					ok: false,
-					error: "--change-kind requires one of: bug-fix, feature, refactor, performance, prototype, generic.",
-				};
-			}
-			changeKind = value;
 			continue;
 		}
 
@@ -170,17 +121,9 @@ export function parseArgs(input: string): ArgsParse {
 		return { ok: false, error: `Unknown flag: ${token}. Supported: ${SUPPORTED_FLAGS}.` };
 	}
 
-	if (delivery === "stack" && worktree) {
-		return { ok: false, error: "--stack and --worktree cannot currently be combined." };
-	}
-	if (worktree && !delivery) delivery = "single";
-
 	// Validate route if provided.
 	if (route !== undefined && !isRouteId(route)) {
 		return { ok: false, error: `Unknown route "${route}". Valid routes: ${VALID_ROUTES}.` };
-	}
-	if (route !== undefined && route !== "change" && (!adversary || planOnly)) {
-		return { ok: false, error: "--no-adversary and --plan-only apply only to the change route." };
 	}
 
 	// Remaining tokens form the task.
@@ -201,11 +144,6 @@ export function parseArgs(input: string): ArgsParse {
 			route: route
 				? /* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (route as RouterArgs["route"])
 				: undefined,
-			delivery,
-			worktree,
-			changeKind,
-			adversary,
-			planOnly,
 			autopilotMode,
 			prNumber,
 			landMethod,

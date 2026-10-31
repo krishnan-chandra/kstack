@@ -2,7 +2,7 @@
 
 export const CHANGE_KINDS = ["bug-fix", "feature", "refactor", "performance", "prototype", "generic"] as const;
 
-export type ChangeKind = (typeof CHANGE_KINDS)[number];
+type ChangeKind = (typeof CHANGE_KINDS)[number];
 
 const CHANGE_KIND_SET: ReadonlySet<string> = new Set(CHANGE_KINDS);
 

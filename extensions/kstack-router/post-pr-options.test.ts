@@ -39,28 +39,19 @@ describe("resolvePostPrOptions", () => {
 		assert.deepEqual(await resolvePostPrOptions("investigate", args({ prNumber: 3 }), fx), {
 			failed: "--pr is only valid with the pr-autopilot or land routes.",
 		});
-		assert.deepEqual(await resolvePostPrOptions("change", args({ autopilotMode: "drive" }), fx), {
+		assert.deepEqual(await resolvePostPrOptions("review", args({ autopilotMode: "drive" }), fx), {
 			failed: "--mode is only valid with the pr-autopilot route.",
 		});
 		assert.deepEqual(await resolvePostPrOptions("investigate", args({ landMethod: "squash" }), fx), {
 			failed: "--method is only valid with the land route.",
 		});
-		assert.deepEqual(await resolvePostPrOptions("fast-change", args({ readiness: "watch" }), fx), {
+		assert.deepEqual(await resolvePostPrOptions("review", args({ readiness: "watch" }), fx), {
 			failed: "--readiness is only valid with the land route.",
 		});
 	});
 
-	it("rejects implementation flags on post-PR routes", async () => {
+	it("cross-rejects post-PR flags on the other post-PR route", async () => {
 		const { fx } = effects();
-		assert.deepEqual(await resolvePostPrOptions("pr-autopilot", args({ delivery: "single" }), fx), {
-			failed: "--single/--stack is only valid with implementation routes.",
-		});
-		assert.deepEqual(await resolvePostPrOptions("land", args({ worktree: true }), fx), {
-			failed: "--worktree is only valid with the change or fast-change routes.",
-		});
-		assert.deepEqual(await resolvePostPrOptions("land", args({ changeKind: "feature" }), fx), {
-			failed: "--change-kind is only valid with the change or fast-change routes.",
-		});
 		assert.deepEqual(await resolvePostPrOptions("pr-autopilot", args({ landMethod: "rebase" }), fx), {
 			failed: "--method and --readiness are only valid with the land route.",
 		});

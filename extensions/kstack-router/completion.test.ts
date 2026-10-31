@@ -13,17 +13,17 @@ describe("kstack-router argument completions", () => {
 		assert.ok(items);
 		const labels = items.map((item) => item.label);
 		assert.ok(labels.includes("--route"));
-		assert.ok(labels.includes("--single"));
-		assert.ok(labels.includes("--stack"));
-		assert.ok(labels.includes("--worktree"));
-		assert.ok(labels.includes("--change-kind"));
-		assert.ok(labels.includes("--no-adversary"));
-		assert.ok(labels.includes("--plan-only"));
 		assert.ok(labels.includes("--mode"));
 		assert.ok(labels.includes("--pr"));
 		assert.ok(labels.includes("--method"));
 		assert.ok(labels.includes("--readiness"));
 		assert.ok(labels.includes("--"));
+		assert.ok(!labels.includes("--single"));
+		assert.ok(!labels.includes("--stack"));
+		assert.ok(!labels.includes("--worktree"));
+		assert.ok(!labels.includes("--change-kind"));
+		assert.ok(!labels.includes("--no-adversary"));
+		assert.ok(!labels.includes("--plan-only"));
 	});
 
 	it("narrows flags by partial prefix", () => {
@@ -35,21 +35,15 @@ describe("kstack-router argument completions", () => {
 		const result = values("--route ");
 		assert.ok(result);
 		assert.ok(result.includes("--route investigate "));
-		assert.ok(result.includes("--route change "));
 		assert.ok(result.includes("--route land "));
+		assert.ok(result.includes("--route pr-autopilot "));
 		assert.ok(!result.some((v) => v.includes("unsupported")));
+		assert.ok(!result.some((v) => v.includes("change")));
 	});
 
 	it("narrows route values by partial prefix", () => {
 		const result = values("--route inv");
 		assert.deepEqual(result, ["--route investigate "]);
-	});
-
-	it("offers change kinds after --change-kind", () => {
-		const result = values("--route change --change-kind ");
-		assert.ok(result);
-		assert.ok(result.includes("--route change --change-kind bug-fix "));
-		assert.ok(result.includes("--route change --change-kind feature "));
 	});
 
 	it("offers autopilot modes after --mode", () => {
@@ -89,14 +83,14 @@ describe("kstack-router argument completions", () => {
 	});
 
 	it("preserves earlier flags when completing a later flag or value", () => {
-		assert.deepEqual(values("--route change --ch"), ["--route change --change-kind "]);
-		assert.deepEqual(values("--route change --change-kind fe"), ["--route change --change-kind feature "]);
+		assert.deepEqual(values("--route land --re"), ["--route land --readiness "]);
+		assert.deepEqual(values("--route land --readiness wa"), ["--route land --readiness watch "]);
 	});
 
 	it("stops offering flags once the task or -- has started", () => {
 		assert.equal(values("Refactor the widget --ro"), null);
-		assert.equal(values("--route change Refactor --ro"), null);
-		assert.equal(values("--route change -- --sin"), null);
+		assert.equal(values("--route land Refactor --ro"), null);
+		assert.equal(values("--route land -- --sin"), null);
 		assert.equal(values("-- some task text"), null);
 	});
 

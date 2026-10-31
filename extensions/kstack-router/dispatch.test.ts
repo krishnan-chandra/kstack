@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { LAND_REQUEST_EVENT } from "../land/api.ts";
-import { PLAN_IMPLEMENT_REQUEST_EVENT } from "../plan-implement/api.ts";
 import { PRAUTOPILOT_REQUEST_EVENT } from "../pr-autopilot/api.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { dispatchRoute, getRestrictedTools } from "./dispatch.ts";
@@ -60,14 +59,14 @@ describe("dispatchRoute", () => {
 
 	it("fails closed for active-session routes (handled by the command handler)", async () => {
 		const { lifecycle, token } = setup();
-		const result = await dispatchRoute("investigate", "task", undefined, false, "generic", token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("investigate", "task", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /active-session route/);
 	});
 
 	it("unsupported explains the bounded routes without dispatching", async () => {
 		const { lifecycle, token } = setup();
-		const result = await dispatchRoute("unsupported", "task", undefined, false, "generic", token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("unsupported", "task", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "failed");
 		if (result.status === "failed") assert.match(result.error, /does not fit a supported route/);
 	});
@@ -75,98 +74,8 @@ describe("dispatchRoute", () => {
 	it("aborts when the dispatch token is stale", async () => {
 		const { lifecycle, token } = setup();
 		lifecycle.endDispatch(token);
-		const result = await dispatchRoute("investigate", "task", undefined, false, "generic", token, lifecycle, pi, ctx);
+		const result = await dispatchRoute("investigate", "task", token, lifecycle, pi, ctx);
 		assert.equal(result.status, "aborted");
-	});
-
-	it("passes adversary and plan-only options through the change request", async () => {
-		const { lifecycle, token } = setup();
-		const seen: BoundaryValue[] = [];
-		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
-			events: {
-				emit(name: string, value: { payload: BoundaryValue; claimed: boolean; completion?: Promise<unknown> }) {
-					assert.equal(name, PLAN_IMPLEMENT_REQUEST_EVENT);
-					seen.push(value.payload);
-					value.claimed = true;
-					value.completion = Promise.resolve();
-				},
-			},
-		} as never;
-		const result = await dispatchRoute(
-			"change",
-			"task",
-			"single",
-			false,
-			"feature",
-			token,
-			lifecycle,
-			bus,
-			ctx,
-			undefined,
-			{ adversary: false, planOnly: true },
-		);
-		assert.equal(result.status, "dispatched");
-		assert.deepEqual(seen, [
-			{
-				task: "task",
-				mode: "single",
-				workLocation: "current",
-				changeKind: "feature",
-				fast: false,
-				adversary: false,
-				planOnly: true,
-				ctx,
-			},
-		]);
-	});
-
-	it("keeps current fast-change dispatch in the active session", async () => {
-		const { lifecycle, token } = setup();
-		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
-			events: {
-				emit(name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
-					assert.equal(name, PLAN_IMPLEMENT_REQUEST_EVENT);
-					value.claimed = true;
-					value.completion = Promise.resolve();
-				},
-			},
-		} as never;
-		assert.deepEqual(
-			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
-			{ status: "dispatched" },
-		);
-	});
-
-	it("reports a current-session fast-change dispatch failure", async () => {
-		const { lifecycle, token } = setup();
-		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
-			events: {
-				emit(_name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
-					value.claimed = true;
-					value.completion = Promise.reject(new Error("replacement send failed"));
-				},
-			},
-		} as never;
-		assert.deepEqual(
-			await dispatchRoute("fast-change", "task", undefined, false, "generic", token, lifecycle, bus, ctx),
-			{ status: "failed", error: "plan-implement dispatch failed: replacement send failed" },
-		);
-	});
-
-	it("keeps worktree fast-change dispatch in the parent session", async () => {
-		const { lifecycle, token } = setup();
-		const bus: ExtensionAPI = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
-			events: {
-				emit(_name: string, value: { claimed: boolean; completion?: Promise<unknown> }) {
-					value.claimed = true;
-					value.completion = Promise.resolve();
-				},
-			},
-		} as never;
-		assert.deepEqual(
-			await dispatchRoute("fast-change", "task", undefined, true, "generic", token, lifecycle, bus, ctx),
-			{ status: "dispatched" },
-		);
 	});
 
 	it("dispatches pr-autopilot through the typed request channel", async () => {
@@ -185,9 +94,6 @@ describe("dispatchRoute", () => {
 		const result = await dispatchRoute(
 			"pr-autopilot",
 			"",
-			undefined,
-			false,
-			"generic",
 			token,
 			lifecycle,
 			bus,
@@ -216,9 +122,6 @@ describe("dispatchRoute", () => {
 		const result = await dispatchRoute(
 			"land",
 			"",
-			undefined,
-			false,
-			"generic",
 			token,
 			lifecycle,
 			bus,
@@ -248,9 +151,9 @@ describe("dispatchRoute", () => {
 		const bus = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 			events: { emit },
 		} as never;
-		const missing = await dispatchRoute("pr-autopilot", "", undefined, false, "generic", token, lifecycle, bus, ctx);
+		const missing = await dispatchRoute("pr-autopilot", "", token, lifecycle, bus, ctx);
 		assert.equal(missing.status, "failed");
-		const mismatched = await dispatchRoute("land", "", undefined, false, "generic", token, lifecycle, bus, ctx, {
+		const mismatched = await dispatchRoute("land", "", token, lifecycle, bus, ctx, {
 			route: "pr-autopilot",
 			mode: "check",
 		});
@@ -265,9 +168,6 @@ describe("dispatchRoute", () => {
 		const result = await dispatchRoute(
 			"pr-autopilot",
 			"",
-			undefined,
-			false,
-			"generic",
 			token,
 			lifecycle,
 			bus,

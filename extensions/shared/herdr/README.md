@@ -1,6 +1,6 @@
 # Herdr-hosted agents
 
-This directory hosts watchable, steerable Pi agents in Herdr panes. Plan-implement, Arena, Swarm, and Simplify share the host. The adversarial-planning skill opens its council seats through `council-host.ts` and asks them through the same request lifecycle. Short headless work still uses `../child-agent-runner.ts`.
+This directory hosts watchable, steerable Pi agents in Herdr panes. The adversarial-planning skill, Arena, Swarm, and Simplify share the host. The adversarial-planning skill opens its council seats through `council-host.ts` and asks them through the same request lifecycle. Short headless work still uses `../child-agent-runner.ts`.
 
 The modules use Node APIs and injected effects, with no Pi SDK runtime imports. The skill CLI loads them through Node's TypeScript stripping.
 
@@ -28,7 +28,7 @@ Preflight requires `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, `HERDR_PANE_ID`, a reach
 
 Use `openAgentHost` when Kstack creates and owns the agents in a new tab, and `openPaneHost` when the agents should share the caller's tab as panes split off the caller's own pane. `openPaneHost` accepts a fixed `direction` for that split and `maxColumns` for the agent grid inside it; councils use `right` and one column, so seats stack to the right of the caller. A `HostedAgentSpec.exactName` uses that agent name verbatim: no random suffix, and a name conflict fails instead of retrying. Every failed `start` reports the pane it reserved and the name it tried, when known. Use `attachHostedAgent` only for an existing named agent in a user- or skill-owned pane. It attaches the request lifecycle without creating a tab. For these attached agents, cancellation sends Escape but never sends Ctrl+C or closes the pane. `attachHostedAgent` refuses the caller's pane. The caller is responsible for selecting an agent with the intended model, tools, and cwd.
 
-Hosted Pi processes load Kstack and the Herdr integration explicitly. Extension discovery defaults to off (`--no-extensions`). `inheritExtensions: true` enables normal Pi discovery; `tools` independently controls any tool allowlist. Plan-implement, fanout, and router reviews enable discovery and omit the allowlist.
+Hosted Pi processes load Kstack and the Herdr integration explicitly. Extension discovery defaults to off (`--no-extensions`). `inheritExtensions: true` enables normal Pi discovery; `tools` independently controls any tool allowlist. The adversarial-planning skill, fanout, and router reviews enable discovery and omit the allowlist.
 
 Discovery is not a snapshot of the parent's tools. Pi resolves user configuration and trusted project resources from the child's cwd. Parent-only `-e` paths, process-only trust approval, runtime tool registrations, and active tool selections are not forwarded. A managed worktree may lack the parent's untracked project configuration. Exact parent-tool inheritance remains unsupported.
 

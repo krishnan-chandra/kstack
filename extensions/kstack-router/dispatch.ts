@@ -2,22 +2,19 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { requestLand } from "../land/api.ts";
-import { requestPlanImplement } from "../plan-implement/api.ts";
 import { requestPrAutopilot } from "../pr-autopilot/api.ts";
-import type { ChangeKind } from "../shared/change-kind.ts";
 import { getRoutePlaybook } from "./catalog.ts";
 import type { DispatchToken, RouterLifecycle } from "./lifecycle.ts";
 import type { PostPrRequest } from "./post-pr-options.ts";
 import { runReviewRoute } from "./review-runner.ts";
-import { allowedReadToolsForRoute, type DeliveryRecommendation, type RouteId } from "./types.ts";
+import { allowedReadToolsForRoute, type RouteId } from "./types.ts";
 
 type DispatchResult = { status: "dispatched" } | { status: "failed"; error: string } | { status: "aborted" };
 
 /**
  * Dispatch the task to the appropriate handler based on the selected route.
  *
- * For `change`, `review`, `pr-autopilot`, and `land`, this uses in-process
- * event APIs to avoid synthesizing slash-command strings. For other routes,
+ * For `review`, `pr-autopilot`, and `land`, this uses in-process event APIs to avoid synthesizing slash-command strings. For other routes,
  * the caller handles active-session lifecycle (tool restriction, playbook
  * attachment, etc.) before calling this function; those routes return here
  * immediately.
@@ -25,82 +22,17 @@ type DispatchResult = { status: "dispatched" } | { status: "failed"; error: stri
 export async function dispatchRoute(
 	route: RouteId,
 	task: string,
-	delivery: DeliveryRecommendation,
-	worktree: boolean,
-	changeKind: ChangeKind,
 	dispatchToken: DispatchToken,
 	lifecycle: RouterLifecycle,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	postPr?: PostPrRequest,
-	planOptions: { adversary: boolean; planOnly: boolean } = { adversary: true, planOnly: false },
 ): Promise<DispatchResult> {
 	if (!lifecycle.isCurrentDispatch(dispatchToken)) {
 		return { status: "aborted" };
 	}
 
 	switch (route) {
-		case "change": {
-			const mode = delivery === "stack" ? "stack" : "single";
-			try {
-				const result = await requestPlanImplement(
-					pi,
-					task,
-					mode,
-					worktree ? "worktree" : "current",
-					changeKind,
-					false,
-					planOptions.adversary,
-					planOptions.planOnly,
-					ctx,
-				);
-				if (!result.handled) {
-					return {
-						status: "failed",
-						error:
-							"plan-implement extension is not loaded or did not accept the request. " +
-							"Make sure it is installed: pi list | grep plan-implement",
-					};
-				}
-				return { status: "dispatched" };
-			} catch (err) {
-				return {
-					status: "failed",
-					error: `plan-implement dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
-				};
-			}
-		}
-
-		case "fast-change": {
-			if (delivery === "stack")
-				return {
-					status: "failed",
-					error: "fast-change supports only single-PR workstreams. Use the change route for stacks.",
-				};
-			try {
-				const result = await requestPlanImplement(
-					pi,
-					task,
-					"single",
-					worktree ? "worktree" : "current",
-					changeKind,
-					true,
-					false,
-					false,
-					ctx,
-				);
-				if (!result.handled) {
-					return { status: "failed", error: "plan-implement extension is not loaded or did not accept the request." };
-				}
-				return { status: "dispatched" };
-			} catch (err) {
-				return {
-					status: "failed",
-					error: `plan-implement dispatch failed: ${/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ (err as Error).message}`,
-				};
-			}
-		}
-
 		case "review": {
 			const result = await runReviewRoute(pi, ctx, task, lifecycle.signal());
 			if (result.status === "failed") return { status: "failed", error: result.error };
@@ -180,11 +112,10 @@ export async function dispatchRoute(
 				status: "failed",
 				error:
 					"This task does not fit a supported route. Kstack Router supports: " +
-					"investigate (read-only research), change (plan → implement → adversarial review), fast-change (one-shot bounded implementation), " +
-					"arena (parallel candidate comparison), swarm (parallel independent slices), " +
+					"investigate (read-only research), arena (parallel candidate comparison), swarm (parallel independent slices), " +
 					"skill-authoring (create/test skills), session-pickup (recover context), " +
 					"review (strict code-quality review on a frontier model), pr-autopilot (drive an existing PR to merge-ready), " +
-					"land (confirm and merge one PR). Use --route to pick one explicitly.",
+					"land (confirm and merge one PR). Plan + implement workflows run through /skill:adversarial-planning. Use --route to pick one explicitly.",
 			};
 
 		default: {

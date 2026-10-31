@@ -15,7 +15,7 @@ It also registers `/gh-stack publish` and the `gh_stack_publish` tool.
 
 ## Publish a stack
 
-`plan-implement --stack` writes a private schema-version-1 manifest. The parent
+Stack publication writes a private schema-version-1 manifest. The parent
 validates the manifest against the clean Git working tree, immutable trunk and
 branch SHAs, branch ancestry, and the checked-out top branch before it changes
 the remote.

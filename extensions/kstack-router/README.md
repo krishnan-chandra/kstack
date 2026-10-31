@@ -7,7 +7,7 @@ before waiting, classification, or dispatch. It never overwrites an explicit
 session name.
 
 ```
-/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--no-adversary] [--plan-only] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>
+/kstack [--route <id>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>
 ```
 
 ## Route table
@@ -15,8 +15,6 @@ session name.
 | Route | Description | Dispatch target |
 |---|---|---|
 | `investigate` | Read-only research, explain, diagnose | Active session, read-only tools |
-| `change` | Feature, fix, refactor, prototype | plan-implement → adversarial review |
-| `fast-change` | Implement an explicit, bounded existing plan | plan-implement --fast in one hosted Herdr pane |
 | `arena` | Competing parallel candidates | Arena skill, frame-first |
 | `swarm` | Parallel independent slices | Swarm skill, frame-first |
 | `skill-authoring` | Create, improve, test skills | create-skill skill, frame-first |
@@ -31,12 +29,6 @@ session name.
 ```bash
 /kstack Explain the archive indexing strategy
 /kstack --route investigate What does the handoff extension do?
-/kstack --route change --change-kind refactor Refactor the config loader
-/kstack --route change --plan-only --change-kind feature Draft the migration
-/kstack --route change --no-adversary --change-kind feature Use the existing plan
-/kstack --route change --worktree --change-kind feature Add isolated search
-/kstack --route fast-change --worktree --change-kind bug-fix Fix a narrow parser bug
-/kstack --route change --stack --change-kind feature Split feature into three PRs
 /kstack --route review Review the latest changes
 /kstack --route pr-autopilot --mode drive --pr 42
 /kstack --route land --pr 42 --readiness watch --method squash
@@ -51,12 +43,12 @@ session name.
 
 Typing `/kstack` in the TUI offers Tab-completion for leading flag names and,
 right after a flag with a finite value set, that flag's valid values:
-`--route` (route IDs), `--change-kind` (change kinds), `--mode` (`check`,
-`threads`, `drive`, `watch`, `cleanup`), `--method` (`squash`, `rebase`), and
-`--readiness` (`check`, `watch`). `--single`, `--stack`, `--worktree`,
-`--no-adversary`, `--plan-only`, and `--` complete as flags with no further value. `--pr` completes only as a
-flag; its numeric value is never guessed. Completion stops once the task or a
-bare `--` has started, because `/kstack` only accepts flags before the task.
+`--route` (route IDs), `--mode` (`check`, `threads`, `drive`, `watch`,
+`cleanup`), `--method` (`squash`, `rebase`), and `--readiness` (`check`,
+`watch`). `--` completes as a flag with no further value. `--pr` completes
+only as a flag; its numeric value is never guessed. Completion stops once the
+task or a bare `--` has started, because `/kstack` only accepts flags before
+the task.
 
 ## Post-PR flags
 
@@ -83,15 +75,12 @@ does not mean the PR merged; land still revalidates the exact head and asks
 before it merges.
 
 
-## Change-kind playbooks
+## Plan + implement workflows
 
-For the `change` and `fast-change` routes, the classifier recommends one of `bug-fix`, `feature`,
-`refactor`, `performance`, `prototype`, or `generic`. The selected kind appears
-in the route card and plan-implement confirmation. Override it explicitly when
-the classifier has insufficient context:
-
-```text
-/kstack --route change --change-kind performance Reduce archive-index latency
+Plan → implement → adversarial review → publish workflows live in the
+[`adversarial-planning`](../../skills/adversarial-planning/SKILL.md) skill, not
+in the router. The classifier sends such requests to `investigate` or points
+the user at the skill.
 ```
 
 `--worktree` is valid only for a change route and dispatches single-PR work
@@ -179,8 +168,6 @@ strictly validated JSON envelope. Invalid, malformed, or injection-shaped
 classifier output fails safe to manual route selection.
 
 Downstream routes have their own trust boundaries:
-- `change` hands the task to plan-implement, whose planner and adversary
-  use normal tool discovery, and requires explicit approval.
 - `review` runs one review on a configured frontier model
   (`kstack-router.review.models`, default Opus 5.5 then Astra): a visible pane
   split off the caller's pane inside Herdr, or a headless child otherwise. It
@@ -199,8 +186,8 @@ Downstream routes have their own trust boundaries:
 - It persists the derived task slug before waiting, classifier work, or downstream workflow model calls.
 - Classification output is displayed via notifications; the user confirms or
   overrides the route.
-- The `kstack-route` message card records the selected route, delivery mode,
-  classifier source, and dispatch status.
+- The `kstack-route` message card records the selected route, classifier
+  source, and dispatch status.
 
 ## Classifier session history
 
@@ -208,8 +195,9 @@ Classifier runs persist native Pi sessions under `~/.pi/kstack/subagents/`. Reop
 
 ## Troubleshooting
 
-**"plan-implement extension is not loaded"**: Run `pi list` to verify
-plan-implement is installed. Run `/reload` after installing it.
+**"Route requires an extension"**: Run `pi list` to verify the extension is
+installed. Run `/reload` after installing it. Plan + implement routes no
+longer exist; use `/skill:adversarial-planning`.
 
 **"Classifier timed out"**: The classifier model may be slow. Increase
 `timeoutSeconds` in config, or use `--route` to bypass the classifier.

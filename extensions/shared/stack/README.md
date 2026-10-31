@@ -5,7 +5,7 @@ from [`../vcs/`](../vcs/README.md), which mutates the local repository.
 
 `outcome.ts` is the vocabulary every stack publisher and lander emits.
 `manifest.ts` owns the bounded provider-neutral manifest and shared immutable
-Git-fact checks used by Graphite and GitHub. `plan-implement` and `land` consume
+Git-fact checks used by Graphite and GitHub. Stack publication and `land` consume
 these contracts directly.
 
 ## PR transitions during publication
@@ -113,7 +113,7 @@ with a warning for jj and Graphite because those mappings are fixed.
 ## Request channels
 
 `channel.ts` defines the four request/claim channels connecting stack providers
-with host workflows (`plan-implement` and `land`):
+with host workflows (stack publication and `land`):
 
 - `kstack:stack:capabilities` (`StackCapabilitiesPayload` → `StackProviderCapabilities`)
 - `kstack:stack:preflight` (`StackPreflightPayload` → `VcsResult<StackPreflight>`)

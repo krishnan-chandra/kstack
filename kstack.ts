@@ -7,7 +7,6 @@ import kstackRouter from "./extensions/kstack-router/index.ts";
 import land from "./extensions/land/index.ts";
 import openrouterFloor from "./extensions/openrouter-floor/index.ts";
 import parallelAgents from "./extensions/parallel-agents/index.ts";
-import planImplement from "./extensions/plan-implement/index.ts";
 import prAutopilot from "./extensions/pr-autopilot/index.ts";
 import sessionArchive from "./extensions/session-archive/index.ts";
 import steeringSwap from "./extensions/steering-swap/index.ts";
@@ -23,7 +22,6 @@ const KSTACK_EXTENSIONS: ReadonlyArray<{ name: string; register: ExtensionFactor
 	{ name: "land", register: land },
 	{ name: "openrouter-floor", register: openrouterFloor },
 	{ name: "parallel-agents", register: parallelAgents },
-	{ name: "plan-implement", register: planImplement },
 	{ name: "pr-autopilot", register: prAutopilot },
 	{ name: "session-archive", register: sessionArchive },
 	{ name: "steering-swap", register: steeringSwap },

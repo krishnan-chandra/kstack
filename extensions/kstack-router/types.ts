@@ -1,15 +1,10 @@
 /** Canonical route catalog IDs and shared types for the kstack-router. */
 
-import type { ChangeKind } from "../shared/change-kind.ts";
 import type { MergeMethod } from "../shared/github.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 
-export { type ChangeKind, isChangeKind } from "../shared/change-kind.ts";
-
 export type RouteId =
 	| "investigate"
-	| "change"
-	| "fast-change"
 	| "arena"
 	| "swarm"
 	| "skill-authoring"
@@ -21,8 +16,6 @@ export type RouteId =
 
 export const ALL_ROUTES: readonly RouteId[] = [
 	"investigate",
-	"change",
-	"fast-change",
 	"arena",
 	"swarm",
 	"skill-authoring",
@@ -39,17 +32,11 @@ export function isRouteId(value: string): value is RouteId {
 	return ROUTE_SET.has(value);
 }
 
-export type DeliveryRecommendation = "single" | "stack" | undefined;
-
 export interface ClassifierEnvelope {
 	schemaVersion: number;
 	route: RouteId;
 	confidence: "high" | "medium" | "low";
 	rationale: string;
-	/** Optional delivery mode recommendation (only meaningful for "change"). */
-	delivery?: DeliveryRecommendation;
-	/** Optional proof-obligation category (only meaningful for "change"). */
-	changeKind?: ChangeKind;
 }
 
 /** Sentinel that must wrap classifier JSON output. */
@@ -105,11 +92,6 @@ export type LandMethodFlag = MergeMethod;
 
 export interface RouterArgs {
 	route?: RouteId;
-	delivery?: DeliveryRecommendation;
-	worktree?: boolean;
-	changeKind?: ChangeKind;
-	adversary?: boolean;
-	planOnly?: boolean;
 	autopilotMode?: AutopilotModeFlag;
 	prNumber?: number;
 	landMethod?: LandMethodFlag;

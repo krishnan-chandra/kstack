@@ -116,8 +116,8 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("kstack", {
 		description:
-			"Route a task through the Kstack Router: /kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] " +
-			"[--no-adversary] [--plan-only] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>. " +
+			"Route a task through the Kstack Router: /kstack [--route <id>] [--mode <mode>] [--pr <n>] [--method <method>] " +
+			"[--readiness <mode>] [--] <task>. Plan + implement workflows run through /skill:adversarial-planning. " +
 			"Prompts for classification when no --route is given.",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
@@ -206,12 +206,7 @@ export default function (pi: ExtensionAPI): void {
 				notify(resolution.failed, "warning");
 				return;
 			}
-			const { route, delivery, changeKind, overrode, modelSource, confidence } = resolution.resolved;
-			if (route !== "change" && (parsed.args.planOnly || parsed.args.adversary === false)) {
-				notify("--no-adversary and --plan-only apply only to the change route.", "warning");
-				return;
-			}
-			const worktree = parsed.args.worktree ?? false;
+			const { route, overrode, modelSource, confidence } = resolution.resolved;
 
 			const postPrResolution = await resolvePostPrOptions(route, parsed.args, {
 				select: (title, options) => ctx.ui.select(title, options, {}),
@@ -256,17 +251,11 @@ export default function (pi: ExtensionAPI): void {
 				schemaVersion: 1,
 				route,
 				routeLabel: getRouteLabel(route),
-				delivery,
-				worktree,
-				...(route === "change" || route === "fast-change" ? { changeKind } : undefined),
 				modelSource,
 				confidence,
 				overrode,
 			};
 			const routeDescription = getRouteDescription(route);
-			const deliveryNote = delivery
-				? `\nDelivery: ${delivery === "stack" ? "stacked PRs" : "single PR"}${worktree ? " in a managed Git worktree" : ""}`
-				: "";
 
 			if (isActiveSessionRoute(route)) {
 				await ctx.waitForIdle();
@@ -297,7 +286,7 @@ export default function (pi: ExtensionAPI): void {
 				routeCard.dispatchStatus = "dispatched";
 				pi.sendMessage({
 					customType: "kstack-route",
-					content: `${routeDescription}${deliveryNote}\nRead-only gate: ${restricted.join(", ")}`,
+					content: `${routeDescription}\nRead-only gate: ${restricted.join(", ")}`,
 					display: true,
 					details: routeCard,
 				});
@@ -335,27 +324,12 @@ export default function (pi: ExtensionAPI): void {
 			try {
 				pi.sendMessage({
 					customType: "kstack-route",
-					content: `${routeDescription}${deliveryNote}`,
+					content: `${routeDescription}`,
 					display: true,
 					details: routeCard,
 				});
 
-				const result = await dispatchRoute(
-					route,
-					task,
-					delivery,
-					worktree,
-					changeKind,
-					dispatchToken,
-					lifecycle,
-					pi,
-					ctx,
-					postPr,
-					{
-						adversary: parsed.args.adversary ?? true,
-						planOnly: parsed.args.planOnly ?? false,
-					},
-				);
+				const result = await dispatchRoute(route, task, dispatchToken, lifecycle, pi, ctx, postPr);
 				routeCard.dispatchStatus = result.status;
 				pi.sendMessage({
 					customType: "kstack-route",
@@ -373,15 +347,6 @@ export default function (pi: ExtensionAPI): void {
 							result as { error?: string }
 						).error ?? "Dispatch failed.",
 						"error",
-					);
-				} else if (route === "change") {
-					notify("Delegated to plan-implement. Use Ctrl+Shift+I to abort the plan/implement child.", "info");
-				} else if (route === "fast-change") {
-					notify(
-						worktree
-							? "Delegated to plan-implement --fast. Use Ctrl+Shift+I to abort the worktree child."
-							: "Delegated to plan-implement --fast in this session; its plan and discussion remain in context.",
-						"info",
 					);
 				} else if (route === "review") {
 					notify("Review running in an isolated read-only child. The verdict appears here when it finishes.", "info");

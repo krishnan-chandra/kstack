@@ -38,7 +38,7 @@ describe("jj-stacked-prs registration", () => {
 		for (const handler of sessionHandlers) handler();
 	});
 
-	it("aborts publication when the plan-implement command context is cancelled", () => {
+	it("aborts publication when the stack publication command context is cancelled", () => {
 		const session = new AbortController();
 		const ctx = new AbortController();
 		const combined = combinePublicationSignals(session.signal, ctx.signal);

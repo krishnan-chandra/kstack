@@ -119,7 +119,7 @@ diff is too large, the model is unavailable, or the response fails validation.
 Existing title, body, and draft state are preserved. Navigation comments carry
 verified merged, closed, open, and draft ancestors.
 
-`plan-implement --stack` may run its metadata and reviewer child afterward. That
+A later, separately confirmed publisher step may run its metadata and reviewer child afterward. That
 child can refine the generated title and body from the same exact slice, but it
 must not push bookmarks, create PRs, repair bases, or update navigation comments.
 

@@ -26,7 +26,7 @@ function fixture(options: { cap?: number; isPidAlive?: (pid: number) => boolean 
 }
 
 function prepare(store: ReturnType<typeof createSubagentSessionStore>) {
-	const result = store.prepare({ owner: "plan-implement", label: "lead" }, "/repo");
+	const result = store.prepare({ owner: "adv-planning", label: "lead" }, "/repo");
 	if (!result.ok) throw new Error("session preparation failed");
 	return result.prepared;
 }
@@ -70,14 +70,7 @@ describe("subagent session store", () => {
 			assert.equal(lstatSync(fx.root).isDirectory(), true);
 			assert.equal(lstatSync(join(fx.root, ".active")).isDirectory(), true);
 			assert.equal(existsSync(prepared.leaseFile), true);
-			assert.deepEqual(prepared.cliArgs, [
-				"--session-id",
-				ID,
-				"--session-dir",
-				fx.root,
-				"--name",
-				"plan-implement/lead",
-			]);
+			assert.deepEqual(prepared.cliArgs, ["--session-id", ID, "--session-dir", fx.root, "--name", "adv-planning/lead"]);
 			assert.equal(prepared.expectedCwd, "/repo");
 		} finally {
 			rmSync(fx.dir, { recursive: true, force: true });
@@ -109,7 +102,7 @@ describe("subagent session store", () => {
 			assert.deepEqual(fx.store.finish(prepared, { header: validated.header, spawnFailed: false }), {
 				kind: "persisted",
 				id: ID,
-				name: "plan-implement/lead",
+				name: "adv-planning/lead",
 				file,
 			});
 			assert.equal(existsSync(prepared.leaseFile), false);
@@ -130,7 +123,7 @@ describe("subagent session store", () => {
 			assert.deepEqual(fx.store.finish(prepared, { spawnFailed: false, forcedMissingReason: "protocol-mismatch" }), {
 				kind: "missing",
 				id: ID,
-				name: "plan-implement/lead",
+				name: "adv-planning/lead",
 				reason: "protocol-mismatch",
 			});
 		} finally {

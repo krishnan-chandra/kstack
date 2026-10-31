@@ -26,88 +26,30 @@ describe("parseClassifierOutput", () => {
 		}
 	});
 
-	it("parses envelope with delivery", () => {
-		const output = buildEnvelope(
-			JSON.stringify({
-				schemaVersion: 1,
-				route: "change",
-				confidence: "high",
-				rationale: "Feature work.",
-				delivery: "single",
-			}),
-		);
-		const result = parseClassifierOutput(output);
-		assert.ok(result.ok);
-		if (result.ok) {
-			assert.equal(result.envelope.route, "change");
-			assert.equal(result.envelope.delivery, "single");
-		}
-	});
-
-	it("parses a change-kind for change work", () => {
-		const output = buildEnvelope(
-			JSON.stringify({
-				schemaVersion: 1,
-				route: "change",
-				confidence: "high",
-				rationale: "Regression in the parser.",
-				changeKind: "bug-fix",
-			}),
-		);
-		const result = parseClassifierOutput(output);
-		assert.ok(result.ok);
-		if (result.ok) assert.equal(result.envelope.changeKind, "bug-fix");
-	});
-
-	it("ignores an echoed change-kind outside the change route", () => {
+	it("accepts but ignores echoed delivery and change-kind fields", () => {
 		const output = buildEnvelope(
 			JSON.stringify({
 				schemaVersion: 1,
 				route: "investigate",
 				confidence: "high",
 				rationale: "Research.",
+				delivery: "stack",
 				changeKind: "feature",
 			}),
 		);
 		const result = parseClassifierOutput(output);
 		assert.ok(result.ok);
-		if (result.ok) assert.equal(result.envelope.changeKind, undefined);
-	});
-
-	it("drops an echoed delivery on a fast-change route but keeps its change kind", () => {
-		const output = buildEnvelope(
-			JSON.stringify({
-				schemaVersion: 1,
-				route: "fast-change",
-				confidence: "high",
-				rationale: "Narrow bounded edit.",
-				delivery: "stack",
-				changeKind: "bug-fix",
-			}),
-		);
-		const result = parseClassifierOutput(output);
-		assert.ok(result.ok);
 		if (result.ok) {
-			assert.equal(result.envelope.route, "fast-change");
-			assert.equal(result.envelope.delivery, undefined);
-			assert.equal(result.envelope.changeKind, "bug-fix");
+			assert.equal(result.envelope.route, "investigate");
 		}
 	});
 
-	it("parses envelope with stack delivery", () => {
-		const output = buildEnvelope(
-			JSON.stringify({
-				schemaVersion: 1,
-				route: "change",
-				confidence: "medium",
-				rationale: "Large feature that benefits from stacking.",
-				delivery: "stack",
-			}),
-		);
-		const result = parseClassifierOutput(output);
-		assert.ok(result.ok);
-		if (result.ok) {
-			assert.equal(result.envelope.delivery, "stack");
+	it("rejects the removed change and fast-change routes", () => {
+		for (const route of ["change", "fast-change"]) {
+			const result = parseClassifierOutput(
+				buildEnvelope(JSON.stringify({ schemaVersion: 1, route, confidence: "high", rationale: "Implement." })),
+			);
+			assert.ok(!result.ok);
 		}
 	});
 
@@ -188,25 +130,11 @@ describe("parseClassifierOutput", () => {
 		const output = buildEnvelope(
 			JSON.stringify({
 				schemaVersion: 1,
-				route: "change",
+				route: "investigate",
 				confidence: "high",
 				rationale: "test",
 				command: "rm -rf /",
 				model: "gpt-5",
-			}),
-		);
-		const result = parseClassifierOutput(output);
-		assert.ok(!result.ok);
-	});
-
-	it("rejects invalid delivery", () => {
-		const output = buildEnvelope(
-			JSON.stringify({
-				schemaVersion: 1,
-				route: "change",
-				confidence: "high",
-				rationale: "test",
-				delivery: "both",
 			}),
 		);
 		const result = parseClassifierOutput(output);
@@ -250,8 +178,6 @@ describe("parseClassifierOutput", () => {
 			assert.ok(result.ok);
 			if (result.ok) {
 				assert.equal(result.envelope.route, route);
-				assert.equal(result.envelope.delivery, undefined);
-				assert.equal(result.envelope.changeKind, undefined);
 			}
 		}
 	});
@@ -280,28 +206,15 @@ describe("formatRecommendation", () => {
 		assert.ok(text.includes("High confidence"));
 		assert.ok(text.includes("Clear research task."));
 	});
-
-	it("includes delivery when provided", () => {
-		const text = formatRecommendation(
-			{
-				route: "change",
-				confidence: "high",
-				rationale: "Feature work.",
-				delivery: "stack",
-			},
-			"config",
-		);
-		assert.ok(text.includes("stacked PRs"));
-	});
 });
 
 describe("buildRouteAlternatives", () => {
 	it("returns all routes except the current one and unsupported", () => {
-		const alts = buildRouteAlternatives("change");
+		const alts = buildRouteAlternatives("investigate");
 		const ids = alts.map((a) => a.id);
-		assert.ok(!ids.includes("change"));
+		assert.ok(!ids.includes("investigate"));
 		assert.ok(!ids.includes("unsupported"));
-		assert.ok(ids.includes("investigate"));
+		assert.ok(ids.includes("review"));
 		assert.ok(ids.includes("session-pickup"));
 		assert.ok(ids.includes("pr-autopilot"));
 		assert.ok(ids.includes("land"));

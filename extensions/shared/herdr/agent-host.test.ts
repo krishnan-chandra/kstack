@@ -281,7 +281,7 @@ function makeHarness(label: string): Harness {
 }
 
 async function startOne(fake: FakeHerdr, maxAgents = 1): Promise<{ host: AgentHost; agent: HostedAgent }> {
-	const opened = await openAgentHost({ owner: "plan-implement", label: "test", cwd: "/repo", maxAgents }, fake.deps());
+	const opened = await openAgentHost({ owner: "adv-planning", label: "test", cwd: "/repo", maxAgents }, fake.deps());
 	assert.ok(opened.ok, opened.ok ? "" : opened.error);
 	const agent = await opened.host.start(PLANNER_SPEC);
 	assert.ok(agent.ok, agent.ok ? "" : agent.error);
@@ -659,14 +659,14 @@ describe("agent-host: layout and start", () => {
 	it("creates exactly one no-focus tab and never touches the caller's pane", async () => {
 		const harness = makeHarness("layout");
 		const opened = await openAgentHost(
-			{ owner: "plan-implement", label: "run", cwd: "/repo", maxAgents: 4 },
+			{ owner: "adv-planning", label: "run", cwd: "/repo", maxAgents: 4 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok);
 		const tabCreate = harness.fake.callsMatching("tab create")[0];
 		assert.ok(tabCreate);
 		const labelIndex = tabCreate.args.indexOf("--label");
-		assert.equal(tabCreate.args[labelIndex + 1], "plan-implement: run");
+		assert.equal(tabCreate.args[labelIndex + 1], "adv-planning: run");
 		assert.ok(tabCreate.args.includes("--no-focus"));
 		await opened.host.dispose();
 		assert.equal(harness.fake.callsMatching("tab close").length, 0);
@@ -697,7 +697,7 @@ describe("agent-host: layout and start", () => {
 	it("rejects starts beyond maxAgents and refuses to split the caller pane", async () => {
 		const harness = makeHarness("bounds");
 		const opened = await openAgentHost(
-			{ owner: "plan-implement", label: "test", cwd: "/repo", maxAgents: 2 },
+			{ owner: "adv-planning", label: "test", cwd: "/repo", maxAgents: 2 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok);
@@ -1102,7 +1102,7 @@ describe("agent-host: ask protocol", () => {
 	it("rejects a screen DONE pointer without request-specific session completion", async () => {
 		const harness = makeHarness("ask-fallback");
 		const opened = await openAgentHost(
-			{ owner: "plan-implement", label: "test", cwd: "/repo", maxAgents: 1 },
+			{ owner: "adv-planning", label: "test", cwd: "/repo", maxAgents: 1 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok);
@@ -1494,7 +1494,7 @@ describe("agent-host: dispose and exchange directory", () => {
 
 describe("agent-host helpers", () => {
 	it("builds agent names within the herdr name grammar", () => {
-		const name = buildAgentName("plan-implement", "implementer", "ab12");
+		const name = buildAgentName("adv-planning", "implementer", "ab12");
 		assert.match(name, /^[a-z][a-z0-9_-]{0,31}$/);
 		assert.ok(name.endsWith("-ab12"));
 		const long = buildAgentName("a-very-long-owner-name-here", "a-very-long-role-name", "zz99");

@@ -18,7 +18,7 @@ A short, non-interactive `pi -p --mode json` process run through
 
 **Adversary**:
 A read-only hosted agent that critiques a plan or implementation. In
-plan-implement, adversaries are the council seats left after the planner's
+adversarial-planning, adversaries are the council seats left after the planner's
 model sits out.
 _Avoid_: reviewer
 

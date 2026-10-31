@@ -11,20 +11,6 @@ const CATALOG: RouteCatalog = {
 		description: "Explain, diagnose, research, or understand without requesting a fix. Read-only tools only.",
 		playbookFile: "investigate.md",
 	},
-	change: {
-		id: "change",
-		label: "Change",
-		description:
-			"Features, fixes, refactors, prototypes, docs/config changes, and Pi extension implementation. Runs plan → approve → implement → adversarial review.",
-		requires: ["plan-implement"],
-	},
-	"fast-change": {
-		id: "fast-change",
-		label: "Fast implement",
-		description:
-			"Implement an explicit, bounded change when a plan already exists in this session. Uses one confirmed implementer and local commits; skips new planning and review.",
-		requires: ["plan-implement"],
-	},
 	arena: {
 		id: "arena",
 		label: "Arena",

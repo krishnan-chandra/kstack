@@ -23,8 +23,6 @@ describe("kstack-router catalog", () => {
 		const ids = routes.map((r) => r.id).sort();
 		assert.deepEqual(ids, [
 			"arena",
-			"change",
-			"fast-change",
 			"investigate",
 			"land",
 			"pr-autopilot",
@@ -43,9 +41,9 @@ describe("kstack-router catalog", () => {
 		}
 	});
 
-	it("change requires plan-implement", () => {
-		const deps = routeRequires("change");
-		assert.deepEqual(deps, ["plan-implement"]);
+	it("investigate has no dependencies", () => {
+		const deps = routeRequires("investigate");
+		assert.deepEqual(deps, []);
 	});
 
 	it("review requires the thermo-nuclear skill", () => {
@@ -83,13 +81,13 @@ describe("kstack-router catalog", () => {
 	});
 
 	it("checkDependencies returns missing dependencies", () => {
-		const missing = checkDependencies("change", [], []);
+		const missing = checkDependencies("review", [], []);
 		assert.ok(missing.length > 0);
-		assert.ok(missing.some((m) => m.includes("plan-implement")));
+		assert.ok(missing.some((m) => m.includes("thermo-nuclear")));
 	});
 
 	it("checkDependencies returns empty when all deps are satisfied", () => {
-		const missing = checkDependencies("change", ["plan-implement"], []);
+		const missing = checkDependencies("review", [], ["thermo-nuclear-code-quality-review"]);
 		assert.deepEqual(missing, []);
 	});
 

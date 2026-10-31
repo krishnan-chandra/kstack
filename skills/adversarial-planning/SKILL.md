@@ -1,6 +1,6 @@
 ---
 name: adversarial-planning
-description: Draft an implementation plan and stress-test it with a council of distinct reviewer models in visible Herdr panes until the council approves or the round budget runs out. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan council, a plan critique loop, or a planner-versus-adversary debate.
+description: Draft an implementation plan, stress-test it with a council of distinct reviewer models in visible Herdr panes until the council approves or the round budget runs out, implement the approved plan on a dedicated workstream, run every remaining council seat as an implementation adversary, fix blocking findings, and — after explicit approval — publish a draft PR with reviewer recommendations. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan council, a plan critique loop, a planner-versus-adversary debate, or implementing an approved plan with adversarial review.
 license: MIT
 compatibility: Pi running inside Herdr with the Herdr Pi integration installed and a kstack.json council section or --seats.
 disable-model-invocation: true
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # Adversarial planning
 
-Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own Herdr pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. The user is the final arbiter.
+Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own Herdr pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. Once the council approves, you implement the exact approved snapshot on a dedicated workstream, run the same seats as implementation adversaries against the diff, fix findings, and — only after the user approves publishing — publish a draft PR with reviewer recommendations. The user is the final arbiter.
 
 ## Guard and resolve paths
 
@@ -41,7 +41,7 @@ The command prints JSON. Seats open in one column to the right of your pane, nam
 - `waiting` (exit 1): a seat is at a prompt, usually project trust, including on its first start. Tell the user each waiting seat's `paneId`, wait for them to answer, then rerun the same `council open`. Rerunning adopts the waiting seat instead of starting another.
 - `failed` (exit 1): report `error` and each failed seat's `error` and `paneId`, then stop. For a missing roster, ask the user for `--seats` or a `council` section.
 
-Run every council command from this tab. The council is bound to it.
+Run every council command from this tab. The council is bound to it. Record the seat model references from the `seats` array of the open output; the implementation review reuses exactly these seats and models.
 
 ## Draft the plan
 
@@ -60,6 +60,8 @@ Delivery: single-pr
 ```
 
 Name the change-kind proof-obligation playbook when one applies.
+
+If the user already supplies an approved plan file (for example `plans/<slug>.md` with the `[STEP-n]`/`[AC-n]` contract), copy it to `plans/<slug>.md`, skip the planning debate, and go to [Implement](#implement). You still open the council: the implementation review needs its seats.
 
 ## Run rounds
 
@@ -101,26 +103,67 @@ Keep the response out of the plan file. Use one line per binding finding:
 
 A rebuttal sends the finding back to a vote. Rebut a finding at most once; a second rebuttal escalates to the user, as does `conflicts-with`.
 
-## Hand off
+## Implement
 
-Leave the seat panes open and report their panes. After the user approves, offer handoffs that target the approved snapshot, `$COUNCIL/approved-plan.md`, never the live plan:
+After approval, `$COUNCIL/approved-plan.md` holds the exact reviewed snapshot. Implement it in this session, in the working repository, on a dedicated workstream.
 
-```text
-/plan-implement --fast --plan-file <absolute approved-plan.md path> --change-kind <kind> <task>
-```
+1. Prepare the implementation bundle in `plans/<slug>-implement/`:
+   - copy `$COUNCIL/approved-plan.md` → `plans/<slug>-implement/approved-plan.md`;
+   - write `plans/<slug>-implement/task.md` (the user's request);
+   - write `plans/<slug>-implement/execution-ledger.md` copying every `[STEP-n]` and `[AC-n]` line verbatim from the approved plan.
+2. Create the workstream for the configured backend (`vcs.backend` in `kstack.json`, or inferred: jj workspace → jj; Graphite branch → graphite; else git):
+   - Git: require a clean tree. Create branch `kstack/<slug>` from the remote trunk (origin-first `main`/`master`, else local `main`/`master`, else `HEAD`). If the branch exists, append `-2`, `-3`, … until it does not.
+   - jj: create a change off `trunk()` and a bookmark `kstack/<slug>`. Leave the working copy above the bookmark empty.
+   - Graphite: `gt branch create kstack/<slug>` (with `gt` recording), or a managed worktree via the `git-worktrees` skill when the user asks.
+   - Record the base ref (the trunk ref or the bookmark's parent) — the review diff is computed against it.
+3. Read `references/implementer.md` and follow its contract exactly: implement steps in order, update each ledger entry exactly once (`done` / `blocked: <reason>` / `skip: <reason>`), verify with focused tests before each commit, commit one coherent milestone at a time, and never push, publish, or create PRs.
+4. Regenerate the diff of the workstream against the base into `plans/<slug>-implement/diff.patch` plus a `diff--stat.txt`:
+   - Git: `git diff <baseRef>...<branch>` and `git diff --stat <baseRef>...<branch>`.
+   - jj: `jj diff --from <base> --to <bookmark>` (base = trunk or the bookmark's parent) and the matching `--stat`.
+   - Graphite: `git diff <baseRef>...<ref>` after `gt`.
 
-The path must contain no whitespace; copy the approved snapshot to a suitable path if necessary. Fast mode snapshots the file before workstream creation and passes it to a fresh implementer. It does not inherit this conversation.
+## Implementation review
 
-For a full run that keeps the adversarial implementation review and publication gates without re-planning, offer:
+Run every remaining council seat (from the open output's `seats`) as a read-only implementation adversary in parallel:
 
-```text
-/plan-implement --plan-file <absolute approved-plan.md path> --change-kind <kind> <task>
-```
+1. Create one prompt file per seat: copy `references/implementation-adversary.md` and append an `## Inputs` section listing absolute paths for that seat's `task.md`, `approved-plan.md`, `execution-ledger.md`, and `diff.patch`.
+2. Write a fanout spec JSON (one task per seat) with:
+   - `owner`: `adversarial-planning`
+   - `label`: `<slug>-impl-review`
+   - `cwd`: the repository root (absolute)
+   - `maxConcurrency`: the number of seats (≤ 8)
+   - per task: `label` (`seat-a`, …), `model` (the seat's model ref from the open output), `cwd` (repository root), `promptFile` (the per-seat prompt), `outputFile` (`plans/<slug>-implement/review-<letter>.md`), `access`: `"read-only"`, `noContextFiles`: true, `timeoutMinutes`: `council.reviewTimeoutMinutes` or 10.
+   Save it as `local/<slug>-review-spec.json` (absolute paths).
+3. Run:
 
-The full handoff validates the plan's ordered `[STEP-n]` and `[AC-n]` contract and snapshots it read-only. It skips the planner and planning debate, then runs the implementer, the adversarial implementation review, fixing, and publication. Implementation and review models come from the `plan-implement` and `council` configuration. Neither handoff authorizes publication or landing.
+   ```sh
+   node "$CLI" fanout --spec "<abs>/local/<slug>-review-spec.json" \
+     --out "<abs>/plans/<slug>-implement/review-summary.json"
+   ```
+
+4. Interpret each seat's output file: `Verdict: approve` or `Verdict: revise`, with `## Blocking` (`[B-n]`), `## Suggestions` (`[S-n]`), and `## Resolved from previous round`. All seats must approve for the implementation to pass.
+
+## Fix
+
+If any seat reports blocking findings, address them in this session:
+
+1. Read `references/review-fixer.md` and follow its contract: verify each finding in the live repository, fix every `[B-n]`, skip or dispute only with evidence, record verified commits on the same workstream, and never push or publish.
+2. Regenerate the diff, rebuild the per-seat prompt files (appending the previous verdicts as `## Resolved from previous round` context), and rerun the same fanout.
+3. Loop until all seats approve or the council's `maxRounds` budget (from the open/roster output) is exhausted. If exhausted, present the open findings to the user and let them decide: steer a seat, override with their direction, or stop.
+
+## Publish
+
+Publishing requires explicit user approval — never publish, push, or create a PR unprompted.
+
+1. Read `references/publisher.md` and follow its contract: consult `write-pr` and `my-voice` for the title and body from the actual diff, create or update a **draft** PR (with the jj empty-checkpoint push for jj backends), and consult `find-reviewers` for 2–5 prioritized reviewers.
+2. Return the PR URL (or base-to-top table for stacks) and the full reviewer recommendation; never mark the PR ready and never merge.
+
+## Close
 
 When the user is done with the seats, close their panes:
 
 ```sh
 node "$CLI" council close --dir "$COUNCIL"
 ```
+
+Leave the workstream, plan, and review artifacts in place for the user's review.

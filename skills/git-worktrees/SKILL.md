@@ -1,6 +1,6 @@
 ---
 name: git-worktrees
-description: Create, inspect, reuse, repair, and safely remove local Git linked worktrees managed under ~/.pi/kstack/worktrees. Use whenever the user asks to work in a worktree, isolate a change from the current checkout, list or clean up worktrees, prune stale worktree records, or mentions plan-implement/kstack with --worktree. This skill is for Git worktrees, not Jujutsu workspaces.
+description: Create, inspect, reuse, repair, and safely remove local Git linked worktrees managed under ~/.pi/kstack/worktrees. Use whenever the user asks to work in a worktree, isolate a change from the current checkout, list or clean up worktrees, prune stale worktree records, or mentions kstack/planning workflows with --worktree. This skill is for Git worktrees, not Jujutsu workspaces.
 license: MIT
 compatibility: Requires Git with `git worktree` support and Node 22+ for the bundled read-only planner and inspector. Managed worktrees default to ~/.pi/kstack/worktrees. Mutations require confirmation in interactive use.
 ---
@@ -51,9 +51,9 @@ Never treat a directory scan alone as authority. Validate the owning repository 
    node <skill-dir>/scripts/plan_worktree.ts --repo <repo> --task "<task>"
    ```
 
-2. Review the planner's `base_ref`, immutable `base_sha`, `branch`, and `path`. The planner uses the same slug and base-ref rules as `/plan-implement --worktree`: `extractSlug` (30 characters, no mid-word cut) and origin-first symbolic HEAD, then remote and local `main`/`master`, then `HEAD`. Report any fallback.
+2. Review the planner's `base_ref`, immutable `base_sha`, `branch`, and `path`. The planner uses the same slug and base-ref rules as the adversarial-planning workflow: `extractSlug` (30 characters, no mid-word cut) and origin-first symbolic HEAD, then remote and local `main`/`master`, then `HEAD`. Report any fallback.
 3. Recheck both the branch and destination. If either exists, do not overwrite or reset it; rerun the planner to allocate `-2`, `-3`, and so on, or offer explicit reuse after inspection.
-4. Show the exact base, branch, and destination, then ask for confirmation. An approved non-interactive `plan-implement --worktree` plan already authorizes this one creation; it does not authorize cleanup or publication.
+4. Show the exact base, branch, and destination, then ask for confirmation. An approved adversarial-planning plan that names a managed worktree already authorizes this one creation; it does not authorize cleanup or publication.
 5. Create with argument-separated Git invocation, not shell interpolation:
 
    ```bash
@@ -152,4 +152,4 @@ Recovery:
 - <specific repair/prune command when relevant>
 ```
 
-Keep worktrees after publication by default. End creation and plan-implement runs by printing the managed path and explaining that cleanup remains explicit.
+Keep worktrees after publication by default. End creation and adversarial-planning runs by printing the managed path and explaining that cleanup remains explicit.

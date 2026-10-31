@@ -1,6 +1,6 @@
 # Voice profile
 
-Last updated: 2026-10-09
+Last updated: 2026-10-30
 
 Evidence covers user-authored coding-agent messages (Pi, kstack), Slack, Linear
 tickets, and a thin set of Notion notes, all from 2026-08 onward. Email,
@@ -132,8 +132,37 @@ context, goals and non-goals, proposed design, alternatives, risks or open
 questions, decisions. Claims tied to evidence links. Not a sentence-level
 signal.
 
+### Lumen roundups (weekly Notion page)
+
+Medium confidence for structure, low for sentence-level voice. The pages are
+agent-drafted and user-vouched. The only user-authored text is a few edits and
+revision directives, so the bullets are not the user's own phrasing.
+
+- Private Notion draft first, then moved under the "Lumen roundups" index page.
+  Title "Lumen roundup | <date range>, <year>", 🔆 icon, no intro paragraph.
+- One `##` heading per theme, with contributor mentions in parentheses. Themes
+  are short plain nouns ("Connectors", "Chat and attachment fixes"). Work behind
+  a flag says so in the heading ("still gated"). "Under the hood" goes last and
+  covers tools, prompts, evals, and analytics.
+- User-facing launches first. Connectors goes at the top when the week has
+  connector work. A bullet moves under the section of whoever owns that area.
+- Bullets lead with the change and put the reason beside it, usually as "used
+  to…" or "because…". Tool, flag, and field names in code format.
+- A bold lead ending in one "!" marks a headline launch. Observed once, in the
+  user's own edit.
+- Every claim gets checked against merged code, with flag names and defaults
+  stated. Anything unverified keeps a hedge.
+
+> "**<Feature> is now available!** Users sign in through…" (the user's edit)
+
+The earliest page used sentence-style headings and "now" openers. Later pages
+use theme headings and cause-first bullets, after the user asked for their
+style. The 🔆 page icon is the one exception to the no-emoji rule.
+
 ## Context-specific habits
 
+- Lumen roundups: edits are structural (order, headings, one bold lead), not
+  sentence rewrites. See the register above.
 - Coding chat: `@path/` scope references, phase gates ("just investigate"),
   findings by number, chained repo actions, "Continue pls".
 - Slack: abbreviations ("lmk", "sg", "ty", "tbh", "imo", "ppl", "w/", "FWIW"),
@@ -170,6 +199,9 @@ Apply lightly. Stacking fingerprints reads as parody.
 - Linear comments were barely checked (2 of 62 issues); no reply register for
   Linear.
 - Notion is thin and mostly agent-written.
+- The roundup register rests on five agent-drafted pages, one user-authored
+  bullet edit, and about ten revision directives. Sentence-level voice for
+  roundups is unevidenced.
 - No email, external, or social evidence. Use invariants and medium
   conventions there.
 - Observations are qualitative; counts are approximate.
@@ -184,6 +216,7 @@ Apply lightly. Stacking fingerprints reads as parody.
 | Linear tickets | ~17 user-authored, ~8 user-vouched; ~37 agent-written excluded | ~25 | 2026-08-10 to 2026-10-09 | Medium |
 | Notion notes and comments | 2 pages + 1 comment user-authored | ~30 lines | 2026-08 to 2026-09 | Low |
 | Design doc structure | 4 user-vouched, largely agent-written pages | 4 | 2026-08 to 2026-10 | Low, structure only |
+| Lumen roundups (Notion) | 5 agent-drafted, user-vouched pages (4 read directly), 1 user-authored bullet edit, ~10 revision directives | 5 pages | 2026-09-28 to 2026-10-30 | Medium for structure, low for sentence-level voice |
 | Agent writing rules | Explicit user instruction | — | 2026-10-09 | Authoritative |
 
 Excerpts are short and redacted. Keep this file free of secrets, customer

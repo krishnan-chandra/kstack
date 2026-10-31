@@ -3,13 +3,10 @@ import { type BoundaryValue, isObject, isString, type JsonObject } from "../shar
 
 import { getAllRoutes, getRouteDescription, getRouteLabel } from "./catalog.ts";
 import {
-	type ChangeKind,
 	CLASSIFIER_SENTINEL_END,
 	CLASSIFIER_SENTINEL_START,
 	type ClassifierEnvelope,
 	DEFAULTS,
-	type DeliveryRecommendation,
-	isChangeKind,
 	isRouteId,
 	type RouteId,
 } from "./types.ts";
@@ -82,39 +79,13 @@ export function parseClassifierOutput(
 		return { ok: false, error: `Rationale exceeds ${DEFAULTS.maxRationaleChars} characters.` };
 	}
 
-	// Validate optional change kind.
-	let changeKind: ChangeKind | undefined;
-	if (envelope.changeKind !== undefined) {
-		if (!isString(envelope.changeKind) || !isChangeKind(envelope.changeKind)) {
-			return { ok: false, error: `Invalid changeKind: ${JSON.stringify(envelope.changeKind)}.` };
-		}
-		// Fast classifiers sometimes fill every field shown in the output
-		// template. A valid non-change route should not be discarded because
-		// its inapplicable, otherwise-valid changeKind was echoed.
-		if (envelope.route === "change" || envelope.route === "fast-change") changeKind = envelope.changeKind;
-	}
-
-	// Reject unknown keys.
+	// Reject unknown keys. Legacy `delivery`/`changeKind` fields from older
+	// classifier prompts are accepted and ignored.
 	const allowedKeys = new Set(["schemaVersion", "route", "confidence", "rationale", "delivery", "changeKind"]);
 	for (const key of Object.keys(envelope)) {
 		if (!allowedKeys.has(key)) {
 			return { ok: false, error: `Unknown key in classifier envelope: "${key}".` };
 		}
-	}
-
-	// Validate optional delivery.
-	let delivery: DeliveryRecommendation;
-	if (envelope.delivery !== undefined) {
-		if (envelope.delivery !== "single" && envelope.delivery !== "stack") {
-			return {
-				ok: false,
-				error: `Invalid delivery: ${JSON.stringify(envelope.delivery)}. Must be "single" or "stack".`,
-			};
-		}
-		// Delivery only applies to the full change route. fast-change is always
-		// single-PR, and fast classifiers sometimes echo every template field, so
-		// an inapplicable delivery is dropped rather than rejected.
-		if (envelope.route === "change") delivery = envelope.delivery;
 	}
 
 	// Reject model-supplied commands or parameters.
@@ -134,8 +105,6 @@ export function parseClassifierOutput(
 				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.confidence as ClassifierEnvelope["confidence"],
 			rationale:
 				/* SAFETY: The owner contract validates or supplies this boundary value before domain use. */ envelope.rationale as string,
-			delivery,
-			changeKind,
 		},
 	};
 }
@@ -144,8 +113,6 @@ interface RouteRecommendation {
 	route: RouteId;
 	confidence: ClassifierEnvelope["confidence"];
 	rationale: string;
-	delivery?: DeliveryRecommendation;
-	changeKind?: ChangeKind;
 }
 
 /**
@@ -160,16 +127,12 @@ export function formatRecommendation(recommendation: RouteRecommendation, modelS
 
 	const routeLabel = getRouteLabel(recommendation.route);
 	const routeDesc = getRouteDescription(recommendation.route);
-	const deliveryLine = recommendation.delivery
-		? `\nDelivery: ${recommendation.delivery === "stack" ? "stacked PRs" : "single PR"}`
-		: "";
-	const kindLine = recommendation.changeKind ? `\nChange kind: ${recommendation.changeKind}` : "";
 
 	return (
 		`Recommended route: ${routeLabel}\n` +
 		`${confidenceMap[recommendation.confidence] ?? recommendation.confidence}\n` +
 		`Model: ${modelSource}\n` +
-		`${routeDesc}${deliveryLine}${kindLine}\n\n` +
+		`${routeDesc}\n\n` +
 		`Rationale: ${recommendation.rationale}`
 	);
 }

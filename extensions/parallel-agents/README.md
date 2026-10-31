@@ -1,6 +1,6 @@
 # parallel-agents
 
-`parallel_agents` runs the parallel child processes required by the Simplify skill. In TUI mode it mounts Kstack's shared live agent pane, the same interface used by plan-implement.
+`parallel_agents` runs the parallel child processes required by the Simplify skill. In TUI mode it mounts Kstack's shared live agent pane, the same interface used by the adversarial-planning skill.
 
 ## Use
 

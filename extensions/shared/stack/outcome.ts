@@ -75,6 +75,7 @@ export type StackPublishOutcome =
 	  }
 	| { status: "failed"; error: string; completedActions?: readonly CompletedPublicationAction[] };
 
+/* exported: publication-metadata follow-up contract for stack publishers */
 export function newlyCreatedDrafts(outcome: StackPublishOutcome): readonly StackPublishedPullRequest[] {
 	if (outcome.status !== "completed" && outcome.status !== "partial" && outcome.status !== "indeterminate") return [];
 	if (!outcome.publication) return [];

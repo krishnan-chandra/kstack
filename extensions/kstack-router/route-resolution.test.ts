@@ -8,11 +8,9 @@ const completed: ClassifierRunResult = {
 	status: "completed",
 	envelope: {
 		schemaVersion: 1,
-		route: "change",
+		route: "investigate",
 		confidence: "high",
-		rationale: "This changes repository behavior.",
-		delivery: "stack",
-		changeKind: "feature",
+		rationale: "This is a read-only research task.",
 	},
 	model: "test/classifier",
 	usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
@@ -61,8 +59,6 @@ test("an explicit route skips classification", async () => {
 	assert.deepEqual(result, {
 		resolved: {
 			route: "investigate",
-			delivery: undefined,
-			changeKind: "generic",
 			overrode: false,
 			modelSource: "explicit --route",
 			confidence: undefined,
@@ -71,26 +67,23 @@ test("an explicit route skips classification", async () => {
 	assert.equal(calls.includes("classifier"), false);
 });
 
-test("accepting a recommendation inherits delivery and change kind", async () => {
-	const { fx } = effects({ routes: ["change"] });
-	const result = await resolve({ task: "do work" }, fx);
-	assert.ok("resolved" in result);
-	if ("resolved" in result) {
-		assert.equal(result.resolved.route, "change");
-		assert.equal(result.resolved.delivery, "stack");
-		assert.equal(result.resolved.changeKind, "feature");
-		assert.equal(result.resolved.overrode, false);
-	}
-});
-
-test("overriding a recommendation does not inherit change metadata", async () => {
+test("accepting a recommendation uses the recommended route", async () => {
 	const { fx } = effects({ routes: ["investigate"] });
 	const result = await resolve({ task: "do work" }, fx);
 	assert.ok("resolved" in result);
 	if ("resolved" in result) {
 		assert.equal(result.resolved.route, "investigate");
-		assert.equal(result.resolved.delivery, undefined);
-		assert.equal(result.resolved.changeKind, "generic");
+		assert.equal(result.resolved.overrode, false);
+		assert.equal(result.resolved.confidence, "high");
+	}
+});
+
+test("overriding a recommendation marks the resolution overridden", async () => {
+	const { fx } = effects({ routes: ["review"] });
+	const result = await resolve({ task: "do work" }, fx);
+	assert.ok("resolved" in result);
+	if ("resolved" in result) {
+		assert.equal(result.resolved.route, "review");
 		assert.equal(result.resolved.overrode, true);
 	}
 });
@@ -121,74 +114,10 @@ test("missing classifier model uses the no-classifier manual prompt", async () =
 	assert.ok(calls.includes("notify:No model available for routing classification."));
 });
 
-test("change kind is rejected for non-change routes", async () => {
-	const { fx } = effects();
-	const result = await resolve({ route: "investigate", changeKind: "feature", task: "do work" }, fx);
-	assert.deepEqual(result, { failed: "--change-kind is only valid with the change or fast-change routes." });
-});
-
-test("worktree is rejected for non-change routes", async () => {
-	const { fx } = effects();
-	const result = await resolve({ route: "investigate", worktree: true, task: "do work" }, fx);
-	assert.deepEqual(result, { failed: "--worktree is only valid with the change or fast-change routes." });
-});
-
-test("an explicit stack delivery on fast-change fails with a redirect", async () => {
-	const { fx } = effects();
-	const result = await resolve({ route: "fast-change", delivery: "stack", task: "do work" }, fx);
-	assert.deepEqual(result, { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." });
-});
-
-test("an accepted fast-change recommendation ignores echoed delivery and forces single", async () => {
-	const fastChange: ClassifierRunResult = {
-		...completed,
-		envelope: { ...completed.envelope, route: "fast-change", delivery: "stack", changeKind: "bug-fix" },
-	};
-	const { fx } = effects({ classifier: fastChange, routes: ["fast-change"] });
-	const result = await resolve({ task: "do work" }, fx);
-	assert.ok("resolved" in result);
-	if ("resolved" in result) {
-		assert.equal(result.resolved.route, "fast-change");
-		assert.equal(result.resolved.delivery, "single");
-		assert.equal(result.resolved.changeKind, "bug-fix");
-	}
-});
-
-test("an explicit change route prompts for delivery and honors stack", async () => {
-	const { fx, calls } = effects({ choices: ["stack"] });
-	const result = await resolve({ route: "change", task: "do work" }, fx);
-	assert.ok("resolved" in result && result.resolved.delivery === "stack");
-	assert.ok(calls.includes("option:Delivery mode for change?"));
-});
-
-test("cancelling delivery selection cancels resolution", async () => {
-	const { fx } = effects({ choices: ["Cancel"] });
-	const result = await resolve({ route: "change", task: "do work" }, fx);
-	assert.deepEqual(result, { cancelled: true });
-});
-
-test("a manually overridden change defaults to single without prompting", async () => {
-	const manualFx = effects({ routes: ["change"] });
-	const result = await resolveRoute(
-		{
-			parsedArgs: { task: "do work" },
-			task: "do work",
-			routerConfig: null,
-			classifierResolution: { ok: false, error: "none" },
-		},
-		manualFx.fx,
-	);
-	assert.ok("resolved" in result && result.resolved.delivery === "single");
-	assert.equal(
-		manualFx.calls.some((call) => call.startsWith("option:")),
-		false,
-	);
-});
-
 test("session invalidation after route selection cancels further work", async () => {
 	let checks = 0;
 	const { fx, calls } = effects({
-		routes: ["change"],
+		routes: ["review"],
 		current: () => {
 			checks += 1;
 			return false;

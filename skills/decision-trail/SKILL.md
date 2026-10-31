@@ -1,6 +1,6 @@
 ---
 name: decision-trail
-description: Keep a reviewable decision trail for long-running or unattended work — a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use explicitly with /skill:decision-trail for stacked plan-implement runs, large migrations, prolonged Arena or Swarm fan-outs, work resumed through handoff, or any run a human reviews after stepping away. Not for routine changes.
+description: Keep a reviewable decision trail for long-running or unattended work — a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use explicitly with /skill:decision-trail for stacked planning/implementation runs, large migrations, prolonged Arena or Swarm fan-outs, work resumed through handoff, or any run a human reviews after stepping away. Not for routine changes.
 license: MIT
 compatibility: Pi CLI; pairs with the session-archive and handoff extensions for the end-of-run transcript audit.
 disable-model-invocation: true
@@ -31,7 +31,7 @@ An example, plain-spoken so a reviewer reads it at a glance. This is illustratio
 ts	phase	decision	why	evidence	result
 2026-08-12T09:02:00Z	frame	scoped the migration to the archive writer first	wanted the riskiest boundary proven before touching readers	commit 3a9f1c2	found 2 callers that needed pinning first
 2026-08-12T09:40:00Z	pr1	pinned current rename behavior with a characterization test	refactor must prove equivalence before restructuring	archive-files.test.ts	fails on old code as expected
-2026-08-12T11:15:00Z	pr2	rejected the copy-then-delete approach after the crash-window analysis	two-phase pending/archived keeps one complete copy at every step	docs/plans/plan-implement.md	superseded by rename-first design
+2026-08-12T11:15:00Z	pr2	rejected the copy-then-delete approach after the crash-window analysis	two-phase pending/archived keeps one complete copy at every step	docs/plans/adversarial-planning.md	superseded by rename-first design
 2026-08-12T12:30:00Z	pr2	landed the two-phase state machine	planner and panel both accepted the recovery model	commit 7c21e0a	tests green, panel verdict clean
 ```
 
@@ -106,4 +106,4 @@ Read top to bottom, follow the evidence pointers, spot-check. GitHub renders a c
 
 ## Composing this skill
 
-Other workflows route their audit trail here instead of inventing one — stacked `plan-implement` runs, long Arena or Swarm fan-outs, migrations, and work expected to resume through `/handoff`. Reference it by name and let it own the format; don't restate the columns.
+Other workflows route their audit trail here instead of inventing one — stacked adversarial-planning runs, long Arena or Swarm fan-outs, migrations, and work expected to resume through `/handoff`. Reference it by name and let it own the format; don't restate the columns.

@@ -12,13 +12,12 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
 | [`openrouter-floor`](extensions/openrouter-floor/) | Uses `:floor` by default, with `floor`, `nitro`, or `none` configurable per model or per session via `/openrouter-route`. Records bounded, redacted variant and service-tier observations; existing model suffixes pass through. |
-| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--single|--stack] [--worktree] [--change-kind <kind>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to implementation, review, PR autopilot, or confirmed landing. |
+| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to review, PR autopilot, or confirmed landing. Plan + implement workflows run through `/skill:adversarial-planning`. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
 | [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
 | [`handoff`](extensions/handoff/) | Opens a lean replacement session from one editor confirmation, optionally archiving the old session first and selecting a model and effort, then gives read-only tools that outline the linked history and expand or search only the entries the agent needs. |
 | [`parallel-agents`](extensions/parallel-agents/) | Runs bounded isolated read-only child agents for Simplify through the same shared live TUI pane, cancellation path, and persisted subagent sessions. |
-| [`plan-implement`](extensions/plan-implement/) | Runs a planner and optional adversary in visible Herdr panes, gates the final plan, implements on a dedicated Git/Graphite branch or jj bookmark, runs adversarial review, fixes findings, and publishes a draft PR with reviewer recommendations. Supports local stacks, managed worktrees, `--plan-only`, a hosted `--fast` implementer, and a `--plan-file` handoff that implements an approved plan without re-planning. |
 | [`pr-autopilot`](extensions/pr-autopilot/) | Bounded post-PR autopilot using only tiny models (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash). Drives an open PR frontier through comments-first triage, CI watch, and fix → push → recheck, stopping at merge-ready. Never auto-merges, never rebases shared history. |
 | [`land`](extensions/land/) | Confirmation-gated landing of exact, merge-ready GitHub PR heads. In jj mode, selecting an upper stacked PR lands the full prefix from trunk through that PR. Land reuses pr-autopilot readiness, respects branch protection and merge queues, and verifies remote merge state. |
 | [`jj-stacked-prs`](extensions/jj-stacked-prs/) | Publishes linear jj bookmarks as GitHub-native stacks and lands a complete stack with one asynchronous GitHub stack merge. Pi can publish or land through a model tool after an explicit user request; command-driven mutations retain standard confirmation. |
@@ -92,13 +91,12 @@ K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
 `"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
 For Git, `vcs.stackProvider` defaults to `"github"`; set it to `"none"` to
 disable stacked-PR publication and membership routing.
-Model assignments for plan-implement, council, arena,
+Model assignments for the adversarial-planning skill, council, arena,
 swarm, and the `how` and `why` investigation skills use sections in the same
 file. `council.seats` lists the 1–5 reviewer models for adversarial planning
-and plan-implement, with their round limits and the implementation review
+and implementation review, with their round limits and the implementation review
 timeout. A seat that uses the planner's model sits out. The pre-council
-`adversary` section is rejected with a message that names the rename. The `plan-implement` section also drives `--fast` mode, which runs the same
-implementer while skipping planning, review, and publishing. The router's
+`adversary` section is rejected with a message that names the rename. The router's
 review route always runs on `kstack-router.review.models` (default Opus 5.5,
 then Astra). A top-level
 `aliases` array (or any `{label, model, thinking}`
@@ -136,8 +134,7 @@ before launching a model or mutating repository state.
 
 | Workflow | Git backend | jj backend | Graphite backend |
 | --- | --- | --- | --- |
-| `plan-implement --single` | Current branch or `--worktree` | `main`-based change and bookmark | Current branch or tracked `--worktree` |
-| `plan-implement --stack` | Local Git branch stack (`github` provider) | Local jj stack | Graphite stack adapter |
+| `adversarial-planning` implementation | Current `kstack/<slug>` branch or managed worktree | Trunk-based change and bookmark | Tracked `kstack/<slug>` branch |
 | `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push | Branch validation and native Graphite record/restack/submit |
 | `land` auto-discovery | Current branch | Bookmark targeting `@` | Current Graphite branch |
 
@@ -159,7 +156,7 @@ subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Session names in development workflows
 
-Kstack names an unnamed session as soon as `/plan-implement` or `/kstack` knows
+Kstack names an unnamed session as soon as `/skill:adversarial-planning` or `/kstack` knows
 the task, before waiting, preflight, classification, or child-model work.
 Automatically derived names are short lowercase slugs, such as
 `archive-multiple-sessions`. `/handoff` gives its replacement session the same
@@ -186,12 +183,12 @@ rows stay unnamed.
 - Pi 1.1.0 or newer
 - Node 22.18 or newer for Pi's runtime and local tooling. CI tests Node 22.18, 24, and 26.
 - A local filesystem for Pi's agent directory
-- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, GitHub and jj stacked PRs, and plan-implement's publish step
+- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, GitHub and jj stacked PRs, and the adversarial-planning publish step
 - `github/gh-stack` 0.1.0 or newer (`gh extension install github/gh-stack`) — required for multi-PR jj publication and landing
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
-- Herdr 0.8.2 or newer, with `herdr integration install pi`, for plan-implement, adversarial planning, Arena, and Swarm
+- Herdr 0.8.2 or newer, with `herdr integration install pi`, for adversarial planning, hosted implementation reviewers, Arena, and Swarm
 
 Pi loads one TypeScript entry, `kstack.ts`, from the package. The installer
 links each directory in `skills/` into the shared `~/.agents/skills` directory.
@@ -257,18 +254,20 @@ pi list
 pi config
 ```
 
-The two-model implementation workflow is available as an extension command:
+The plan → implement → adversarial review → publish workflow lives in the
+[`adversarial-planning`](skills/adversarial-planning/SKILL.md) skill:
 
 ```text
-/plan-implement Add optimistic locking to the archive writer
-/plan-implement --change-kind bug-fix Fix the archive race
+/skill:adversarial-planning Add optimistic locking to the archive writer
 ```
 
-Without `--change-kind`, the command asks you to select one before planning. For explicit low-risk bounded edits, use `/plan-implement --fast --change-kind feature <task>` or `/kstack --route fast-change <task>`; this lower-assurance option never publishes automatically. To implement an already approved plan with the adversarial review and publication gates but no second planning pass, use `/plan-implement --plan-file plans/<slug>.md --change-kind <kind> <task>`. It
-keeps skills enabled in both child agents, so each role can consult the
-original task-specific skills it needs. See
-[`extensions/plan-implement/README.md`](extensions/plan-implement/README.md)
-for model defaults, configuration, confirmations, and security boundaries.
+The skill drafts a plan, runs it past a council of distinct reviewer models in
+visible Herdr panes until it approves, implements the approved plan on a
+dedicated Git/Graphite branch or jj bookmark, runs every remaining council seat
+as an implementation adversary against the diff, fixes blocking findings, and —
+after explicit user approval — publishes a draft PR with reviewer recommendations.
+See [`skills/adversarial-planning/SKILL.md`](skills/adversarial-planning/SKILL.md)
+for the full contract, configuration, and safety boundaries.
 
 Skills can then be invoked explicitly, for example:
 
@@ -288,17 +287,11 @@ Skills can then be invoked explicitly, for example:
 /skill:decision-trail
 ```
 
-The two-model implementation workflow also has a stacked-PR delivery mode:
-
-```text
-/plan-implement --stack Split the auth rollout into a three-PR jj stack
-```
-
-In stack mode the planner and implementer build a **local** stack with one ref
-per PR and deterministically exclude the `arena` skill. The configured stack
-provider owns confirmed structural publication: [`github-stacked-prs`](extensions/github-stacked-prs/)
+Stacked-PR delivery is owned by the stack extensions: [`github-stacked-prs`](extensions/github-stacked-prs/)
 for Git, [`jj-stacked-prs`](extensions/jj-stacked-prs/) for jj, or
-[`graphite-stacked-prs`](extensions/graphite-stacked-prs/) for Graphite. A child
+[`graphite-stacked-prs`](extensions/graphite-stacked-prs/) for Graphite. The
+adversarial-planning skill plans a single-PR delivery; stacking is a separate,
+confirmed step. A child
 updates titles and bodies and recommends reviewers only after publication
 succeeds.
 
@@ -393,7 +386,6 @@ node --test scripts/install/index.test.mjs
 node --test scripts/check-exports/index.test.mjs
 npm run test:handoff
 npm run test:session-archive
-node --test extensions/plan-implement/
 node --test extensions/kstack-router/
 node --test extensions/land/
 node --test extensions/pr-autopilot/

@@ -32,7 +32,7 @@ export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 /** A model object or a kstack.json alias label. */
 export type ConfiguredModel = string | { model: string; thinking?: ModelThinkingLevel };
 
-/* exported: shared configuration contract for plan-implement and the adversarial-planning CLI */
+/* exported: shared configuration contract for the adversarial-planning skill and CLI */
 export interface CouncilConfig {
 	/** One to five council seats, in configured order, before planner exclusion. */
 	seats: ConfiguredModel[];
@@ -40,7 +40,7 @@ export interface CouncilConfig {
 	maxRounds: number;
 	/** Wall-clock limit for one seat request during a planning round. */
 	timeoutMinutes: number;
-	/** Shared deadline for the plan-implement implementation review fan-out. */
+	/** Shared deadline for the adversarial-planning implementation review fan-out. */
 	reviewTimeoutMinutes: number;
 }
 
@@ -94,7 +94,7 @@ function boundedInteger(value: BoundaryValue, min: number, max: number): value i
 
 /**
  * Validate the shared council settings once for the skill CLI and
- * plan-implement. An omitted `seats` list falls back to {@link DEFAULT_SEAT}.
+ * adversarial-planning. An omitted `seats` list falls back to {@link DEFAULT_SEAT}.
  */
 export function validateCouncilConfig(
 	value: BoundaryValue,

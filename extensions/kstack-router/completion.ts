@@ -1,6 +1,5 @@
 /** Pure argument-completion helper for the /kstack command. */
 
-import { CHANGE_KINDS } from "../shared/change-kind.ts";
 import { ALL_ROUTES, type RouteId } from "./types.ts";
 
 interface KstackCompletionItem {
@@ -18,7 +17,6 @@ const READINESS_MODES = ["check", "watch"] as const;
 /** Flags that take a finite, completable value. */
 const VALUE_FLAGS: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
 	["--route", ROUTE_IDS],
-	["--change-kind", CHANGE_KINDS],
 	["--mode", AUTOPILOT_MODES],
 	["--method", LAND_METHODS],
 	["--readiness", READINESS_MODES],
@@ -29,20 +27,7 @@ const VALUE_FLAGS: ReadonlyMap<string, readonly string[]> = new Map<string, read
  * number) but that value is free-form, so only the flag itself is offered;
  * its value is never guessed.
  */
-const ALL_FLAGS = [
-	"--route",
-	"--single",
-	"--stack",
-	"--worktree",
-	"--change-kind",
-	"--no-adversary",
-	"--plan-only",
-	"--mode",
-	"--pr",
-	"--method",
-	"--readiness",
-	"--",
-] as const;
+const ALL_FLAGS = ["--route", "--mode", "--pr", "--method", "--readiness", "--"] as const;
 
 /**
  * Split `prefix` into the text before the token currently being typed and
@@ -59,7 +44,7 @@ function splitLastToken(prefix: string) {
 	return { base: prefix.slice(0, start), token: prefix.slice(start) };
 }
 
-const BOOLEAN_FLAGS = new Set(["--single", "--stack", "--worktree", "--no-adversary", "--plan-only"]);
+const BOOLEAN_FLAGS = new Set<string>();
 const VALUE_TAKING_FLAGS = new Set([...VALUE_FLAGS.keys(), "--pr"]);
 
 /**

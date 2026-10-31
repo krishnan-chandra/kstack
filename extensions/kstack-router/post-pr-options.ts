@@ -36,13 +36,6 @@ function lookupChoice<T extends string>(
 	return choices.find((choice) => choice.label === selected)?.value;
 }
 
-function inapplicableImplementationFlags(args: RouterArgs): string | undefined {
-	if (args.delivery) return "--single/--stack is only valid with implementation routes.";
-	if (args.worktree) return "--worktree is only valid with the change or fast-change routes.";
-	if (args.changeKind) return "--change-kind is only valid with the change or fast-change routes.";
-	return undefined;
-}
-
 function inapplicablePostPrFlags(args: RouterArgs): string | undefined {
 	if (args.autopilotMode) return "--mode is only valid with the pr-autopilot route.";
 	if (args.prNumber !== undefined) return "--pr is only valid with the pr-autopilot or land routes.";
@@ -72,8 +65,6 @@ export async function resolvePostPrOptions(
 		return error ? { failed: error } : { ok: true };
 	}
 
-	const implementationError = inapplicableImplementationFlags(args);
-	if (implementationError) return { failed: implementationError };
 	if (route === "pr-autopilot" && (args.landMethod || args.readiness)) {
 		return { failed: "--method and --readiness are only valid with the land route." };
 	}

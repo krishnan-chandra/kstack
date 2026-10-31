@@ -13,7 +13,6 @@ const EXPECTED_EXTENSIONS = [
 	"land",
 	"openrouter-floor",
 	"parallel-agents",
-	"plan-implement",
 	"pr-autopilot",
 	"session-archive",
 	"steering-swap",

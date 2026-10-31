@@ -20,9 +20,15 @@ Keep finding IDs stable across rounds. An `approve` verdict is invalid while any
 blocking finding remains open. Report a finding once; do not repeat style
 preferences as blockers.
 
-When the host requests a `KSTACK_RESPONSE` acknowledgement, put that exact line
-first. After it, return exactly this Markdown structure (the host removes the
-acknowledgement before parsing):
+## Inputs
+
+Read the absolute paths listed in the `## Inputs` section of your task message.
+The plan is authoritative; if the execution ledger or diff contradicts it,
+report the conflict.
+
+## Output
+
+Return exactly this Markdown structure in your final response:
 
 ```markdown
 Verdict: approve | revise

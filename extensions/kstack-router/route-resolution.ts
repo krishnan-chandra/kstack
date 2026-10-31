@@ -1,12 +1,11 @@
 /** Route decision pipeline, isolated from Pi command and UI contexts. */
 
-import type { ChangeKind } from "../shared/change-kind.ts";
 import type { ModelThinkingLevel } from "../shared/kstack-config.ts";
 import { getRouteLabel } from "./catalog.ts";
 import { buildRouteAlternatives, formatRecommendation } from "./classification.ts";
 import type { ClassifierRunResult } from "./classifier-runner.ts";
 import type { ClassifierModelResolution } from "./config.ts";
-import type { DeliveryRecommendation, RouteId, RouterArgs, RouterConfig } from "./types.ts";
+import type { RouteId, RouterArgs, RouterConfig } from "./types.ts";
 
 export interface RouteResolutionEffects {
 	notify(message: string, level: "info" | "warning" | "error"): void;
@@ -27,8 +26,6 @@ export interface RouteResolutionEffects {
 
 interface ResolvedRoute {
 	route: RouteId;
-	delivery: DeliveryRecommendation;
-	changeKind: ChangeKind;
 	overrode: boolean;
 	modelSource: string;
 	confidence?: string;
@@ -47,9 +44,6 @@ export async function resolveRoute(
 ): Promise<RouteResolution> {
 	const { parsedArgs } = input;
 	let route = parsedArgs.route;
-	const worktree = parsedArgs.worktree ?? false;
-	let delivery: DeliveryRecommendation = parsedArgs.delivery ?? (worktree ? "single" : undefined);
-	let changeKind: ChangeKind = parsedArgs.changeKind ?? "generic";
 	let overrode = false;
 	let modelSource = "explicit --route";
 	let confidence: string | undefined;
@@ -96,11 +90,7 @@ export async function resolveRoute(
 				const recommendation = classifierResult.envelope;
 				fx.notify(formatRecommendation(recommendation, modelSource), "info");
 				const alternatives = buildRouteAlternatives(recommendation.route);
-				const selectionTitle =
-					recommendation.route === "change"
-						? "Accept route or select Fast implement for an existing plan?"
-						: "Accept route or choose another?";
-				const selected = await fx.selectRoute(selectionTitle, [
+				const selected = await fx.selectRoute("Accept route or choose another?", [
 					{ route: recommendation.route, label: `✓ Accept: ${getRouteLabel(recommendation.route)}` },
 					...alternatives.map((alternative) => ({
 						route: alternative.id,
@@ -114,10 +104,6 @@ export async function resolveRoute(
 				}
 				route = selected;
 				overrode = route !== recommendation.route;
-				// Classifier delivery applies only to the full change route;
-				// fast-change is always single-PR.
-				if (!overrode && route === "change" && recommendation.delivery && !delivery) delivery = recommendation.delivery;
-				if (!overrode && recommendation.changeKind && !parsedArgs.changeKind) changeKind = recommendation.changeKind;
 			} else {
 				fx.notify(
 					`Classifier did not produce a valid route (${classifierResult.error}). Please pick a route manually.`,
@@ -136,28 +122,7 @@ export async function resolveRoute(
 		}
 	}
 
-	if (parsedArgs.changeKind && route !== "change" && route !== "fast-change") {
-		return { failed: "--change-kind is only valid with the change or fast-change routes." };
-	}
-	if (worktree && route !== "change" && route !== "fast-change") {
-		return { failed: "--worktree is only valid with the change or fast-change routes." };
-	}
-	if (route === "fast-change") {
-		if (delivery === "stack")
-			return { failed: "fast-change supports only single-PR workstreams. Use --route change --stack." };
-		delivery = "single";
-	}
-	if (route === "change" && !delivery) {
-		if (!overrode) {
-			const choice = await fx.selectOption("Delivery mode for change?", ["single (default)", "stack", "Cancel"]);
-			if (!fx.isSessionCurrent() || !choice || choice === "Cancel") return { cancelled: true };
-			delivery = choice === "stack" ? "stack" : "single";
-		} else {
-			delivery = "single";
-		}
-	}
-
-	return { resolved: { route, delivery, changeKind, overrode, modelSource, confidence } };
+	return { resolved: { route, overrode, modelSource, confidence } };
 }
 
 async function selectManualRoute(title: string, fx: RouteResolutionEffects): Promise<RouteId | undefined> {

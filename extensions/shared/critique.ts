@@ -1,5 +1,6 @@
 /** Parse an adversary's Markdown critique into the debate domain model. */
 
+/* exported: shared debate domain model consumed by council/protocol.ts */
 export interface CritiqueFinding {
 	id: string;
 	text: string;
@@ -10,6 +11,7 @@ interface ResolvedCritiqueFinding {
 	summary: string;
 }
 
+/* exported: shared debate domain model consumed by council/protocol.ts */
 export interface Critique {
 	verdict: "approve" | "revise";
 	blocking: CritiqueFinding[];

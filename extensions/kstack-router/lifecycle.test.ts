@@ -36,7 +36,7 @@ describe("RouterLifecycle", () => {
 		const session = lifecycle.sessionToken();
 		assert.ok(session);
 
-		const first = lifecycle.beginDispatch(session, { route: "change" });
+		const first = lifecycle.beginDispatch(session, { route: "review" });
 		assert.ok(first);
 		assert.equal(lifecycle.beginDispatch(session, { route: "investigate" }), undefined);
 		lifecycle.endDispatch(first);
@@ -136,10 +136,10 @@ describe("RouterLifecycle", () => {
 		assert.ok(session);
 
 		assert.ok(lifecycle.beginClassifier(session));
-		assert.equal(lifecycle.beginDispatch(session, { route: "change" }), undefined);
+		assert.equal(lifecycle.beginDispatch(session, { route: "review" }), undefined);
 		lifecycle.endClassifier(session);
 
-		const dispatch = lifecycle.beginDispatch(session, { route: "change" });
+		const dispatch = lifecycle.beginDispatch(session, { route: "review" });
 		assert.ok(dispatch);
 		assert.equal(lifecycle.beginClassifier(session), undefined);
 	});
