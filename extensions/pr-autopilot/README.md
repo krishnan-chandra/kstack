@@ -313,15 +313,7 @@ push.
 ## Integration
 
 The autopilot is designed to be invoked after a plan → implement workflow
-publishes a draft PR. `/kstack` can also dispatch it:
-
-```text
-/kstack --route pr-autopilot --mode drive
-/kstack --route pr-autopilot --mode check --pr 42
-```
-
-Omit `--pr` to keep the existing lowest-unmerged auto-detection. The router
-collects a missing mode or PR through deterministic prompts; it does not merge.
+publishes a draft PR.
 
 When Land selects an upper PR in a local jj stack, `jj-stacked-prs` invokes PR
 Autopilot for each frontier in bottom-up order. Autopilot still handles one

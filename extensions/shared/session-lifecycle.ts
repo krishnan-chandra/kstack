@@ -10,7 +10,7 @@ export interface SessionToken {
  * the generation before invoking the hook, so abort callbacks cannot observe a
  * stale token as current.
  */
-export class SessionLifecycle {
+class SessionLifecycle {
 	private generation = 0;
 	private sessionActive = false;
 

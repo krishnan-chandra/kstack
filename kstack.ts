@@ -3,7 +3,6 @@ import githubStackedPrs from "./extensions/github-stacked-prs/index.ts";
 import graphiteStackedPrs from "./extensions/graphite-stacked-prs/index.ts";
 import handoff from "./extensions/handoff/index.ts";
 import jjStackedPrs from "./extensions/jj-stacked-prs/index.ts";
-import kstackRouter from "./extensions/kstack-router/index.ts";
 import land from "./extensions/land/index.ts";
 import openrouterFloor from "./extensions/openrouter-floor/index.ts";
 import parallelAgents from "./extensions/parallel-agents/index.ts";
@@ -18,7 +17,6 @@ const KSTACK_EXTENSIONS: ReadonlyArray<{ name: string; register: ExtensionFactor
 	{ name: "github-stacked-prs", register: githubStackedPrs },
 	{ name: "handoff", register: handoff },
 	{ name: "jj-stacked-prs", register: jjStackedPrs },
-	{ name: "kstack-router", register: kstackRouter },
 	{ name: "land", register: land },
 	{ name: "openrouter-floor", register: openrouterFloor },
 	{ name: "parallel-agents", register: parallelAgents },

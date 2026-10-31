@@ -12,7 +12,6 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
 | [`openrouter-floor`](extensions/openrouter-floor/) | Uses `:floor` by default, with `floor`, `nitro`, or `none` configurable per model or per session via `/openrouter-route`. Records bounded, redacted variant and service-tier observations; existing model suffixes pass through. |
-| [`kstack-router`](extensions/kstack-router/) | Optional front door: `/kstack [--route <id>] [--mode <mode>] [--pr <n>] [--method <method>] [--readiness <mode>] [--] <task>` routes tasks through a classifier to review, PR autopilot, or confirmed landing. Plan + implement workflows run through `/skill:adversarial-planning`. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
 | [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
@@ -96,9 +95,7 @@ swarm, and the `how` and `why` investigation skills use sections in the same
 file. `council.seats` lists the 1–5 reviewer models for adversarial planning
 and implementation review, with their round limits and the implementation review
 timeout. A seat that uses the planner's model sits out. The pre-council
-`adversary` section is rejected with a message that names the rename. The router's
-review route always runs on `kstack-router.review.models` (default Opus 5.5,
-then Astra). A top-level
+`adversary` section is rejected with a message that names the rename. A top-level
 `aliases` array (or any `{label, model, thinking}`
 entry anywhere in the file) defines model short names that `/handoff --model`
 resolves alongside Pi model display names.
@@ -156,14 +153,11 @@ subset. Set `defaultModel` to one of the allowlisted model IDs.
 
 ## Session names in development workflows
 
-Kstack names an unnamed session as soon as `/kstack` knows
-the task, before waiting, preflight, classification, or child-model work.
-Automatically derived names are short lowercase slugs, such as
-`archive-multiple-sessions`. `/handoff` gives its replacement session the same
-kind of slug before sending that session's first user message. Existing names
-are never overwritten.
+`/handoff` gives its replacement session an automatically derived name before
+sending that session's first user message: a short lowercase slug, such as
+`archive-multiple-sessions`. Existing names are never overwritten.
 
-For workflows started outside those commands, use Pi's built-in naming support:
+For workflows started outside `/handoff`, use Pi's built-in naming support:
 
 ```bash
 pi --name "Named session archive"
@@ -386,7 +380,6 @@ node --test scripts/install/index.test.mjs
 node --test scripts/check-exports/index.test.mjs
 npm run test:handoff
 npm run test:session-archive
-node --test extensions/kstack-router/
 node --test extensions/land/
 node --test extensions/pr-autopilot/
 node --test extensions/jj-stacked-prs/
