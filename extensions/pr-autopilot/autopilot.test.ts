@@ -585,7 +585,7 @@ describe("pr-autopilot state machine", () => {
 			const models = DEFAULT_AUTOPILOT_MODELS;
 			assert.equal(pickModel(models, () => 0).label, "luna");
 			assert.equal(pickModel(models, () => 0.32).label, "luna");
-			assert.equal(pickModel(models, () => 1 / 3).label, "glm");
+			assert.equal(pickModel(models, () => 1 / 3).label, "minimax");
 			assert.equal(pickModel(models, () => 0.99).label, "deepseek");
 		});
 	});

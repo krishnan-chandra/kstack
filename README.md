@@ -309,10 +309,12 @@ the review/fix/CI loop with only tiny models:
 /land --pr 42 --readiness watch        # run autopilot for each selected frontier
 ```
 
-`pr-autopilot` uses only tiny models (GPT-5.6 Luna, GLM 5.2, and DeepSeek
-V4 Flash) recorded in the `pr-autopilot` section of `kstack.example.json`. It stops at
-merge-ready — it never auto-merges or rebases shared history. See
-[`extensions/pr-autopilot/README.md`](extensions/pr-autopilot/README.md) for details.
+`pr-autopilot` uses only tiny models (GPT-6 Luna, MiniMax M3.1 Flash, and
+DeepSeek V4.1 Flash) recorded in the `pr-autopilot` section of
+`kstack.example.json`. It stops at merge-ready — it never auto-merges or
+rebases shared history. See
+[`extensions/pr-autopilot/README.md`](extensions/pr-autopilot/README.md) for
+details.
 
 To remove the package registration, run this from the same checkout:
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { validateRoutingConfig } from "./extensions/openrouter-floor/routing-policy.ts";
+import { validateConfig as validateAutopilotConfig } from "./extensions/pr-autopilot/config.ts";
 import { resolveCouncilRoster } from "./extensions/shared/council/roster.ts";
 import { validateCouncilConfig } from "./extensions/shared/kstack-config.ts";
 import { validateInvestigationConfig } from "./skills/investigation-model.mjs";
@@ -21,6 +22,9 @@ test("kstack.example.json passes the council and routing policy validators", () 
 
 	const investigation = validateInvestigationConfig(example.investigation);
 	assert.equal(investigation.ok, true, investigation.ok ? "" : investigation.error);
+
+	const autopilot = validateAutopilotConfig(example["pr-autopilot"]);
+	assert.equal(autopilot.ok, true, autopilot.ok ? "" : autopilot.error);
 });
 
 test("kstack.example.json leaves council seats after the example planner sits out", () => {

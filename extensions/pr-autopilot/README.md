@@ -34,7 +34,8 @@ If `--pr` is omitted, the autopilot auto-detects the **lowest unmerged open PR a
 
 Every child agent in a run uses one model chosen at random from the configured
 array. All Pi thinking levels are accepted; omitted thinking defaults to
-`"low"`. The default pool is GPT-5.6 Luna, GLM 5.2, and DeepSeek V4 Flash.
+`"low"`. The default pool is GPT-6 Luna, MiniMax M3.1 Flash, and
+DeepSeek V4.1 Flash.
 
 If no `pr-autopilot` section exists in `kstack.json`, the complete built-in
 pool is used. Explicitly configured model IDs are passed to child Pi processes
@@ -51,9 +52,9 @@ Config lives in the `"pr-autopilot"` section of
 {
   "pr-autopilot": {
     "models": [
-      { "label": "luna", "model": "openai/gpt-5.6-luna", "thinking": "low" },
-      { "label": "glm", "model": "openrouter/z-ai/glm-5.2", "thinking": "low" },
-      { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" }
+      { "label": "luna", "model": "openai/gpt-6-luna", "thinking": "low" },
+      { "label": "minimax", "model": "openrouter/minimax/minimax-m3.1-flash", "thinking": "low" },
+      { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinking": "low" }
     ],
     "maxConcurrency": 3,
     "timeoutMinutes": 5,
