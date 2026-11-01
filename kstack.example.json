@@ -53,7 +53,7 @@
       },
       {
         "label": "glimmer",
-        "model": "openrouter/meta/muse-spark-1.3",
+        "model": "openrouter/meta/muse-spark-open",
         "thinking": "medium"
       }
     ],
@@ -81,19 +81,19 @@
   "pr-autopilot": {
     "models": [
       {
-        "label": "glm",
-        "model": "openrouter/z-ai/glm-5.3-flash",
+        "label": "minimax",
+        "model": "openrouter/minimax/minimax-m3.1-flash",
         "thinking": "low"
       },
       {
         "label": "deepseek",
-        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
+        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
         "thinking": "low"
       },
       {
         "label": "luna",
         "model": "openai/gpt-6-luna",
-        "thinking": "high"
+        "thinking": "low"
       },
       {
         "label": "gemini",

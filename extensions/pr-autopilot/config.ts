@@ -8,9 +8,9 @@ import { type BoundaryValue, isObject, type JsonObject } from "../shared/validat
  *   {
  *     "pr-autopilot": {
  *       "models": [
- *         { "label": "luna",     "model": "openai/gpt-5.6-luna", "thinking": "low" },
- *         { "label": "glm",       "model": "openrouter/z-ai/glm-5.2", "thinking": "low" },
- *         { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "low" }
+ *         { "label": "luna",     "model": "openai/gpt-6-luna", "thinking": "low" },
+ *         { "label": "minimax",  "model": "openrouter/minimax/minimax-m3.1-flash", "thinking": "low" },
+ *         { "label": "deepseek", "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinking": "low" }
  *       ],
  *       "maxConcurrency": 3,
  *       "timeoutMinutes": 5,
@@ -21,8 +21,8 @@ import { type BoundaryValue, isObject, type JsonObject } from "../shared/validat
  * The autopilot uses only the configured model pool. Any supported thinking
  * level is accepted, and explicit model IDs are trusted so provider models can be used
  * before Pi's bundled catalog catches up. When no config file exists the
- * built-in DEFAULT_AUTOPILOT_MODELS (GPT-5.6 Luna, GLM 5.2, DeepSeek V4 Flash) are
- * used.
+ * built-in DEFAULT_AUTOPILOT_MODELS (GPT-6 Luna, MiniMax M3.1 Flash,
+ * DeepSeek V4.1 Flash) are used.
  */
 
 import { validateBoundedNumber } from "../shared/config-validate.ts";
@@ -41,9 +41,9 @@ type ConfigLoad = SharedConfigLoad<ResolvedAutopilotConfig>;
  * triage loops.
  */
 export const DEFAULT_AUTOPILOT_MODELS: readonly AutopilotModelSpec[] = [
-	{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-	{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
-	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4-flash", thinking: "low" },
+	{ label: "luna", model: "openai/gpt-6-luna", thinking: "low" },
+	{ label: "minimax", model: "openrouter/minimax/minimax-m3.1-flash", thinking: "low" },
+	{ label: "deepseek", model: "openrouter/deepseek/deepseek-v4.1-flash-1017", thinking: "low" },
 ] as const;
 
 /** Validate one model spec, defaulting its thinking level to "low". */

@@ -8,9 +8,9 @@ import { DEFAULT_AUTOPILOT_MODELS, loadConfig, modelCliId, resolveModels, valida
 describe("pr-autopilot config", () => {
 	it("defaults to three models", () => {
 		assert.equal(DEFAULT_AUTOPILOT_MODELS.length, 3);
-		assert.equal(DEFAULT_AUTOPILOT_MODELS[0].model, "openai/gpt-5.6-luna");
-		assert.equal(DEFAULT_AUTOPILOT_MODELS[1].model, "openrouter/z-ai/glm-5.2");
-		assert.equal(DEFAULT_AUTOPILOT_MODELS[2].model, "openrouter/deepseek/deepseek-v4-flash");
+		assert.equal(DEFAULT_AUTOPILOT_MODELS[0].model, "openai/gpt-6-luna");
+		assert.equal(DEFAULT_AUTOPILOT_MODELS[1].model, "openrouter/minimax/minimax-m3.1-flash");
+		assert.equal(DEFAULT_AUTOPILOT_MODELS[2].model, "openrouter/deepseek/deepseek-v4.1-flash-1017");
 		for (const m of DEFAULT_AUTOPILOT_MODELS) {
 			assert.equal(m.thinking, "low");
 		}
@@ -19,8 +19,8 @@ describe("pr-autopilot config", () => {
 	it("validates a well-formed model config", () => {
 		const result = validateConfig({
 			models: [
-				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-				{ label: "lite", model: "openrouter/z-ai/glm-5.2" },
+				{ label: "luna", model: "openai/gpt-6-luna", thinking: "low" },
+				{ label: "lite", model: "openrouter/minimax/minimax-m3.1-flash" },
 			],
 			maxConcurrency: 2,
 			timeoutMinutes: 5,
@@ -40,8 +40,8 @@ describe("pr-autopilot config", () => {
 	it("accepts any supported thinking level", () => {
 		const result = validateConfig({
 			models: [
-				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "max" },
-				{ label: "lite", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
+				{ label: "luna", model: "openai/gpt-6-luna", thinking: "max" },
+				{ label: "lite", model: "openrouter/minimax/minimax-m3.1-flash", thinking: "high" },
 			],
 		});
 		assert.equal(result.ok, true);
@@ -54,7 +54,7 @@ describe("pr-autopilot config", () => {
 
 	it("requires at least 2 models", () => {
 		const result = validateConfig({
-			models: [{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" }],
+			models: [{ label: "luna", model: "openai/gpt-6-luna", thinking: "low" }],
 		});
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /at least 2/);
@@ -140,8 +140,8 @@ describe("pr-autopilot config", () => {
 	it("trusts explicitly configured model IDs even when absent from Pi's registry", () => {
 		const valid = validateConfig({
 			models: [
-				{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-				{ label: "lite", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
+				{ label: "luna", model: "openai/gpt-6-luna", thinking: "low" },
+				{ label: "lite", model: "openrouter/minimax/minimax-m3.1-flash", thinking: "low" },
 			],
 		});
 		assert.equal(valid.ok, true);
@@ -183,8 +183,8 @@ describe("pr-autopilot config", () => {
 					"other-extension": { models: [] },
 					"pr-autopilot": {
 						models: [
-							{ label: "luna", model: "openai/gpt-5.6-luna", thinking: "low" },
-							{ label: "lite", model: "openrouter/z-ai/glm-5.2", thinking: "low" },
+							{ label: "luna", model: "openai/gpt-6-luna", thinking: "low" },
+							{ label: "lite", model: "openrouter/minimax/minimax-m3.1-flash", thinking: "low" },
 						],
 					},
 				}),
