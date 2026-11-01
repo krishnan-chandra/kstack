@@ -8,6 +8,43 @@ from [`../vcs/`](../vcs/README.md), which mutates the local repository.
 Git-fact checks used by Graphite and GitHub. Stack publication and `land` consume
 these contracts directly.
 
+## Stack transaction
+
+`transaction.ts` owns the sequence every stack publication runs (landing joins
+in a follow-up): plan, authorize, lock, re-plan, compare plan IDs, apply,
+release. A provider supplies an adapter with two methods, `plan()` and
+`apply(plan)`, plus its lock target. The transaction owns everything else:
+
+- **Authorization.** `interactive-confirmation` asks with the plan preview.
+  `model-tool` treats the user's explicit request as authorization and skips
+  the dialog. Interactive authorization without a UI returns a `missing-ui`
+  blocker.
+- **Confirm before locking.** A pending dialog never holds the repository lock,
+  so it cannot block another publication or landing. The re-plan under the lock
+  proves the user confirmed what is applied: a different plan ID returns
+  `stale`, and nothing is applied.
+- **Planning never publishes.** `plan()` runs twice, and the second run holds
+  the lock. The lock is deliberately not reentrant. A plan step that publishes,
+  such as a PR Autopilot fix on Graphite (whose backend takes the same lock),
+  would fail against its own lock as `busy`, and any other mutation would run
+  twice. `plan()` must not publish, move refs, or take the lock. Idempotent
+  local bookkeeping is allowed: jj inspection snapshots the working copy, and
+  a second snapshot changes nothing unless files changed, which the plan ID
+  then catches. Readiness work that can publish runs before the transaction.
+  Reentrancy was rejected because it would hide double mutation, not prevent it.
+- **Uniform lock outcomes.** Contention returns one `busy` message with the
+  holder's pid and start time. A failed lock release becomes a `warnings` entry
+  on the outcome, so tool callers see it as well as TUI users. If the locked
+  step throws instead, the release failure is appended to the thrown error's
+  message; the error keeps its class and indeterminate classification.
+  Cancellation at any point before `apply` starts returns `cancelled`.
+- **Phases.** An optional callback reports `planning`, `confirming`, `locking`,
+  `replanning`, and `applying` for status lines.
+
+`apply()` is the only mutating step. It keeps its own progress accounting and
+any freshness checks it needs mid-mutation (jj re-plans after generating PR
+metadata, for example).
+
 ## PR transitions during publication
 
 `pr-transitions.ts` keeps successful create and ready mutations together with

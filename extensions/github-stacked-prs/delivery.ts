@@ -9,7 +9,7 @@ import {
 	isGitHubIndeterminate,
 	type OpenPullRequest,
 } from "../shared/github.ts";
-import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
+import type { acquirePublicationLock } from "../shared/publication-lock.ts";
 import type { StackPreflight } from "../shared/stack/channel.ts";
 import {
 	parseStackManifest,
@@ -22,6 +22,7 @@ import { planIdFor } from "../shared/stack/plan-id.ts";
 import { createPrTransitions } from "../shared/stack/pr-transitions.ts";
 import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { runPublication, type StackPlanResult } from "../shared/stack/transaction.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -55,6 +56,8 @@ interface GitHubPublicationPlan {
 interface GitHubPublicationDeps {
 	exec: ExecFn;
 	gateway: GitHubGateway;
+	/** Interactive authorization is refused without a UI; tool authorization ignores both fields. */
+	hasUI: boolean;
 	confirm(title: string, body: string): Promise<boolean>;
 	signal?: AbortSignal;
 	acquireLock?: typeof acquirePublicationLock;
@@ -242,66 +245,36 @@ export async function publishGitHubStack(input: {
 	authorization: "interactive-confirmation" | "model-tool";
 	deps: GitHubPublicationDeps;
 }): Promise<StackPublishOutcome> {
-	if (input.deps.signal?.aborted) return { status: "cancelled" };
-	const verified = await verifyStackManifestGitFacts(
-		input.cwd,
-		input.manifest,
-		input.deps.exec,
-		"GitHub",
-		input.deps.signal,
+	const { deps } = input;
+	return runPublication(
+		{
+			async plan(signal) {
+				const verified = await verifyStackManifestGitFacts(input.cwd, input.manifest, deps.exec, "GitHub", signal);
+				if (!verified.ok) return planBlocked(verified.error);
+				const planned = await planGitHubPublication({
+					stack: verified.stack,
+					remote: input.remote,
+					ready: input.ready,
+					exec: deps.exec,
+					gateway: deps.gateway,
+					signal,
+				});
+				return planned.ok ? planned : planBlocked(planned.error);
+			},
+			apply: (plan) => applyPublication(plan, input.ready, deps),
+		},
+		{
+			authorization: input.authorization,
+			ui: { hasUI: deps.hasUI, confirm: (title, body) => deps.confirm(title, body) },
+			confirmTitle: "Publish this GitHub stack?",
+			lock: { exec: deps.exec, cwd: input.cwd, acquireLock: deps.acquireLock, realpath: deps.realpath },
+			signal: deps.signal,
+		},
 	);
-	if (input.deps.signal?.aborted) return { status: "cancelled" };
-	if (!verified.ok) return blocked(verified.error);
-	const planned = await planGitHubPublication({
-		stack: verified.stack,
-		remote: input.remote,
-		ready: input.ready,
-		exec: input.deps.exec,
-		gateway: input.deps.gateway,
-		signal: input.deps.signal,
-	});
-	if (!planned.ok) return blocked(planned.error);
-	const lock = await acquireRepositoryPublicationLock(input.deps.exec, planned.plan.repositoryRoot, {
-		acquireLock: input.deps.acquireLock,
-		realpath: input.deps.realpath,
-		signal: input.deps.signal,
-	});
-	if (!lock.ok) {
-		return lock.kind === "busy"
-			? { status: "busy", message: "Another stack publication or landing is active for this repository." }
-			: { status: "failed", error: lock.error };
-	}
-	try {
-		const freshFacts = await verifyStackManifestGitFacts(
-			input.cwd,
-			input.manifest,
-			input.deps.exec,
-			"GitHub",
-			input.deps.signal,
-		);
-		if (input.deps.signal?.aborted) return { status: "cancelled" };
-		if (!freshFacts.ok) return blocked(freshFacts.error, planned.plan.planId);
-		const fresh = await planGitHubPublication({
-			stack: freshFacts.stack,
-			remote: input.remote,
-			ready: input.ready,
-			exec: input.deps.exec,
-			gateway: input.deps.gateway,
-			signal: input.deps.signal,
-		});
-		if (!fresh.ok) return blocked(fresh.error, planned.plan.planId);
-		if (fresh.plan.planId !== planned.plan.planId) {
-			return { status: "stale", providedPlanId: planned.plan.planId, recomputedPlanId: fresh.plan.planId };
-		}
-		if (input.authorization === "interactive-confirmation") {
-			if (!(await input.deps.confirm("Publish this GitHub stack?", fresh.plan.preview))) {
-				return { status: "declined", planId: fresh.plan.planId };
-			}
-		}
-		return await applyPublication(fresh.plan, input.ready, input.deps);
-	} finally {
-		lock.lock.release();
-	}
+}
+
+function planBlocked(message: string): StackPlanResult<GitHubPublicationPlan> {
+	return { ok: false, blockers: [{ code: "provider-contract", message }] };
 }
 
 export async function publishGitHubManifestFile(input: {

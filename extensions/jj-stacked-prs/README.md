@@ -183,7 +183,8 @@ navigation comments after a core publication or ready-state mutation fails. If
 a navigation-comment write fails after successful publication, later comment
 writes are skipped and the error is reported separately.
 
-Publication acquires an advisory per-repository file lock under
+Publication runs through the shared [stack transaction](../shared/stack/README.md#stack-transaction),
+which acquires an advisory per-repository file lock under
 `<agentDir>/kstack-locks/`. A second process that attempts to publish the same
 repository is blocked with the holder's pid and start time. Locks owned by a
 dead pid are reclaimed automatically; an unreadable or corrupt lock receives a

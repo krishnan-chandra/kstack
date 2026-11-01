@@ -101,32 +101,25 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 	);
 
 	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
-		claimStackPublication(data, "graphite", async (input, ctx) => {
-			if (!ctx.hasUI) {
-				return {
-					status: "blocked",
-					blockers: [{ code: "missing-ui", message: "Publication requires interactive TUI/RPC mode." }],
-				};
-			}
-			return withRun(
+		claimStackPublication(data, "graphite", async (input, ctx) =>
+			withRun(
 				ctx,
 				async (signal) => {
 					ctx.ui.setStatus("graphite-stack", "graphite-stack: publishing");
 					const publicationSignals = [signal];
 					if (ctx.signal) publicationSignals.push(ctx.signal);
 					if (input.signal) publicationSignals.push(input.signal);
-					const publicationSignal = AbortSignal.any(publicationSignals);
-					return publishGraphiteStack(
-						input.repositoryPath,
-						input.manifestPath,
-						(title, body) => ctx.ui.confirm(title, body),
+					return publishGraphiteStack({
+						cwd: input.repositoryPath,
+						manifestPath: input.manifestPath,
 						exec,
-						publicationSignal,
-					);
+						ui: { hasUI: ctx.hasUI, confirm: (title, body) => ctx.ui.confirm(title, body) },
+						signal: AbortSignal.any(publicationSignals),
+					});
 				},
 				() => ({ status: "busy" as const, message: "Another Graphite stack run is active." }),
-			);
-		}),
+			),
+		),
 	);
 
 	pi.events.on(STACK_LANDING_EVENT, (data) =>

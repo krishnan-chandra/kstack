@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 /** Validated local Graphite stack evidence and parent-owned publication. */
 
 import { commandDiagnostic, type ExecFn, type ExecFnResult, runCommand } from "../shared/git-exec.ts";
-import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
+import type { acquirePublicationLock } from "../shared/publication-lock.ts";
 import type { StackPreflight } from "../shared/stack/channel.ts";
 import {
 	parseStackManifest,
@@ -13,6 +13,7 @@ import {
 } from "../shared/stack/manifest.ts";
 import type { CompletedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { planIdFor } from "../shared/stack/plan-id.ts";
+import { runPublication } from "../shared/stack/transaction.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -178,8 +179,9 @@ async function existingForRef(
 	exec: ExecFn,
 	cwd: string,
 	ref: string,
+	signal?: AbortSignal,
 ): Promise<{ ok: true; pr?: ExistingPullRequest } | { ok: false; error: string }> {
-	const result = await queryOpenPullRequests({ exec, cwd, filter: ["--head", ref], limit: 2 });
+	const result = await queryOpenPullRequests({ exec, cwd, filter: ["--head", ref], limit: 2, signal });
 	if (!result.ok) return { ok: false, error: `Could not inspect GitHub PR for ${ref}: ${result.error}` };
 	if (result.pullRequests.some((pr) => pr.ref !== ref)) {
 		return { ok: false, error: `GitHub returned invalid PR data for ${ref}.` };
@@ -232,10 +234,13 @@ async function inspectPublishedStack(
 export async function planGraphitePublication(
 	stack: VerifiedStackManifest,
 	exec: ExecFn,
+	signal?: AbortSignal,
 ): Promise<{ ok: true; plan: GraphitePublicationPlan } | { ok: false; error: string }> {
 	const existing: ExistingPullRequest[] = [];
 	for (const slice of stack.manifest.slices) {
-		const found = await existingForRef(exec, stack.repositoryRoot, slice.branch);
+		// The locked re-plan runs here too; stop querying as soon as the caller cancels.
+		if (signal?.aborted) return { ok: false, error: "Graphite publication planning was cancelled." };
+		const found = await existingForRef(exec, stack.repositoryRoot, slice.branch, signal);
 		if (!found.ok) return found;
 		if (found.pr) existing.push(found.pr);
 	}
@@ -267,88 +272,94 @@ export async function planGraphitePublication(
 	};
 }
 
-/** Revalidate under a repository lock, submit once, and verify every exact GitHub PR. */
-export async function submitGraphiteStack(
+/** Submit the confirmed plan once and verify every exact GitHub PR. Runs under the repository lock. */
+async function submitGraphitePlan(
 	plan: GraphitePublicationPlan,
-	exec: ExecFn,
-	deps: { acquireLock?: typeof acquirePublicationLock; realpath?: (path: string) => string; signal?: AbortSignal } = {},
-): Promise<StackPublishOutcome> {
-	const lock = await acquireRepositoryPublicationLock(exec, plan.repositoryRoot, deps);
-	if (!lock.ok) {
-		return lock.kind === "busy"
-			? { status: "busy", message: "Another Graphite publication or landing is active for this repository." }
-			: { status: "failed", error: lock.error };
-	}
-	try {
-		const verified = await verifyGraphiteStack(plan.repositoryRoot, plan.manifest, exec, deps.signal);
-		if (deps.signal?.aborted) return { status: "cancelled", completedActions: [] };
-		if (!verified.ok) return blockedPublish(verified.error);
-		const current = await planGraphitePublication(verified.stack, exec);
-		if (!current.ok) return blockedPublish(current.error);
-		if (current.plan.planId !== plan.planId) {
-			return { status: "stale", providedPlanId: plan.planId, recomputedPlanId: current.plan.planId };
-		}
-		let submitted: ExecFnResult;
-		try {
-			submitted = await exec("gt", ["--no-interactive", "--no-ai", "submit", "--stack", "--draft", "--no-edit"], {
-				cwd: plan.repositoryRoot,
-				timeout: 60_000,
-				signal: deps.signal,
-			});
-		} catch (error) {
-			const inspected = await inspectPublishedStack(exec, plan);
-			const message = `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)} ${inspected.errors.join(" ")}`;
-			return graphiteSubmitFailure(plan, message, inspected.pullRequests);
-		}
-		const inspected = await inspectPublishedStack(exec, plan);
-		if (submitted.code !== 0) {
-			const message = `gt submit --stack returned ${commandDiagnostic(submitted)} after publication began. ${inspected.errors.join(" ")}`;
-			return graphiteSubmitFailure(plan, message, inspected.pullRequests);
-		}
-		if (inspected.errors.length > 0) {
-			return graphiteSubmitFailure(plan, inspected.errors.join(" "), inspected.pullRequests);
-		}
-		const createdActions = graphiteCreatedActions(plan, inspected.pullRequests);
-		return {
-			status: "completed",
-			planId: plan.planId,
-			publication: graphitePublication(inspected.pullRequests),
-			completedActions: createdActions,
-		};
-	} finally {
-		lock.lock.release();
-	}
-}
-
-export async function publishGraphiteStack(
-	cwd: string,
-	manifestPath: string | undefined,
-	confirm: (title: string, body: string) => Promise<boolean>,
 	exec: ExecFn,
 	signal?: AbortSignal,
 ): Promise<StackPublishOutcome> {
-	if (!manifestPath) return { status: "failed", error: "Graphite stack manifest path is unavailable." };
+	let submitted: ExecFnResult;
+	try {
+		submitted = await exec("gt", ["--no-interactive", "--no-ai", "submit", "--stack", "--draft", "--no-edit"], {
+			cwd: plan.repositoryRoot,
+			timeout: 60_000,
+			signal,
+		});
+	} catch (error) {
+		const inspected = await inspectPublishedStack(exec, plan);
+		const message = `gt submit may have started before the process failed: ${error instanceof Error ? error.message : String(error)} ${inspected.errors.join(" ")}`;
+		return graphiteSubmitFailure(plan, message, inspected.pullRequests);
+	}
+	const inspected = await inspectPublishedStack(exec, plan);
+	if (submitted.code !== 0) {
+		const message = `gt submit --stack returned ${commandDiagnostic(submitted)} after publication began. ${inspected.errors.join(" ")}`;
+		return graphiteSubmitFailure(plan, message, inspected.pullRequests);
+	}
+	if (inspected.errors.length > 0) {
+		return graphiteSubmitFailure(plan, inspected.errors.join(" "), inspected.pullRequests);
+	}
+	return {
+		status: "completed",
+		planId: plan.planId,
+		publication: graphitePublication(inspected.pullRequests),
+		completedActions: graphiteCreatedActions(plan, inspected.pullRequests),
+	};
+}
+
+/** Publish a parsed manifest through the shared stack transaction. Graphite publication is interactive only. */
+export async function publishGraphiteManifest(input: {
+	cwd: string;
+	manifest: StackManifest;
+	exec: ExecFn;
+	ui: { hasUI: boolean; confirm(title: string, body: string): Promise<boolean> };
+	signal?: AbortSignal;
+	acquireLock?: typeof acquirePublicationLock;
+	realpath?: (path: string) => string;
+}): Promise<StackPublishOutcome> {
+	const { exec } = input;
+	return runPublication(
+		{
+			async plan(signal) {
+				const verified = await verifyGraphiteStack(input.cwd, input.manifest, exec, signal);
+				if (!verified.ok) return { ok: false, blockers: [{ code: "provider-contract", message: verified.error }] };
+				const planned = await planGraphitePublication(verified.stack, exec, signal);
+				return planned.ok ? planned : { ok: false, blockers: [{ code: "provider-contract", message: planned.error }] };
+			},
+			apply: (plan, signal) => submitGraphitePlan(plan, exec, signal),
+		},
+		{
+			authorization: "interactive-confirmation",
+			ui: input.ui,
+			confirmTitle: "Publish this Graphite stack?",
+			lock: { exec, cwd: input.cwd, acquireLock: input.acquireLock, realpath: input.realpath },
+			signal: input.signal,
+		},
+	);
+}
+
+export async function publishGraphiteStack(input: {
+	cwd: string;
+	manifestPath: string | undefined;
+	exec: ExecFn;
+	ui: { hasUI: boolean; confirm(title: string, body: string): Promise<boolean> };
+	signal?: AbortSignal;
+}): Promise<StackPublishOutcome> {
+	if (!input.manifestPath) return { status: "failed", error: "Graphite stack manifest path is unavailable." };
 	let raw: string;
 	try {
-		raw = readFileSync(manifestPath, "utf8");
+		raw = readFileSync(input.manifestPath, "utf8");
 	} catch (error) {
-		return {
-			status: "blocked",
-			blockers: [
-				{
-					code: "provider-contract",
-					message: `Could not read the Graphite stack manifest: ${error instanceof Error ? error.message : String(error)}`,
-				},
-			],
-		};
+		return blockedPublish(
+			`Could not read the Graphite stack manifest: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 	const parsed = parseStackManifest(raw);
-	if (!parsed.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: parsed.error }] };
-	const verified = await verifyGraphiteStack(cwd, parsed.manifest, exec, signal);
-	if (signal?.aborted) return { status: "cancelled" };
-	if (!verified.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: verified.error }] };
-	const planned = await planGraphitePublication(verified.stack, exec);
-	if (!planned.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: planned.error }] };
-	if (!(await confirm("Publish this Graphite stack?", planned.plan.preview))) return { status: "declined" };
-	return submitGraphiteStack(planned.plan, exec, { signal });
+	if (!parsed.ok) return blockedPublish(parsed.error);
+	return publishGraphiteManifest({
+		cwd: input.cwd,
+		manifest: parsed.manifest,
+		exec: input.exec,
+		ui: input.ui,
+		signal: input.signal,
+	});
 }

@@ -234,6 +234,12 @@ export function renderConfirmation(plan: PublicationPlan): { ok: true; body: str
 }
 
 export function renderOutcome(outcome: StackPublishOutcome): string {
+	const body = renderPublishStatus(outcome);
+	if (!outcome.warnings?.length) return body;
+	return boundText([body, "", "Warnings:", ...outcome.warnings.map((warning) => `- ${warning}`)].join("\n"));
+}
+
+function renderPublishStatus(outcome: StackPublishOutcome): string {
 	const followUp = publicationMetadataFollowUp(outcome);
 	switch (outcome.status) {
 		case "completed":

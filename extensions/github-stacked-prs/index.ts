@@ -88,6 +88,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 		remote: string;
 		ready: boolean;
 		authorization: "interactive-confirmation" | "model-tool";
+		hasUI: boolean;
 		confirm(title: string, body: string): Promise<boolean>;
 		signal: AbortSignal;
 	}): Promise<StackPublishOutcome> {
@@ -108,7 +109,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 			remote: input.remote,
 			ready: input.ready,
 			authorization: input.authorization,
-			deps: { exec, gateway, confirm: input.confirm, signal: input.signal },
+			deps: { exec, gateway, hasUI: input.hasUI, confirm: input.confirm, signal: input.signal },
 		});
 	}
 
@@ -119,14 +120,8 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 		),
 	);
 	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
-		claimStackPublication(data, "github", async (input, ctx) => {
-			if (!ctx.hasUI) {
-				return {
-					status: "blocked",
-					blockers: [{ code: "missing-ui", message: "Publication requires interactive TUI/RPC mode." }],
-				};
-			}
-			return withRun(
+		claimStackPublication(data, "github", async (input, ctx) =>
+			withRun(
 				ctx,
 				(signal) => {
 					ctx.ui.setStatus("gh-stack", "gh-stack: publishing");
@@ -138,14 +133,15 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 						deps: {
 							exec,
 							gateway,
+							hasUI: ctx.hasUI,
 							confirm: (title, body) => ctx.ui.confirm(title, body),
 							signal: combineSignals(signal, ctx.signal, input.signal),
 						},
 					});
 				},
 				() => ({ status: "busy" as const, message: "Another GitHub stack run is active." }),
-			);
-		}),
+			),
+		),
 	);
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
 		claimStackLanding(data, "github", async ({ input, ctx }) => {
@@ -222,6 +218,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 						remote: parsed.command.remote,
 						ready: parsed.command.ready,
 						authorization: "interactive-confirmation",
+						hasUI: ctx.hasUI,
 						confirm: (title, body) => ctx.ui.confirm(title, body),
 						signal,
 					}),
@@ -257,6 +254,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 						remote: params.remote ?? "origin",
 						ready: params.ready === true,
 						authorization: "model-tool",
+						hasUI: ctx.hasUI,
 						confirm: async () => true,
 						signal: combineSignals(runSignal, signal),
 					}),
