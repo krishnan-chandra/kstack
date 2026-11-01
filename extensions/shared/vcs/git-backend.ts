@@ -1,29 +1,28 @@
 import type { BoundaryValue } from "../validation.ts";
 /** Git implementation of K-Stack's repository-mutation contract. */
 
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import type {
 	CurrentRef,
-	IsolationPlan,
 	MergeBaseResult,
 	VcsBackend,
 	VcsResult,
+	WorkstreamPrimitives,
 	WorkstreamSnapshot,
 } from "./backend.ts";
 import { gitStatusChangedPaths } from "./git-status.ts";
+import { createPrMutation, type PrMutation } from "./mutation.ts";
 import { preflightVcs } from "./preflight.ts";
 import { parseWorktreeInventory } from "./worktree-inventory.ts";
-import { planManagedWorktree } from "./worktree-plan.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 interface GitBackendDeps {
 	exists?: (path: string) => boolean;
 	realpath?: (path: string) => string;
-	mkdir?: (path: string) => void;
 	managedRoot?: string;
 }
 
@@ -33,11 +32,6 @@ function failure(error: BoundaryValue): ExecFnResult {
 
 function output(result: ExecFnResult): string {
 	return result.stdout.trim();
-}
-
-function oneLine(result: ExecFnResult): string | undefined {
-	if (result.code !== 0) return undefined;
-	return output(result) || undefined;
 }
 
 function isContained(root: string, path: string): boolean {
@@ -106,12 +100,10 @@ export async function removeManagedGitWorktree(input: {
 	return { ok: true, ownerRoot };
 }
 
-export class GitBackend implements VcsBackend {
+export class GitBackend implements VcsBackend, WorkstreamPrimitives {
 	readonly id = "git" as const;
-	readonly isolation = {
-		plan: (cwd: string, task: string) => this.planIsolation(cwd, task),
-		create: (plan: IsolationPlan) => this.createIsolation(plan),
-		remove: (cwd: string, ref: string) => this.removeIsolation(cwd, ref),
+	readonly managedWorktree = {
+		remove: (cwd: string, ref: string) => this.removeManagedWorktree(cwd, ref),
 	};
 	private readonly exec: ExecFn;
 	private readonly deps: GitBackendDeps;
@@ -131,6 +123,10 @@ export class GitBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec, { exists: this.deps.exists });
+	}
+
+	prMutation(options: { signal?: AbortSignal } = {}): PrMutation {
+		return createPrMutation(this, options);
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {
@@ -182,68 +178,7 @@ export class GitBackend implements VcsBackend {
 		return details ? { ok: true, empty: false, details } : { ok: true, empty: true };
 	}
 
-	private async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		const planned = await planManagedWorktree({
-			exec: this.exec,
-			cwd,
-			task,
-			managedRoot: this.deps.managedRoot,
-			exists: this.deps.exists,
-			realpath: this.deps.realpath,
-		});
-		return planned.ok ? { ok: true, plan: planned.plan } : planned;
-	}
-
-	private async createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		const branchLookup = await this.git(plan.sourceRepoRoot, [
-			"show-ref",
-			"--verify",
-			"--quiet",
-			`refs/heads/${plan.ref}`,
-		]);
-		const pathExists = this.deps.exists ?? existsSync;
-		if (branchLookup.code === 0 || pathExists(plan.path)) {
-			return {
-				ok: false,
-				error: `Worktree destination or branch appeared after preflight: ${plan.path} (${plan.ref}). Nothing was overwritten.`,
-			};
-		}
-		try {
-			(this.deps.mkdir ?? ((path: string) => mkdirSync(path, { recursive: true })))(dirname(plan.path));
-		} catch (error) {
-			return { ok: false, error: `Could not create the managed worktree directory: ${failure(error).stderr}` };
-		}
-		const added = await this.git(
-			plan.sourceRepoRoot,
-			["worktree", "add", "--no-guess-remote", "-b", plan.ref, plan.path, plan.baseSha],
-			10_000,
-		);
-		if (added.code !== 0) {
-			return {
-				ok: false,
-				error: `git worktree add failed: ${added.stderr.trim() || added.stdout.trim()}. The managed directory and branch may need manual inspection.`,
-			};
-		}
-		const verified = await this.git(plan.path, ["rev-parse", "--show-toplevel"]);
-		const verifiedRoot = oneLine(verified);
-		const realpath = this.deps.realpath ?? realpathSync;
-		try {
-			if (!verifiedRoot || realpath(verifiedRoot) !== realpath(plan.path)) {
-				return {
-					ok: false,
-					error: `Git created the worktree but verification returned an unexpected root: ${verifiedRoot ?? "none"}.`,
-				};
-			}
-		} catch (error) {
-			return {
-				ok: false,
-				error: `Git created the worktree but its path could not be verified: ${failure(error).stderr}.`,
-			};
-		}
-		return { ok: true, plan };
-	}
-
-	private async removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
+	private async removeManagedWorktree(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
 		const removed = await removeManagedGitWorktree({
 			cwd,
 			ref,

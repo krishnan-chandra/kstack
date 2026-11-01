@@ -1321,6 +1321,10 @@ test("cleanup mode never resolves the repository", async (t) => {
 	const backend = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
 		id: "jj",
 		preflight: async () => ({ ok: true, workspaceRoot: cwd }),
+		prMutation: () => {
+			const refuse = async () => assert.fail("cleanup must not mutate a PR");
+			return { openCheckout: refuse, publishFix: refuse, updateBaseAndPublish: refuse };
+		},
 	} as never;
 	const result = await runAutopilot(
 		"cleanup",

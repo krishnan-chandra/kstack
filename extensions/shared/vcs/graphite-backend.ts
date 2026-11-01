@@ -1,30 +1,28 @@
 import type { BoundaryValue } from "../validation.ts";
 /** Graphite implementation of the semantic VCS contract. */
 
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { unlinkSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../publication-lock.ts";
 import type {
 	CurrentRef,
-	IsolationPlan,
 	MergeBaseResult,
 	VcsBackend,
 	VcsResult,
+	WorkstreamPrimitives,
 	WorkstreamSnapshot,
 } from "./backend.ts";
 import { removeManagedGitWorktree } from "./git-backend.ts";
 import { gitStatusChangedPaths } from "./git-status.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "./graphite-dry-run.ts";
+import { createPrMutation, type PrMutation } from "./mutation.ts";
 import { preflightVcs } from "./preflight.ts";
-import { planManagedWorktree } from "./worktree-plan.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 interface GraphiteBackendDeps {
-	exists?: (path: string) => boolean;
 	realpath?: (path: string) => string;
-	mkdir?: (path: string) => void;
 	unlink?: (path: string) => void;
 	managedRoot?: string;
 	acquireLock?: typeof acquirePublicationLock;
@@ -47,21 +45,15 @@ function isSafeRelativePath(path: string): boolean {
 }
 
 /** Graphite owns all workstream mutations; Git is used only for inspection. */
-export class GraphiteBackend implements VcsBackend {
+export class GraphiteBackend implements VcsBackend, WorkstreamPrimitives {
 	readonly id = "graphite" as const;
 	private readonly exec: ExecFn;
 	private readonly deps: GraphiteBackendDeps;
-	readonly isolation = {
-		plan: (cwd: string, task: string) => this.planIsolation(cwd, task),
-		create: (plan: IsolationPlan) => this.createIsolation(plan),
-		remove: (cwd: string, ref: string) => this.removeIsolation(cwd, ref),
+	readonly managedWorktree = {
+		remove: (cwd: string, ref: string) => this.removeManagedWorktree(cwd, ref),
 	};
 	readonly rewriteScope = {
 		assertSingleRef: (cwd: string, ref: string) => this.assertSingleRefRewrite(cwd, ref),
-	};
-	readonly parentOwnedPublication = {
-		publish: (cwd: string, ref: string, options?: { existingOnly?: boolean }) =>
-			this.publishRecordedChanges(cwd, ref, options),
 	};
 
 	constructor(exec: ExecFn, deps: GraphiteBackendDeps = {}) {
@@ -87,6 +79,10 @@ export class GraphiteBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec);
+	}
+
+	prMutation(options: { signal?: AbortSignal } = {}): PrMutation {
+		return createPrMutation(this, options);
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {
@@ -274,72 +270,7 @@ export class GraphiteBackend implements VcsBackend {
 		return { ok: true, affectedRefs: [ref] };
 	}
 
-	private async planIsolation(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		const planned = await planManagedWorktree({
-			exec: this.exec,
-			cwd,
-			task,
-			managedRoot: this.deps.managedRoot,
-			exists: this.deps.exists,
-			realpath: this.deps.realpath,
-		});
-		if (!planned.ok) return planned;
-		const trunk = await this.gt(planned.plan.sourceRepoRoot, ["trunk"], 8_000);
-		const baseRef = output(trunk);
-		if (trunk.code !== 0 || !baseRef)
-			return { ok: false, error: `Could not resolve the Graphite trunk: ${diagnostic(trunk)}` };
-		const base = await this.git(
-			planned.plan.sourceRepoRoot,
-			["rev-parse", "--verify", `refs/heads/${baseRef}^{commit}`],
-			8_000,
-		);
-		const baseSha = output(base);
-		if (base.code !== 0 || !SHA_RE.test(baseSha))
-			return { ok: false, error: `Could not resolve Graphite trunk ${baseRef}.` };
-		return { ok: true, plan: { ...planned.plan, baseRef, baseSha } };
-	}
-
-	private async createIsolation(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>> {
-		const branch = await this.git(plan.sourceRepoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${plan.ref}`]);
-		if (branch.code === 0 || (this.deps.exists ?? existsSync)(plan.path)) {
-			return {
-				ok: false,
-				error: `Worktree destination or branch appeared after preflight: ${plan.path} (${plan.ref}).`,
-			};
-		}
-		try {
-			(this.deps.mkdir ?? ((path: string) => mkdirSync(path, { recursive: true })))(dirname(plan.path));
-		} catch (error) {
-			return {
-				ok: false,
-				error: `Could not create the managed worktree directory: ${error instanceof Error ? error.message : String(error)}`,
-			};
-		}
-		const added = await this.git(
-			plan.sourceRepoRoot,
-			["worktree", "add", "--no-guess-remote", "-b", plan.ref, plan.path, plan.baseSha],
-			30_000,
-		);
-		if (added.code !== 0) return { ok: false, error: `git worktree add failed: ${diagnostic(added)}` };
-		const tracked = await this.gt(plan.path, ["track", plan.ref, "--parent", plan.baseRef], 30_000);
-		if (tracked.code !== 0) {
-			const rollback = await this.git(plan.sourceRepoRoot, ["worktree", "remove", plan.path, "--force"], 30_000);
-			return {
-				ok: false,
-				error: `gt track failed: ${diagnostic(tracked)}. ${rollback.code === 0 ? `The worktree was removed; branch ${plan.ref} was retained for inspection.` : `Worktree rollback also failed: ${diagnostic(rollback)}`}`,
-			};
-		}
-		const current = await this.currentRef(plan.path);
-		if (!current.ok || current.ref.kind !== "branch" || current.ref.name !== plan.ref) {
-			return {
-				ok: false,
-				error: `Graphite worktree creation succeeded but ${plan.ref} is not checked out at ${plan.path}.`,
-			};
-		}
-		return { ok: true, plan };
-	}
-
-	private async removeIsolation(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
+	private async removeManagedWorktree(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>> {
 		const removed = await removeManagedGitWorktree({
 			cwd,
 			ref,

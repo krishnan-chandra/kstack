@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../git-exec.ts";
-import type { VcsBackend, WorkstreamSnapshot } from "./backend.ts";
+import type { WorkstreamPrimitives, WorkstreamSnapshot } from "./backend.ts";
 import { JjBackend } from "./jj-backend.ts";
 import { createPrMutation, type MutationCheckout, type MutationTarget } from "./mutation.ts";
 
@@ -21,11 +21,10 @@ const target: MutationTarget = {
 	headSha: SHA,
 };
 
-function fakeBackend(overrides: Partial<VcsBackend> = {}): VcsBackend & { calls: string[] } {
+function fakeBackend(overrides: Partial<WorkstreamPrimitives> = {}): WorkstreamPrimitives & { calls: string[] } {
 	const calls: string[] = [];
 	return {
 		id: "git",
-		preflight: async () => ({ ok: true, workspaceRoot: "/repo" }),
 		headSha: async () => ({ ok: true, sha: SHA }),
 		currentRef: async () => ({ ok: true, ref: { kind: "branch", name: target.headRef } }),
 		captureWorkstream: async () => ({

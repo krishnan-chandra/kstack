@@ -7,19 +7,22 @@ describe("vcsPolicy", () => {
 		assert.deepEqual(
 			(["git", "jj", "graphite"] as const).map((id) => {
 				const policy = vcsPolicy(id);
-				return [policy.id, policy.refNoun, policy.workstreamNoun, policy.baseUpdateVerb];
+				return [policy.id, policy.workstreamNoun, policy.baseUpdateVerb];
 			}),
 			[
-				["git", "branch", "Git checkout", "merge"],
-				["jj", "bookmark", "jj workspace", "merge"],
-				["graphite", "Graphite branch", "Graphite checkout", "restack"],
+				["git", "Git checkout", "merge"],
+				["jj", "jj workspace", "merge"],
+				["graphite", "Graphite checkout", "restack"],
 			],
 		);
 	});
 
-	it("injects mutually exclusive mutation guidance", () => {
-		assert.match(vcsPolicy("git").childGuidance, /Do not run jj commands/);
-		assert.match(vcsPolicy("jj").childGuidance, /Do not run git status, add, commit/);
+	it("keeps child guidance inspection-only so the parent owns recording", () => {
+		for (const id of ["git", "jj", "graphite"] as const) {
+			const guidance = vcsPolicy(id).childGuidance;
+			assert.match(guidance, /only to inspect/);
+			assert.doesNotMatch(guidance, /Make incremental|Record work with/);
+		}
 	});
 
 	it("formats remote bases for the selected backend", () => {

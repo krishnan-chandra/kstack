@@ -7,11 +7,19 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
 import { extractSlug, MAX_SLUG_LENGTH, normalizePathSegment } from "../slug.ts";
-import type { IsolationPlan, VcsResult } from "./backend.ts";
+import type { VcsResult } from "./backend.ts";
 
 const MAX_COLLISION_ATTEMPTS = 100;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const DEFAULT_TIMEOUT = 10_000;
+
+interface IsolationPlan {
+	sourceRepoRoot: string;
+	ref: string;
+	path: string;
+	baseRef: string;
+	baseSha: string;
+}
 
 export interface IsolationBase {
 	ref: string;

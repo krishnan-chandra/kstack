@@ -453,7 +453,7 @@ export async function runCleanup(
 	signal?: AbortSignal,
 ): Promise<boolean> {
 	if (signal?.aborted) return false;
-	if (!backend.isolation) {
+	if (!backend.managedWorktree) {
 		notify("Cleanup is not supported by this backend because it has no managed worktrees.", "info");
 		return true;
 	}
@@ -481,7 +481,7 @@ export async function runCleanup(
 	);
 	if (!confirmed || signal?.aborted) return false;
 
-	const removed = await backend.isolation.remove(cwd, branch);
+	const removed = await backend.managedWorktree.remove(cwd, branch);
 	if (!removed.ok) {
 		notify(removed.error, "error");
 		return false;
