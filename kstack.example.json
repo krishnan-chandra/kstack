@@ -2,7 +2,7 @@
   "aliases": [
     {
       "label": "sol",
-      "model": "openai/gpt-6-sol",
+      "model": "openai/gpt-6.1-sol",
       "thinking": "high"
     },
     {
@@ -38,7 +38,7 @@
     "runners": [
       {
         "label": "sol",
-        "model": "openai/gpt-6-sol",
+        "model": "openai/gpt-6.1-sol",
         "thinking": "low"
       },
       {
@@ -48,8 +48,8 @@
       },
       {
         "label": "mercury",
-        "model": "openrouter/inception/mercury-2",
-        "thinking": "high"
+        "model": "openrouter/inception/mercury-3",
+        "thinking": "off"
       },
       {
         "label": "glimmer",
