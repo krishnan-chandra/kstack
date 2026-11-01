@@ -7,8 +7,11 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveInvestigationModel, validateInvestigationConfig } from "./investigation-model.mjs";
 
-const luna = { model: "openai/gpt-5.6-luna", thinking: "medium" };
-const terra = { model: "openai/gpt-5.6-terra", thinking: "medium" };
+const luna = { model: "openai/gpt-6-luna", thinking: "medium" };
+const deepseek = { model: "openrouter/deepseek/deepseek-v4.1-flash", thinking: "medium" };
+const minimax = { model: "openrouter/minimax/minimax-m3.1-flash", thinking: "medium" };
+const terra = { model: "openai/gpt-6-terra", thinking: "medium" };
+const deepseekPro = { model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" };
 const script = fileURLToPath(new URL("./investigation-model.mjs", import.meta.url));
 
 describe("investigation model allowlist", () => {
@@ -18,12 +21,12 @@ describe("investigation model allowlist", () => {
 		if (result.ok) {
 			assert.equal(result.model, luna.model);
 			assert.equal(result.thinking, luna.thinking);
-			assert.equal(result.spec, "openai/gpt-5.6-luna:medium");
+			assert.equal(result.spec, "openai/gpt-6-luna:medium");
 		}
 	});
 
 	it("accepts only a configured fast investigation model", () => {
-		const result = validateInvestigationConfig({ allowedModels: [luna], defaultModel: luna.model });
+		const result = validateInvestigationConfig({ allowedModels: [luna, deepseek, minimax], defaultModel: luna.model });
 		assert.ok(result.ok);
 		if (result.ok) assert.equal(result.config.defaultModel, luna.model);
 
@@ -31,7 +34,10 @@ describe("investigation model allowlist", () => {
 		try {
 			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ investigation: result.ok ? result.config : {} }));
 			assert.ok(resolveInvestigationModel(luna.model, { PI_CODING_AGENT_DIR: dir }).ok);
+			assert.ok(resolveInvestigationModel(deepseek.model, { PI_CODING_AGENT_DIR: dir }).ok);
+			assert.ok(resolveInvestigationModel(minimax.model, { PI_CODING_AGENT_DIR: dir }).ok);
 			assert.ok(!resolveInvestigationModel(terra.model, { PI_CODING_AGENT_DIR: dir }).ok);
+			assert.ok(!resolveInvestigationModel(deepseekPro.model, { PI_CODING_AGENT_DIR: dir }).ok);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -39,7 +45,11 @@ describe("investigation model allowlist", () => {
 
 	it("rejects a default or allowlist entry outside the fast model set", () => {
 		assert.ok(!validateInvestigationConfig({ allowedModels: [luna], defaultModel: terra.model }).ok);
-		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "openai/gpt-5.6-sol" }] }).ok);
+		assert.ok(!validateInvestigationConfig({ allowedModels: [deepseekPro] }).ok);
+		assert.ok(
+			!validateInvestigationConfig({ allowedModels: [{ model: "openai/gpt-5.6-luna", thinking: "medium" }] }).ok,
+		);
+		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "openai/gpt-6-sol" }] }).ok);
 		assert.ok(!validateInvestigationConfig({ allowedModels: [{ model: "fast/model", thinking: "medium" }] }).ok);
 	});
 
@@ -64,7 +74,7 @@ describe("investigation model allowlist", () => {
 			const env = { ...process.env, PI_CODING_AGENT_DIR: dir };
 			const defaultRun = spawnSync(process.execPath, [script], { encoding: "utf8", env });
 			assert.equal(defaultRun.status, 0);
-			assert.equal(defaultRun.stdout, "openai/gpt-5.6-luna:medium\n");
+			assert.equal(defaultRun.stdout, "openai/gpt-6-luna:medium\n");
 
 			const rejected = spawnSync(process.execPath, [script, "--model", terra.model], { encoding: "utf8", env });
 			assert.equal(rejected.status, 2);

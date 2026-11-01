@@ -146,10 +146,15 @@ select the backend, review the preview, and approve the update to the user-level
 package updates never create, overwrite, or migrate `kstack.json`; they preserve
 the user's backend choice.
 
-`how` and `why` use only models in `investigation.allowedModels`. The resolver
-requires every entry to come from kstack's curated fast-model set and to use at
-least `medium` thinking. It rejects a requested model outside the configured
-subset. Set `defaultModel` to one of the allowlisted model IDs.
+`how`, `why`, `recall`, and `decision-trail` use only models in
+`investigation.allowedModels`. The resolver requires every entry to come from
+kstack's curated fast-model set (`openai/gpt-6-luna`,
+`openrouter/deepseek/deepseek-v4.1-flash`, and
+`openrouter/minimax/minimax-m3.1-flash`) and to use at least `medium` thinking.
+It rejects a requested model outside the configured subset. Set `defaultModel`
+to one of the allowlisted model IDs. If an existing `kstack.json` specifies
+retired models such as GPT-5.6 Luna, DeepSeek V4 Flash/Pro, or GLM 5.2, run
+`/skill:setup-kstack` to review and update the configuration.
 
 ## Session names in development workflows
 
