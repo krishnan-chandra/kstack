@@ -2,7 +2,15 @@ import type { BoundaryValue } from "../validation.ts";
 /** Jujutsu implementation of K-Stack's repository-mutation contract. */
 
 import type { ExecFn, ExecFnResult } from "../git-exec.ts";
-import type { CurrentRef, MergeBaseResult, VcsBackend, VcsResult, WorkstreamSnapshot } from "./backend.ts";
+import type {
+	CurrentRef,
+	MergeBaseResult,
+	VcsBackend,
+	VcsResult,
+	WorkstreamPrimitives,
+	WorkstreamSnapshot,
+} from "./backend.ts";
+import { createPrMutation, type PrMutation } from "./mutation.ts";
 import { preflightVcs } from "./preflight.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -36,7 +44,7 @@ export function filesetPath(path: string): string {
 	return `cwd:"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export class JjBackend implements VcsBackend {
+export class JjBackend implements VcsBackend, WorkstreamPrimitives {
 	readonly id = "jj" as const;
 	readonly mutationWorkstream = {
 		open: async (cwd: string, ref: string, headSha: string) => this.openMutationWorkstream(cwd, ref, headSha),
@@ -58,6 +66,10 @@ export class JjBackend implements VcsBackend {
 
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>> {
 		return preflightVcs(cwd, this.id, this.exec);
+	}
+
+	prMutation(options: { signal?: AbortSignal } = {}): PrMutation {
+		return createPrMutation(this, options);
 	}
 
 	async headSha(cwd: string): Promise<VcsResult<{ sha: string }>> {

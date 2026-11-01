@@ -1,4 +1,5 @@
 import type { VcsBackendId } from "./config.ts";
+import type { PrMutation } from "./mutation.ts";
 
 export type VcsResult<T extends object = Record<never, never>> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -7,14 +8,6 @@ export type CurrentRef =
 	| { kind: "bookmark"; name: string }
 	| { kind: "detached" }
 	| { kind: "no-bookmark"; changeId: string };
-
-export interface IsolationPlan {
-	sourceRepoRoot: string;
-	ref: string;
-	path: string;
-	baseRef: string;
-	baseSha: string;
-}
 
 /** Opaque, backend-owned evidence that a checked-out workstream has not moved. */
 export interface WorkstreamSnapshot {
@@ -28,23 +21,14 @@ export type MergeBaseResult =
 	| { kind: "needs-human"; files: string[]; error: string }
 	| { kind: "failed"; error: string };
 
-/* exported: VCS backend contract */
-export interface IsolationBackend {
-	plan(cwd: string, task: string): Promise<VcsResult<{ plan: IsolationPlan }>>;
-	create(plan: IsolationPlan): Promise<VcsResult<{ plan: IsolationPlan }>>;
+/** Removal of a clean Kstack-managed Git worktree and its branch. */
+interface ManagedWorktreeCleanup {
 	remove(cwd: string, ref: string): Promise<VcsResult<{ warning?: string }>>;
 }
 
 /** Optional guard for backends whose local record/update can rewrite other refs. */
-/* exported: VCS backend contract */
-export interface RewriteScopeGuard {
+interface RewriteScopeGuard {
 	assertSingleRef(cwd: string, ref: string): Promise<VcsResult<{ affectedRefs: readonly string[] }>>;
-}
-
-/** Optional parent-owned publication path for backends that prohibit generic pushes. */
-/* exported: VCS backend contract */
-export interface ParentOwnedPublication {
-	publish(cwd: string, ref: string, options?: { existingOnly?: boolean }): Promise<VcsResult>;
 }
 
 /** Backend-specific checkout semantics for mutating an existing review head. */
@@ -53,13 +37,22 @@ interface MutationWorkstreamBackend {
 	publishedHeadSha(cwd: string, ref: string): Promise<VcsResult<{ sha: string }>>;
 }
 
+/** The configured backend as workflows outside `shared/vcs/` see it. */
 export interface VcsBackend {
 	readonly id: VcsBackendId;
-	readonly isolation?: IsolationBackend;
-	readonly rewriteScope?: RewriteScopeGuard;
-	readonly parentOwnedPublication?: ParentOwnedPublication;
-	readonly mutationWorkstream?: MutationWorkstreamBackend;
+	/** Present only for backends with Kstack-managed Git worktrees (Git and Graphite). */
+	readonly managedWorktree?: ManagedWorktreeCleanup;
 	preflight(cwd: string): Promise<VcsResult<{ workspaceRoot: string }>>;
+	currentRef(cwd: string): Promise<VcsResult<{ ref: CurrentRef }>>;
+	/** Open the PR mutation workflow over this backend's primitives. */
+	prMutation(options?: { signal?: AbortSignal }): PrMutation;
+}
+
+/** Backend primitives sequenced only by the PR mutation workflow in `mutation.ts`. */
+export interface WorkstreamPrimitives {
+	readonly id: VcsBackendId;
+	readonly rewriteScope?: RewriteScopeGuard;
+	readonly mutationWorkstream?: MutationWorkstreamBackend;
 	headSha(cwd: string): Promise<VcsResult<{ sha: string }>>;
 	currentRef(cwd: string): Promise<VcsResult<{ ref: CurrentRef }>>;
 	captureWorkstream(cwd: string): Promise<VcsResult<{ snapshot: WorkstreamSnapshot }>>;

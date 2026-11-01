@@ -1,4 +1,4 @@
-import type { VcsBackend, VcsResult, WorkstreamSnapshot } from "./backend.ts";
+import type { VcsResult, WorkstreamPrimitives, WorkstreamSnapshot } from "./backend.ts";
 import { vcsPolicy } from "./policy.ts";
 
 export interface MutationTarget {
@@ -27,7 +27,7 @@ type BaseUpdateOutcome =
 	| { kind: "needs-human"; files: string[]; error: string }
 	| { kind: "failed"; error: string };
 
-interface PrMutation {
+export interface PrMutation {
 	openCheckout(cwd: string, target: MutationTarget): Promise<VcsResult<{ checkout: MutationCheckout }>>;
 	publishFix(
 		cwd: string,
@@ -37,7 +37,7 @@ interface PrMutation {
 	updateBaseAndPublish(cwd: string, target: MutationTarget & { baseRef: string }): Promise<BaseUpdateOutcome>;
 }
 
-export function createPrMutation(backend: VcsBackend, options: { signal?: AbortSignal } = {}): PrMutation {
+export function createPrMutation(backend: WorkstreamPrimitives, options: { signal?: AbortSignal } = {}): PrMutation {
 	const policy = vcsPolicy(backend.id);
 	const isCancelled = () => options.signal?.aborted === true;
 

@@ -17,11 +17,13 @@ CLI discovery from their Git worktree. jj reads the GitHub `origin` with
 blocks the workflow. GitHub callers scope PR and run commands with those
 coordinates rather than assume that `gh` can discover the repository from cwd.
 
-Every parent-side repository write must use the configured backend. The shared
-`VcsBackend` contract covers branches and bookmarks, commits, path restoration,
-merges, and pushes. Git and Graphite expose managed-worktree isolation; jj does
-not. Delegated implementation children receive an explicit backend policy and
-may invoke only that backend's CLI. Do not mix mutations from different
+Every parent-side repository write must use the configured backend. Callers
+outside `shared/vcs/` use three parts of the `VcsBackend` contract: `preflight`
+and `currentRef` (land and PR Autopilot), managed-worktree removal (PR
+Autopilot cleanup; Git and Graphite only), and `prMutation()`, the PR mutation workflow in
+`mutation.ts`. The remaining primitives exist for that workflow. PR Autopilot's
+fixer child receives an inspection-only backend policy from `policy.ts`; the
+parent records and publishes its edits. Do not mix mutations from different
 backends in the same workspace.
 
 `preflightVcs` enforces the selected backend before a workflow mutates the
@@ -34,22 +36,18 @@ backing Git directory.
 
 ## Workstream semantics
 
-`worktree-plan.ts` owns read-only managed-worktree allocation: base-ref
-resolution and collision-safe `kstack/<task-slug>` paths. Git and Graphite
-delegate planning to it and still return only the `IsolationPlan`.
-`worktree-inventory.ts` owns decoding Git's porcelain worktree listing.
-Cleanup, rebase scope, and the skill inspector consume that inventory and
-keep their own safety decisions. `git-status.ts` owns decoding Git's
-porcelain status records. Git and Graphite path lists, backend context
-checks, and the skill inspector consume those records.
+`worktree-plan.ts` owns read-only managed-worktree allocation for the
+`git-worktrees` skill: base-ref resolution and collision-safe
+`kstack/<task-slug>` paths. `worktree-inventory.ts` owns decoding Git's
+porcelain worktree listing. Cleanup, rebase scope, and the skill inspector
+consume that inventory and keep their own safety decisions. `git-status.ts`
+owns decoding Git's porcelain status records. Git and Graphite path lists,
+backend context checks, and the skill inspector consume those records.
 
-The Git backend creates a clean `kstack/<task-slug>` branch and can create a
-managed linked worktree. Graphite uses that Git isolation seam, then tracks and
-mutates the branch through native `gt` commands. The jj backend creates a
-`trunk()`-based change with a collision-safe `kstack/<task-slug>` bookmark. A
-completed jj workstream keeps the bookmark on an ancestor of the current
-change, contains at least one non-empty change above its checkpoint, and leaves
-an empty working-copy change. Git worktree isolation is unavailable in jj mode.
+Managed-worktree removal refuses a path outside the managed root, an
+unregistered, locked, or dirty worktree, and a worktree whose branch moved.
+Git then deletes the branch with `git branch -d`; Graphite uses `gt delete`.
+jj has no managed worktrees.
 
 Graphite publication and landing resolve `git rev-parse --git-common-dir` and
 lock its canonical path. All linked worktrees for one repository therefore
@@ -70,11 +68,10 @@ snapshot changes but rejects a moved or replaced workstream.
 rewrite scope, and owns fix and base-update publication. It checks rewrite scope
 again after any operation that can rewrite refs and before publication.
 PR Autopilot uses this workflow instead of sequencing mutation primitives.
-Callers outside `shared/vcs/` must not call `rewriteScope` directly.
+Callers reach it through `backend.prMutation()`; the primitives it sequences
+are typed as `WorkstreamPrimitives` and are not part of `VcsBackend`.
 
-Before a jj push, the backend describes an otherwise-undescribed empty `@` as
-an automation checkpoint and moves the task bookmark to it. Implementation and
-fix commits remain in ancestors while later automation gets a clean change to
-edit. A conflicted jj base merge returns a structured human-required result and
-abandons the temporary merge change. K-Stack does not auto-resolve competing
-intent.
+A jj fix is recorded by squashing the fixer's working-copy paths into the
+bookmarked parent, then pushing that bookmark. A conflicted jj base merge
+returns a structured human-required result and abandons the temporary merge
+change. K-Stack does not auto-resolve competing intent.

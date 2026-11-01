@@ -30,7 +30,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { commandDiagnostic } from "../shared/git-exec.ts";
 import { resolveRepositoryIdentity } from "../shared/repository-identity.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
-import { createPrMutation } from "../shared/vcs/mutation.ts";
 import { vcsPolicy } from "../shared/vcs/policy.ts";
 import {
 	applyThreadReplies,
@@ -131,7 +130,7 @@ export async function runAutopilot(
 	const { config, exec, backend, cwd, promptDir, triagerPromptFile, fixerPromptFile } = params;
 	const { setPhase, notify, confirm } = handlers;
 	const policy = vcsPolicy(backend.id);
-	const mutation = createPrMutation(backend, { signal });
+	const mutation = backend.prMutation({ signal });
 	let state: PRState | null = null;
 	let cycle = 0;
 	let usage = emptyUsage();

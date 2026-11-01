@@ -249,7 +249,7 @@ test("cleanup confirmation after abort cannot remove worktree", async (t) => {
 	const controller = new AbortController();
 	const backend = new GitBackend(harness.exec);
 	let removed = 0;
-	backend.isolation.remove = async () => {
+	backend.managedWorktree.remove = async () => {
 		removed++;
 		return { ok: true };
 	};
@@ -439,7 +439,7 @@ test("cleanup already in flight settles and reports removal", async (t) => {
 	const started = deferred<void>();
 	const released = deferred<{ ok: true }>();
 	const notices: string[] = [];
-	backend.isolation.remove = async () => {
+	backend.managedWorktree.remove = async () => {
 		started.resolve();
 		return released.promise;
 	};

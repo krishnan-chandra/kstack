@@ -222,37 +222,6 @@ describe("GraphiteBackend", () => {
 		assert.deepEqual(removed, []);
 	});
 
-	it("allocates a Git worktree and tracks it with Graphite metadata", async () => {
-		const { exec, calls } = scripted({
-			"git rev-parse --show-toplevel": { stdout: "/repo\n" },
-			"git rev-parse --path-format=absolute --git-common-dir": { stdout: "/repo/.git\n" },
-			"git remote": { stdout: "origin\n" },
-			"git symbolic-ref --quiet refs/remotes/origin/HEAD": { stdout: "refs/remotes/origin/main\n" },
-			"git rev-parse --verify refs/remotes/origin/main^{commit}": { stdout: `${sha}\n` },
-			"git show-ref --verify --quiet refs/heads/kstack/fix-search": { code: 1 },
-			"gt --no-interactive trunk": { stdout: "main\n" },
-			"git rev-parse --verify refs/heads/main^{commit}": { stdout: `${sha}\n` },
-			"git branch --show-current": { stdout: "kstack/fix-search\n" },
-		});
-		const backend = new GraphiteBackend(exec, {
-			managedRoot: "/managed",
-			exists: () => false,
-			realpath: (path) => path,
-			mkdir: () => {},
-		});
-		const planned = await backend.isolation.plan("/repo", "Fix search");
-		assert.equal(planned.ok, true);
-		if (!planned.ok) return;
-		assert.equal(planned.plan.baseRef, "main");
-		assert.deepEqual(await backend.isolation.create(planned.plan), { ok: true, plan: planned.plan });
-		assert.ok(
-			calls.includes(
-				`git worktree add --no-guess-remote -b ${planned.plan.ref} ${planned.plan.path} ${planned.plan.baseSha}`,
-			),
-		);
-		assert.ok(calls.includes("gt --no-interactive track kstack/fix-search --parent main"));
-	});
-
 	it("preserves dirty managed worktrees during cleanup", async () => {
 		const cwd = "/managed/task";
 		const { exec, calls } = scripted({
@@ -263,7 +232,7 @@ describe("GraphiteBackend", () => {
 			"git status --porcelain=v1 --untracked-files=all": { stdout: "?? notes.txt\n" },
 		});
 		const backend = new GraphiteBackend(exec, { managedRoot: "/managed", realpath: (path) => path });
-		assert.deepEqual(await backend.isolation.remove(cwd, "kstack/task"), {
+		assert.deepEqual(await backend.managedWorktree.remove(cwd, "kstack/task"), {
 			ok: false,
 			error: `Worktree ${cwd} has uncommitted or untracked files; cleanup preserved it.`,
 		});
