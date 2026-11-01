@@ -149,6 +149,7 @@ the user's backend choice.
 `how`, `why`, `recall`, and `decision-trail` use only models in
 `investigation.allowedModels`. The resolver requires every entry to come from
 kstack's curated fast-model set (`openai/gpt-6-luna`,
+`openrouter/deepseek/deepseek-v4.1-flash-1017`,
 `openrouter/deepseek/deepseek-v4.1-flash`, and
 `openrouter/minimax/minimax-m3.1-flash`) and to use at least `medium` thinking.
 It rejects a requested model outside the configured subset. Set `defaultModel`

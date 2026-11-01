@@ -134,6 +134,7 @@ model IDs are currently:
 
 ```text
 openai/gpt-6-luna
+openrouter/deepseek/deepseek-v4.1-flash-1017
 openrouter/deepseek/deepseek-v4.1-flash
 openrouter/minimax/minimax-m3.1-flash
 ```
