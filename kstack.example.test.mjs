@@ -6,6 +6,7 @@ import test from "node:test";
 import { validateRoutingConfig } from "./extensions/openrouter-floor/routing-policy.ts";
 import { resolveCouncilRoster } from "./extensions/shared/council/roster.ts";
 import { validateCouncilConfig } from "./extensions/shared/kstack-config.ts";
+import { validateInvestigationConfig } from "./skills/investigation-model.mjs";
 
 const REPO_ROOT = import.meta.dirname;
 const EXAMPLE_PATH = join(REPO_ROOT, "kstack.example.json");
@@ -17,6 +18,9 @@ test("kstack.example.json passes the council and routing policy validators", () 
 
 	const routing = validateRoutingConfig(example["openrouter-floor"]);
 	assert.equal(routing.ok, true, routing.ok ? "" : routing.error);
+
+	const investigation = validateInvestigationConfig(example.investigation);
+	assert.equal(investigation.ok, true, investigation.ok ? "" : investigation.error);
 });
 
 test("kstack.example.json leaves council seats after the example planner sits out", () => {

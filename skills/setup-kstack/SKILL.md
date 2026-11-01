@@ -133,10 +133,9 @@ The investigation list has a stricter allowlist than the other roles. Its valid
 model IDs are currently:
 
 ```text
-openai/gpt-5.6-luna
-openrouter/deepseek/deepseek-v4-flash
-openrouter/deepseek/deepseek-v4-pro
-openrouter/z-ai/glm-5.2
+openai/gpt-6-luna
+openrouter/deepseek/deepseek-v4.1-flash
+openrouter/minimax/minimax-m3.1-flash
 ```
 
 When the user requests a different investigator, explain that `how`, `why`,
