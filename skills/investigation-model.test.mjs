@@ -9,6 +9,7 @@ import { resolveInvestigationModel, validateInvestigationConfig } from "./invest
 
 const luna = { model: "openai/gpt-6-luna", thinking: "medium" };
 const deepseek = { model: "openrouter/deepseek/deepseek-v4.1-flash", thinking: "medium" };
+const deepseekSnapshot = { model: "openrouter/deepseek/deepseek-v4.1-flash-1017", thinking: "medium" };
 const minimax = { model: "openrouter/minimax/minimax-m3.1-flash", thinking: "medium" };
 const terra = { model: "openai/gpt-6-terra", thinking: "medium" };
 const deepseekPro = { model: "openrouter/deepseek/deepseek-v4-pro", thinking: "medium" };
@@ -26,7 +27,10 @@ describe("investigation model allowlist", () => {
 	});
 
 	it("accepts only a configured fast investigation model", () => {
-		const result = validateInvestigationConfig({ allowedModels: [luna, deepseek, minimax], defaultModel: luna.model });
+		const result = validateInvestigationConfig({
+			allowedModels: [luna, deepseekSnapshot, deepseek, minimax],
+			defaultModel: luna.model,
+		});
 		assert.ok(result.ok);
 		if (result.ok) assert.equal(result.config.defaultModel, luna.model);
 
@@ -34,6 +38,7 @@ describe("investigation model allowlist", () => {
 		try {
 			writeFileSync(join(dir, "kstack.json"), JSON.stringify({ investigation: result.ok ? result.config : {} }));
 			assert.ok(resolveInvestigationModel(luna.model, { PI_CODING_AGENT_DIR: dir }).ok);
+			assert.ok(resolveInvestigationModel(deepseekSnapshot.model, { PI_CODING_AGENT_DIR: dir }).ok);
 			assert.ok(resolveInvestigationModel(deepseek.model, { PI_CODING_AGENT_DIR: dir }).ok);
 			assert.ok(resolveInvestigationModel(minimax.model, { PI_CODING_AGENT_DIR: dir }).ok);
 			assert.ok(!resolveInvestigationModel(terra.model, { PI_CODING_AGENT_DIR: dir }).ok);

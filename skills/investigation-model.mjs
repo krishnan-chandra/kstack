@@ -9,6 +9,7 @@ const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 const INVESTIGATION_THINKING_LEVELS = new Set(["medium", "high", "xhigh", "max"]);
 const FAST_MODELS = [
 	{ model: "openai/gpt-6-luna", thinking: "medium" },
+	{ model: "openrouter/deepseek/deepseek-v4.1-flash-1017", thinking: "medium" },
 	{ model: "openrouter/deepseek/deepseek-v4.1-flash", thinking: "medium" },
 	{ model: "openrouter/minimax/minimax-m3.1-flash", thinking: "medium" },
 ];

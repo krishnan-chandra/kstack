@@ -112,7 +112,7 @@
         "thinking": "high"
       },
       {
-        "model": "openrouter/deepseek/deepseek-v4.1-flash",
+        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
         "thinking": "medium"
       },
       {
