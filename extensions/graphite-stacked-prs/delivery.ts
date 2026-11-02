@@ -13,7 +13,7 @@ import {
 } from "../shared/stack/manifest.ts";
 import type { CompletedPublicationAction, StackPublicationMap, StackPublishOutcome } from "../shared/stack/outcome.ts";
 import { planIdFor } from "../shared/stack/plan-id.ts";
-import { runPublication } from "../shared/stack/transaction.ts";
+import { runPublication, type StackTransactionPhase } from "../shared/stack/transaction.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -315,6 +315,7 @@ export async function publishGraphiteManifest(input: {
 	signal?: AbortSignal;
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
+	onPhase?: (phase: StackTransactionPhase) => void;
 }): Promise<StackPublishOutcome> {
 	const { exec } = input;
 	return runPublication(
@@ -332,6 +333,7 @@ export async function publishGraphiteManifest(input: {
 			ui: input.ui,
 			confirmTitle: "Publish this Graphite stack?",
 			lock: { exec, cwd: input.cwd, acquireLock: input.acquireLock, realpath: input.realpath },
+			onPhase: input.onPhase,
 			signal: input.signal,
 		},
 	);
@@ -343,6 +345,7 @@ export async function publishGraphiteStack(input: {
 	exec: ExecFn;
 	ui: { hasUI: boolean; confirm(title: string, body: string): Promise<boolean> };
 	signal?: AbortSignal;
+	onPhase?: (phase: StackTransactionPhase) => void;
 }): Promise<StackPublishOutcome> {
 	if (!input.manifestPath) return { status: "failed", error: "Graphite stack manifest path is unavailable." };
 	let raw: string;
@@ -360,6 +363,7 @@ export async function publishGraphiteStack(input: {
 		manifest: parsed.manifest,
 		exec: input.exec,
 		ui: input.ui,
+		onPhase: input.onPhase,
 		signal: input.signal,
 	});
 }

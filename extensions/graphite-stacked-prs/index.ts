@@ -19,6 +19,7 @@ import {
 	STACK_PUBLICATION_EVENT,
 	type StackProviderCapabilities,
 } from "../shared/stack/channel.ts";
+import type { StackTransactionPhase } from "../shared/stack/transaction.ts";
 import { preflightGraphiteStack, publishGraphiteStack } from "./delivery.ts";
 import { type GraphiteLandingDeps, requestGraphiteStackLanding } from "./landing.ts";
 
@@ -26,6 +27,22 @@ const GRAPHITE_CAPABILITIES: StackProviderCapabilities = {
 	schemaVersion: 1,
 	publication: true,
 };
+
+const GRAPHITE_PUBLICATION_STATUS = {
+	planning: "graphite-stack: planning publication",
+	confirming: "graphite-stack: confirm publication",
+	locking: "graphite-stack: waiting for the repository lock",
+	replanning: "graphite-stack: re-checking the plan",
+	applying: "graphite-stack: publishing",
+} satisfies Record<StackTransactionPhase, string>;
+
+const GRAPHITE_LANDING_STATUS = {
+	planning: "graphite-stack: planning landing",
+	confirming: "graphite-stack: confirm landing",
+	locking: "graphite-stack: waiting for the repository lock",
+	replanning: "graphite-stack: re-checking the landing plan",
+	applying: "graphite-stack: landing",
+} satisfies Record<StackTransactionPhase, string>;
 
 class GraphiteStackLifecycle extends SessionRunLifecycle {
 	begin() {
@@ -114,6 +131,7 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 						manifestPath: input.manifestPath,
 						exec,
 						ui: { hasUI: ctx.hasUI, confirm: (title, body) => ctx.ui.confirm(title, body) },
+						onPhase: (phase) => ctx.ui.setStatus("graphite-stack", GRAPHITE_PUBLICATION_STATUS[phase]),
 						signal: AbortSignal.any(publicationSignals),
 					});
 				},
@@ -148,6 +166,7 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 						ui: { hasUI: ctx.hasUI, confirm: (title, body) => ctx.ui.confirm(title, body) },
 						now: Date.now,
 						sleep: abortableSleep,
+						onPhase: (phase) => ctx.ui.setStatus("graphite-stack", GRAPHITE_LANDING_STATUS[phase]),
 					};
 					return requestGraphiteStackLanding(
 						{

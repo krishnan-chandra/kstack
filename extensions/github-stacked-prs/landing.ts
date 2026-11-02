@@ -14,7 +14,12 @@ import { STACK_SHA_RE } from "../shared/stack/manifest.ts";
 import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
 import { planIdFor } from "../shared/stack/plan-id.ts";
 import { createNavigationCommentStore, type NavigationEntry } from "../shared/stack/topology.ts";
-import { missingUiBlocker, runLanding, type StackPlanResult } from "../shared/stack/transaction.ts";
+import {
+	missingUiBlocker,
+	runLanding,
+	type StackPlanResult,
+	type StackTransactionPhase,
+} from "../shared/stack/transaction.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { cleanupLocalBranch } from "./branch-cleanup.ts";
 import {
@@ -48,6 +53,7 @@ interface GitHubLandingDeps {
 	signal?: AbortSignal;
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
+	onPhase?: (phase: StackTransactionPhase) => void;
 }
 
 export async function requestGitHubStackLanding(
@@ -110,6 +116,7 @@ export async function requestGitHubStackLanding(
 			ui: { hasUI: deps.hasUI, confirm: deps.confirm },
 			confirmTitle: "Land this GitHub stack prefix?",
 			lock: { exec: deps.exec, cwd: input.cwd, acquireLock: deps.acquireLock, realpath: deps.realpath },
+			onPhase: deps.onPhase,
 			signal: deps.signal,
 		},
 	);

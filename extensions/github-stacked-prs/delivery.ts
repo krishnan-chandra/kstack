@@ -22,7 +22,7 @@ import { planIdFor } from "../shared/stack/plan-id.ts";
 import { createPrTransitions } from "../shared/stack/pr-transitions.ts";
 import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
-import { runPublication, type StackPlanResult } from "../shared/stack/transaction.ts";
+import { runPublication, type StackPlanResult, type StackTransactionPhase } from "../shared/stack/transaction.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import type { VcsResult } from "../shared/vcs/backend.ts";
 import { preflightVcs } from "../shared/vcs/preflight.ts";
@@ -63,6 +63,7 @@ interface GitHubPublicationDeps {
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
 	readManifest?: (path: string) => string;
+	onPhase?: (phase: StackTransactionPhase) => void;
 }
 
 function childPolicy(input: { trunkRef: string; trunkSha: string; manifestPath?: string }): string {
@@ -268,6 +269,7 @@ export async function publishGitHubStack(input: {
 			ui: { hasUI: deps.hasUI, confirm: (title, body) => deps.confirm(title, body) },
 			confirmTitle: "Publish this GitHub stack?",
 			lock: { exec: deps.exec, cwd: input.cwd, acquireLock: deps.acquireLock, realpath: deps.realpath },
+			onPhase: deps.onPhase,
 			signal: deps.signal,
 		},
 	);
