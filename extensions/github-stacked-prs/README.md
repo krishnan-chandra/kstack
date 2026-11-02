@@ -75,8 +75,14 @@ landing. No intermediate remainder branch may be checked out in any worktree.
 If a refusal names a worktree, check out another branch there. If it names an
 alias in the rewrite range, move or delete that alias before retrying.
 
-The provider repeats this inspection under the publication lock before each
-frontier merge and again after it fetches the merged trunk. For each frontier,
+Landing runs through the shared [stack transaction](../shared/stack/README.md#stack-transaction).
+The plan ID covers the stack membership from the navigation comments, every
+PR and local branch fact above, and the rebase scope. After confirmation the
+provider takes the publication lock, re-reads membership, repeats the
+inspection, and returns `stale` without merging if the plan ID changed, for
+example because a branch was published onto the stack in the meantime. It
+repeats the rebase-scope inspection before each later frontier merge and again
+after it fetches the merged trunk. For each frontier,
 the provider asks Land to merge the exact pinned 40-character head SHA. It
 then rebases the remainder with `git rebase --update-refs`. Before the first
 push, it verifies ordered ancestry from refreshed trunk and confirms that no

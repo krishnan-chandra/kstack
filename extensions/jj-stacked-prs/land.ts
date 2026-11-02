@@ -4,14 +4,15 @@ import type { BoundaryValue } from "../shared/validation.ts";
 
 import { applyDelegatedFrontierSettlement } from "../land/api.ts";
 import { type GitHubGateway, isMergeMethod } from "../shared/github.ts";
-import { acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
 import {
 	emptyStackLandProgress,
 	type StackLandFrontier,
 	type StackLandOutcome,
 	type StackPrefixLandOutcome,
 } from "../shared/stack/outcome.ts";
+import { planIdFor } from "../shared/stack/plan-id.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { missingUiBlocker, runLanding, type StackTransactionPhase } from "../shared/stack/transaction.ts";
 import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
 import { createJjAdapter } from "./jj.ts";
@@ -52,6 +53,9 @@ export async function landStackThroughPullRequest(
 	},
 	deps: OrchestratorDeps,
 ): Promise<StackPrefixLandOutcome> {
+	// Discovery below reads jj and GitHub; refuse a request that cannot be confirmed before spending that work.
+	const missingUi = missingUiBlocker("interactive-confirmation", deps.ui.hasUI, "Stack landing");
+	if (missingUi) return { status: "stack", outcome: { status: "blocked", blockers: [missingUi] } };
 	const resolvedDeps = resolveLandingDeps(deps);
 	const jj = resolvedDeps.jj;
 	const github = resolvedDeps.github;
@@ -195,83 +199,128 @@ function resolveLandingDeps(deps: OrchestratorDeps): ResolvedOrchestratorDeps {
 	};
 }
 
+const LANDING_STATUS = {
+	planning: "jj-stack: planning landing",
+	confirming: "jj-stack: confirm landing",
+	locking: "jj-stack: waiting for the repository lock",
+	replanning: "jj-stack: re-checking the landing plan",
+	applying: "jj-stack: landing",
+} satisfies Record<StackTransactionPhase, string>;
+
+type PreparedLand = Extract<Awaited<ReturnType<typeof prepareLand>>, { status: "ok" }>;
+
+/**
+ * Both landing shapes run under the repository lock. The single-PR path merges a PR and rewrites local history,
+ * which is exactly what the lock serializes. `apply` may ask PR Autopilot to land a frontier while holding the
+ * lock because jj's mutation backend never takes that lock.
+ */
 async function landStackWithAuthorization(
 	options: LandStackOptions,
 	deps: ResolvedOrchestratorDeps,
 	authorization: "interactive-confirmation" | "model-tool",
 	initialModel?: InspectModel,
 ): Promise<StackLandOutcome> {
-	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
-		return {
-			status: "blocked",
-			blockers: [{ code: "missing-ui", message: "Stack landing requires interactive TUI/RPC mode." }],
-		};
-	}
-	if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
-	let prepared: Awaited<ReturnType<typeof prepareLand>>;
+	// The first plan reuses the caller's inspection and may ask for a merge method. The locked re-plan inspects
+	// again but keeps the chosen method, so the user is asked once.
+	let model = initialModel;
+	let method = options.method;
+	let applying = false;
+	const injectedAcquireLock = deps.acquirePublicationLock;
 	try {
-		prepared = await prepareLand(options, deps, initialModel);
+		return await runLanding(
+			{
+				async plan() {
+					const prepared = await prepareLand({ ...options, method }, deps, model);
+					model = undefined;
+					if (prepared.status !== "ok") return { ok: false, blockers: prepared.blockers };
+					method = prepared.method;
+					const confirmation = renderStackLandingPlan({
+						changeCount: prepared.model.stack.length,
+						slices: prepared.mapped,
+						method: prepared.method,
+						readiness: options.readiness,
+						nativeStackNumber: prepared.kind === "native" ? prepared.nativeStack.stackNumber : undefined,
+						queuePolicy: prepared.queuePolicy,
+					});
+					// Only a human reads the preview; an over-long one blocks interactive landing alone.
+					if (!confirmation.ok && authorization === "interactive-confirmation") {
+						return { ok: false, blockers: [{ code: "truncated", message: confirmation.reason }] };
+					}
+					const preview = confirmation.ok ? confirmation.body : confirmation.reason;
+					return { ok: true, plan: { planId: landingPlanId(options, prepared), preview, prepared } };
+				},
+				apply({ prepared }) {
+					applying = true;
+					if (prepared.kind === "single") return runSingleLand(options, deps, prepared);
+					return runNativeLand(
+						options,
+						deps,
+						prepared.method,
+						prepared.model,
+						prepared.mapped,
+						prepared.nativeStack,
+						prepared.repository,
+						deps.nativeStack,
+					);
+				},
+			},
+			{
+				authorization,
+				ui: deps.ui,
+				confirmTitle: "Land this stacked PR plan?",
+				lock: {
+					exec: execFromRunner(deps.run),
+					cwd: options.cwd,
+					backend: "jj",
+					acquireLock: injectedAcquireLock ? ({ repositoryPath }) => injectedAcquireLock(repositoryPath) : undefined,
+					realpath: deps.realpath,
+				},
+				onPhase: (phase) => deps.ui.setStatus(LANDING_STATUS[phase]),
+				signal: deps.signal,
+			},
+		);
 	} catch (error) {
+		// Apply owns its errors; a planning error (for example native stack inspection) means nothing was submitted.
+		if (applying) throw error;
 		return classifyNativePreparationError(error);
 	}
-	if (prepared.status !== "ok") return prepared;
-	if (authorization === "interactive-confirmation") {
-		const confirmation = renderStackLandingPlan({
-			changeCount: prepared.model.stack.length,
-			slices: prepared.mapped,
-			method: prepared.method,
-			readiness: options.readiness,
-			nativeStackNumber: prepared.kind === "native" ? prepared.nativeStack.stackNumber : undefined,
-			queuePolicy: prepared.queuePolicy,
-		});
-		if (!confirmation.ok) {
-			return { status: "blocked", blockers: [{ code: "truncated", message: confirmation.reason }] };
-		}
-		deps.ui.setStatus("jj-stack: confirm landing");
-		const confirmed = await deps.ui.confirm("Land this stacked PR plan?", confirmation.body);
-		if (deps.signal?.aborted) return { status: "cancelled", ...emptyStackLandProgress() };
-		if (!confirmed) return { status: "declined" };
-	}
-	if (prepared.kind === "native") {
-		const injectedAcquireLock = deps.acquirePublicationLock;
-		const acquireLock = injectedAcquireLock
-			? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
-			: undefined;
-		const lockAttempt = await acquireRepositoryPublicationLock(execFromRunner(deps.run), options.cwd, {
-			backend: "jj",
-			acquireLock,
-			signal: deps.signal,
-		});
-		if (!lockAttempt.ok) {
-			if (lockAttempt.kind === "failed") {
-				return {
-					status: "failed",
-					error: `Unable to acquire native stack landing lock: ${lockAttempt.error}`,
-					...emptyStackLandProgress(),
-				};
-			}
-			return {
-				status: "busy",
-				message: "Another stack publication or landing is active for this repository.",
-			};
-		}
-		try {
-			return await runNativeLand(
-				options,
-				deps,
-				prepared.method,
-				prepared.model,
-				prepared.mapped,
-				prepared.nativeStack,
-				prepared.repository,
-				deps.nativeStack,
-			);
-		} finally {
-			const released = lockAttempt.lock.release();
-			if (!released.ok) deps.ui.notify(`Native landing lock cleanup failed: ${released.error}`, "warning");
-		}
-	}
-	return runSingleLand(options, deps, prepared);
+}
+
+/** Every fact the landing depends on, so a re-plan under the lock proves the confirmed plan is still current. */
+function landingPlanId(options: LandStackOptions, prepared: PreparedLand): string {
+	const nativeStack =
+		prepared.kind === "native"
+			? {
+					stackNumber: prepared.nativeStack.stackNumber,
+					baseRef: prepared.nativeStack.baseRef,
+					baseSha: prepared.nativeStack.baseSha ?? null,
+					open: prepared.nativeStack.open,
+					pullRequests: prepared.nativeStack.pullRequests.map((pr) => ({
+						number: pr.number,
+						state: pr.state,
+						draft: pr.draft,
+						mergedAt: pr.mergedAt ?? null,
+						head: { ref: pr.head.ref, sha: pr.head.sha },
+					})),
+				}
+			: null;
+	return planIdFor(1, {
+		remote: options.remote,
+		trunkRevset: options.trunk ?? "trunk()",
+		readiness: options.readiness,
+		kind: prepared.kind,
+		method: prepared.method,
+		queuePolicy: prepared.queuePolicy,
+		repository: { owner: prepared.repository.owner, repo: prepared.repository.repo },
+		trunkCommitId: prepared.model.trunk.commitId,
+		stack: prepared.model.stack.map((commit) => ({
+			changeId: commit.changeId,
+			commitId: commit.commitId,
+			bookmarks: [...commit.bookmarks],
+		})),
+		slices: prepared.mapped.map((slice) => ({ ...slice })),
+		nativeStack,
+	});
 }
 
 async function remapLand(
@@ -600,7 +649,7 @@ async function resolveLandMethod(
 async function runSingleLand(
 	options: LandStackOptions,
 	deps: ResolvedOrchestratorDeps,
-	prepared: Extract<Awaited<ReturnType<typeof prepareLand>>, { status: "ok"; kind: "single" }>,
+	prepared: Extract<PreparedLand, { kind: "single" }>,
 ): Promise<StackLandOutcome> {
 	const { jj, github, landFrontier } = deps;
 	const { method } = prepared;

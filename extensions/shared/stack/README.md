@@ -10,9 +10,10 @@ these contracts directly.
 
 ## Stack transaction
 
-`transaction.ts` owns the sequence every stack publication runs (landing joins
-in a follow-up): plan, authorize, lock, re-plan, compare plan IDs, apply,
-release. A provider supplies an adapter with two methods, `plan()` and
+`transaction.ts` owns the sequence every stack publication and landing runs:
+plan, authorize, lock, re-plan, compare plan IDs, apply, release.
+`runPublication` and `runLanding` wrap one generic core and return the
+publication and landing outcome types. A provider supplies an adapter with two methods, `plan()` and
 `apply(plan)`, plus its lock target. The transaction owns everything else:
 
 - **Authorization.** `interactive-confirmation` asks with the plan preview.
@@ -43,7 +44,22 @@ release. A provider supplies an adapter with two methods, `plan()` and
 
 `apply()` is the only mutating step. It keeps its own progress accounting and
 any freshness checks it needs mid-mutation (jj re-plans after generating PR
-metadata, for example).
+metadata, and GitHub re-inspects the rebase scope before each later frontier,
+for example).
+
+Landing adds two rules:
+
+- **Every landing locks**, including jj's single-PR path, which merges a PR
+  and rewrites local history.
+- **Apply may call PR Autopilot only on a backend whose mutation path does not
+  take the repository lock** (Git and jj). jj and GitHub landing ask Land to
+  merge each frontier while holding the lock, and Land may run an Autopilot
+  readiness pass that publishes fixes. Graphite's backend takes the lock to
+  publish, so Graphite runs its readiness pass before the transaction starts and
+  its plan step requires the PR heads that readiness verified.
+
+A plan step that asks the user for a merge method keeps the answer for the
+locked re-plan, so the user is asked once.
 
 ## PR transitions during publication
 

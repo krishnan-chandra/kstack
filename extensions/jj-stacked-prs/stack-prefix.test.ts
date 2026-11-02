@@ -63,13 +63,31 @@ describe("stack-prefix landing", () => {
 		assert.deepEqual(jj.calls, ["abandon:trunk..feat2", "fetch"]);
 	});
 
+	it("blocks without a UI before any jj or GitHub inspection", async () => {
+		const result = await landStackThroughPullRequest(
+			{ cwd: "/repo", prNumber: 11, headBookmark: "feat1", readiness: "watch", method: "squash" },
+			{
+				run: async () => assert.fail("no command may run without a UI"),
+				ui: ui({ hasUI: false }),
+				jj: fakeJj({ listLocalBookmarks: async () => assert.fail("no jj inspection without a UI") }),
+				nativeStack: fakeNativeStack(),
+				github: fakeGithub({ listOpenPrs: async () => assert.fail("no GitHub inspection without a UI") }),
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : undefined, "blocked");
+		if (result.status === "stack" && result.outcome.status === "blocked") {
+			assert.equal(result.outcome.blockers[0]?.code, "missing-ui");
+		}
+	});
+
 	it("blocks an unclaimed Land request before progress", async () => {
 		const stack = [commit("aaa", "feat1")];
 		const readyPr = { ...openPrs()[0], draft: false };
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 11, headBookmark: "feat1", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj: fakeJj({
 					fetchStack: async () => stack,
@@ -127,7 +145,8 @@ describe("stack-prefix landing", () => {
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj: fakeJj({
 					fetchStack: async () => stack,
@@ -159,7 +178,8 @@ describe("stack-prefix landing", () => {
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 12, headBookmark: "feat2", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj: fakeJj({
 					fetchStack: async () => stack,
@@ -197,7 +217,8 @@ describe("stack-prefix landing", () => {
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 11, headBookmark: "feat1", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -222,7 +243,8 @@ describe("stack-prefix landing", () => {
 		const result = await landStackThroughPullRequest(
 			{ cwd: "/repo", prNumber: 11, headBookmark: "feat1", readiness: "watch", method: "squash" },
 			{
-				run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj: fakeJj({
 					fetchStack: async () => [one],

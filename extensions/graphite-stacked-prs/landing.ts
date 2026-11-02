@@ -4,9 +4,15 @@ import { type BoundaryValue, isString } from "../shared/validation.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import type { ExecFn, ExecFnResult } from "../shared/git-exec.ts";
 import { getPullRequest, type MergeMethod, waitForMerge } from "../shared/github.ts";
-import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
-import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
+import type { acquirePublicationLock } from "../shared/publication-lock.ts";
+import {
+	emptyStackLandProgress,
+	type StackLandFrontier,
+	type StackLandOutcome,
+	type StackPrefixLandOutcome,
+} from "../shared/stack/outcome.ts";
 import { planIdFor } from "../shared/stack/plan-id.ts";
+import { missingUiBlocker, runLanding, type StackPlanResult } from "../shared/stack/transaction.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { type GraphiteOpenPullRequest, queryOpenPullRequests } from "./pull-requests.ts";
 
@@ -30,7 +36,7 @@ export interface GraphiteLandingDeps {
 		mode: "check" | "watch",
 		pr: number,
 	): Promise<{ handled: false } | { handled: true; outcome: AutopilotResult }>;
-	confirmMerge(preview: string): Promise<boolean>;
+	ui: { hasUI: boolean; confirm(title: string, body: string): Promise<boolean> };
 	now(): number;
 	sleep(ms: number, signal: AbortSignal): Promise<void>;
 	acquireLock?: typeof acquirePublicationLock;
@@ -222,10 +228,49 @@ async function dryRun(
 	return scope.ok ? { ok: true } : { ok: false, error: `Refusing Graphite stack landing: ${scope.error}` };
 }
 
+/** The PR heads PR Autopilot verified as merge-ready, by PR number. */
+type ReadinessEvidence = ReadonlyMap<number, Pick<GraphiteOpenPullRequest, "ref" | "baseRef" | "headSha">>;
+
+/**
+ * The transaction's plan step: re-inspect the prefix, require it to match the readiness evidence, and dry-run the
+ * merge. Read-only, so it runs before confirmation and again under the repository lock.
+ */
+async function planMerge(
+	prNumber: number,
+	readinessEvidence: ReadinessEvidence,
+	deps: GraphiteLandingDeps,
+): Promise<StackPlanResult<GraphiteLandingPlan>> {
+	const inspected = await inspectPlan(deps.cwd, prNumber, deps.exec, deps.signal);
+	if (!inspected.ok) return planBlocked(inspected.error);
+	if (!inspected.plan) return planBlocked("Graphite stack topology disappeared after readiness checks.");
+	const plan = inspected.plan;
+	const readinessChanged =
+		plan.pullRequests.length !== readinessEvidence.size ||
+		plan.pullRequests.some((pr) => {
+			const evidence = readinessEvidence.get(pr.number);
+			return !evidence || evidence.ref !== pr.ref || evidence.baseRef !== pr.baseRef || evidence.headSha !== pr.headSha;
+		});
+	if (readinessChanged)
+		return planBlocked("Graphite PR heads or topology changed after readiness checks; no merge ran.");
+	if (plan.pullRequests.some((pr) => pr.draft)) {
+		return planBlocked("Every Graphite prefix PR must be ready for review before landing.");
+	}
+	const dryRunResult = await dryRun(plan, deps);
+	if (!dryRunResult.ok) return planBlocked(dryRunResult.error);
+	return { ok: true, plan };
+}
+
+function planBlocked(message: string): StackPlanResult<GraphiteLandingPlan> {
+	return { ok: false, blockers: [{ code: "provider-contract", message }] };
+}
+
 export async function requestGraphiteStackLanding(
 	options: { prNumber: number; readiness: "check" | "watch"; method?: MergeMethod },
 	deps: GraphiteLandingDeps,
 ): Promise<StackPrefixLandOutcome> {
+	// The readiness pass below may publish fixes, so it runs before the transaction and must not run in vain.
+	const missingUi = missingUiBlocker("interactive-confirmation", deps.ui.hasUI, "Stack landing");
+	if (missingUi) return { status: "stack", outcome: { status: "blocked", blockers: [missingUi] } };
 	let inspected: Awaited<ReturnType<typeof inspectPlan>>;
 	try {
 		inspected = await inspectPlan(deps.cwd, options.prNumber, deps.exec, deps.signal);
@@ -243,9 +288,8 @@ export async function requestGraphiteStackLanding(
 		};
 	}
 
-	let plan = inspected.plan;
 	const readinessEvidence = new Map<number, Pick<GraphiteOpenPullRequest, "ref" | "baseRef" | "headSha">>();
-	for (const pr of plan.pullRequests) {
+	for (const pr of inspected.plan.pullRequests) {
 		const readiness = await deps.runAutopilot(options.readiness, pr.number);
 		if (!readiness.handled) {
 			return { status: "stack", outcome: blocked("pr-autopilot extension is unavailable.") };
@@ -273,192 +317,125 @@ export async function requestGraphiteStackLanding(
 		});
 	}
 
-	const refreshed = await inspectPlan(deps.cwd, options.prNumber, deps.exec, deps.signal);
-	if (!refreshed.ok || !refreshed.plan) {
-		return {
-			status: "stack",
-			outcome: blocked(refreshed.ok ? "Graphite stack topology disappeared after readiness checks." : refreshed.error),
-		};
-	}
-	const refreshedPlan = refreshed.plan;
-	const readinessChanged =
-		refreshedPlan.pullRequests.length !== readinessEvidence.size ||
-		refreshedPlan.pullRequests.some((pr) => {
-			const evidence = readinessEvidence.get(pr.number);
-			return !evidence || evidence.ref !== pr.ref || evidence.baseRef !== pr.baseRef || evidence.headSha !== pr.headSha;
-		});
-	if (readinessChanged) {
-		return {
-			status: "stack",
-			outcome: blocked("Graphite PR heads or topology changed after readiness checks; no merge ran."),
-		};
-	}
-	plan = refreshedPlan;
-	if (plan.pullRequests.some((pr) => pr.draft)) {
-		return {
-			status: "stack",
-			outcome: blocked("Every Graphite prefix PR must be ready for review before landing."),
-		};
-	}
-	const previewDryRun = await dryRun(plan, deps);
-	if (!previewDryRun.ok) return { status: "stack", outcome: blocked(previewDryRun.error) };
-	if (!(await deps.confirmMerge(plan.preview))) {
-		return {
-			status: "stack",
-			outcome: { status: "declined" },
-		};
-	}
+	const outcome = await runLanding(
+		{
+			plan: () => planMerge(options.prNumber, readinessEvidence, deps),
+			apply: (plan) => mergeGraphiteStack(plan, deps),
+		},
+		{
+			authorization: "interactive-confirmation",
+			ui: deps.ui,
+			confirmTitle: "Confirm exact Graphite stack merge?",
+			lock: {
+				exec: deps.exec,
+				cwd: inspected.plan.repositoryRoot,
+				acquireLock: deps.acquireLock,
+				realpath: deps.realpath,
+			},
+			signal: deps.signal,
+		},
+	);
+	return { status: "stack", outcome };
+}
 
-	const lock = await acquireRepositoryPublicationLock(deps.exec, plan.repositoryRoot, {
-		acquireLock: deps.acquireLock,
-		realpath: deps.realpath,
-		signal: deps.signal,
-	});
-	if (!lock.ok) {
-		const reason =
-			lock.kind === "busy" ? "Another Graphite publication or landing is active for this repository." : lock.error;
-		return {
-			status: "stack",
-			outcome: lock.kind === "busy" ? { status: "busy", message: reason } : blocked(reason),
-		};
-	}
+/** The transaction's apply step: submit the confirmed merge, verify each PR, then sync Graphite. */
+async function mergeGraphiteStack(
+	finalPlan: GraphiteLandingPlan,
+	deps: GraphiteLandingDeps,
+): Promise<StackLandOutcome> {
+	let merged: ExecFnResult;
 	try {
-		const final = await inspectPlan(deps.cwd, options.prNumber, deps.exec, deps.signal);
-		if (!final.ok || !final.plan || final.plan.planId !== plan.planId) {
-			return {
-				status: "stack",
-				outcome: blocked(final.ok ? "Graphite landing plan changed after confirmation; no merge ran." : final.error),
-			};
-		}
-		const finalPlan = final.plan;
-		const finalDryRun = await dryRun(finalPlan, deps);
-		if (!finalDryRun.ok) return { status: "stack", outcome: blocked(finalDryRun.error) };
-
-		let merged: ExecFnResult;
-		try {
-			merged = await deps.exec("gt", ["--no-interactive", "merge"], {
-				cwd: finalPlan.repositoryRoot,
-				timeout: 60_000,
-				signal: deps.signal,
-			});
-		} catch (error) {
-			const inFlight = `gt merge may have started before the process failed: ${error instanceof Error ? error.message : String(error)}.`;
-			return {
-				status: "stack",
-				outcome: {
-					status: "indeterminate",
-					inFlight,
-					recovery: `Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
-					frontiers: [],
-					remainingRefs: [],
-					completedMutations: [],
-					warnings: [],
-					recoveryOperationIds: [],
-				},
-			};
-		}
-		if (merged.code !== 0) {
-			return {
-				status: "stack",
-				outcome: {
-					status: "indeterminate",
-					inFlight: `gt merge returned ${diagnostic(merged)} after invocation.`,
-					recovery: `Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
-					frontiers: [],
-					remainingRefs: [],
-					completedMutations: [],
-					warnings: [],
-					recoveryOperationIds: [],
-				},
-			};
-		}
-
-		const waiter = deps.waitForMerge ?? waitForMerge;
-		const settlements = await Promise.allSettled(
-			finalPlan.pullRequests.map((pr) =>
-				waiter(deps.exec, finalPlan.repositoryRoot, pr.number, pr.ref, pr.headSha, deps, deps.signal),
-			),
-		);
-		const frontiers: StackLandFrontier[] = [];
-		const completedMutations = [
-			`Graphite accepted the native merge for ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")}`,
-		];
-		const blockers: string[] = [];
-		const warnings: string[] = [];
-		let allMerged = true;
-		for (let index = 0; index < settlements.length; index++) {
-			const pr = finalPlan.pullRequests[index];
-			const settlement = settlements[index];
-			let state: StackLandFrontier["state"];
-			if (settlement.status === "rejected") {
-				allMerged = false;
-				state = "blocked";
-				const error = settlement.reason instanceof Error ? settlement.reason.message : String(settlement.reason);
-				blockers.push(`PR #${pr.number} remote verification failed: ${error}. Inspect it before retrying.`);
-			} else if (settlement.value.merged) {
-				state = "landed";
-				completedMutations.push(`Verified PR #${pr.number} merged remotely`);
-			} else {
-				allMerged = false;
-				const snapshot = settlement.value.snapshot;
-				const unchangedOpen =
-					snapshot.state === "OPEN" && snapshot.headRef === pr.ref && snapshot.headOid === pr.headSha;
-				if (unchangedOpen) {
-					state = "queued";
-					blockers.push(`PR #${pr.number} remains open at the expected head and may be queued.`);
-				} else {
-					state = "blocked";
-					blockers.push(
-						`PR #${pr.number} verification stopped at ${snapshot.state} ${snapshot.headRef}@${snapshot.headOid.slice(0, 12)}; expected OPEN or MERGED ${pr.ref}@${pr.headSha.slice(0, 12)}.`,
-					);
-				}
-			}
-			frontiers.push({
-				ref: pr.ref,
-				prNumber: pr.number,
-				url: pr.url,
-				expectedHeadSha: pr.headSha,
-				method: "graphite",
-				state,
-			});
-		}
-		if (allMerged) {
-			const synced = await run(
-				deps.exec,
-				"gt",
-				["--no-interactive", "sync"],
-				finalPlan.repositoryRoot,
-				deps.signal,
-				60_000,
-			);
-			if (synced.code === 0) {
-				completedMutations.push("Synchronized Graphite after the stack merged");
-			} else {
-				warnings.push(`The stack merged, but gt sync failed: ${diagnostic(synced)}. Run gt sync manually.`);
-			}
-		}
+		merged = await deps.exec("gt", ["--no-interactive", "merge"], {
+			cwd: finalPlan.repositoryRoot,
+			timeout: 60_000,
+			signal: deps.signal,
+		});
+	} catch (error) {
+		const inFlight = `gt merge may have started before the process failed: ${error instanceof Error ? error.message : String(error)}.`;
 		return {
-			status: "stack",
-			outcome: allMerged
-				? {
-						status: "completed",
-						frontiers,
-						remainingRefs: [],
-						completedMutations,
-						warnings,
-						recoveryOperationIds: [],
-					}
-				: {
-						status: "partial",
-						error: blockers.join("; ") || "Graphite stack landing was partially completed.",
-						frontiers,
-						remainingRefs: [],
-						completedMutations,
-						warnings,
-						recoveryOperationIds: [],
-					},
+			status: "indeterminate",
+			inFlight,
+			recovery: `Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
+			...emptyStackLandProgress(),
 		};
-	} finally {
-		lock.lock.release();
 	}
+	if (merged.code !== 0) {
+		return {
+			status: "indeterminate",
+			inFlight: `gt merge returned ${diagnostic(merged)} after invocation.`,
+			recovery: `Inspect ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")} before retrying.`,
+			...emptyStackLandProgress(),
+		};
+	}
+
+	const waiter = deps.waitForMerge ?? waitForMerge;
+	const settlements = await Promise.allSettled(
+		finalPlan.pullRequests.map((pr) =>
+			waiter(deps.exec, finalPlan.repositoryRoot, pr.number, pr.ref, pr.headSha, deps, deps.signal),
+		),
+	);
+	const frontiers: StackLandFrontier[] = [];
+	const completedMutations = [
+		`Graphite accepted the native merge for ${finalPlan.pullRequests.map((pr) => `#${pr.number}`).join(", ")}`,
+	];
+	const blockers: string[] = [];
+	const warnings: string[] = [];
+	let allMerged = true;
+	for (let index = 0; index < settlements.length; index++) {
+		const pr = finalPlan.pullRequests[index];
+		const settlement = settlements[index];
+		let state: StackLandFrontier["state"];
+		if (settlement.status === "rejected") {
+			allMerged = false;
+			state = "blocked";
+			const error = settlement.reason instanceof Error ? settlement.reason.message : String(settlement.reason);
+			blockers.push(`PR #${pr.number} remote verification failed: ${error}. Inspect it before retrying.`);
+		} else if (settlement.value.merged) {
+			state = "landed";
+			completedMutations.push(`Verified PR #${pr.number} merged remotely`);
+		} else {
+			allMerged = false;
+			const snapshot = settlement.value.snapshot;
+			const unchangedOpen = snapshot.state === "OPEN" && snapshot.headRef === pr.ref && snapshot.headOid === pr.headSha;
+			if (unchangedOpen) {
+				state = "queued";
+				blockers.push(`PR #${pr.number} remains open at the expected head and may be queued.`);
+			} else {
+				state = "blocked";
+				blockers.push(
+					`PR #${pr.number} verification stopped at ${snapshot.state} ${snapshot.headRef}@${snapshot.headOid.slice(0, 12)}; expected OPEN or MERGED ${pr.ref}@${pr.headSha.slice(0, 12)}.`,
+				);
+			}
+		}
+		frontiers.push({
+			ref: pr.ref,
+			prNumber: pr.number,
+			url: pr.url,
+			expectedHeadSha: pr.headSha,
+			method: "graphite",
+			state,
+		});
+	}
+	if (allMerged) {
+		const synced = await run(
+			deps.exec,
+			"gt",
+			["--no-interactive", "sync"],
+			finalPlan.repositoryRoot,
+			deps.signal,
+			60_000,
+		);
+		if (synced.code === 0) {
+			completedMutations.push("Synchronized Graphite after the stack merged");
+		} else {
+			warnings.push(`The stack merged, but gt sync failed: ${diagnostic(synced)}. Run gt sync manually.`);
+		}
+	}
+	const progress = { frontiers, remainingRefs: [], completedMutations, warnings, recoveryOperationIds: [] };
+	if (allMerged) return { status: "completed", ...progress };
+	return {
+		status: "partial",
+		error: blockers.join("; ") || "Graphite stack landing was partially completed.",
+		...progress,
+	};
 }

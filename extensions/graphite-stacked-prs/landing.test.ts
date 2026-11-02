@@ -124,9 +124,12 @@ describe("Graphite stack landing", () => {
 					readiness.push(pr);
 					return { handled: true, outcome: ready(pr) };
 				},
-				confirmMerge: async (body) => {
-					preview = body;
-					return true;
+				ui: {
+					hasUI: true,
+					confirm: async (_title: string, body: string) => {
+						preview = body;
+						return true;
+					},
 				},
 				now: () => 0,
 				sleep: async () => {},
@@ -183,7 +186,7 @@ describe("Graphite stack landing", () => {
 					cwd: "/repo",
 					signal: new AbortController().signal,
 					runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-					confirmMerge: async () => true,
+					ui: { hasUI: true, confirm: async () => true },
 					now: () => 0,
 					sleep: async () => {},
 					acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
@@ -216,7 +219,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async () => ({ handled: true, outcome: pending }),
-				confirmMerge: async () => true,
+				ui: { hasUI: true, confirm: async () => true },
 				now: () => 0,
 				sleep: async () => {},
 			},
@@ -246,7 +249,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => true,
+				ui: { hasUI: true, confirm: async () => true },
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
@@ -268,6 +271,24 @@ describe("Graphite stack landing", () => {
 		);
 	});
 
+	it("blocks interactive landing without a UI before the readiness pass", async () => {
+		const base = harness();
+		const response = await requestGraphiteStackLanding(
+			{ prNumber: 12, readiness: "check" },
+			{
+				exec: base.exec,
+				cwd: "/repo",
+				signal: new AbortController().signal,
+				runAutopilot: async () => assert.fail("readiness must not run without a UI to confirm"),
+				ui: { hasUI: false, confirm: async () => assert.fail("confirmation must not run") },
+				now: () => 0,
+				sleep: async () => {},
+			},
+		);
+		assert.equal(response.status === "stack" ? response.outcome.status : undefined, "blocked");
+		assert.deepEqual(base.calls, []);
+	});
+
 	it("rejects an explicit merge method before readiness or mutation", async () => {
 		const { calls, exec } = harness();
 		const response = await requestGraphiteStackLanding(
@@ -277,7 +298,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async () => assert.fail("readiness must not run"),
-				confirmMerge: async () => false,
+				ui: { hasUI: true, confirm: async () => false },
 				now: () => 0,
 				sleep: async () => {},
 			},
@@ -305,7 +326,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => false,
+				ui: { hasUI: true, confirm: async () => false },
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => assert.fail("declining must not acquire the publication lock"),
@@ -338,7 +359,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => assert.fail("confirmation must not run"),
+				ui: { hasUI: true, confirm: async () => assert.fail("confirmation must not run") },
 				now: () => 0,
 				sleep: async () => {},
 			},
@@ -390,7 +411,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => assert.fail("confirmation must not run"),
+				ui: { hasUI: true, confirm: async () => assert.fail("confirmation must not run") },
 				now: () => 0,
 				sleep: async () => {},
 			},
@@ -472,7 +493,7 @@ describe("Graphite stack landing", () => {
 						},
 					},
 				}),
-				confirmMerge: async () => true,
+				ui: { hasUI: true, confirm: async () => true },
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
@@ -500,7 +521,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => true,
+				ui: { hasUI: true, confirm: async () => true },
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
@@ -549,7 +570,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => true,
+				ui: { hasUI: true, confirm: async () => true },
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
@@ -608,7 +629,7 @@ describe("Graphite stack landing", () => {
 				cwd: "/repo",
 				signal: new AbortController().signal,
 				runAutopilot: async (_mode, pr) => ({ handled: true, outcome: ready(pr) }),
-				confirmMerge: async () => true,
+				ui: { hasUI: true, confirm: async () => true },
 				now: () => 0,
 				sleep: async () => {},
 				acquireLock: () => ({

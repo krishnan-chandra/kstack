@@ -145,6 +145,7 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 					`Submitted native stack #${outcome.nativeStackNumber} to the merge queue.`,
 					...outcome.frontiers.map(renderFrontierLine),
 					"Local jj changes and bookmarks were preserved until GitHub finishes merging the complete stack.",
+					...warningLines(outcome.warnings),
 				].join("\n"),
 			);
 		case "waiting":
@@ -153,6 +154,7 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 					`Stack landing is waiting: ${outcome.reason}`,
 					...outcome.frontiers.map(renderFrontierLine),
 					...(outcome.remainingRefs.length > 0 ? [`Remaining: ${outcome.remainingRefs.join(", ")}`] : []),
+					...warningLines(outcome.warnings),
 				].join("\n"),
 			);
 		case "partial":
@@ -169,14 +171,23 @@ export function renderLandOutcome(outcome: StackLandOutcome): string {
 			);
 		case "blocked":
 			return boundText(
-				["Stack landing blocked:", ...outcome.blockers.map((blocker) => `- [${blocker.code}] ${blocker.message}`)].join(
-					"\n",
-				),
+				[
+					"Stack landing blocked:",
+					...outcome.blockers.map((blocker) => `- [${blocker.code}] ${blocker.message}`),
+					...warningLines(outcome.warnings ?? []),
+				].join("\n"),
 			);
 		case "declined":
-			return "Stack landing declined.";
+			return boundText(["Stack landing declined.", ...warningLines(outcome.warnings ?? [])].join("\n"));
 		case "busy":
-			return outcome.message;
+			return boundText([outcome.message, ...warningLines(outcome.warnings ?? [])].join("\n"));
+		case "stale":
+			return boundText(
+				[
+					`Landing plan ${shortenId(outcome.providedPlanId, PLAN_ID_DISPLAY_CHARS)} is stale; recomputed ${shortenId(outcome.recomputedPlanId, PLAN_ID_DISPLAY_CHARS)}. Nothing was landed.`,
+					...warningLines(outcome.warnings ?? []),
+				].join("\n"),
+			);
 		case "cancelled":
 			return boundText(
 				[

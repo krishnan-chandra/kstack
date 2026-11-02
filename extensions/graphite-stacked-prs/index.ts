@@ -123,19 +123,8 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 	);
 
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
-		claimStackLanding(data, "graphite", async ({ input, capabilities, ctx }) => {
-			if (!ctx.hasUI) {
-				return {
-					status: "stack",
-					outcome: {
-						status: "blocked",
-						blockers: [
-							{ code: "land-unavailable", message: "Graphite stack landing requires interactive TUI/RPC mode." },
-						],
-					},
-				};
-			}
-			return withRun(
+		claimStackLanding(data, "graphite", async ({ input, capabilities, ctx }) =>
+			withRun(
 				ctx,
 				async (signal) => {
 					ctx.ui.setStatus("graphite-stack", "graphite-stack: validating stack");
@@ -156,7 +145,7 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 										| { handled: true; outcome: AutopilotResult };
 								}
 							: async () => ({ handled: false }),
-						confirmMerge: (preview) => ctx.ui.confirm("Confirm exact Graphite stack merge?", preview),
+						ui: { hasUI: ctx.hasUI, confirm: (title, body) => ctx.ui.confirm(title, body) },
 						now: Date.now,
 						sleep: abortableSleep,
 					};
@@ -173,7 +162,7 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 					status: "stack" as const,
 					outcome: { status: "busy" as const, message: "Another Graphite stack run is active." },
 				}),
-			);
-		}),
+			),
+		),
 	);
 }

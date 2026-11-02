@@ -9,20 +9,16 @@ import {
 	type MergeMethod,
 	type OpenPullRequest,
 } from "../shared/github.ts";
-import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../shared/publication-lock.ts";
+import type { acquirePublicationLock } from "../shared/publication-lock.ts";
 import { STACK_SHA_RE } from "../shared/stack/manifest.ts";
-import {
-	emptyStackLandProgress,
-	type StackLandFrontier,
-	type StackLandOutcome,
-	type StackPrefixLandOutcome,
-} from "../shared/stack/outcome.ts";
+import type { StackLandFrontier, StackLandOutcome, StackPrefixLandOutcome } from "../shared/stack/outcome.ts";
+import { planIdFor } from "../shared/stack/plan-id.ts";
 import { createNavigationCommentStore, type NavigationEntry } from "../shared/stack/topology.ts";
+import { missingUiBlocker, runLanding, type StackPlanResult } from "../shared/stack/transaction.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { cleanupLocalBranch } from "./branch-cleanup.ts";
 import {
 	inspectRebaseScope,
-	matchesConfirmedRebaseScope,
 	type RebaseScopeBranch,
 	type RebaseScopeSnapshot,
 	verifyRebasedScope,
@@ -39,6 +35,7 @@ interface LocalStackEntry {
 interface GitHubLandingDeps {
 	exec: ExecFn;
 	gateway: GitHubGateway;
+	hasUI: boolean;
 	confirm(title: string, body: string): Promise<boolean>;
 	selectMethod(allowed: readonly MergeMethod[]): Promise<MergeMethod | undefined>;
 	landFrontier(input: {
@@ -64,69 +61,176 @@ export async function requestGitHubStackLanding(
 	},
 	deps: GitHubLandingDeps,
 ): Promise<StackPrefixLandOutcome> {
+	const missingUi = missingUiBlocker("interactive-confirmation", deps.hasUI, "Stack landing");
+	if (missingUi) return { status: "stack", outcome: { status: "blocked", blockers: [missingUi] } };
 	const remote = input.remote
 		? await resolveGitRemote(input.cwd, input.remote, deps.exec, deps.signal)
 		: await discoverLandingRemote(input.cwd, input.prNumber, input.headRef, deps);
 	if (!remote.ok) return stackBlocked(remote.error);
-	const remoteName = remote.remote.name;
-	let membership: { entries: NavigationEntry[]; selectedIndex: number };
+	const target: LandingTarget = {
+		cwd: input.cwd,
+		remote: remote.remote.name,
+		repository: remote.remote.repository,
+		prNumber: input.prNumber,
+		headRef: input.headRef,
+		readiness: input.readiness,
+	};
+	let membership: StackMembership | undefined;
 	try {
-		membership = await createNavigationCommentStore(deps.gateway).membership({
-			repo: remote.remote.repository,
-			prNumber: input.prNumber,
-			headRef: input.headRef,
-			cwd: input.cwd,
-			signal: deps.signal,
-		});
+		membership = await readMembership(target, deps);
 	} catch (error) {
 		return stackBlocked(`Could not inspect the selected PR: ${errorMessage(error)}`);
 	}
-	if (membership.selectedIndex < 0 || membership.entries.length <= 1) return { status: "not-stack" };
+	if (!isStack(membership)) return { status: "not-stack" };
 	const version = await requireGit238(input.cwd, deps.exec);
 	if (!version.ok) return stackBlocked(version.error);
+	// The first plan reuses the membership read above and may ask for a merge method. The locked re-plan reads
+	// membership again, so a branch published onto the stack during confirmation changes the plan ID, and keeps
+	// the chosen method so the user is asked once.
+	let method = input.method;
+	const outcome = await runLanding(
+		{
+			async plan() {
+				const planned = await planLanding(target, membership, method, deps);
+				membership = undefined;
+				if (planned.ok) method = planned.plan.method;
+				return planned;
+			},
+			apply: (plan) =>
+				runLandingLoop({
+					...target,
+					entries: plan.entries,
+					selectedIndex: plan.selectedIndex,
+					method: plan.method,
+					deps,
+				}),
+		},
+		{
+			authorization: "interactive-confirmation",
+			ui: { hasUI: deps.hasUI, confirm: deps.confirm },
+			confirmTitle: "Land this GitHub stack prefix?",
+			lock: { exec: deps.exec, cwd: input.cwd, acquireLock: deps.acquireLock, realpath: deps.realpath },
+			signal: deps.signal,
+		},
+	);
+	return { status: "stack", outcome };
+}
+
+interface LandingTarget {
+	cwd: string;
+	remote: string;
+	repository: GitHubRepository;
+	prNumber: number;
+	headRef: string;
+	readiness: "check" | "watch";
+}
+
+interface StackMembership {
+	entries: NavigationEntry[];
+	selectedIndex: number;
+}
+
+interface GitHubLandingPlan {
+	planId: string;
+	preview: string;
+	entries: LocalStackEntry[];
+	selectedIndex: number;
+	method: MergeMethod;
+}
+
+function readMembership(target: LandingTarget, deps: GitHubLandingDeps): Promise<StackMembership> {
+	return createNavigationCommentStore(deps.gateway).membership({
+		repo: target.repository,
+		prNumber: target.prNumber,
+		headRef: target.headRef,
+		cwd: target.cwd,
+		signal: deps.signal,
+	});
+}
+
+function isStack(membership: StackMembership): boolean {
+	return membership.selectedIndex >= 0 && membership.entries.length > 1;
+}
+
+/**
+ * Inspect the stack without mutating it. The plan ID covers every PR and local branch fact the loop pins, plus
+ * the rebase scope, so a re-plan under the lock proves the confirmed landing is still current.
+ */
+async function planLanding(
+	target: LandingTarget,
+	knownMembership: StackMembership | undefined,
+	requestedMethod: MergeMethod | undefined,
+	deps: GitHubLandingDeps,
+): Promise<StackPlanResult<GitHubLandingPlan>> {
+	let membership = knownMembership;
+	if (!membership) {
+		try {
+			membership = await readMembership(target, deps);
+		} catch (error) {
+			return planBlocked(`Could not inspect the selected PR: ${errorMessage(error)}`);
+		}
+		if (!isStack(membership)) return planBlocked(`PR #${target.prNumber} is no longer part of a stack.`);
+	}
+	const { entries, selectedIndex } = membership;
 	const clean = await runCommand(
 		deps.exec,
 		"git",
 		["status", "--porcelain=v1", "--untracked-files=all"],
-		input.cwd,
+		target.cwd,
 		deps.signal,
 	);
 	if (clean.code !== 0 || clean.stdout.trim())
-		return stackBlocked("GitHub stack landing requires a clean working tree.");
-	const prepared = await inspectLocalStack(
-		membership.entries,
-		membership.selectedIndex,
-		remote.remote.repository,
-		input.cwd,
-		deps,
-	);
-	if (!prepared.ok) return stackBlocked(prepared.error);
-	const confirmedScope = await inspectLandingRebaseScope({
+		return planBlocked("GitHub stack landing requires a clean working tree.");
+	const prepared = await inspectLocalStack(entries, selectedIndex, target.repository, target.cwd, deps);
+	if (!prepared.ok) return planBlocked(prepared.error);
+	const scope = await inspectLandingRebaseScope({
 		current: prepared.entries[0],
 		remainder: prepared.entries.slice(1),
-		cwd: input.cwd,
+		cwd: target.cwd,
 		deps,
 	});
-	if (!confirmedScope.ok) return stackBlocked(confirmedScope.error);
-	const method = await resolveMethod(input.method, remote.remote.repository, input.cwd, deps);
-	if (!method.ok) return stackBlocked(method.error);
-	const preview = renderPreview(prepared.entries, membership.selectedIndex, method.method, input.readiness);
-	if (!preview.ok) return stackBlocked(preview.error);
-	if (!(await deps.confirm("Land this GitHub stack prefix?", preview.body))) {
-		return { status: "stack", outcome: { status: "declined" } };
-	}
-	const outcome = await runLandingLoop({
-		cwd: input.cwd,
-		remote: remoteName,
-		repository: remote.remote.repository,
-		selectedIndex: membership.selectedIndex,
-		entries: prepared.entries,
+	if (!scope.ok) return planBlocked(scope.error);
+	const method = await resolveMethod(requestedMethod, target.repository, target.cwd, deps);
+	if (!method.ok) return planBlocked(method.error);
+	const preview = renderPreview(prepared.entries, selectedIndex, method.method, target.readiness);
+	if (!preview.ok) return { ok: false, blockers: [{ code: "truncated", message: preview.error }] };
+	const planId = planIdFor(1, {
+		remote: target.remote,
+		repository: { owner: target.repository.owner, repo: target.repository.repo },
+		selectedIndex,
+		readiness: target.readiness,
 		method: method.method,
-		readiness: input.readiness,
-		confirmedScope: confirmedScope.scope,
-		deps,
+		entries: prepared.entries.map((item) => ({
+			bookmark: item.entry.bookmark,
+			base: item.entry.base,
+			prNumber: item.entry.prNumber,
+			status: item.status,
+			localSha: item.localSha ?? null,
+			pr: {
+				number: item.pr.number,
+				headCommitId: item.pr.headCommitId,
+				baseRef: item.pr.baseRef,
+				draft: item.pr.draft,
+				url: item.pr.url,
+			},
+		})),
+		rebaseScope: scope.scope
+			? {
+					frontierSha: scope.scope.frontierSha,
+					initiatingWorktree: scope.scope.initiatingWorktree,
+					range: [...scope.scope.range],
+					remainder: scope.scope.remainder.map((item) => ({ branch: item.branch, sha: item.sha })),
+				}
+			: null,
 	});
-	return { status: "stack", outcome };
+	return {
+		ok: true,
+		plan: { planId, preview: preview.body, entries: prepared.entries, selectedIndex, method: method.method },
+	};
+}
+
+function planBlocked(message: string): StackPlanResult<GitHubLandingPlan> {
+	return { ok: false, blockers: [{ code: "provider-contract", message }] };
 }
 
 async function discoverLandingRemote(
@@ -630,6 +734,7 @@ async function cleanupMergedBranch(input: {
 	return { completedMutations, warnings };
 }
 
+/** Land the confirmed prefix bottom-up. Runs as the transaction's apply step, under the repository lock. */
 async function runLandingLoop(input: {
 	cwd: string;
 	remote: string;
@@ -638,24 +743,14 @@ async function runLandingLoop(input: {
 	entries: readonly LocalStackEntry[];
 	method: MergeMethod;
 	readiness: "check" | "watch";
-	confirmedScope: RebaseScopeSnapshot | undefined;
 	deps: GitHubLandingDeps;
 }): Promise<StackLandOutcome> {
-	const lock = await acquireRepositoryPublicationLock(input.deps.exec, input.cwd, {
-		acquireLock: input.deps.acquireLock,
-		realpath: input.deps.realpath,
-		signal: input.deps.signal,
-	});
-	if (!lock.ok) {
-		return lock.kind === "busy"
-			? { status: "busy", message: "Another stack publication or landing is active for this repository." }
-			: { status: "failed", error: lock.error, ...emptyStackLandProgress() };
-	}
 	const frontiers: StackLandFrontier[] = [];
 	const completedMutations: string[] = [];
 	const warnings: string[] = [];
 	const recoveryOperationIds: string[] = [];
-	let remainingRefs = input.entries.map((item) => item.entry.bookmark);
+	const entries = input.entries;
+	let remainingRefs = entries.map((item) => item.entry.bookmark);
 	const progress = () => ({
 		frontiers: [...frontiers],
 		remainingRefs: [...remainingRefs],
@@ -664,56 +759,6 @@ async function runLandingLoop(input: {
 		recoveryOperationIds: [...recoveryOperationIds],
 	});
 	try {
-		const fresh = await inspectLocalStack(
-			input.entries.map((item) => item.entry),
-			input.selectedIndex,
-			input.repository,
-			input.cwd,
-			input.deps,
-		);
-		if (!fresh.ok) return { status: "blocked", blockers: [{ code: "provider-contract", message: fresh.error }] };
-		const changed = fresh.entries.some((item, index) => {
-			const prior = input.entries[index];
-			return (
-				!prior ||
-				item.status !== prior.status ||
-				item.localSha !== prior.localSha ||
-				item.pr.headCommitId !== prior.pr.headCommitId
-			);
-		});
-		if (changed) {
-			return {
-				status: "blocked",
-				blockers: [
-					{
-						code: "provider-contract",
-						message: "The local or remote stack changed after confirmation; retry from a fresh plan.",
-					},
-				],
-			};
-		}
-		const lockedScope = await inspectLandingRebaseScope({
-			current: fresh.entries[0],
-			remainder: fresh.entries.slice(1),
-			cwd: input.cwd,
-			deps: input.deps,
-		});
-		if (!lockedScope.ok) {
-			return { status: "blocked", blockers: [{ code: "provider-contract", message: lockedScope.error }] };
-		}
-		if (
-			(input.confirmedScope === undefined) !== (lockedScope.scope === undefined) ||
-			(input.confirmedScope &&
-				lockedScope.scope &&
-				!matchesConfirmedRebaseScope(input.confirmedScope, lockedScope.scope))
-		) {
-			return {
-				status: "blocked",
-				blockers: [{ code: "provider-contract", message: "The local rebase scope changed after confirmation; retry." }],
-			};
-		}
-		const entries = fresh.entries;
-		remainingRefs = entries.map((item) => item.entry.bookmark);
 		for (let index = 0; index <= input.selectedIndex; index++) {
 			const current = entries[index];
 			if (input.deps.signal?.aborted) {
@@ -821,8 +866,6 @@ async function runLandingLoop(input: {
 		return frontiers.length > 0 || completedMutations.length > 0
 			? { status: "partial", error: errorMessage(error), ...progress() }
 			: { status: "failed", error: errorMessage(error), ...progress() };
-	} finally {
-		lock.lock.release();
 	}
 }
 

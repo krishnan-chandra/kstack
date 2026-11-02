@@ -175,17 +175,8 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		}),
 	);
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
-		claimStackLanding(data, "jj", async ({ input, ctx }) => {
-			if (!ctx.hasUI) {
-				return {
-					status: "stack",
-					outcome: {
-						status: "blocked",
-						blockers: [{ code: "missing-ui", message: "Stack landing requires interactive TUI/RPC mode." }],
-					},
-				};
-			}
-			return withRun(
+		claimStackLanding(data, "jj", async ({ input, ctx }) =>
+			withRun(
 				ctx,
 				(signal) => {
 					const contextSignal = combinePublicationSignals(signal, ctx.signal);
@@ -205,8 +196,8 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 					status: "stack" as const,
 					outcome: { status: "busy" as const, message: "Another stacked-PR run is active." },
 				}),
-			);
-		}),
+			),
+		),
 	);
 
 	pi.registerCommand("jj-stack", {
