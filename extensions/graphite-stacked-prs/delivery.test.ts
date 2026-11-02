@@ -5,7 +5,7 @@ import { parseStackManifest } from "../shared/stack/manifest.ts";
 import {
 	planGraphitePublication,
 	preflightGraphiteStack,
-	submitGraphiteStack,
+	publishGraphiteManifest,
 	verifyGraphiteStack,
 } from "./delivery.ts";
 
@@ -118,6 +118,84 @@ describe("Graphite stack delivery", () => {
 		assert.match(planned.ok ? planned.plan.preview : "", /create draft PR: kstack\/one -> main/);
 	});
 
+	it("stops querying PRs once planning is cancelled", async () => {
+		const parsed = parseStackManifest(JSON.stringify(manifestValue));
+		assert.equal(parsed.ok, true);
+		if (!parsed.ok) return;
+		const { exec, calls } = scripted();
+		const verified = await verifyGraphiteStack("/repo", parsed.manifest, exec);
+		assert.equal(verified.ok, true);
+		if (!verified.ok) return;
+		const controller = new AbortController();
+		controller.abort();
+		const before = calls.length;
+		const planned = await planGraphitePublication(verified.stack, exec, controller.signal);
+		assert.equal(planned.ok, false);
+		assert.equal(calls.length, before);
+	});
+
+	it("cancels a locked re-plan mid-query without further queries or a submit", async () => {
+		const secondSha = "c".repeat(40);
+		const manifest = parseStackManifest(
+			JSON.stringify({
+				...manifestValue,
+				slices: [
+					...manifestValue.slices,
+					{ branch: "kstack/two", baseBranch: "kstack/one", headSha: secondSha, subject: "Two" },
+				],
+			}),
+		);
+		assert.equal(manifest.ok, true);
+		if (!manifest.ok) return;
+		const controller = new AbortController();
+		const prQueries: string[] = [];
+		const unexpected: string[] = [];
+		const base = scripted({
+			"git branch --show-current": { stdout: "kstack/two\n" },
+			"git check-ref-format --branch kstack/two": {},
+			"git rev-parse --verify refs/heads/kstack/two^{commit}": { stdout: `${secondSha}\n` },
+			[`git merge-base --is-ancestor ${headSha} ${secondSha}`]: {},
+			[`git diff --quiet ${headSha} ${secondSha} --`]: { code: 1 },
+			"gt --no-interactive --no-ai submit --stack --draft --no-edit --dry-run": {
+				stdout:
+					"Preparing to submit PRs for the following branches...\n▸ kstack/one (Create)\n▸ kstack/two (Create)\n✅ Dry run complete.\n",
+			},
+		});
+		const exec: ExecFn = async (command, args, options) => {
+			if (command === "gh") {
+				prQueries.push(args.join(" "));
+				assert.equal(options.signal, controller.signal);
+				// Queries 1-2 are the first plan; query 3 is the first slice of the locked re-plan.
+				if (prQueries.length === 3) controller.abort();
+				return { code: 0, stdout: "[]\n", stderr: "" };
+			}
+			if (command === "gt" && !args.includes("--dry-run")) unexpected.push(`${command} ${args.join(" ")}`);
+			return base.exec(command, args, options);
+		};
+		let releases = 0;
+		const result = await publishGraphiteManifest({
+			cwd: "/repo",
+			manifest: manifest.manifest,
+			exec,
+			ui: { hasUI: true, confirm: async () => true },
+			signal: controller.signal,
+			acquireLock: () => ({
+				ok: true,
+				lock: {
+					release: () => {
+						releases++;
+						return { ok: true };
+					},
+				},
+			}),
+			realpath: (path) => path,
+		});
+		assert.deepEqual(result, { status: "cancelled" });
+		assert.equal(prQueries.length, 3);
+		assert.deepEqual(unexpected, []);
+		assert.equal(releases, 1);
+	});
+
 	it("rejects a dry run whose affected branches differ from the manifest", async () => {
 		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
@@ -133,7 +211,7 @@ describe("Graphite stack delivery", () => {
 		assert.match(verified.ok ? "" : verified.error, /unexpected/);
 	});
 
-	it("revalidates under lock, submits once, and verifies the exact draft PR", async () => {
+	it("re-plans under the lock, submits once, and verifies the exact draft PR", async () => {
 		const parsed = parseStackManifest(JSON.stringify(manifestValue));
 		assert.equal(parsed.ok, true);
 		if (!parsed.ok) return;
@@ -162,14 +240,12 @@ describe("Graphite stack delivery", () => {
 			}
 			return base.exec(command, args, options);
 		};
-		const verified = await verifyGraphiteStack("/repo", parsed.manifest, exec);
-		assert.equal(verified.ok, true);
-		if (!verified.ok) return;
-		const planned = await planGraphitePublication(verified.stack, exec);
-		assert.equal(planned.ok, true);
-		if (!planned.ok) return;
 		let released = false;
-		const result = await submitGraphiteStack(planned.plan, exec, {
+		const result = await publishGraphiteManifest({
+			cwd: "/repo",
+			manifest: parsed.manifest,
+			exec,
+			ui: { hasUI: true, confirm: async () => true },
 			acquireLock: () => ({
 				ok: true,
 				lock: {
@@ -224,13 +300,11 @@ describe("Graphite stack delivery", () => {
 			}
 			return base.exec(command, args, options);
 		};
-		const verified = await verifyGraphiteStack("/repo", parsed.manifest, exec);
-		assert.equal(verified.ok, true);
-		if (!verified.ok) return;
-		const planned = await planGraphitePublication(verified.stack, exec);
-		assert.equal(planned.ok, true);
-		if (!planned.ok) return;
-		const result = await submitGraphiteStack(planned.plan, exec, {
+		const result = await publishGraphiteManifest({
+			cwd: "/repo",
+			manifest: parsed.manifest,
+			exec,
+			ui: { hasUI: true, confirm: async () => true },
 			acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
 			realpath: (path) => path,
 		});

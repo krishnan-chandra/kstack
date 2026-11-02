@@ -40,7 +40,8 @@ export type FailedPublicationAction = {
 	error: string;
 };
 
-export type StackPublishOutcome =
+/** `warnings` carries non-fatal problems such as a failed repository-lock release. */
+export type StackPublishOutcome = { warnings?: readonly string[] } & (
 	| {
 			status: "completed";
 			planId: string;
@@ -73,7 +74,8 @@ export type StackPublishOutcome =
 			publication?: StackPublicationMap;
 			recovery?: string;
 	  }
-	| { status: "failed"; error: string; completedActions?: readonly CompletedPublicationAction[] };
+	| { status: "failed"; error: string; completedActions?: readonly CompletedPublicationAction[] }
+);
 
 function newlyCreatedDrafts(outcome: StackPublishOutcome): readonly StackPublishedPullRequest[] {
 	if (outcome.status !== "completed" && outcome.status !== "partial" && outcome.status !== "indeterminate") return [];

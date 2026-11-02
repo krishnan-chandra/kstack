@@ -222,6 +222,7 @@ describe("GitHub publication transition traces", () => {
 						},
 						getAuthenticatedUser: async () => undefined,
 					}),
+					hasUI: true,
 					confirm: async () => {
 						if (scenario === "cancel-before") controller.abort();
 						return true;
@@ -309,6 +310,7 @@ describe("GitHub stack publication", () => {
 			deps: {
 				exec: fixture.exec,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				acquireLock: lock.acquireLock,
 				realpath: (path) => path,
@@ -328,6 +330,7 @@ describe("GitHub stack publication", () => {
 				deps: {
 					exec: execFixture().exec,
 					gateway: gateway(),
+					hasUI: true,
 					confirm: async () => true,
 					acquireLock: lock.acquireLock,
 					realpath: (path) => path,
@@ -367,6 +370,7 @@ describe("GitHub stack publication", () => {
 						return { id: 1 };
 					},
 				}),
+				hasUI: true,
 				confirm: async () => true,
 				acquireLock: lock.acquireLock,
 				realpath: (path) => path,
@@ -417,6 +421,7 @@ describe("GitHub stack publication", () => {
 						throw new GitHubError("comment acceptance unknown", "indeterminate");
 					},
 				}),
+				hasUI: true,
 				confirm: async () => true,
 				acquireLock: lock.acquireLock,
 				realpath: (path) => path,
@@ -441,6 +446,7 @@ describe("GitHub stack publication", () => {
 			deps: {
 				exec,
 				gateway: gateway({ getRemoteBranchSha: async () => (++reads === 1 ? undefined : remoteHead) }),
+				hasUI: true,
 				confirm: async () => true,
 				acquireLock: lock.acquireLock,
 				realpath: (path) => path,
@@ -454,7 +460,7 @@ describe("GitHub stack publication", () => {
 		assert.equal(lock.releaseCount, 1);
 	});
 
-	it("releases the publication lock after a declined confirmation", async () => {
+	it("never takes the publication lock when confirmation is declined", async () => {
 		const { exec, calls } = execFixture();
 		const lock = publicationLockFixture();
 		let confirmations = 0;
@@ -467,6 +473,7 @@ describe("GitHub stack publication", () => {
 			deps: {
 				exec,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => {
 					confirmations++;
 					return false;
@@ -481,10 +488,11 @@ describe("GitHub stack publication", () => {
 			calls.some((call) => call.startsWith("git push ")),
 			false,
 		);
-		assert.equal(lock.releaseCount, 1);
+		assert.equal(lock.held, false);
+		assert.equal(lock.releaseCount, 0);
 	});
 
-	it("releases the publication lock when confirmation rejects", async () => {
+	it("never takes the publication lock when confirmation rejects", async () => {
 		const lock = publicationLockFixture();
 		await assert.rejects(
 			publishGitHubStack({
@@ -496,6 +504,7 @@ describe("GitHub stack publication", () => {
 				deps: {
 					exec: execFixture().exec,
 					gateway: gateway(),
+					hasUI: true,
 					confirm: async () => {
 						throw new Error("confirmation rejected");
 					},
@@ -506,7 +515,7 @@ describe("GitHub stack publication", () => {
 			/confirmation rejected/,
 		);
 		assert.equal(lock.held, false);
-		assert.equal(lock.releaseCount, 1);
+		assert.equal(lock.releaseCount, 0);
 	});
 
 	it("holds the publication lock until a conclusive push failure settles", async () => {
@@ -524,6 +533,7 @@ describe("GitHub stack publication", () => {
 			deps: {
 				exec: fixture.exec,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				acquireLock: lock.acquireLock,
 				realpath: (path) => path,
@@ -558,6 +568,7 @@ describe("GitHub stack publication", () => {
 						throw new Error("readiness rejected");
 					},
 				}),
+				hasUI: true,
 				confirm: async () => true,
 				realpath: (path) => path,
 			},
@@ -600,6 +611,7 @@ describe("GitHub stack publication", () => {
 			deps: {
 				exec: abortAfterPush,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				signal: controller.signal,
 				acquireLock: lock.acquireLock,
@@ -627,6 +639,7 @@ describe("GitHub stack publication", () => {
 			deps: {
 				exec: fixture.exec,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				acquireLock: lock.acquireLock,
 				realpath: (path) => path,
@@ -661,7 +674,7 @@ describe("GitHub stack publication", () => {
 			remote: "origin",
 			ready: false,
 			authorization: "model-tool",
-			deps: { exec, gateway: gateway(), confirm: async () => true },
+			deps: { exec, gateway: gateway(), hasUI: true, confirm: async () => true },
 		});
 		assert.equal(result.status, "blocked");
 		assert.equal(

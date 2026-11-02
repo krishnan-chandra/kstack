@@ -961,7 +961,8 @@ describe("publication lock", () => {
 		);
 		assert.deepEqual(result, {
 			status: "failed",
-			error: "Unable to acquire publication lock: Could not acquire the repository publication lock: permission denied",
+			error:
+				"Unable to acquire the repository lock: Could not acquire the repository publication lock: permission denied",
 		});
 		assert.deepEqual(jj.calls, []);
 	});
@@ -998,16 +999,12 @@ describe("publication lock", () => {
 		]);
 	});
 
-	it("warns when lock cleanup fails", async () => {
-		const notifications: Array<{ message: string; level: string | undefined }> = [];
+	it("reports a failed lock cleanup as an outcome warning", async () => {
 		const result = await publishStackFromTool(
 			{ cwd: "/repo", top: "feat2", remote: "origin" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
-				ui: {
-					...ui({ hasUI: false }),
-					notify: (message, level) => notifications.push({ message, level }),
-				},
+				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
 				nativeStack: fakeNativeStack(),
 				github: fakeGithub(),
@@ -1018,12 +1015,8 @@ describe("publication lock", () => {
 			},
 		);
 		assert.equal(result.status, "completed");
-		assert.deepEqual(notifications, [
-			{
-				message:
-					"Publication lock cleanup failed: permission denied. Remove the lock file manually if later publications block.",
-				level: "warning",
-			},
+		assert.deepEqual(result.warnings, [
+			"Repository lock cleanup failed: permission denied. Remove the lock file manually if later publications or landings report busy.",
 		]);
 	});
 

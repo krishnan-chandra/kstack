@@ -6,7 +6,7 @@ import type { DelegatedFrontierResponse } from "../land/api.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
 import type { GitHubGateway } from "../shared/github.ts";
-import { acquireRepositoryPublicationLock, type LockAttempt } from "../shared/publication-lock.ts";
+import type { LockAttempt } from "../shared/publication-lock.ts";
 import type {
 	FailedPublicationAction,
 	StackPublishedPullRequest,
@@ -15,6 +15,7 @@ import type {
 import { createPrTransitions } from "../shared/stack/pr-transitions.ts";
 import { createPublicationProgress } from "../shared/stack/publication-progress.ts";
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
+import { runPublication, type StackTransactionPhase } from "../shared/stack/transaction.ts";
 import { errorMessage, isIndeterminate } from "./errors.ts";
 import { createJjGitHubGateway, execFromRunner } from "./github-gateway.ts";
 import { bookmarkRevset, createJjAdapter, type JjAdapter } from "./jj.ts";
@@ -209,67 +210,58 @@ export async function publishStackFromTool(
 	return publishStackWithAuthorization(options, deps, "model-tool");
 }
 
+const PUBLICATION_STATUS = {
+	planning: "jj-stack: planning publication",
+	confirming: "jj-stack: confirm publication",
+	locking: "jj-stack: waiting for the repository lock",
+	replanning: "jj-stack: re-checking the plan",
+	applying: "jj-stack: publishing",
+} satisfies Record<StackTransactionPhase, string>;
+
 async function publishStackWithAuthorization(
 	options: PublishOptions,
 	deps: OrchestratorDeps,
 	authorization: "interactive-confirmation" | "model-tool",
 ): Promise<StackPublishOutcome> {
-	if (authorization === "interactive-confirmation" && !deps.ui.hasUI) {
-		return {
-			status: "blocked",
-			blockers: [{ code: "missing-ui", message: "Publication requires interactive TUI/RPC mode." }],
-		};
-	}
-	if (deps.signal?.aborted) return { status: "cancelled" };
-	const planned = await planStack(options, deps);
-	if (planned.status === "blocked") return { status: "blocked", blockers: planned.blockers };
-	if (authorization === "interactive-confirmation") {
-		const confirmation = renderConfirmation(planned.plan);
-		if (!confirmation.ok) {
-			return { status: "blocked", blockers: [{ code: "truncated", message: confirmation.reason }] };
-		}
-		deps.ui.setStatus("jj-stack: confirm publication");
-		const confirmed = await deps.ui.confirm("Publish this stacked PR plan?", confirmation.body);
-		if (deps.signal?.aborted) return { status: "cancelled" };
-		if (!confirmed) return { status: "declined", planId: planned.plan.planId };
-	}
 	const injectedAcquireLock = deps.acquirePublicationLock;
-	const acquireLock = injectedAcquireLock
-		? ({ repositoryPath }: { repositoryPath: string }) => injectedAcquireLock(repositoryPath)
-		: undefined;
-	const lockAttempt = await acquireRepositoryPublicationLock(execFromRunner(deps.run), options.cwd, {
-		backend: "jj",
-		acquireLock,
-		realpath: deps.realpath,
-		signal: deps.signal,
-	});
-	if (!lockAttempt.ok) {
-		if (lockAttempt.kind === "failed") {
-			return { status: "failed", error: `Unable to acquire publication lock: ${lockAttempt.error}` };
-		}
-		const detail = lockAttempt.holder ? ` (pid ${lockAttempt.holder.pid}, since ${lockAttempt.holder.startedAt})` : "";
-		return {
-			status: "busy",
-			message: `Another kstack publication is in progress for this repository${detail}. Retry after it finishes.`,
-		};
-	}
-	try {
-		const fresh = await planStack(options, deps);
-		if (fresh.status === "blocked") return { status: "blocked", blockers: fresh.blockers, planId: planned.plan.planId };
-		if (fresh.plan.planId !== planned.plan.planId) {
-			return { status: "stale", providedPlanId: planned.plan.planId, recomputedPlanId: fresh.plan.planId };
-		}
-		deps.ui.setStatus("jj-stack: publishing");
-		return await applyPublication(fresh.plan, options, deps);
-	} finally {
-		const released = lockAttempt.lock.release();
-		if (!released.ok) {
-			deps.ui.notify(
-				`Publication lock cleanup failed: ${released.error}. Remove the lock file manually if later publications block.`,
-				"warning",
-			);
-		}
-	}
+	return runPublication(
+		{
+			async plan() {
+				const planned = await planStack(options, deps);
+				if (planned.status === "blocked") return { ok: false, blockers: planned.blockers };
+				const confirmation = renderConfirmation(planned.plan);
+				if (confirmation.ok) {
+					return {
+						ok: true,
+						plan: { planId: planned.plan.planId, preview: confirmation.body, publication: planned.plan },
+					};
+				}
+				// Only a human reads the preview; an over-long one blocks interactive publication alone.
+				if (authorization === "interactive-confirmation") {
+					return { ok: false, blockers: [{ code: "truncated", message: confirmation.reason }] };
+				}
+				return {
+					ok: true,
+					plan: { planId: planned.plan.planId, preview: confirmation.reason, publication: planned.plan },
+				};
+			},
+			apply: (plan) => applyPublication(plan.publication, options, deps),
+		},
+		{
+			authorization,
+			ui: deps.ui,
+			confirmTitle: "Publish this stacked PR plan?",
+			lock: {
+				exec: execFromRunner(deps.run),
+				cwd: options.cwd,
+				backend: "jj",
+				acquireLock: injectedAcquireLock ? ({ repositoryPath }) => injectedAcquireLock(repositoryPath) : undefined,
+				realpath: deps.realpath,
+			},
+			onPhase: (phase) => deps.ui.setStatus(PUBLICATION_STATUS[phase]),
+			signal: deps.signal,
+		},
+	);
 }
 
 export async function syncStack(options: SyncOptions, deps: OrchestratorDeps): Promise<SyncOutcome> {

@@ -39,8 +39,10 @@ publication.
 tool mutates the remote without another UI confirmation, so call it only after
 an explicit user request to publish the current stack.
 
-Publication acquires the shared repository lock, recomputes its plan, and then
-pushes branches bottom-up. Existing branches use
+Publication runs through the shared [stack transaction](../shared/stack/README.md#stack-transaction):
+it confirms the plan preview before taking the repository lock, recomputes the
+plan under the lock, and returns `stale` without mutating if the plan ID changed.
+It then pushes branches bottom-up. Existing branches use
 `--force-with-lease=refs/heads/<branch>:<exact-sha>`. The provider creates draft
 PRs, repairs bases, optionally marks drafts ready, and reconciles navigation
 comments. Comment failures are warnings after core publication succeeds.

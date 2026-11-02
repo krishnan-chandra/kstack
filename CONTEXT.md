@@ -136,11 +136,23 @@ advance and republish the remainder.
 Removing a merged frontier from local history and rebasing the remaining
 stack onto refreshed trunk.
 
+**Stack transaction**:
+The sequence every publication and landing runs: plan, authorize, take the
+repository lock, re-plan, and apply only if the re-plan reproduces the
+confirmed plan ID. Planning never publishes or moves refs; only the apply step
+does.
+_Avoid_: delivery, envelope
+
 ### Outcomes
 
 **Blocker**:
 A structured reason (code plus message) a stack mutation refuses to proceed
 without remote changes having been made.
+
+**Stale**:
+An outcome where the re-plan under the repository lock produced a different
+plan ID than the one authorized. Nothing was applied; retry from a fresh plan.
+_Avoid_: blocked (for this state)
 
 **Indeterminate**:
 An outcome where a mutation was sent but remote acceptance cannot be
