@@ -11,15 +11,25 @@ interface RouteLandDeps {
 	runSingle(): Promise<LandResult>;
 }
 
+/** A result for an outcome without progress, keeping any warning from the stack transaction. */
+function unstartedLandResult(reason: string, warnings: readonly string[] = []): LandResult {
+	return { ...blockedLandResult(reason), warnings: [...warnings] };
+}
+
 function mapStackOutcome(outcome: StackLandOutcome): LandResult {
-	if (outcome.status === "blocked") return blockedLandResult(outcome.blockers.map((item) => item.message).join(" "));
-	if (outcome.status === "declined") {
-		return {
-			...blockedLandResult("Stack landing confirmation declined."),
-			status: "declined",
-		};
+	if (outcome.status === "blocked") {
+		return unstartedLandResult(outcome.blockers.map((item) => item.message).join(" "), outcome.warnings);
 	}
-	if (outcome.status === "busy") return blockedLandResult(outcome.message);
+	if (outcome.status === "declined") {
+		return { ...unstartedLandResult("Stack landing confirmation declined.", outcome.warnings), status: "declined" };
+	}
+	if (outcome.status === "busy") return unstartedLandResult(outcome.message, outcome.warnings);
+	if (outcome.status === "stale") {
+		return unstartedLandResult(
+			"The stack changed after the landing plan was confirmed, so nothing was landed. Run /land again to review the fresh plan.",
+			outcome.warnings,
+		);
+	}
 
 	const frontiers: FrontierResult[] = outcome.frontiers.map((frontier) => ({
 		prNumber: frontier.prNumber,

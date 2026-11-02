@@ -164,6 +164,7 @@ async function runInvalidPostRebaseScenario(kind: "added-ref" | "moved-ref" | "s
 					return { kind: "deleted" as const };
 				},
 			},
+			hasUI: true,
 			confirm: async () => true,
 			selectMethod: async () => "squash",
 			landFrontier: async () => ({ handled: false }),
@@ -318,6 +319,7 @@ describe("GitHub stack landing", () => {
 							return undefined;
 						},
 					},
+					hasUI: true,
 					confirm: async () => true,
 					selectMethod: async () => "squash",
 					landFrontier: async () => ({ handled: false }),
@@ -349,6 +351,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(),
 				gateway: gateway(false),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -367,6 +370,7 @@ describe("GitHub stack landing", () => {
 					...base,
 					getPrComments: async () => [{ id: 1, user: "me", body: buildNavigationComment([entries[0]], "main") }],
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -382,6 +386,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -408,6 +413,7 @@ describe("GitHub stack landing", () => {
 						throw new Error("GitHub authentication failed");
 					},
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -429,6 +435,7 @@ describe("GitHub stack landing", () => {
 					"git remote get-url upstream": { stdout: "https://github.com/other/r.git\n" },
 				}),
 				gateway: { ...base, listPrsForHead: async (_repo, head) => [pr(2, head, two, "kstack/one")] },
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -446,6 +453,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(false),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -469,6 +477,7 @@ describe("GitHub stack landing", () => {
 					},
 				}),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -498,6 +507,7 @@ describe("GitHub stack landing", () => {
 					},
 				}),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -555,6 +565,7 @@ describe("GitHub stack landing", () => {
 					listPrsForHead: async (_repo, head) => prs.filter((item) => item.headRef === head),
 					getPrComments: async () => [{ id: 1, user: "me", body: buildNavigationComment(stackEntries, "main") }],
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -597,6 +608,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: changingExec,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => {
 					confirmed = true;
 					return true;
@@ -634,6 +646,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: driftingExec,
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => {
 					confirmed = true;
 					return true;
@@ -653,6 +666,153 @@ describe("GitHub stack landing", () => {
 			result.status === "stack" && result.outcome.status === "blocked" ? result.outcome.blockers[0].message : "",
 			/does not match PR #2 head/,
 		);
+	});
+
+	it("returns stale without landing when a PR changes during confirmation", async () => {
+		let confirmed = false;
+		let landCalls = 0;
+		const base = gateway();
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: exec(),
+				gateway: {
+					...base,
+					listOpenPrs: async (...args) => {
+						const prs = await base.listOpenPrs(...args);
+						return confirmed ? prs.map((item) => ({ ...item, draft: !item.draft })) : prs;
+					},
+				},
+				hasUI: true,
+				confirm: async () => {
+					confirmed = true;
+					return true;
+				},
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({ ok: true, lock: { release: () => ({ ok: true }) } }),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "stale");
+	});
+
+	it("returns stale when a branch is published onto the stack during confirmation", async () => {
+		let confirmed = false;
+		let landCalls = 0;
+		let releases = 0;
+		const grownEntries = [
+			...entries,
+			{ prNumber: 3, bookmark: "kstack/three", base: "kstack/two", status: "open" as const },
+		];
+		const base = gateway();
+		const baseExec = exec();
+		const growingExec: ExecFn = (command, args, options) => {
+			const key = `${command} ${args.join(" ")}`;
+			const grownResponses = new Map([
+				["git rev-parse --verify refs/heads/kstack/three^{commit}", `${three}\n`],
+				[
+					"git for-each-ref --format=%(refname)%09%(objectname) refs/heads",
+					localRefInventory([
+						["kstack/one", one],
+						["kstack/two", two],
+						["kstack/three", three],
+					]),
+				],
+				["git worktree list --porcelain -z", worktreeRecord("/repo", "kstack/three", three)],
+				[`git rev-list --reverse ${one}..${three}`, `${two}\n${three}\n`],
+			]);
+			const grown = confirmed ? grownResponses.get(key) : undefined;
+			if (grown !== undefined) return Promise.resolve({ code: 0, stdout: grown, stderr: "" });
+			return baseExec(command, args, options);
+		};
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: growingExec,
+				gateway: {
+					...base,
+					listOpenPrs: async (...args) => {
+						const prs = await base.listOpenPrs(...args);
+						return confirmed ? [...prs, pr(3, "kstack/three", three, "kstack/two")] : prs;
+					},
+					getPrComments: async (...args) =>
+						confirmed
+							? [{ id: 1, user: "me", body: buildNavigationComment(grownEntries, "main") }]
+							: base.getPrComments(...args),
+				},
+				hasUI: true,
+				confirm: async () => {
+					confirmed = true;
+					return true;
+				},
+				selectMethod: async () => "squash",
+				landFrontier: async () => {
+					landCalls++;
+					return { handled: false };
+				},
+				acquireLock: () => ({
+					ok: true,
+					lock: {
+						release: () => {
+							releases++;
+							return { ok: true };
+						},
+					},
+				}),
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(landCalls, 0);
+		assert.equal(releases, 1);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "stale", JSON.stringify(result));
+	});
+
+	it("blocks without a UI before resolving remotes or reading the stack", async () => {
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: async () => assert.fail("no command may run without a UI"),
+				gateway: {
+					...gateway(),
+					getPrComments: async () => assert.fail("no GitHub inspection without a UI"),
+				},
+				hasUI: false,
+				confirm: async () => assert.fail("confirmation must not run"),
+				selectMethod: async () => "squash",
+				landFrontier: async () => assert.fail("no merge without a UI"),
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : undefined, "blocked");
+		if (result.status === "stack" && result.outcome.status === "blocked") {
+			assert.equal(result.outcome.blockers[0]?.code, "missing-ui");
+		}
+	});
+
+	it("never takes the repository lock when confirmation is declined", async () => {
+		let lockCalls = 0;
+		const result = await requestGitHubStackLanding(
+			{ cwd: "/repo", prNumber: 1, headRef: "kstack/one", readiness: "check", method: "squash" },
+			{
+				exec: exec(),
+				gateway: gateway(),
+				hasUI: true,
+				confirm: async () => false,
+				selectMethod: async () => "squash",
+				landFrontier: async () => assert.fail("a declined landing must not merge"),
+				acquireLock: () => {
+					lockCalls++;
+					return { ok: true, lock: { release: () => ({ ok: true }) } };
+				},
+				realpath: (path) => path,
+			},
+		);
+		assert.equal(result.status === "stack" ? result.outcome.status : "", "declined");
+		assert.equal(lockCalls, 0);
 	});
 
 	it("rechecks scope before each later frontier merge", async () => {
@@ -727,6 +887,7 @@ describe("GitHub stack landing", () => {
 						return branch === "kstack/one" ? one : undefined;
 					},
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -830,6 +991,7 @@ describe("GitHub stack landing", () => {
 						return undefined;
 					},
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -895,6 +1057,7 @@ describe("GitHub stack landing", () => {
 						return { kind: "deleted" as const };
 					},
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -1032,6 +1195,7 @@ describe("GitHub stack landing", () => {
 							return { kind: "deleted" as const };
 						},
 					},
+					hasUI: true,
 					confirm: async () => true,
 					selectMethod: async () => "squash",
 					landFrontier: async () => ({ handled: false }),
@@ -1085,6 +1249,7 @@ describe("GitHub stack landing", () => {
 						headRef: "kstack/one",
 					}),
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({ handled: false }),
@@ -1118,6 +1283,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => {
@@ -1140,6 +1306,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({
@@ -1166,6 +1333,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({
@@ -1228,6 +1396,7 @@ describe("GitHub stack landing", () => {
 						return { kind: "deleted" as const };
 					},
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async () => ({
@@ -1267,6 +1436,7 @@ describe("GitHub stack landing", () => {
 			{
 				exec: exec(),
 				gateway: gateway(),
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async (input) => {
@@ -1381,6 +1551,7 @@ describe("GitHub stack landing", () => {
 					},
 					deleteRemoteBranch: async () => ({ kind: "deleted" as const }),
 				},
+				hasUI: true,
 				confirm: async () => true,
 				selectMethod: async () => "squash",
 				landFrontier: async (input) => {

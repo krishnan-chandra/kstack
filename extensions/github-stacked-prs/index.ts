@@ -144,17 +144,8 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 		),
 	);
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
-		claimStackLanding(data, "github", async ({ input, ctx }) => {
-			if (!ctx.hasUI) {
-				return {
-					status: "stack",
-					outcome: {
-						status: "blocked",
-						blockers: [{ code: "missing-ui", message: "GitHub stack landing requires interactive TUI/RPC mode." }],
-					},
-				};
-			}
-			return withRun(
+		claimStackLanding(data, "github", async ({ input, ctx }) =>
+			withRun(
 				ctx,
 				(signal) => {
 					ctx.ui.setStatus("gh-stack", "gh-stack: landing");
@@ -170,6 +161,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 						{
 							exec,
 							gateway,
+							hasUI: ctx.hasUI,
 							confirm: (title, body) => ctx.ui.confirm(title, body),
 							selectMethod: async (allowed) => {
 								const selected = await ctx.ui.select("Select an allowed merge method", [...allowed]);
@@ -191,8 +183,8 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 					status: "stack" as const,
 					outcome: { status: "busy" as const, message: "Another GitHub stack run is active." },
 				}),
-			);
-		}),
+			),
+		),
 	);
 
 	pi.registerCommand("gh-stack", {

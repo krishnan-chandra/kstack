@@ -73,6 +73,28 @@ describe("routeLand", () => {
 		);
 	});
 
+	it("maps a stale stack plan to a retry blocker that keeps transaction warnings", async () => {
+		const result = await routeLand({
+			provider: "github",
+			requestStackLanding: async () => ({
+				handled: true,
+				outcome: {
+					status: "stack",
+					outcome: {
+						status: "stale",
+						providedPlanId: "plan-1",
+						recomputedPlanId: "plan-2",
+						warnings: ["Repository lock cleanup failed: EACCES."],
+					},
+				},
+			}),
+			runSingle: async () => assert.fail("a stale stack plan must not fall back to a single landing"),
+		});
+		assert.equal(result.status, "blocked");
+		assert.match(result.blockers[0] ?? "", /Run \/land again/);
+		assert.deepEqual(result.warnings, ["Repository lock cleanup failed: EACCES."]);
+	});
+
 	it("maps a resumable stack wait to a blocked Land result with recovery visible", async () => {
 		const recovery = "Watch is bounded. Inspect PR #11, then retry /land after CI settles.";
 		const result = await routeLand({

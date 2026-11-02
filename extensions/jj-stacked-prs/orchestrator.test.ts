@@ -1691,7 +1691,8 @@ describe("landStack", () => {
 			const result = await landStackFromTool(
 				{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "check", method: "squash" },
 				{
-					run: async () => ({ kind: "ok", code: 0, stdout: "", stderr: "" }),
+					run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+					acquirePublicationLock: permissiveLock(),
 					ui: ui({ hasUI: false }),
 					jj,
 					github: fakeGithub({ listOpenPrs: async () => openPrs() }),
@@ -1721,6 +1722,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				github,
@@ -1739,6 +1741,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat2", remote: "origin", readiness: "check", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui({ hasUI: false }),
 				jj: fakeJj(),
 				github: fakeGithub({ listOpenPrs: async () => openPrs() }),
@@ -1883,7 +1886,8 @@ describe("landStack", () => {
 					preflight: async () => ({ status: "available", version: "0.1.0" }),
 					inspectForPullRequest: async () => {
 						inspectionCount++;
-						return inspectionCount === 1 ? nativeStack : { ...nativeStack, baseSha: "trunk-sha" };
+						// The plan and the locked re-plan see the same stack; only apply's readiness re-check learns the base SHA.
+						return inspectionCount <= 2 ? nativeStack : { ...nativeStack, baseSha: "trunk-sha" };
 					},
 					link: async () => nativeStack,
 					mergeThrough: async () => ({ status: "enqueued", stack: nativeStack }),
@@ -1988,6 +1992,87 @@ describe("landStack", () => {
 		assert.deepEqual(jj.calls.slice(0, 2), ["abandon:trunk..feat2", "fetch"]);
 	});
 
+	it("takes the repository lock for single-PR landing", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: () => ({ ok: false, holder: undefined }),
+				ui: ui(),
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+				}),
+				nativeStack: fakeNativeStack(),
+				github: fakeGithub({ listOpenPrs: async () => [openPrs()[0]] }),
+				landFrontier: async () => assert.fail("a busy lock must stop landing before any merge"),
+			},
+		);
+		assert.equal(result.status, "busy");
+	});
+
+	it("returns stale without landing when the stack changes during confirmation", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const prs = [openPrs()[0]];
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
+				ui: {
+					...ui(),
+					confirm: async () => {
+						prs[0] = { ...prs[0], draft: false };
+						return true;
+					},
+				},
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+				}),
+				nativeStack: fakeNativeStack(),
+				github: fakeGithub({ listOpenPrs: async () => prs }),
+				landFrontier: async () => assert.fail("a stale plan must not land"),
+			},
+		);
+		assert.equal(result.status, "stale");
+	});
+
+	it("asks for the merge method once across the plan and the locked re-plan", async () => {
+		const stack = [commit("aaa", "feat1")];
+		const selections: string[] = [];
+		const result = await landStack(
+			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch" },
+			{
+				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
+				ui: {
+					...ui(),
+					select: async (title: string) => {
+						selections.push(title);
+						return "rebase";
+					},
+				},
+				jj: fakeJj({
+					fetchStack: async () => stack,
+					listLocalBookmarks: async () => [{ name: "feat1", commitId: "aaa-commit" }],
+				}),
+				nativeStack: fakeNativeStack(),
+				github: fakeGithub({
+					listOpenPrs: async () => [openPrs()[0]],
+					getAllowedMergeMethods: async () => ["squash", "rebase"],
+				}),
+				landFrontier: async ({ method }) => {
+					assert.equal(method, "rebase");
+					return { handled: false };
+				},
+			},
+		);
+		assert.equal(result.status, "blocked");
+		assert.deepEqual(selections, ["Select an allowed merge method"]);
+	});
+
 	it("lands one PR, advances, then deletes the remote branch", async () => {
 		const calls: string[] = [];
 		let stack = [commit("aaa", "feat1")];
@@ -2015,6 +2100,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2054,6 +2140,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2090,6 +2177,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2136,6 +2224,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2161,6 +2250,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2197,6 +2287,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2228,6 +2319,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2268,6 +2360,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: {
 					...ui({ hasUI: false }),
 					confirm: async () => {
@@ -2292,6 +2385,7 @@ describe("landStack", () => {
 				{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 				{
 					run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+					acquirePublicationLock: permissiveLock(),
 					ui: ui(),
 					jj: fakeJj({ fetchStack: async () => [commit("aaa", "feat1")] }),
 					nativeStack: fakeNativeStack(),
@@ -2319,6 +2413,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2359,6 +2454,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2387,6 +2483,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2416,6 +2513,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),
@@ -2443,6 +2541,7 @@ describe("landStack", () => {
 			{ cwd: "/repo", top: "feat1", remote: "origin", readiness: "watch", method: "squash" },
 			{
 				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
+				acquirePublicationLock: permissiveLock(),
 				ui: ui(),
 				jj,
 				nativeStack: fakeNativeStack(),

@@ -155,21 +155,6 @@ export async function inspectRebaseScope(input: {
 	};
 }
 
-/** Compare the confirmed semantic rewrite scope while allowing unrelated refs outside its range. */
-export function matchesConfirmedRebaseScope(confirmed: RebaseScopeSnapshot, fresh: RebaseScopeSnapshot): boolean {
-	if (confirmed.frontierSha !== fresh.frontierSha || confirmed.initiatingWorktree !== fresh.initiatingWorktree) {
-		return false;
-	}
-	if (confirmed.range.length !== fresh.range.length || confirmed.remainder.length !== fresh.remainder.length)
-		return false;
-	return (
-		confirmed.range.every((sha, index) => fresh.range[index] === sha) &&
-		confirmed.remainder.every(
-			(item, index) => fresh.remainder[index]?.branch === item.branch && fresh.remainder[index]?.sha === item.sha,
-		)
-	);
-}
-
 /** Verify ref stability and ordered ancestry after a successful local rebase. */
 export async function verifyRebasedScope(input: {
 	cwd: string;

@@ -113,14 +113,16 @@ export function emptyStackLandProgress(): StackLandProgress {
 	return { frontiers: [], remainingRefs: [], completedMutations: [], warnings: [], recoveryOperationIds: [] };
 }
 
+/** Statuses without progress carry `warnings` only when the stack transaction has one, such as a failed lock release. */
 export type StackLandOutcome =
 	| ({ status: "completed" } & StackLandProgress)
 	| ({ status: "queued"; nativeStackNumber: number; submittedAt: string } & StackLandProgress)
 	| ({ status: "waiting"; reason: string } & StackLandProgress)
 	| ({ status: "partial"; error: string } & StackLandProgress)
-	| { status: "blocked"; blockers: readonly StackBlocker[] }
-	| { status: "declined" }
-	| { status: "busy"; message: string }
+	| { status: "blocked"; blockers: readonly StackBlocker[]; warnings?: readonly string[] }
+	| { status: "declined"; warnings?: readonly string[] }
+	| { status: "busy"; message: string; warnings?: readonly string[] }
+	| { status: "stale"; providedPlanId: string; recomputedPlanId: string; warnings?: readonly string[] }
 	| ({ status: "cancelled" } & StackLandProgress)
 	| ({ status: "indeterminate"; inFlight: string; recovery?: string } & StackLandProgress)
 	| ({ status: "failed"; error: string } & StackLandProgress);

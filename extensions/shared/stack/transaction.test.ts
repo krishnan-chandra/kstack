@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExecFn } from "../git-exec.ts";
 import type { LockAttempt } from "../publication-lock.ts";
-import type { StackPublishOutcome } from "./outcome.ts";
-import { runPublication, type StackTransactionAdapter, type StackTransactionOptions } from "./transaction.ts";
+import { emptyStackLandProgress, type StackLandOutcome, type StackPublishOutcome } from "./outcome.ts";
+import {
+	runLanding,
+	runPublication,
+	type StackTransactionAdapter,
+	type StackTransactionOptions,
+} from "./transaction.ts";
 
 interface FakePlan {
 	planId: string;
@@ -249,5 +254,64 @@ describe("runPublication", () => {
 		};
 		await assert.rejects(runPublication(adapter, options), /boom/);
 		assert.equal(events.at(-1), "release");
+	});
+});
+
+describe("runLanding", () => {
+	const landed: StackLandOutcome = { status: "completed", ...emptyStackLandProgress(), warnings: ["sync skipped"] };
+
+	function landingHarness(input: Parameters<typeof harness>[0] = {}) {
+		const { adapter, options, events } = harness(input);
+		const landing: StackTransactionAdapter<FakePlan, StackLandOutcome> = {
+			plan: adapter.plan,
+			async apply() {
+				events.push("apply");
+				return landed;
+			},
+		};
+		return { landing, options, events };
+	}
+
+	it("maps the transaction's own outcomes to landing outcomes", async () => {
+		const declined = landingHarness({ confirm: false });
+		assert.deepEqual(await runLanding(declined.landing, declined.options), { status: "declined" });
+		const missingUi = landingHarness({ hasUI: false });
+		assert.deepEqual(await runLanding(missingUi.landing, missingUi.options), {
+			status: "blocked",
+			blockers: [{ code: "missing-ui", message: "Stack landing requires interactive TUI/RPC mode." }],
+		});
+		const stale = landingHarness({ planIds: ["plan-1", "plan-2"] });
+		assert.deepEqual(await runLanding(stale.landing, stale.options), {
+			status: "stale",
+			providedPlanId: "plan-1",
+			recomputedPlanId: "plan-2",
+		});
+		const controller = new AbortController();
+		const cancelled = landingHarness({ controller, abortOn: "confirm" });
+		assert.deepEqual(await runLanding(cancelled.landing, cancelled.options), {
+			status: "cancelled",
+			...emptyStackLandProgress(),
+		});
+	});
+
+	it("appends a failed lock release to the applied outcome's progress warnings", async () => {
+		const { landing, options } = landingHarness({ release: () => ({ ok: false, error: "EACCES" }) });
+		const outcome = await runLanding(landing, options);
+		assert.equal(outcome.status, "completed");
+		assert.deepEqual(outcome.warnings, [
+			"sync skipped",
+			"Repository lock cleanup failed: EACCES. Remove the lock file manually if later publications or landings report busy.",
+		]);
+	});
+
+	it("attaches a failed lock release to a stale landing", async () => {
+		const { landing, options, events } = landingHarness({
+			planIds: ["plan-1", "plan-2"],
+			release: () => ({ ok: false, error: "EACCES" }),
+		});
+		const outcome = await runLanding(landing, options);
+		assert.equal(outcome.status, "stale");
+		assert.equal(outcome.warnings?.length, 1);
+		assert.equal(events.includes("apply"), false);
 	});
 });

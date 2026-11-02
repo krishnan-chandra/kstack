@@ -17,12 +17,15 @@
  *   transaction starts.
  * - Only `apply()` mutates. It owns its own progress accounting and any
  *   provider-specific freshness checks it needs after the transaction's check.
+ * - `apply()` holds the lock, so it may ask PR Autopilot to land a frontier only
+ *   when the backend's mutation path does not take the lock (Git and jj). Graphite
+ *   runs readiness before the transaction instead.
  */
 
 import type { ExecFn } from "../git-exec.ts";
 import { type acquirePublicationLock, acquireRepositoryPublicationLock } from "../publication-lock.ts";
 import type { StackBlocker } from "./blocker.ts";
-import type { StackPublishOutcome } from "./outcome.ts";
+import { emptyStackLandProgress, type StackLandOutcome, type StackPublishOutcome } from "./outcome.ts";
 
 type StackAuthorization = "interactive-confirmation" | "model-tool";
 
@@ -82,18 +85,27 @@ function settled<O>(outcome: StackTransactionSettlement): StackTransactionResult
 	return { kind: "settled", outcome, warnings: [] };
 }
 
+/**
+ * The blocker for interactive authorization without a UI. The transaction checks it first; a provider that must
+ * run work before the transaction (Graphite's readiness pass) checks it earlier so that work never runs in vain.
+ */
+export function missingUiBlocker(
+	authorization: StackAuthorization,
+	hasUI: boolean,
+	operation: string,
+): StackBlocker | undefined {
+	if (authorization === "model-tool" || hasUI) return undefined;
+	return { code: "missing-ui", message: `${operation} requires interactive TUI/RPC mode.` };
+}
+
 async function runStackTransaction<P extends StackTransactionPlan, O>(
 	adapter: StackTransactionAdapter<P, O>,
 	options: StackTransactionOptions,
 	operation: string,
 ): Promise<StackTransactionResult<O>> {
 	const { signal } = options;
-	if (options.authorization === "interactive-confirmation" && !options.ui.hasUI) {
-		return settled({
-			status: "blocked",
-			blockers: [{ code: "missing-ui", message: `${operation} requires interactive TUI/RPC mode.` }],
-		});
-	}
+	const missingUi = missingUiBlocker(options.authorization, options.ui.hasUI, operation);
+	if (missingUi) return settled({ status: "blocked", blockers: [missingUi] });
 	if (signal?.aborted) return settled({ status: "cancelled" });
 	options.onPhase?.("planning");
 	const planned = await adapter.plan(signal);
@@ -181,4 +193,35 @@ export async function runPublication<P extends StackTransactionPlan>(
 ): Promise<StackPublishOutcome> {
 	const result = await runStackTransaction(adapter, options, "Publication");
 	return withWarnings(result.outcome, result.warnings);
+}
+
+function landSettlement(outcome: StackTransactionSettlement): StackLandOutcome {
+	switch (outcome.status) {
+		case "blocked":
+			return { status: "blocked", blockers: outcome.blockers };
+		case "declined":
+			return { status: "declined" };
+		case "busy":
+		case "stale":
+			return outcome;
+		case "cancelled":
+			return { status: "cancelled", ...emptyStackLandProgress() };
+		case "failed":
+			return { status: "failed", error: outcome.error, ...emptyStackLandProgress() };
+	}
+}
+
+function withLandWarnings(outcome: StackLandOutcome, warnings: readonly string[]): StackLandOutcome {
+	if (warnings.length === 0) return outcome;
+	return { ...outcome, warnings: [...(outcome.warnings ?? []), ...warnings] };
+}
+
+/** Run a stack landing through the shared transaction. */
+export async function runLanding<P extends StackTransactionPlan>(
+	adapter: StackTransactionAdapter<P, StackLandOutcome>,
+	options: StackTransactionOptions,
+): Promise<StackLandOutcome> {
+	const result = await runStackTransaction(adapter, options, "Stack landing");
+	const outcome = result.kind === "applied" ? result.outcome : landSettlement(result.outcome);
+	return withLandWarnings(outcome, result.warnings);
 }

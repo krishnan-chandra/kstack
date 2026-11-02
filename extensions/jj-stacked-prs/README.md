@@ -110,7 +110,7 @@ workspaces.
 - Install or authenticate `jj`, `gh`, or the `github/gh-stack` extension.
 - Assign reviewers, enable auto-merge, pass `--admin`, or force-push with raw Git.
 - One-line wrappers for `jj new`, `jj edit`, `jj split`, or `jj absorb`.
-- A custom TUI dashboard. Publication and native landing share an advisory
+- A custom TUI dashboard. Publication and landing share an advisory
   per-repository lock.
 - Landing without the `land` and `pr-autopilot` extensions.
 
@@ -183,7 +183,7 @@ navigation comments after a core publication or ready-state mutation fails. If
 a navigation-comment write fails after successful publication, later comment
 writes are skipped and the error is reported separately.
 
-Publication runs through the shared [stack transaction](../shared/stack/README.md#stack-transaction),
+Publication and landing run through the shared [stack transaction](../shared/stack/README.md#stack-transaction),
 which acquires an advisory per-repository file lock under
 `<agentDir>/kstack-locks/`. A second process that attempts to publish the same
 repository is blocked with the holder's pid and start time. Locks owned by a
@@ -192,10 +192,12 @@ one-hour grace period before reclamation. A live holder is never displaced just
 because publication runs for a long time. If a process is killed during the
 brief reclamation step, a `.reaper` file can conservatively block later stale
 cleanup; remove it only after verifying that no publication is active. The lock
-covers publication and GitHub-native landing. It resolves the common Git
-directory through `jj git root` and explicit Git plumbing, so all workspaces
-sharing that store use one lock. Legacy advance, sync, and single-frontier
-landing are not covered.
+covers publication and both landing shapes: GitHub-native stack landing and
+single-PR landing. Both confirm the landing plan before locking, re-plan under
+the lock, and return `stale` without merging if the plan ID changed. The lock
+resolves the common Git directory through `jj git root` and explicit Git
+plumbing, so all workspaces sharing that store use one lock. Legacy advance and
+sync are not covered.
 
 ## Development
 

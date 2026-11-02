@@ -4,7 +4,9 @@
 head. With the GitHub, jj, or Graphite stack provider, selecting a PR in a
 confirmed local stack lands the complete prefix from trunk through that PR.
 Land confirms the stack once, then revalidates each pull request before it asks
-GitHub or Graphite to merge it.
+GitHub or Graphite to merge it. Stack providers confirm before taking the
+repository lock and re-plan under it; if the stack changed in between, Land
+reports a blocker asking you to run `/land` again and nothing is merged.
 
 ## Usage
 
