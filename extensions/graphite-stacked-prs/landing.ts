@@ -12,7 +12,12 @@ import {
 	type StackPrefixLandOutcome,
 } from "../shared/stack/outcome.ts";
 import { planIdFor } from "../shared/stack/plan-id.ts";
-import { missingUiBlocker, runLanding, type StackPlanResult } from "../shared/stack/transaction.ts";
+import {
+	missingUiBlocker,
+	runLanding,
+	type StackPlanResult,
+	type StackTransactionPhase,
+} from "../shared/stack/transaction.ts";
 import { verifyGraphiteDryRunAffectedRefs } from "../shared/vcs/graphite-dry-run.ts";
 import { type GraphiteOpenPullRequest, queryOpenPullRequests } from "./pull-requests.ts";
 
@@ -42,6 +47,7 @@ export interface GraphiteLandingDeps {
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
 	waitForMerge?: typeof waitForMerge;
+	onPhase?: (phase: StackTransactionPhase) => void;
 }
 
 function blocked(message: string): StackLandOutcome {
@@ -332,6 +338,7 @@ export async function requestGraphiteStackLanding(
 				acquireLock: deps.acquireLock,
 				realpath: deps.realpath,
 			},
+			onPhase: deps.onPhase,
 			signal: deps.signal,
 		},
 	);

@@ -19,6 +19,7 @@ import {
 	type StackProviderCapabilities,
 } from "../shared/stack/channel.ts";
 import { publicationMetadataFollowUp, type StackPublishOutcome } from "../shared/stack/outcome.ts";
+import type { StackTransactionPhase } from "../shared/stack/transaction.ts";
 import { completeGitHubStackArgs, parseGitHubStackArgs } from "./args.ts";
 import { preflightGitHubStack, publishGitHubManifestFile, publishGitHubStack } from "./delivery.ts";
 import { discoverGitHubStack } from "./discovery.ts";
@@ -30,6 +31,22 @@ const CAPABILITIES: StackProviderCapabilities = {
 	commands: ["publish"],
 	tools: ["gh_stack_publish"],
 };
+
+const GITHUB_PUBLICATION_STATUS = {
+	planning: "gh-stack: planning publication",
+	confirming: "gh-stack: confirm publication",
+	locking: "gh-stack: waiting for the repository lock",
+	replanning: "gh-stack: re-checking the plan",
+	applying: "gh-stack: publishing",
+} satisfies Record<StackTransactionPhase, string>;
+
+const GITHUB_LANDING_STATUS = {
+	planning: "gh-stack: planning landing",
+	confirming: "gh-stack: confirm landing",
+	locking: "gh-stack: waiting for the repository lock",
+	replanning: "gh-stack: re-checking the landing plan",
+	applying: "gh-stack: landing",
+} satisfies Record<StackTransactionPhase, string>;
 
 class GitHubStackLifecycle extends SessionRunLifecycle {
 	begin() {
@@ -90,8 +107,10 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 		authorization: "interactive-confirmation" | "model-tool";
 		hasUI: boolean;
 		confirm(title: string, body: string): Promise<boolean>;
+		onPhase: (phase: StackTransactionPhase) => void;
 		signal: AbortSignal;
 	}): Promise<StackPublishOutcome> {
+		input.onPhase("planning");
 		const discovered = await discoverGitHubStack({
 			cwd: input.cwd,
 			top: input.top,
@@ -109,7 +128,14 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 			remote: input.remote,
 			ready: input.ready,
 			authorization: input.authorization,
-			deps: { exec, gateway, hasUI: input.hasUI, confirm: input.confirm, signal: input.signal },
+			deps: {
+				exec,
+				gateway,
+				hasUI: input.hasUI,
+				confirm: input.confirm,
+				onPhase: input.onPhase,
+				signal: input.signal,
+			},
 		});
 	}
 
@@ -135,6 +161,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 							gateway,
 							hasUI: ctx.hasUI,
 							confirm: (title, body) => ctx.ui.confirm(title, body),
+							onPhase: (phase) => ctx.ui.setStatus("gh-stack", GITHUB_PUBLICATION_STATUS[phase]),
 							signal: combineSignals(signal, ctx.signal, input.signal),
 						},
 					});
@@ -175,6 +202,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 									signal: combined,
 									ctx,
 								}),
+							onPhase: (phase) => ctx.ui.setStatus("gh-stack", GITHUB_LANDING_STATUS[phase]),
 							signal: combined,
 						},
 					);
@@ -212,6 +240,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 						authorization: "interactive-confirmation",
 						hasUI: ctx.hasUI,
 						confirm: (title, body) => ctx.ui.confirm(title, body),
+						onPhase: (phase) => ctx.ui.setStatus("gh-stack", GITHUB_PUBLICATION_STATUS[phase]),
 						signal,
 					}),
 				() => ({ status: "busy" as const, message: "Another GitHub stack run is active." }),
@@ -248,6 +277,7 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 						authorization: "model-tool",
 						hasUI: ctx.hasUI,
 						confirm: async () => true,
+						onPhase: (phase) => ctx.ui.setStatus("gh-stack", GITHUB_PUBLICATION_STATUS[phase]),
 						signal: combineSignals(runSignal, signal),
 					}),
 				() => ({ status: "busy" as const, message: "Another GitHub stack run is active." }),
