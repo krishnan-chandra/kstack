@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoundaryValue } from "../shared/validation.ts";
-import openrouterFloor from "./index.ts";
+import openrouterRouting from "./index.ts";
 import { ROUTE_ENTRY_TYPE } from "./session-route.ts";
 
 type Handler = (event: BoundaryValue, ctx: ExtensionContext) => BoundaryValue;
@@ -15,7 +15,7 @@ it("wires routing commands, reload, tree navigation, model selection and invalid
 	process.env.PI_CODING_AGENT_DIR = directory;
 	try {
 		const configPath = join(directory, "kstack.json");
-		writeFileSync(configPath, JSON.stringify({ "openrouter-floor": { default: "nitro" } }));
+		writeFileSync(configPath, JSON.stringify({ "openrouter-routing": { default: "nitro" } }));
 		const handlers = new Map<string, Handler>();
 		const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]>();
 		const entries: unknown[] = [];
@@ -47,7 +47,7 @@ it("wires routing commands, reload, tree navigation, model selection and invalid
 		// SAFETY: The fixtures supply the Pi capabilities exercised by these adapter paths.
 		const ctx = context as never;
 		// SAFETY: The fixture implements every API used by registration and route commands.
-		openrouterFloor(host as ExtensionAPI);
+		openrouterRouting(host as ExtensionAPI);
 		const emit = async (name: string) => {
 			const handler = handlers.get(name);
 			assert.ok(handler, name);
@@ -100,14 +100,14 @@ it("wires routing commands, reload, tree navigation, model selection and invalid
 		await route.handler("", ctx);
 		assert.match(notices.at(-1) ?? "", /once an OpenRouter model/);
 		context.model = { provider: "openrouter", id: "author/model" };
-		writeFileSync(configPath, JSON.stringify({ "openrouter-floor": { default: "invalid" } }));
+		writeFileSync(configPath, JSON.stringify({ "openrouter-routing": { default: "invalid" } }));
 		await emit("session_start");
 		await emit("session_start");
 		assert.equal(statuses.at(-1), "OR floor");
 		assert.equal(notices.filter((notice) => notice.includes("using :floor")).length, 1);
 		await route.handler("", ctx);
-		assert.match(notices.at(-1) ?? "", /Config invalid:.*openrouter-floor.default/);
-		writeFileSync(configPath, JSON.stringify({ "openrouter-floor": { default: "nitro" } }));
+		assert.match(notices.at(-1) ?? "", /Config invalid:.*openrouter-routing.default/);
+		writeFileSync(configPath, JSON.stringify({ "openrouter-routing": { default: "nitro" } }));
 		await emit("session_start");
 		await route.handler("", ctx);
 		assert.doesNotMatch(notices.at(-1) ?? "", /Config invalid/);

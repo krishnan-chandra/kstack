@@ -4,7 +4,7 @@ import graphiteStackedPrs from "./extensions/graphite-stacked-prs/index.ts";
 import handoff from "./extensions/handoff/index.ts";
 import jjStackedPrs from "./extensions/jj-stacked-prs/index.ts";
 import land from "./extensions/land/index.ts";
-import openrouterFloor from "./extensions/openrouter-floor/index.ts";
+import openrouterRouting from "./extensions/openrouter-routing/index.ts";
 import parallelAgents from "./extensions/parallel-agents/index.ts";
 import prAutopilot from "./extensions/pr-autopilot/index.ts";
 import sessionArchive from "./extensions/session-archive/index.ts";
@@ -18,7 +18,7 @@ const KSTACK_EXTENSIONS: ReadonlyArray<{ name: string; register: ExtensionFactor
 	{ name: "handoff", register: handoff },
 	{ name: "jj-stacked-prs", register: jjStackedPrs },
 	{ name: "land", register: land },
-	{ name: "openrouter-floor", register: openrouterFloor },
+	{ name: "openrouter-routing", register: openrouterRouting },
 	{ name: "parallel-agents", register: parallelAgents },
 	{ name: "pr-autopilot", register: prAutopilot },
 	{ name: "session-archive", register: sessionArchive },

@@ -23,7 +23,7 @@ const DEFAULTS_DIR = join(REPO_ROOT, "config", "pi-defaults");
 const MANAGED_SKILLS_FILE = ".kstack-managed.json";
 /**
  * Custom models earlier Kstack releases installed and no longer track. The
- * openrouter-floor extension now applies `:floor` to every OpenRouter request, so
+ * openrouter-routing extension now applies `:floor` to every OpenRouter request, so
  * these duplicates only clutter the model picker.
  */
 /** Keys Pi accepts on a provider entry that has no `models`; an entry with none of them is invalid. */

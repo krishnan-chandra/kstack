@@ -38,12 +38,12 @@ it("replays only valid route entries in active branch order", () => {
 	assert.equal(overrideFromBranch([first]), "nitro", "returning to earlier branch restores its override");
 });
 it("keeps config failures visible in route summaries", () => {
-	const error = "openrouter-floor.default must be floor, nitro, or none.";
+	const error = "openrouter-routing.default must be floor, nitro, or none.";
 	assert.match(
 		formatRouteSummary({ variant: "floor", source: "built-in" }, undefined, error),
-		/Config invalid:.*openrouter-floor.default/,
+		/Config invalid:.*openrouter-routing.default/,
 	);
-	assert.match(formatRouteSummary(undefined, "nitro", error), /Config invalid:.*openrouter-floor.default/);
+	assert.match(formatRouteSummary(undefined, "nitro", error), /Config invalid:.*openrouter-routing.default/);
 	const overridden = formatRouteSummary({ variant: "nitro", source: "session-override" }, "nitro", error);
 	assert.match(overridden, /OpenRouter route: nitro \(session-override\)/);
 	assert.match(

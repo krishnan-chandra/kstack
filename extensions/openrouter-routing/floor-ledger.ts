@@ -86,7 +86,7 @@ interface FloorLedgerReadResult {
 }
 
 interface FloorLedgerOptions {
-	/** Parent of all scope directories; defaults to <agentDir>/openrouter-floor/ledger-v1. */
+	/** Parent of all scope directories; defaults to <agentDir>/openrouter-routing/ledger-v1. */
 	rootDirectory?: string;
 	resolveScope?: (cwd: string) => Promise<FloorScopeResolution>;
 	fileSystem?: LedgerFileSystem;
@@ -307,7 +307,7 @@ async function defaultResolveScope(cwd: string): Promise<FloorScopeResolution> {
 }
 
 export function defaultLedgerRoot(env: NodeJS.ProcessEnv = process.env): string {
-	return join(getAgentDir(env), "openrouter-floor", "ledger-v1");
+	return join(getAgentDir(env), "openrouter-routing", "ledger-v1");
 }
 
 export function ledgerDirectoryFor(rootDirectory: string, scopeKey: string): string {

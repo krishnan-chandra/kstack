@@ -124,7 +124,7 @@ export const KSTACK_ENTRY = join(dirname(dirname(dirname(fileURLToPath(import.me
  *
  * Extension discovery is off by default so a child does not boot the user's
  * other extensions (for example MCP adapters it cannot use). Kstack itself is
- * loaded explicitly so request shaping such as openrouter-floor applies to
+ * loaded explicitly so request shaping such as openrouter-routing applies to
  * child provider calls; each caller's `--tools` list still bounds tool
  * exposure. `noExtensions: false` enables normal resource discovery; parent
  * CLI extensions and runtime-only tools are not forwarded.

@@ -21,13 +21,13 @@ afterEach(async () => {
 });
 
 async function tempScope(): Promise<string> {
-	const scope = await mkdtemp(join(tmpdir(), "openrouter-floor-ledger-"));
+	const scope = await mkdtemp(join(tmpdir(), "openrouter-routing-ledger-"));
 	scopes.push(scope);
 	return scope;
 }
 
 async function tempRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "openrouter-floor-root-"));
+	const root = await mkdtemp(join(tmpdir(), "openrouter-routing-root-"));
 	scopes.push(root);
 	return root;
 }
@@ -81,7 +81,10 @@ describe("floor ledger", () => {
 		);
 	});
 	it("derives the default ledger root from the Pi agent directory", () => {
-		assert.equal(defaultLedgerRoot({ PI_CODING_AGENT_DIR: "/tmp/agent-x" }), "/tmp/agent-x/openrouter-floor/ledger-v1");
+		assert.equal(
+			defaultLedgerRoot({ PI_CODING_AGENT_DIR: "/tmp/agent-x" }),
+			"/tmp/agent-x/openrouter-routing/ledger-v1",
+		);
 	});
 
 	it("never writes under the scope cwd", async () => {

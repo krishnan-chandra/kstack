@@ -21,7 +21,7 @@ import {
 	ROUTE_ENTRY_TYPE,
 } from "./session-route.ts";
 
-export default function openrouterFloor(pi: ExtensionAPI): void {
+export default function openrouterRouting(pi: ExtensionAPI): void {
 	let config: RoutingConfig = BUILT_IN_ROUTING;
 	let sessionOverride: RoutingVariant | undefined;
 	let warnedConfigPath: string | undefined;
@@ -29,7 +29,7 @@ export default function openrouterFloor(pi: ExtensionAPI): void {
 	const resolve = (model: CurrentModel | undefined) => resolveVariant({ model, config, sessionOverride });
 	const runtime = createDefaultFloorRuntime(resolve);
 	function refreshStatus(ctx: ExtensionContext): void {
-		if (ctx.hasUI) ctx.ui.setStatus("openrouter-floor", formatRouteStatus(resolve(ctx.model)));
+		if (ctx.hasUI) ctx.ui.setStatus("openrouter-routing", formatRouteStatus(resolve(ctx.model)));
 	}
 	function rebuildOverride(ctx: ExtensionContext): void {
 		sessionOverride = overrideFromBranch(ctx.sessionManager.getBranch());
@@ -40,7 +40,7 @@ export default function openrouterFloor(pi: ExtensionAPI): void {
 		config = load.status === "loaded" ? load.config : BUILT_IN_ROUTING;
 		configError = load.status === "invalid" ? load.error : undefined;
 		if (load.status === "invalid" && ctx.hasUI && warnedConfigPath !== load.path) {
-			ctx.ui.notify(`openrouter-floor: ${load.error} (${load.path}); using :floor for every model`, "warning");
+			ctx.ui.notify(`openrouter-routing: ${load.error} (${load.path}); using :floor for every model`, "warning");
 			warnedConfigPath = load.path;
 		}
 		rebuildOverride(ctx);
@@ -88,7 +88,7 @@ export default function openrouterFloor(pi: ExtensionAPI): void {
 		await runtime.shutdown();
 	});
 
-	pi.registerCommand("openrouter-floor-stats", {
+	pi.registerCommand("openrouter-routing-stats", {
 		description: "Show variant routing rewrites and actual OpenRouter service tiers",
 		getArgumentCompletions: (prefix) => {
 			const ranges = ["process", "today", "7d", "30d"];

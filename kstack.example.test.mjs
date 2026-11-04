@@ -3,7 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { validateRoutingConfig } from "./extensions/openrouter-floor/routing-policy.ts";
+import { validateRoutingConfig } from "./extensions/openrouter-routing/routing-policy.ts";
 import { validateConfig as validateAutopilotConfig } from "./extensions/pr-autopilot/config.ts";
 import { resolveCouncilRoster } from "./extensions/shared/council/roster.ts";
 import { validateCouncilConfig } from "./extensions/shared/kstack-config.ts";
@@ -17,7 +17,7 @@ test("kstack.example.json passes the council and routing policy validators", () 
 	const council = validateCouncilConfig(example.council);
 	assert.equal(council.ok, true, council.ok ? "" : council.error);
 
-	const routing = validateRoutingConfig(example["openrouter-floor"]);
+	const routing = validateRoutingConfig(example["openrouter-routing"]);
 	assert.equal(routing.ok, true, routing.ok ? "" : routing.error);
 
 	const investigation = validateInvestigationConfig(example.investigation);

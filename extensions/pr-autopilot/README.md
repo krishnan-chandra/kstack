@@ -277,7 +277,7 @@ is deliberately not migrated.
 
 - Children run with `--no-extensions -e <kstack>/kstack.ts`, `--no-skills`,
   and `--no-context-files` — the autopilot owns the workflow entirely. Only
-  Kstack loads, so provider request shaping (`openrouter-floor`) applies
+  Kstack loads, so provider request shaping (`openrouter-routing`) applies
   without the user's other extensions; `--tools` bounds the tool set.
 - Task files are created in a temp directory with `0600` permissions and
   removed after the run.

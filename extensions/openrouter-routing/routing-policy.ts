@@ -23,26 +23,27 @@ export function isRoutingVariant(value: BoundaryValue): value is RoutingVariant 
 export function validateRoutingConfig(
 	value: BoundaryValue,
 ): { ok: true; config: RoutingConfig } | { ok: false; error: string } {
-	if (!isRecord(value)) return { ok: false, error: "openrouter-floor must be an object." };
+	if (!isRecord(value)) return { ok: false, error: "openrouter-routing must be an object." };
 	for (const key of Object.keys(value)) {
-		if (key !== "default" && key !== "models") return { ok: false, error: `openrouter-floor.${key} is not supported.` };
+		if (key !== "default" && key !== "models")
+			return { ok: false, error: `openrouter-routing.${key} is not supported.` };
 	}
 	const defaultVariant = value.default === undefined ? "floor" : value.default;
 	if (!isRoutingVariant(defaultVariant))
-		return { ok: false, error: "openrouter-floor.default must be floor, nitro, or none." };
+		return { ok: false, error: "openrouter-routing.default must be floor, nitro, or none." };
 	const models = new Map<string, RoutingVariant>();
 	if (value.models !== undefined) {
-		if (!isRecord(value.models)) return { ok: false, error: "openrouter-floor.models must be an object." };
+		if (!isRecord(value.models)) return { ok: false, error: "openrouter-routing.models must be an object." };
 		for (const [key, variant] of Object.entries(value.models)) {
 			const id = key.slice("openrouter/".length);
 			if (!key.startsWith("openrouter/") || !MODEL_ID_RE.test(key) || hasVariant(key)) {
 				return {
 					ok: false,
-					error: `openrouter-floor.models[${JSON.stringify(key)}] must be an exact openrouter/<model-id> without a variant suffix.`,
+					error: `openrouter-routing.models[${JSON.stringify(key)}] must be an exact openrouter/<model-id> without a variant suffix.`,
 				};
 			}
 			if (!isRoutingVariant(variant))
-				return { ok: false, error: `openrouter-floor.models[${JSON.stringify(key)}] must be floor, nitro, or none.` };
+				return { ok: false, error: `openrouter-routing.models[${JSON.stringify(key)}] must be floor, nitro, or none.` };
 			models.set(id, variant);
 		}
 	}
@@ -50,7 +51,7 @@ export function validateRoutingConfig(
 }
 
 export function loadRoutingConfig(env: NodeJS.ProcessEnv = process.env): ConfigLoad<RoutingConfig> {
-	return loadValidatedSection("openrouter-floor", validateRoutingConfig, env);
+	return loadValidatedSection("openrouter-routing", validateRoutingConfig, env);
 }
 
 export function resolveVariant(input: {
