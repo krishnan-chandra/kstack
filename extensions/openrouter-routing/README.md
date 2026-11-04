@@ -1,4 +1,4 @@
-# openrouter-floor
+# openrouter-routing
 
 Routes OpenRouter requests through `:floor` by default. Choose `floor`, `nitro`,
 or `none` per model in config, or override the route for the current session.
@@ -32,7 +32,7 @@ The first matching policy wins:
 Add this section to `$PI_CODING_AGENT_DIR/kstack.json` (default `~/.pi/agent/kstack.json`):
 
 ```json
-"openrouter-floor": {
+"openrouter-routing": {
   "default": "floor",
   "models": {
     "openrouter/google/gemini-3.8-flash": "nitro",
@@ -62,7 +62,7 @@ explicit model suffixes still take precedence.
 
 No argument shows the effective route and source. A choice overrides config for
 all OpenRouter models in this session. `reset` restores config policy. Custom
-`openrouter-floor/route` entries persist the override on the active session
+`openrouter-routing/route` entries persist the override on the active session
 branch, outside model context. It survives reload and resume, follows `/tree`,
 and is copied with the selected history on fork. Fresh child agents use config
 only; they do not inherit the parent's session override.
@@ -106,11 +106,11 @@ other extensions.
 Run the command inside Pi:
 
 ```text
-/openrouter-floor-stats
-/openrouter-floor-stats today
-/openrouter-floor-stats 7d
-/openrouter-floor-stats 30d
-/openrouter-floor-stats process
+/openrouter-routing-stats
+/openrouter-routing-stats today
+/openrouter-routing-stats 7d
+/openrouter-routing-stats 30d
+/openrouter-routing-stats process
 ```
 
 The default range is `30d`. `process` limits the report to the current Pi
@@ -145,7 +145,7 @@ observation, so the attribution survives date-range boundaries.
 Each process writes an append-only shard under:
 
 ```text
-<agentDir>/openrouter-floor/ledger-v1/<scope-key>/<process-id>.<UTC-date>.jsonl
+<agentDir>/openrouter-routing/ledger-v1/<scope-key>/<process-id>.<UTC-date>.jsonl
 ```
 
 `<agentDir>` is Pi's agent directory (`PI_CODING_AGENT_DIR`, default
@@ -223,7 +223,7 @@ can overstate spend at flex rates and understate spend at priority rates.
 ## Tests
 
 ```bash
-node --test extensions/openrouter-floor/
+node --test extensions/openrouter-routing/
 ```
 
 The tests cover the rewrite policy, response validation, authenticated metadata

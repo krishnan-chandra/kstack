@@ -34,7 +34,7 @@ it("validates exact OpenRouter config and defaults", () => {
 	]) {
 		const result = validateRoutingConfig(value);
 		assert.equal(result.ok, false, JSON.stringify(value));
-		if (!result.ok) assert.match(result.error, /openrouter-floor/);
+		if (!result.ok) assert.match(result.error, /openrouter-routing/);
 	}
 });
 it("accepts and resolves slashless catalog and custom OpenRouter IDs", () => {
@@ -74,11 +74,11 @@ it("loads missing, valid, and invalid configuration from an isolated agent direc
 	const env = { PI_CODING_AGENT_DIR: root };
 	try {
 		assert.equal(loadRoutingConfig(env).status, "missing");
-		writeFileSync(join(root, "kstack.json"), JSON.stringify({ "openrouter-floor": { default: "nitro" } }));
+		writeFileSync(join(root, "kstack.json"), JSON.stringify({ "openrouter-routing": { default: "nitro" } }));
 		const loaded = loadRoutingConfig(env);
 		assert.equal(loaded.status, "loaded");
 		if (loaded.status === "loaded") assert.equal(loaded.config.default, "nitro");
-		writeFileSync(join(root, "kstack.json"), JSON.stringify({ "openrouter-floor": { default: "wrong" } }));
+		writeFileSync(join(root, "kstack.json"), JSON.stringify({ "openrouter-routing": { default: "wrong" } }));
 		assert.equal(loadRoutingConfig(env).status, "invalid");
 		writeFileSync(join(root, "kstack.json"), "{");
 		assert.equal(loadRoutingConfig(env).status, "invalid");

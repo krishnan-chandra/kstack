@@ -142,7 +142,7 @@ afterEach(async () => {
 });
 
 async function tempScope(): Promise<string> {
-	const scope = await mkdtemp(join(tmpdir(), "openrouter-floor-runtime-"));
+	const scope = await mkdtemp(join(tmpdir(), "openrouter-routing-runtime-"));
 	scopes.push(scope);
 	return scope;
 }

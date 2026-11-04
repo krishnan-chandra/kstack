@@ -11,7 +11,7 @@ Krishnan's personal extensions for [Pi](https://pi.dev).
 | Extension | Description |
 | --- | --- |
 | [`steering-swap`](extensions/steering-swap/) | Swaps Enter and Alt+Enter in the main editor while Pi is working (Enter queues a follow-up, Alt+Enter steers) without breaking Enter for idle submission, autocomplete, or inline prompts. |
-| [`openrouter-floor`](extensions/openrouter-floor/) | Uses `:floor` by default, with `floor`, `nitro`, or `none` configurable per model or per session via `/openrouter-route`. Records bounded, redacted variant and service-tier observations; existing model suffixes pass through. |
+| [`openrouter-routing`](extensions/openrouter-routing/) | Uses `:floor` by default, with `floor`, `nitro`, or `none` configurable per model or per session via `/openrouter-route`. Records bounded, redacted variant and service-tier observations; existing model suffixes pass through. |
 | [`session-archive`](extensions/session-archive/) | Provides `/sessions`, a searchable unified active/archive browser that immediately archives or restores one session, while preserving confirmed bulk archive commands and local SQLite/FTS5 search. |
 | [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) | Validates and publishes local Graphite stacks (`gt`) and lands complete Graphite stack prefixes through `/land`. Automatically claimed in Graphite mode. |
 | [`github-stacked-prs`](extensions/github-stacked-prs/) | Publishes local Git branch stacks as chained GitHub PRs and lands confirmed prefixes through `/land`, with exact force-with-lease republication. Enabled by default for the Git backend. |
@@ -226,7 +226,7 @@ authoritative:
   Enter and Alt+Enter in the main editor while Pi is working, so Enter queues
   follow-up messages and Alt+Enter steers. Enter keeps stock behavior for idle
   submission, autocomplete, inline prompts, and selectors.
-- OpenRouter requests use `:floor` by default through `openrouter-floor`.
+- OpenRouter requests use `:floor` by default through `openrouter-routing`.
   Configure `floor`, `nitro`, or `none` per model in `kstack.json` or per session
   with `/openrouter-route`; no per-model variant entries are needed in `models.json`.
 

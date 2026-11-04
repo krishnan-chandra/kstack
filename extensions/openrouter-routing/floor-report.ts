@@ -10,12 +10,12 @@ export function parseStatsRange(args: string): StatsRangeParseResult {
 		.split(/\s+/)
 		.filter((token) => token.length > 0);
 	if (tokens.length === 0) return { ok: true, value: "30d" };
-	if (tokens.length !== 1) return { ok: false, error: "Usage: /openrouter-floor-stats [process|today|7d|30d]" };
+	if (tokens.length !== 1) return { ok: false, error: "Usage: /openrouter-routing-stats [process|today|7d|30d]" };
 	const value = tokens[0];
 	if (value === "process" || value === "today" || value === "7d" || value === "30d") {
 		return { ok: true, value };
 	}
-	return { ok: false, error: "Usage: /openrouter-floor-stats [process|today|7d|30d]" };
+	return { ok: false, error: "Usage: /openrouter-routing-stats [process|today|7d|30d]" };
 }
 
 type TierCounts = Record<ServiceTier, number>;

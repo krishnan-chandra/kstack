@@ -10,7 +10,7 @@ const EXPECTED_EXTENSIONS = [
 	"handoff",
 	"jj-stacked-prs",
 	"land",
-	"openrouter-floor",
+	"openrouter-routing",
 	"parallel-agents",
 	"pr-autopilot",
 	"session-archive",

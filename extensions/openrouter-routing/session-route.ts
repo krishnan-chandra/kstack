@@ -4,7 +4,7 @@ import { isRecord } from "../shared/narrow.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import { isRoutingVariant, type ResolvedVariant, type RoutingVariant } from "./routing-policy.ts";
 
-export const ROUTE_ENTRY_TYPE = "openrouter-floor/route";
+export const ROUTE_ENTRY_TYPE = "openrouter-routing/route";
 const routeEntrySchema = Type.Object(
 	{
 		version: Type.Literal(1),
