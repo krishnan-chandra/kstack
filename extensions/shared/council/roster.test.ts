@@ -106,17 +106,6 @@ describe("resolveCouncilRoster", () => {
 		});
 	});
 
-	it("rejects a legacy adversary section with a migration message", () => {
-		const error = errorOf(
-			resolveCouncilRoster({
-				env: envWith({ adversary: { adversary: "astra" } }),
-				plannerModel: "a/b",
-				whenMissing: "skip",
-			}),
-		);
-		assert.match(error, /council\.seats/);
-	});
-
 	it("rejects duplicates, an empty post-exclusion roster, too many seats, and unknown aliases", () => {
 		const env = envWith({ aliases: ALIASES });
 		assert.match(

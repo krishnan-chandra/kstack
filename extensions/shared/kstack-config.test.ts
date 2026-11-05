@@ -155,14 +155,4 @@ describe("loadCouncilSection", () => {
 		const result = load({ council: { seats: [] } });
 		assert.equal(result.status, "invalid");
 	});
-
-	it("rejects a legacy adversary section with a migration message", () => {
-		for (const root of [{ adversary: { adversary: "astra" } }, { adversary: {}, council: { seats: ["opus"] } }]) {
-			const result = load(root);
-			assert.equal(result.status, "invalid");
-			if (result.status !== "invalid") return;
-			assert.match(result.error, /"adversary" to "council"/);
-			assert.match(result.error, /council\.seats/);
-		}
-	});
 });

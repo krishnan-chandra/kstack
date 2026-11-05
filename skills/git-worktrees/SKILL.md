@@ -51,9 +51,9 @@ Never treat a directory scan alone as authority. Validate the owning repository 
    node <skill-dir>/scripts/plan_worktree.ts --repo <repo> --task "<task>"
    ```
 
-2. Review the planner's `base_ref`, immutable `base_sha`, `branch`, and `path`. The planner uses the same slug and base-ref rules as the adversarial-planning workflow: `extractSlug` (30 characters, no mid-word cut) and origin-first symbolic HEAD, then remote and local `main`/`master`, then `HEAD`. Report any fallback.
+2. Review the planner's `base_ref`, immutable `base_sha`, `branch`, and `path`. The planner uses the same slug and base-ref rules as the council workflow: `extractSlug` (30 characters, no mid-word cut) and origin-first symbolic HEAD, then remote and local `main`/`master`, then `HEAD`. Report any fallback.
 3. Recheck both the branch and destination. If either exists, do not overwrite or reset it; rerun the planner to allocate `-2`, `-3`, and so on, or offer explicit reuse after inspection.
-4. Show the exact base, branch, and destination, then ask for confirmation. An approved adversarial-planning plan that names a managed worktree already authorizes this one creation; it does not authorize cleanup or publication.
+4. Show the exact base, branch, and destination, then ask for confirmation. An approved council plan that names a managed worktree already authorizes this one creation; it does not authorize cleanup or publication.
 5. Create with argument-separated Git invocation, not shell interpolation:
 
    ```bash
@@ -152,4 +152,4 @@ Recovery:
 - <specific repair/prune command when relevant>
 ```
 
-Keep worktrees after publication by default. End creation and adversarial-planning runs by printing the managed path and explaining that cleanup remains explicit.
+Keep worktrees after publication by default. End creation and council runs by printing the managed path and explaining that cleanup remains explicit.

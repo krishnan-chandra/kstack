@@ -16,14 +16,14 @@ _Avoid_: subagent, child
 A short, non-interactive `pi -p --mode json` process run through
 `child-agent-runner.ts`.
 
-**Adversary**:
-A read-only hosted agent that critiques a plan or implementation. In
-adversarial-planning, adversaries are the council seats left after the planner's
-model sits out.
-_Avoid_: reviewer
+**Reviewer**:
+A read-only hosted agent that critiques a plan or implementation. In the
+`council` skill, reviewers are the council seats left after the planner's model
+sits out.
+_Avoid_: adversary, subagent
 
 **Critique**:
-One structured adversary response. It contains an `approve` or `revise`
+One structured reviewer response. It contains an `approve` or `revise`
 verdict, blocking `[B-n]` findings, optional `[S-n]` suggestions, and findings
 resolved from the previous round.
 
@@ -33,11 +33,12 @@ One plan, critique, and revision cycle.
 **Debate**:
 A bounded sequence of rounds that produces a final plan.
 
-### Planning council
+### Council
 
 **Council**:
-The adversarial-planning debate with 1–5 seats. Deterministic CLI code, not a
-model, publishes the ledger, counts votes, and decides each round.
+The `council` skill's plan-and-implementation debate with 1–5 seats.
+Deterministic CLI code, not a model, publishes the ledger, counts votes, and
+decides each round.
 _Avoid_: panel, committee
 
 **Seat**:

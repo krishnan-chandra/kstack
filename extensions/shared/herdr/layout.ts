@@ -62,7 +62,7 @@ export interface PaneSplitDecision {
 }
 
 /**
- * Decide how to split the caller's own pane for a hosted adversary: right when
+ * Decide how to split the caller's own pane for a hosted reviewer: right when
  * the pane is wide, down when it is narrow or tall. Callers that need a fixed
  * placement, such as council seats, pass `openPaneHost` a direction instead.
  */

@@ -281,7 +281,7 @@ function makeHarness(label: string): Harness {
 }
 
 async function startOne(fake: FakeHerdr, maxAgents = 1): Promise<{ host: AgentHost; agent: HostedAgent }> {
-	const opened = await openAgentHost({ owner: "adv-planning", label: "test", cwd: "/repo", maxAgents }, fake.deps());
+	const opened = await openAgentHost({ owner: "council", label: "test", cwd: "/repo", maxAgents }, fake.deps());
 	assert.ok(opened.ok, opened.ok ? "" : opened.error);
 	const agent = await opened.host.start(PLANNER_SPEC);
 	assert.ok(agent.ok, agent.ok ? "" : agent.error);
@@ -397,7 +397,7 @@ describe("openPaneHost", () => {
 	it("splits the caller's pane and starts the agent there without a tab", async () => {
 		const harness = makeHarness("pane-host");
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 1 },
+			{ owner: "council", label: "review", cwd: "/repo", maxAgents: 1 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -419,7 +419,7 @@ describe("openPaneHost", () => {
 	it("closes its own split when disposed before an agent starts, never the caller's pane", async () => {
 		const harness = makeHarness("pane-host-empty");
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 1 },
+			{ owner: "council", label: "review", cwd: "/repo", maxAgents: 1 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -433,13 +433,13 @@ describe("openPaneHost", () => {
 	it("splits the caller's pane for the first agent and within it for later agents", async () => {
 		const harness = makeHarness("pane-host-multi");
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 2 },
+			{ owner: "council", label: "review", cwd: "/repo", maxAgents: 2 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
 		const first = await opened.host.start(PLANNER_SPEC);
 		assert.ok(first.ok, first.ok ? "" : first.error);
-		const second = await opened.host.start({ ...PLANNER_SPEC, role: "adversary" });
+		const second = await opened.host.start({ ...PLANNER_SPEC, role: "reviewer" });
 		assert.ok(second.ok, second.ok ? "" : second.error);
 		assert.notEqual(first.agent.paneId, second.agent.paneId);
 		const splits = harness.fake.callsMatching("pane split");
@@ -458,7 +458,7 @@ describe("openPaneHost", () => {
 	it("closes a split that resolves after disposal and rejects the late start", async () => {
 		const harness = makeHarness("pane-host-race");
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "race", cwd: "/repo", maxAgents: 2 },
+			{ owner: "council", label: "race", cwd: "/repo", maxAgents: 2 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -473,7 +473,7 @@ describe("openPaneHost", () => {
 					resolveSplit = resolve;
 				}),
 		);
-		const second = opened.host.start({ ...PLANNER_SPEC, role: "adversary" });
+		const second = opened.host.start({ ...PLANNER_SPEC, role: "reviewer" });
 		while (!resolveSplit) await new Promise((resolve) => setTimeout(resolve, 0));
 		const disposing = opened.host.dispose({ closeTab: true });
 		resolveSplit?.({
@@ -499,7 +499,7 @@ describe("openPaneHost", () => {
 	it("rejects and disposes an agent whose start resolves after disposal", async () => {
 		const harness = makeHarness("pane-host-start-race");
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "start-race", cwd: "/repo", maxAgents: 1 },
+			{ owner: "council", label: "start-race", cwd: "/repo", maxAgents: 1 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -563,7 +563,7 @@ describe("openPaneHost", () => {
 			},
 		);
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "review", cwd: "/repo", maxAgents: 2 },
+			{ owner: "council", label: "review", cwd: "/repo", maxAgents: 2 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -571,7 +571,7 @@ describe("openPaneHost", () => {
 		assert.ok(first.ok, first.ok ? "" : first.error);
 
 		const controller = new AbortController();
-		const starting = opened.host.start({ ...PLANNER_SPEC, role: "adversary", signal: controller.signal });
+		const starting = opened.host.start({ ...PLANNER_SPEC, role: "reviewer", signal: controller.signal });
 		while (splitCount < 2) await new Promise((resolve) => setTimeout(resolve, 0));
 		controller.abort();
 		release?.();
@@ -586,7 +586,7 @@ describe("openPaneHost", () => {
 	it("closes a late-started agent and sends no review request when the start is cancelled", async () => {
 		const harness = makeHarness("pane-host-start-cancel");
 		const opened = await openPaneHost(
-			{ owner: "adversary", label: "start-cancel", cwd: "/repo", maxAgents: 1 },
+			{ owner: "council", label: "start-cancel", cwd: "/repo", maxAgents: 1 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -641,7 +641,7 @@ describe("openPaneHost", () => {
 				controller.abort();
 			},
 		};
-		const opened = await openPaneHost({ owner: "adversary", label: "busy-cancel", cwd: "/repo", maxAgents: 1 }, deps);
+		const opened = await openPaneHost({ owner: "council", label: "busy-cancel", cwd: "/repo", maxAgents: 1 }, deps);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
 
 		const result = await opened.host.start({ ...PLANNER_SPEC, signal: controller.signal });
@@ -659,14 +659,14 @@ describe("agent-host: layout and start", () => {
 	it("creates exactly one no-focus tab and never touches the caller's pane", async () => {
 		const harness = makeHarness("layout");
 		const opened = await openAgentHost(
-			{ owner: "adv-planning", label: "run", cwd: "/repo", maxAgents: 4 },
+			{ owner: "council", label: "run", cwd: "/repo", maxAgents: 4 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok);
 		const tabCreate = harness.fake.callsMatching("tab create")[0];
 		assert.ok(tabCreate);
 		const labelIndex = tabCreate.args.indexOf("--label");
-		assert.equal(tabCreate.args[labelIndex + 1], "adv-planning: run");
+		assert.equal(tabCreate.args[labelIndex + 1], "council: run");
 		assert.ok(tabCreate.args.includes("--no-focus"));
 		await opened.host.dispose();
 		assert.equal(harness.fake.callsMatching("tab close").length, 0);
@@ -681,7 +681,7 @@ describe("agent-host: layout and start", () => {
 		assert.ok(first.args.includes(harness.fake.rootPaneId));
 		assert.ok(first.args.includes("--no-extensions"));
 		assert.ok(first.args.includes(hostedAgentArgs(PLANNER_SPEC, harness.fake.integrationPath).at(-1) ?? ""));
-		const second = await host.start({ ...PLANNER_SPEC, role: "adversary" });
+		const second = await host.start({ ...PLANNER_SPEC, role: "reviewer" });
 		assert.ok(second.ok);
 		const split = harness.fake.callsMatching("pane split")[0];
 		assert.ok(split);
@@ -697,13 +697,13 @@ describe("agent-host: layout and start", () => {
 	it("rejects starts beyond maxAgents and refuses to split the caller pane", async () => {
 		const harness = makeHarness("bounds");
 		const opened = await openAgentHost(
-			{ owner: "adv-planning", label: "test", cwd: "/repo", maxAgents: 2 },
+			{ owner: "council", label: "test", cwd: "/repo", maxAgents: 2 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok);
 		const first = await opened.host.start(PLANNER_SPEC);
 		assert.ok(first.ok);
-		const second = await opened.host.start({ ...PLANNER_SPEC, role: "adversary" });
+		const second = await opened.host.start({ ...PLANNER_SPEC, role: "reviewer" });
 		assert.ok(second.ok);
 		const extra = await opened.host.start({ ...PLANNER_SPEC, role: "extra" });
 		assert.equal(extra.ok, false);
@@ -1102,7 +1102,7 @@ describe("agent-host: ask protocol", () => {
 	it("rejects a screen DONE pointer without request-specific session completion", async () => {
 		const harness = makeHarness("ask-fallback");
 		const opened = await openAgentHost(
-			{ owner: "adv-planning", label: "test", cwd: "/repo", maxAgents: 1 },
+			{ owner: "council", label: "test", cwd: "/repo", maxAgents: 1 },
 			harness.fake.deps(),
 		);
 		assert.ok(opened.ok);
@@ -1186,7 +1186,7 @@ describe("agent-host review regressions", () => {
 	it("attaches a standalone skill to the same response and cancellation lifecycle", async () => {
 		const h = makeHarness("attach");
 		h.fake.onPrompt = () => h.fake.respond("standalone response");
-		const attached = await attachHostedAgent("adversary-test", h.fake.deps());
+		const attached = await attachHostedAgent("reviewer-test", h.fake.deps());
 		assert.ok(attached.ok);
 		assert.equal((await attached.agent.ask(askOptions(h))).status, "completed");
 		assert.equal(h.fake.callsMatching("tab create").length, 0);
@@ -1203,7 +1203,7 @@ describe("agent-host review regressions", () => {
 				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out" } }),
 			}),
 		);
-		const attached = await attachHostedAgent("adversary-test", h.fake.deps());
+		const attached = await attachHostedAgent("reviewer-test", h.fake.deps());
 		assert.ok(attached.ok);
 		await attached.agent.abort();
 		await attached.agent.abort();
@@ -1229,7 +1229,7 @@ describe("agent-host review regressions", () => {
 				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out" } }),
 			}),
 		);
-		const attached = await attachHostedAgent("adversary-test", h.fake.deps());
+		const attached = await attachHostedAgent("reviewer-test", h.fake.deps());
 		assert.ok(attached.ok);
 		const result = await attached.agent.ask(askOptions(h));
 		assert.equal(result.status, "failed");
@@ -1494,7 +1494,7 @@ describe("agent-host: dispose and exchange directory", () => {
 
 describe("agent-host helpers", () => {
 	it("builds agent names within the herdr name grammar", () => {
-		const name = buildAgentName("adv-planning", "implementer", "ab12");
+		const name = buildAgentName("council", "implementer", "ab12");
 		assert.match(name, /^[a-z][a-z0-9_-]{0,31}$/);
 		assert.ok(name.endsWith("-ab12"));
 		const long = buildAgentName("a-very-long-owner-name-here", "a-very-long-role-name", "zz99");

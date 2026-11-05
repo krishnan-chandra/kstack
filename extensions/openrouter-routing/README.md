@@ -95,7 +95,7 @@ It leaves a request alone when:
 
 ## Where it runs
 
-Pi loads it with the rest of Kstack. Kstack child agents (adversarial-planning
+Pi loads it with the rest of Kstack. Kstack child agents (council
 seats, pr-autopilot) run with
 `--no-extensions -e <kstack>/kstack.ts`, so they load Kstack alone and their
 OpenRouter calls use the configured routing policy without booting the user's
