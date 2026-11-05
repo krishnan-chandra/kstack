@@ -1,19 +1,19 @@
 ---
-name: adversarial-planning
-description: Draft an implementation plan, stress-test it with a council of distinct reviewer models in visible Herdr panes until the council approves or the round budget runs out, implement the approved plan on a dedicated workstream, run every remaining council seat as an implementation adversary, fix blocking findings, and — after explicit approval — publish a draft PR with reviewer recommendations. Use explicitly with /skill:adversarial-planning when the user asks for adversarial planning, a plan council, a plan critique loop, a planner-versus-adversary debate, or implementing an approved plan with adversarial review.
+name: council
+description: Draft an implementation plan, stress-test it with a council of distinct reviewer models in visible Herdr panes until the council approves or the round budget runs out, implement the approved plan on a dedicated workstream, run every remaining council seat as a read-only implementation reviewer against the diff, fix blocking findings, and — after explicit approval — publish a draft PR with reviewer recommendations. Covers both planning and implementation, so it can run the whole cycle or start from an approved plan for implementation and review only. Use explicitly with /skill:council when the user asks for a planning council, a plan critique loop, or implementing an already-approved plan under council review.
 license: MIT
 compatibility: Pi running inside Herdr with the Herdr Pi integration installed and a kstack.json council section or --seats.
 disable-model-invocation: true
 ---
 
-# Adversarial planning
+# Council
 
-Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own Herdr pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. Once the council approves, you implement the exact approved snapshot on a dedicated workstream, run the same seats as implementation adversaries against the diff, fix findings, and — only after the user approves publishing — publish a draft PR with reviewer recommendations. The user is the final arbiter.
+Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own Herdr pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. Once the council approves, you implement the exact approved snapshot on a dedicated workstream, run the same seats as implementation reviewers against the diff, fix findings, and — only after the user approves publishing — publish a draft PR with reviewer recommendations. The user is the final arbiter.
 
 ## Guard and resolve paths
 
 1. Run `test "${HERDR_ENV:-}" = 1`. Stop if this is not a Pi session inside Herdr.
-2. Resolve symlinks before walking up, because `~/.agents/skills/adversarial-planning` is usually a symlink into the kstack checkout:
+2. Resolve symlinks before walking up, because `~/.agents/skills/council` is usually a symlink into the kstack checkout:
 
    ```sh
    SKILL_DIR="$(cd "<directory containing this SKILL.md>" && pwd -P)"
@@ -62,10 +62,10 @@ Change kind: <bug-fix|feature|refactor|performance|prototype|generic>
 
 The `Change kind` line is optional; when present it names the proof-obligation
 playbook at `$KSTACK/extensions/shared/playbooks/<kind>.md` (omit for
-`generic`). The implementation adversaries receive the playbook path so
+`generic`). The implementation reviewers receive the playbook path so
 missing proof obligations are blocking.
 
-If the user already supplies an approved plan file (for example `plans/<slug>.md` with the `[STEP-n]`/`[AC-n]` contract), copy it to `plans/<slug>.md`, skip the planning debate, and go to [Implement](#implement). You still open the council: the implementation review needs its seats.
+The skill also runs in implementation-only mode. If the user already supplies an approved plan file (for example `plans/<slug>.md` with the `[STEP-n]`/`[AC-n]` contract), copy it to `plans/<slug>.md`, open the council as described in [Open the council](#open-the-council) so the implementation review has seats, skip the planning debate, and go to [Implement](#implement). In this mode there is no round decision, so the supplied plan is the approved plan.
 
 ## Run rounds
 
@@ -109,10 +109,10 @@ A rebuttal sends the finding back to a vote. Rebut a finding at most once; a sec
 
 ## Implement
 
-Council approval alone is not authorization to edit. Show the user `$COUNCIL/approved-plan.md` and ask explicitly for permission to implement it on a dedicated workstream; stop until they confirm. Their confirmation authorizes the local VCS mutations this workflow requires — it does not authorize pushing, publishing, or creating PRs.
+Approval of the plan alone is not authorization to edit. Show the user the approved plan — `$COUNCIL/approved-plan.md` after a planning debate, or `plans/<slug>.md` when the user supplied an approved plan — and ask explicitly for permission to implement it on a dedicated workstream; stop until they confirm. Their confirmation authorizes the local VCS mutations this workflow requires — it does not authorize pushing, publishing, or creating PRs.
 
 1. Prepare the implementation bundle in `plans/<slug>-implement/`:
-   - copy `$COUNCIL/approved-plan.md` → `plans/<slug>-implement/approved-plan.md`;
+   - copy the approved plan → `plans/<slug>-implement/approved-plan.md`: `$COUNCIL/approved-plan.md` after a planning debate, or `plans/<slug>.md` when the user supplied an approved plan;
    - write `plans/<slug>-implement/task.md` (the user's request);
    - write `plans/<slug>-implement/execution-ledger.md` copying every `[STEP-n]` and `[AC-n]` line verbatim from the approved plan;
    - write `plans/<slug>-implement/vcs-policy.md` naming the configured backend (`git` | `jj` | `graphite`) and its rules: use only that backend for version-control state and mutations; never push, publish, force-push, or create PRs; include only workstream files; Git requires a clean tree and finishes clean, jj keeps an empty working-copy change above the bookmark, and Graphite records through `gt`. The implementer, fixer, and publisher roles read this file;
@@ -130,11 +130,11 @@ Council approval alone is not authorization to edit. Show the user `$COUNCIL/app
 
 ## Implementation review
 
-Run every remaining council seat (from the open output's `seats`) as a read-only implementation adversary in parallel:
+Run every remaining council seat (from the open output's `seats`) as a read-only implementation reviewer in parallel:
 
-1. Create one prompt file per seat: copy `references/implementation-adversary.md` and append an `## Inputs` section listing absolute paths for that seat's `task.md`, `approved-plan.md`, `execution-ledger.md`, `diff.patch`, and `vcs-policy.md`; if `playbook-path.txt` exists, include the playbook path too.
+1. Create one prompt file per seat: copy `references/implementation-reviewer.md` and append an `## Inputs` section listing absolute paths for that seat's `task.md`, `approved-plan.md`, `execution-ledger.md`, `diff.patch`, and `vcs-policy.md`; if `playbook-path.txt` exists, include the playbook path too.
 2. Write a fanout spec JSON (one task per seat) with:
-   - `owner`: `adv-planning` (owner and task labels are capped at 16 characters)
+   - `owner`: `council` (owner and task labels are capped at 16 characters)
    - `label`: `impl-review`
    - `cwd`: the repository root (absolute)
    - `maxConcurrency`: the number of seats (≤ 8)
@@ -145,7 +145,7 @@ Run every remaining council seat (from the open output's `seats`) as a read-only
 
    ```json
    {
-     "owner": "adv-planning",
+     "owner": "council",
      "label": "impl-review",
      "cwd": "/fixture/repo",
      "maxConcurrency": 2,

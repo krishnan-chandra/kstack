@@ -36,7 +36,7 @@ routes do not create workstreams.
 | [`create-pi-extension`](skills/create-pi-extension/) | Designs and implements Pi extensions using the installed documentation, repository patterns, lifecycle/security ground rules, and an incremental verification checklist. |
 | [`create-skill`](skills/create-skill/) | Creates, tests, and improves Pi skills: draft, headless with-skill vs baseline eval runs, grading, benchmark aggregation, a static review page, and description/trigger optimization. |
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
-| [`adversarial-planning`](skills/adversarial-planning/) | Drafts an implementation plan and runs it past a council of 1–5 distinct read-only seat models in visible Herdr panes. Seats review independently, vote on each other's findings, and the CLI decides by strict-majority dismissal. Explicit invocation only. |
+| [`council`](skills/council/) | Drafts an implementation plan, runs it past a council of 1–5 distinct read-only seat models in visible Herdr panes until it approves, implements the approved plan, then runs the same seats as implementation reviewers against the diff. Also starts from a user-supplied approved plan for implementation-only runs. Seats review independently, vote on each other's findings, and the CLI decides by strict-majority dismissal. Explicit invocation only. |
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
@@ -90,12 +90,11 @@ K-Stack settings live in one config file: `$PI_CODING_AGENT_DIR/kstack.json`
 `"jj"`, or `"graphite"` for repository mutations and defaults to `"git"` when omitted.
 For Git, `vcs.stackProvider` defaults to `"github"`; set it to `"none"` to
 disable stacked-PR publication and membership routing.
-Model assignments for the adversarial-planning skill, council, arena,
+Model assignments for the council skill, arena,
 swarm, and the `how` and `why` investigation skills use sections in the same
-file. `council.seats` lists the 1–5 reviewer models for adversarial planning
+file. `council.seats` lists the 1–5 reviewer models for planning
 and implementation review, with their round limits and the implementation review
-timeout. A seat that uses the planner's model sits out. The pre-council
-`adversary` section is rejected with a message that names the rename. A top-level
+timeout. A seat that uses the planner's model sits out. A top-level
 `aliases` array (or any `{label, model, thinking}`
 entry anywhere in the file) defines model short names that `/handoff --model`
 resolves alongside Pi model display names.
@@ -131,7 +130,7 @@ before launching a model or mutating repository state.
 
 | Workflow | Git backend | jj backend | Graphite backend |
 | --- | --- | --- | --- |
-| `adversarial-planning` implementation | Current `kstack/<slug>` branch or managed worktree | Trunk-based change and bookmark | Tracked `kstack/<slug>` branch |
+| `council` implementation | Current `kstack/<slug>` branch or managed worktree | Trunk-based change and bookmark | Tracked `kstack/<slug>` branch |
 | `pr-autopilot` | Branch validation, Git commit/merge/push | Bookmark-at-`@` validation, jj commit/merge/push | Branch validation and native Graphite record/restack/submit |
 | `land` auto-discovery | Current branch | Bookmark targeting `@` | Current Graphite branch |
 
@@ -183,12 +182,12 @@ rows stay unnamed.
 - Pi 1.1.0 or newer
 - Node 22.18 or newer for Pi's runtime and local tooling. CI tests Node 22.18, 24, and 26.
 - A local filesystem for Pi's agent directory
-- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, GitHub and jj stacked PRs, and the adversarial-planning publish step
+- `gh` — the [GitHub CLI](https://cli.github.com), authenticated (`gh auth login`); required by pr-autopilot, land, GitHub and jj stacked PRs, and the council publish step
 - `github/gh-stack` 0.1.0 or newer (`gh extension install github/gh-stack`) — required for multi-PR jj publication and landing
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
-- Herdr 0.8.2 or newer, with `herdr integration install pi`, for adversarial planning, hosted implementation reviewers, Arena, and Swarm
+- Herdr 0.8.2 or newer, with `herdr integration install pi`, for the council skill, hosted implementation reviewers, Arena, and Swarm
 
 Pi loads one TypeScript entry, `kstack.ts`, from the package. The installer
 links each directory in `skills/` into the shared `~/.agents/skills` directory.
@@ -254,19 +253,21 @@ pi list
 pi config
 ```
 
-The plan → implement → adversarial review → publish workflow lives in the
-[`adversarial-planning`](skills/adversarial-planning/SKILL.md) skill:
+The plan → council review → implement → council review → publish workflow lives in the
+[`council`](skills/council/SKILL.md) skill:
 
 ```text
-/skill:adversarial-planning Add optimistic locking to the archive writer
+/skill:council Add optimistic locking to the archive writer
 ```
 
 The skill drafts a plan, runs it past a council of distinct reviewer models in
 visible Herdr panes until it approves, implements the approved plan on a
 dedicated Git/Graphite branch or jj bookmark, runs every remaining council seat
-as an implementation adversary against the diff, fixes blocking findings, and —
+as an implementation reviewer against the diff, fixes blocking findings, and —
 after explicit user approval — publishes a draft PR with reviewer recommendations.
-See [`skills/adversarial-planning/SKILL.md`](skills/adversarial-planning/SKILL.md)
+It can also start from an approved plan the user already supplies, skipping the
+planning rounds and going straight to implementation and review.
+See [`skills/council/SKILL.md`](skills/council/SKILL.md)
 for the full contract, configuration, and safety boundaries.
 
 Skills can then be invoked explicitly, for example:
@@ -275,7 +276,7 @@ Skills can then be invoked explicitly, for example:
 /skill:create-pi-extension
 /skill:create-skill
 /skill:find-reviewers
-/skill:adversarial-planning
+/skill:council
 /skill:arena
 /skill:architect
 /skill:swarm
@@ -290,7 +291,7 @@ Skills can then be invoked explicitly, for example:
 Stacked-PR delivery is owned by the stack extensions: [`github-stacked-prs`](extensions/github-stacked-prs/)
 for Git, [`jj-stacked-prs`](extensions/jj-stacked-prs/) for jj, or
 [`graphite-stacked-prs`](extensions/graphite-stacked-prs/) for Graphite. The
-adversarial-planning skill plans a single-PR delivery; stacking is a separate,
+council skill plans a single-PR delivery; stacking is a separate,
 confirmed step. A child
 updates titles and bodies and recommends reviewers only after publication
 succeeds.

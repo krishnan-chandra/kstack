@@ -32,7 +32,7 @@ export const MODEL_ID_RE = /^[^/\s]+(\/[^/\s]+)+$/;
 /** A model object or a kstack.json alias label. */
 export type ConfiguredModel = string | { model: string; thinking?: ModelThinkingLevel };
 
-/* exported: shared configuration contract for the adversarial-planning skill and CLI */
+/* exported: shared configuration contract for the council skill and CLI */
 export interface CouncilConfig {
 	/** One to five council seats, in configured order, before planner exclusion. */
 	seats: ConfiguredModel[];
@@ -40,7 +40,7 @@ export interface CouncilConfig {
 	maxRounds: number;
 	/** Wall-clock limit for one seat request during a planning round. */
 	timeoutMinutes: number;
-	/** Shared deadline for the adversarial-planning implementation review fan-out. */
+	/** Shared deadline for the council implementation review fan-out. */
 	reviewTimeoutMinutes: number;
 }
 
@@ -94,7 +94,7 @@ function boundedInteger(value: BoundaryValue, min: number, max: number): value i
 
 /**
  * Validate the shared council settings once for the skill CLI and
- * adversarial-planning. An omitted `seats` list falls back to {@link DEFAULT_SEAT}.
+ * the council skill. An omitted `seats` list falls back to {@link DEFAULT_SEAT}.
  */
 export function validateCouncilConfig(
 	value: BoundaryValue,
@@ -202,23 +202,15 @@ export function loadValidatedSection<T>(
 		: { status: "invalid", path: raw.path, error: result.error };
 }
 
-/** Migration message for a kstack.json that still carries the pre-council `adversary` section. */
-const LEGACY_ADVERSARY_ERROR =
-	'The "adversary" section was renamed to "council". Rename "adversary" to "council" and "adversary.adversary" to "council.seats".';
-
 type CouncilSectionLoad =
 	| { status: "found"; config: CouncilConfig; path: string; root: JsonObject }
 	| { status: "missing"; path: string; root?: JsonObject }
 	| { status: "invalid"; path: string; error: string };
 
-/**
- * Load and validate the `council` section. A leftover top-level `adversary`
- * section is invalid so a stale config never silently disables review.
- */
+/** Load and validate the `council` section. */
 export function loadCouncilSection(env: NodeJS.ProcessEnv = process.env): CouncilSectionLoad {
 	const load = loadKstackRoot(env);
 	if (load.status !== "found") return load;
-	if (load.root.adversary !== undefined) return { status: "invalid", path: load.path, error: LEGACY_ADVERSARY_ERROR };
 	if (load.root.council === undefined) return { status: "missing", path: load.path, root: load.root };
 	const validated = validateCouncilConfig(load.root.council);
 	if (!validated.ok) return { status: "invalid", path: load.path, error: validated.error };

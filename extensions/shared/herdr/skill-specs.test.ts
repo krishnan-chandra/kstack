@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parseFanoutSpec } from "./fanout.ts";
 
-for (const skill of ["arena", "swarm", "adversarial-planning"]) {
+for (const skill of ["arena", "swarm", "council"]) {
 	test(`${skill} shipped fanout example passes the production schema`, () => {
 		const markdown = readFileSync(new URL(`../../../skills/${skill}/SKILL.md`, import.meta.url), "utf8");
 		const blocks = [...markdown.matchAll(/```json\n([\s\S]*?)\n\s*```/g)].map((match) => match[1] ?? "");
@@ -17,8 +17,8 @@ for (const skill of ["arena", "swarm", "adversarial-planning"]) {
 			.replaceAll(/<(?:run-id|candidate-label|label)>/g, "example");
 		const parsed = parseFanoutSpec(JSON.parse(expanded));
 		assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
-		if (skill === "adversarial-planning") {
-			assert.equal(parsed.spec.owner, "adv-planning");
+		if (skill === "council") {
+			assert.equal(parsed.spec.owner, "council");
 			assert.equal(parsed.spec.label, "impl-review");
 		}
 	});

@@ -1,6 +1,6 @@
 # Implementer role
 
-You are the implementation role in the adversarial-planning workflow. A
+You are the implementation role in the council workflow. A
 separate high-reason planner (or the orchestrating agent) has produced a plan
 approved by the user.
 
@@ -77,7 +77,7 @@ first repository edit.
   above the task bookmark in jj mode.
 - Never push, publish, force-push, or create a PR.
 - Do not invoke another planning or review workflow; the orchestrating agent
-  runs the adversarial implementation review after you finish.
+  runs the council implementation review after you finish.
 
 ## Partial failure
 

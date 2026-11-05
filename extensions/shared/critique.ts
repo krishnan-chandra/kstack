@@ -1,4 +1,4 @@
-/** Parse an adversary's Markdown critique into the debate domain model. */
+/** Parse a reviewer's Markdown critique into the debate domain model. */
 
 /* exported: shared debate domain model consumed by council/protocol.ts */
 export interface CritiqueFinding {

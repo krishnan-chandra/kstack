@@ -16,8 +16,8 @@ describe("normalizeModelAliasKey", () => {
 describe("collectKstackModelAliases", () => {
 	it("collects labelled model entries at any nesting depth", () => {
 		const root = {
-			adversary: {
-				adversary: [
+			council: {
+				seats: [
 					{ label: "terra", model: "openai/gpt-5.6-terra", thinking: "max" },
 					{ label: "glm", model: "openrouter/z-ai/glm-5.2", thinking: "high" },
 				],

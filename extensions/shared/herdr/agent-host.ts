@@ -88,7 +88,7 @@ export interface AskOptions {
 	signal?: AbortSignal;
 }
 
-/* exported: hosted-agent interface contract consumed by adversarial-planning and fanout adapters */
+/* exported: hosted-agent interface contract consumed by the council skill and fanout adapters */
 export type AskResult =
 	| { status: "completed"; output: string; usage: UsageSummary; session?: string }
 	| { status: "blocked"; paneId: string; usage: UsageSummary }
@@ -705,7 +705,7 @@ export async function openAgentHost(
 
 /**
  * Create the host in a new split of the caller's own pane instead of a separate
- * tab. The caller's tab is never closed by `dispose`, so the adversary stays
+ * tab. The caller's tab is never closed by `dispose`, so the reviewer stays
  * visible for inspection and steering.
  */
 export async function openPaneHost(
