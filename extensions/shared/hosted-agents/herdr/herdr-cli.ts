@@ -2,8 +2,8 @@
  *
  * Every herdr response crosses this module exactly once. It parses the
  * `{id, result}` success envelope, the `{id, error:{code,message}}` failure
- * envelope, maps exit code 2 to `syntax_error`, and treats non-JSON output as
- * `protocol_error`. Captured stdout and stderr are capped so a misbehaving
+ * envelope, and maps every failure onto the port's {@link BackendErrorCode}s;
+ * exit code 2 and non-JSON output become `protocol_error`. Captured stdout and stderr are capped so a misbehaving
  * CLI cannot exhaust memory. The exec function is injected, so tests script a
  * fake herdr instead of spawning the binary.
  *
@@ -18,23 +18,32 @@
  * - errors → stderr JSON `{"id":…,"error":{"code":…,"message":…}}`, exit 1.
  */
 
-import { execFile } from "node:child_process";
-import { truncateHeadUtf8 } from "../child-agent-runner.ts";
-import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } from "../validation.ts";
+import { truncateHeadUtf8 } from "../../child-agent-runner.ts";
+import { type BoundaryValue, isNumber, isObject, isString, type JsonObject } from "../../validation.ts";
+import { createNodeExec } from "../node-exec.ts";
+import {
+	type BackendErrorCode,
+	type BackendExec,
+	type BackendFailure,
+	type ExecOptions,
+	type ExecResult,
+	execFailureCode,
+	type Outcome,
+} from "../terminal-backend.ts";
 
-export type HerdrExec = (
-	args: string[],
-	options: { timeoutMs: number; signal?: AbortSignal },
-) => Promise<{ code: number; stdout: string; stderr: string }>;
-
-export interface HerdrRunOptions {
-	timeoutMs: number;
-	signal?: AbortSignal;
+export function mapHerdrErrorCode(code: string, message: string): BackendErrorCode {
+	if (code === "agent_not_found" || code === "pane_not_found" || code === "tab_not_found") return "not_found";
+	if (code === "agent_pane_busy") return "pane_busy";
+	if (code === "agent_blocked" || code === "agent_not_ready") return "agent_blocked";
+	if (code === "agent_prompt_stalled") return "prompt_stalled";
+	if (code === "aborted") return "aborted";
+	if (code === "timeout" || /timed? out/i.test(message)) return "timeout";
+	const haystack = `${code} ${message}`.toLowerCase();
+	if (/name/.test(haystack) && /(taken|exist|conflict|duplicate|in use|already)/.test(haystack)) {
+		return "name_conflict";
+	}
+	return "protocol_error";
 }
-
-type HerdrExecOptions = HerdrRunOptions;
-
-type HerdrOutcome<T> = { ok: true; value: T } | { ok: false; code: string; message: string };
 
 /** The subset of a Herdr pane record the agent host needs. */
 interface HerdrPaneInfo {
@@ -158,44 +167,40 @@ function parseErrorEnvelope(stderr: string): { code: string; message: string } |
 	}
 }
 
-export interface HerdrCli {
+interface HerdrCli {
 	/** Run one herdr subcommand and parse its `result` payload. */
-	run<T>(
-		args: string[],
-		parse: (result: BoundaryValue) => T | undefined,
-		options: HerdrRunOptions,
-	): Promise<HerdrOutcome<T>>;
+	run<T>(args: string[], parse: (result: BoundaryValue) => T | undefined, options: ExecOptions): Promise<Outcome<T>>;
 	/** Run one herdr subcommand whose stdout is plain text (`agent read`). */
-	runText(args: string[], options: HerdrRunOptions): Promise<HerdrOutcome<string>>;
+	runText(args: string[], options: ExecOptions): Promise<Outcome<string>>;
 	tabCreate(
 		options: { workspaceId: string; cwd: string; label: string },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<HerdrTabInfo>>;
+		run: ExecOptions,
+	): Promise<Outcome<HerdrTabInfo>>;
 	paneSplit(
 		options: { paneId: string; direction: "right" | "down"; ratio: number; cwd?: string },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<HerdrPaneInfo>>;
-	paneClose(options: { paneId: string }, run: HerdrRunOptions): Promise<HerdrOutcome<null>>;
-	tabClose(options: { tabId: string }, run: HerdrRunOptions): Promise<HerdrOutcome<null>>;
+		run: ExecOptions,
+	): Promise<Outcome<HerdrPaneInfo>>;
+	paneClose(options: { paneId: string }, run: ExecOptions): Promise<Outcome<null>>;
+	tabClose(options: { tabId: string }, run: ExecOptions): Promise<Outcome<null>>;
 	agentStart(
 		options: { name: string; paneId: string; timeoutMs: number; args: string[] },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<HerdrAgentInfo>>;
+		run: ExecOptions,
+	): Promise<Outcome<HerdrAgentInfo>>;
 	agentPrompt(
 		options: { name: string; text: string; timeoutMs: number; until?: readonly string[] },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<HerdrAgentInfo>>;
+		run: ExecOptions,
+	): Promise<Outcome<HerdrAgentInfo>>;
 	agentWait(
 		options: { name: string; timeoutMs: number; until: readonly string[] },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<HerdrAgentInfo>>;
-	agentGet(options: { name: string }, run: HerdrRunOptions): Promise<HerdrOutcome<HerdrAgentInfo>>;
-	agentRead(options: { name: string; lines: number }, run: HerdrRunOptions): Promise<HerdrOutcome<string>>;
+		run: ExecOptions,
+	): Promise<Outcome<HerdrAgentInfo>>;
+	agentGet(options: { name: string }, run: ExecOptions): Promise<Outcome<HerdrAgentInfo>>;
+	agentRead(options: { name: string; lines: number }, run: ExecOptions): Promise<Outcome<string>>;
 	agentSendKeys(
 		options: { name: string; keys: readonly ("esc" | "ctrl+c")[] },
-		run: HerdrRunOptions,
-	): Promise<HerdrOutcome<null>>;
-	paneLayout(options: { paneId: string }, run: HerdrRunOptions): Promise<HerdrOutcome<HerdrPaneLayout>>;
+		run: ExecOptions,
+	): Promise<Outcome<null>>;
+	paneLayout(options: { paneId: string }, run: ExecOptions): Promise<Outcome<HerdrPaneLayout>>;
 }
 
 function expectType<T>(expected: string, project: (result: JsonObject) => T | undefined) {
@@ -208,34 +213,37 @@ function expectType<T>(expected: string, project: (result: JsonObject) => T | un
 	};
 }
 
-export function createHerdrCli(exec: HerdrExec): HerdrCli {
+/** Map a failed exec to a port error, or `undefined` when herdr exited 0. */
+function failureOf(finished: ExecResult): ({ ok: false } & BackendFailure) | undefined {
+	if (finished.failure) return { ok: false, code: execFailureCode(finished.failure), message: finished.stderr };
+	if (finished.code === 0) return undefined;
+	const parsed = parseErrorEnvelope(finished.stderr);
+	if (finished.code === 2) {
+		return {
+			ok: false,
+			code: "protocol_error",
+			message: parsed ? parsed.message : `herdr rejected the command syntax: ${cap(finished.stderr, "stderr")}`,
+		};
+	}
+	if (parsed) return { ok: false, code: mapHerdrErrorCode(parsed.code, parsed.message), message: parsed.message };
+	return {
+		ok: false,
+		code: "protocol_error",
+		message: `herdr exited ${finished.code} without an error envelope: ${cap(finished.stderr, "stderr")}`,
+	};
+}
+
+export function createHerdrCli(exec: BackendExec): HerdrCli {
 	const run = async <T>(
 		args: string[],
 		parse: (result: BoundaryValue) => T | undefined,
-		options: HerdrRunOptions,
-	): Promise<HerdrOutcome<T>> => {
-		const execOptions: HerdrExecOptions = { timeoutMs: options.timeoutMs };
-		if (options.signal) execOptions.signal = options.signal;
-		const finished = await exec(args, execOptions);
-		if (finished.code === 2) {
-			const parsed = parseErrorEnvelope(finished.stderr);
-			return {
-				ok: false,
-				code: "syntax_error",
-				message: parsed ? parsed.message : `herdr rejected the command syntax: ${cap(finished.stderr, "stderr")}`,
-			};
-		}
-		if (finished.code !== 0) {
-			const parsed = parseErrorEnvelope(finished.stderr);
-			if (parsed) return { ok: false, code: parsed.code, message: parsed.message };
-			return {
-				ok: false,
-				code: "protocol_error",
-				message: `herdr exited ${finished.code} without an error envelope: ${cap(finished.stderr, "stderr")}`,
-			};
-		}
+		options: ExecOptions,
+	): Promise<Outcome<T>> => {
+		const finished = await exec(args, options);
+		const failed = failureOf(finished);
+		if (failed) return failed;
 		const envelope = parseResultEnvelope(finished.stdout);
-		if (!envelope.ok) return { ok: false, code: envelope.code, message: envelope.message };
+		if (!envelope.ok) return { ok: false, code: "protocol_error", message: envelope.message };
 		const value = parse(envelope.result);
 		if (value === undefined) {
 			return {
@@ -247,23 +255,9 @@ export function createHerdrCli(exec: HerdrExec): HerdrCli {
 		return { ok: true, value };
 	};
 
-	const runText = async (args: string[], options: HerdrRunOptions): Promise<HerdrOutcome<string>> => {
-		const execOptions: HerdrExecOptions = { timeoutMs: options.timeoutMs };
-		if (options.signal) execOptions.signal = options.signal;
-		const finished = await exec(args, execOptions);
-		if (finished.code === 2) {
-			return { ok: false, code: "syntax_error", message: cap(finished.stderr, "stderr") };
-		}
-		if (finished.code !== 0) {
-			const parsed = parseErrorEnvelope(finished.stderr);
-			if (parsed) return { ok: false, code: parsed.code, message: parsed.message };
-			return {
-				ok: false,
-				code: "protocol_error",
-				message: `herdr exited ${finished.code} without an error envelope: ${cap(finished.stderr, "stderr")}`,
-			};
-		}
-		return { ok: true, value: cap(finished.stdout, "output") };
+	const runText = async (args: string[], options: ExecOptions): Promise<Outcome<string>> => {
+		const finished = await exec(args, options);
+		return failureOf(finished) ?? { ok: true, value: cap(finished.stdout, "output") };
 	};
 
 	const agentParse = expectType("agent_info", (record) => {
@@ -405,42 +399,7 @@ export function createHerdrCli(exec: HerdrExec): HerdrCli {
 	};
 }
 
-/** Default exec over the real herdr binary using node's child_process. */
-export function createNodeHerdrExec(binary = "herdr"): HerdrExec {
-	return async (args, options) =>
-		new Promise((resolve) => {
-			execFile(
-				binary,
-				args,
-				{
-					timeout: options.timeoutMs,
-					killSignal: "SIGKILL",
-					maxBuffer: HERDR_OUTPUT_CAP_BYTES,
-					signal: options.signal,
-				},
-				(error, stdout, stderr) => {
-					// node's execFile reports exit codes on error.code (number) or a system code (string).
-					const exitCode = error === null ? 0 : Number.parseInt(String(error.code), 10);
-					const code = Number.isInteger(exitCode) && exitCode >= 0 ? exitCode : 1;
-					let diagnostic = String(stderr);
-					if (error !== null && options.signal?.aborted) {
-						diagnostic = JSON.stringify({ error: { code: "aborted", message: "herdr command was aborted" } });
-					} else if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-						// node kills the child on overflow too; report the cause, not a timeout.
-						diagnostic = JSON.stringify({
-							error: { code: "output_overflow", message: `herdr output exceeded ${HERDR_OUTPUT_CAP_BYTES} bytes` },
-						});
-					} else if (error?.killed) {
-						diagnostic = JSON.stringify({
-							error: { code: "timeout", message: `herdr command timed out after ${options.timeoutMs} ms` },
-						});
-					} else if (error !== null && diagnostic.length === 0) {
-						diagnostic = JSON.stringify({
-							error: { code: String(error.code ?? "exec_error"), message: error.message },
-						});
-					}
-					resolve({ code, stdout: String(stdout), stderr: diagnostic });
-				},
-			);
-		});
+/** Default exec over the real herdr binary. */
+export function createNodeHerdrExec(binary = "herdr"): BackendExec {
+	return createNodeExec(binary, { label: "herdr", maxBufferBytes: HERDR_OUTPUT_CAP_BYTES });
 }

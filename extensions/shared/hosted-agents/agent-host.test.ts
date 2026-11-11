@@ -13,21 +13,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
+import { type AgentHost, type HostDeps, openAgentHost, openPaneHost } from "./agent-host.ts";
+import { buildAgentName, type HostedAgentSpec, hostedAgentArgs } from "./agent-spec.ts";
+import { connectTerminal, preflightTerminal } from "./backends.ts";
+import { virtualClock } from "./clock.ts";
 import {
-	type AgentHost,
 	type AskOptions,
 	attachHostedAgent,
-	buildAgentName,
-	type HostDeps,
 	type HostedAgent,
-	type HostedAgentSpec,
-	hostedAgentArgs,
-	openAgentHost,
-	openPaneHost,
 	POINTER_PROMPT_MAX_BYTES,
 	pointerPrompt,
-	preflightHerdr,
-} from "./agent-host.ts";
+} from "./hosted-agent.ts";
 
 interface ExecCall {
 	args: string[];
@@ -99,9 +95,9 @@ class FakeHerdr {
 		return {
 			exec: this.exec,
 			env: this.env,
-			sleep: async (ms) => {
+			clock: virtualClock((ms) => {
 				this.sleptMs.push(ms);
-			},
+			}),
 		};
 	}
 
@@ -186,7 +182,13 @@ class FakeHerdr {
 				code: 0,
 				stdout: JSON.stringify({
 					id: "x",
-					result: { type: "pane_layout", layout: { area: { width: 240, height: 60 } } },
+					result: {
+						type: "pane_layout",
+						layout: {
+							area: { width: 240, height: 60 },
+							tab_id: args[3] === this.callerPaneId ? "w5:tCaller" : this.tabId,
+						},
+					},
 				}),
 				stderr: "",
 			};
@@ -297,30 +299,43 @@ function askOptions(harness: Harness, overrides: Partial<AskOptions> = {}): AskO
 	};
 }
 
-describe("preflightHerdr", () => {
+describe("preflightTerminal (Herdr)", () => {
 	it("passes with env, integration file, and a reachable server", async () => {
 		const harness = makeHarness("preflight-ok");
-		const result = await preflightHerdr(harness.fake.deps());
+		const result = await preflightTerminal(harness.fake.deps());
 		assert.ok(result.ok);
 		if (result.ok) {
-			assert.equal(result.integrationPath, harness.fake.integrationPath);
-			assert.equal(result.workspaceId, "w5");
-			assert.equal(result.callerPane, harness.fake.callerPaneId);
+			assert.equal(result.backend, "herdr");
+			assert.equal(result.caller.paneId, harness.fake.callerPaneId);
 		}
 	});
 
-	it("fails outside Herdr before touching the CLI", async () => {
+	it("fails outside Herdr and Rex before touching the CLI", async () => {
 		const harness = makeHarness("preflight-noenv");
-		const result = await preflightHerdr({ exec: harness.fake.exec, env: {} });
+		const result = await preflightTerminal({ exec: harness.fake.exec, env: {} });
 		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /HERDR_ENV/);
+		if (!result.ok) {
+			assert.match(result.error, /HERDR_ENV/);
+			assert.match(result.error, /REX_SESSION/);
+		}
+		assert.equal(harness.fake.calls.length, 0);
+	});
+
+	it("refuses when both Herdr and Rex are detected before touching the CLI", async () => {
+		const harness = makeHarness("preflight-both");
+		const result = await preflightTerminal({
+			exec: harness.fake.exec,
+			env: { ...harness.fake.env, REX_SESSION: "session:1", REX_BLOCK: "block:1" },
+		});
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /Both Herdr and Rex/);
 		assert.equal(harness.fake.calls.length, 0);
 	});
 
 	it("fails when the Pi integration is missing", async () => {
 		const harness = makeHarness("preflight-nointegration");
 		rmSync(harness.fake.integrationPath, { force: true });
-		const result = await preflightHerdr(harness.fake.deps());
+		const result = await preflightTerminal(harness.fake.deps());
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /herdr integration install pi/);
 		assert.equal(harness.fake.calls.length, 0);
@@ -336,7 +351,7 @@ describe("preflightHerdr", () => {
 				stderr: "connection refused",
 			}),
 		);
-		const result = await preflightHerdr(harness.fake.deps());
+		const result = await preflightTerminal(harness.fake.deps());
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /Herdr is not reachable/);
 	});
@@ -381,7 +396,7 @@ describe("openPaneHost", () => {
 	it("preserves layout-result fallback and injected exchange directories", async () => {
 		const harness = makeHarness("pane-layout-fallback");
 		harness.fake.on(
-			(args) => args[0] === "pane" && args[1] === "layout",
+			(args) => args[0] === "pane" && args[1] === "layout" && args[3] !== harness.fake.callerPaneId,
 			async () => ({ code: 1, stdout: "", stderr: "layout unavailable" }),
 		);
 		const opened = await openPaneHost(
@@ -637,9 +652,9 @@ describe("openPaneHost", () => {
 		const controller = new AbortController();
 		const deps = {
 			...harness.fake.deps(),
-			sleep: async () => {
+			clock: virtualClock(() => {
 				controller.abort();
-			},
+			}),
 		};
 		const opened = await openPaneHost({ owner: "council", label: "busy-cancel", cwd: "/repo", maxAgents: 1 }, deps);
 		assert.ok(opened.ok, opened.ok ? "" : opened.error);
@@ -680,7 +695,7 @@ describe("agent-host: layout and start", () => {
 		assert.ok(first);
 		assert.ok(first.args.includes(harness.fake.rootPaneId));
 		assert.ok(first.args.includes("--no-extensions"));
-		assert.ok(first.args.includes(hostedAgentArgs(PLANNER_SPEC, harness.fake.integrationPath).at(-1) ?? ""));
+		assert.ok(first.args.includes(hostedAgentArgs(PLANNER_SPEC, ["-e", harness.fake.integrationPath]).at(-1) ?? ""));
 		const second = await host.start({ ...PLANNER_SPEC, role: "reviewer" });
 		assert.ok(second.ok);
 		const split = harness.fake.callsMatching("pane split")[0];
@@ -911,9 +926,10 @@ describe("agent-host: exact names and start failures", () => {
 		const splits = harness.fake.callsMatching("pane split").map((call) => call.args[4]);
 		assert.deepEqual(splits, ["right", "down", "down"]);
 		assert.equal(harness.fake.callsMatching("pane split")[0]?.args[2], harness.fake.callerPaneId);
+		// Only preflight reads the caller's pane (for its live tab); a fixed direction skips geometry.
 		assert.equal(
 			harness.fake.callsMatching("pane layout").filter((call) => call.args[3] === harness.fake.callerPaneId).length,
-			0,
+			1,
 		);
 	});
 });
@@ -1182,11 +1198,17 @@ describe("agent-host: ask protocol", () => {
 	});
 });
 
+async function attachReviewer(fake: FakeHerdr) {
+	const connected = await connectTerminal(fake.deps());
+	assert.ok(connected.ok, connected.ok ? "" : connected.error);
+	return attachHostedAgent({ name: "reviewer-test", paneId: fake.rootPaneId }, connected.session);
+}
+
 describe("agent-host review regressions", () => {
 	it("attaches a standalone skill to the same response and cancellation lifecycle", async () => {
 		const h = makeHarness("attach");
 		h.fake.onPrompt = () => h.fake.respond("standalone response");
-		const attached = await attachHostedAgent("reviewer-test", h.fake.deps());
+		const attached = await attachReviewer(h.fake);
 		assert.ok(attached.ok);
 		assert.equal((await attached.agent.ask(askOptions(h))).status, "completed");
 		assert.equal(h.fake.callsMatching("tab create").length, 0);
@@ -1203,7 +1225,7 @@ describe("agent-host review regressions", () => {
 				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out" } }),
 			}),
 		);
-		const attached = await attachHostedAgent("reviewer-test", h.fake.deps());
+		const attached = await attachReviewer(h.fake);
 		assert.ok(attached.ok);
 		await attached.agent.abort();
 		await attached.agent.abort();
@@ -1229,7 +1251,7 @@ describe("agent-host review regressions", () => {
 				stderr: JSON.stringify({ id: "x", error: { code: "timeout", message: "timed out" } }),
 			}),
 		);
-		const attached = await attachHostedAgent("reviewer-test", h.fake.deps());
+		const attached = await attachReviewer(h.fake);
 		assert.ok(attached.ok);
 		const result = await attached.agent.ask(askOptions(h));
 		assert.equal(result.status, "failed");
@@ -1244,7 +1266,7 @@ describe("agent-host review regressions", () => {
 		const session = SessionManager.create(h.root, join(h.root, "sessions"));
 		h.fake.sessionFile = session.getSessionFile() ?? "";
 		h.fake.onPrompt = async (call) => {
-			const tools = hostedAgentArgs(PLANNER_SPEC, h.fake.integrationPath);
+			const tools = hostedAgentArgs(PLANNER_SPEC, ["-e", h.fake.integrationPath]);
 			assert.equal(tools[tools.indexOf("--tools") + 1], "read,grep,find,ls");
 			const read = await createReadTool(h.root).execute("read-instructions", { path: h.instructionsFile });
 			const answer = read.content
@@ -1503,17 +1525,19 @@ describe("agent-host helpers", () => {
 	});
 
 	it("uses an empty tools allowlist to start Pi without tools", () => {
-		const args = hostedAgentArgs({ ...PLANNER_SPEC, tools: [] }, "/tmp/herdr-agent-state.ts");
+		const args = hostedAgentArgs({ ...PLANNER_SPEC, tools: [] }, ["-e", "/tmp/herdr-agent-state.ts"]);
 		assert.ok(args.includes("--no-tools"));
 		assert.equal(args.includes("--tools"), false);
 	});
 
 	it("keeps the caller's configured extensions when extension inheritance is on", () => {
 		const spec: HostedAgentSpec = { role: "planner", model: "a/planner", cwd: "/repo", inheritExtensions: true };
-		const args = hostedAgentArgs(spec, "/tmp/herdr-agent-state.ts");
+		const args = hostedAgentArgs(spec, ["-e", "/tmp/herdr-agent-state.ts"]);
 		assert.equal(args.includes("--no-extensions"), false);
 		assert.equal(args.includes("--tools"), false);
 		assert.equal(args.filter((arg) => arg === "-e").length, 2);
+		const rexArgs = hostedAgentArgs(spec, []);
+		assert.equal(rexArgs.filter((arg) => arg === "-e").length, 1);
 	});
 
 	it("keeps instruction content in files via the fixed pointer prompt", () => {

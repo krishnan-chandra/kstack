@@ -7,7 +7,11 @@ import type { CouncilRoster } from "../council/roster.ts";
 import { councilPaths, readManifest } from "../council/store.ts";
 import type { JsonObject } from "../validation.ts";
 import type { HostDeps } from "./agent-host.ts";
+import { writeHostedAgentState } from "./agent-state.ts";
+import { virtualClock } from "./clock.ts";
 import { closeCouncilSeats, createSeatAsker, openCouncilSeats } from "./council-host.ts";
+import { FakeRex } from "./rex/test-helpers.ts";
+import type { BackendExec } from "./terminal-backend.ts";
 
 const roots: string[] = [];
 after(() => {
@@ -64,7 +68,7 @@ class StatefulHerdr {
 		this.agents.set(name, { paneId, status, cwd: this.root });
 	}
 
-	readonly exec: HostDeps["exec"] = async (args) => {
+	readonly exec: BackendExec = async (args) => {
 		this.calls.push(args);
 		const [group, command] = args;
 		if (group === "status") return { code: 0, stdout: "running\n", stderr: "" };
@@ -135,7 +139,7 @@ function setup() {
 	const deps: HostDeps = {
 		exec: herdr.exec,
 		env: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: herdr.callerPane, PI_CODING_AGENT_DIR: root },
-		sleep: async () => {},
+		clock: virtualClock(),
 	};
 	const open = (roster: CouncilRoster = ROSTER, options: { deps?: HostDeps; signal?: AbortSignal } = {}) =>
 		openCouncilSeats(
@@ -327,5 +331,181 @@ describe("openCouncilSeats", () => {
 			herdr.calls.filter((call) => call[1] === "close").some((call) => call[2] === herdr.callerPane),
 			false,
 		);
+	});
+});
+
+function setupRex() {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "kstack-council-rex-")));
+	roots.push(root);
+	const rex = new FakeRex(root, { sessionId: "session:1", callerWindow: "window:1" });
+	const dir = join(root, "council");
+	const deps: HostDeps = {
+		exec: rex.exec,
+		env: { REX_SESSION: rex.sessionId, REX_BLOCK: rex.callerBlock },
+		clock: virtualClock(),
+		resolvePiBinary: () => "/usr/local/bin/pi",
+	};
+	const open = (roster: CouncilRoster = ROSTER, overrideDeps?: HostDeps) =>
+		openCouncilSeats(
+			{ dir, slug: "demo", cwd: root, roster, plannerModel: "anthropic/claude-opus-5-5" },
+			overrideDeps ?? deps,
+		);
+	return { root, rex, dir, deps, open };
+}
+
+describe("Council Rex backend and cross-backend binding", () => {
+	for (const damage of ["missing", "malformed", "pid-mismatch"] as const) {
+		it(`refuses open, round attachment, and close without mutating an unverifiable seat (${damage})`, async () => {
+			const { rex, dir, deps, open } = setupRex();
+			assert.ok((await open()).ok);
+			const before = readManifest(dir)!;
+			const seat = before.seats[0]!;
+			const stateFile = councilPaths(dir).seatState(seat.letter);
+			if (damage === "missing") rmSync(stateFile);
+			else if (damage === "malformed") writeFileSync(stateFile, "invalid json");
+			else rex.blocks.get(seat.paneId!)!.pid += 100;
+			const callsBefore = rex.calls.length;
+			for (const result of [await open(), await createSeatAsker(dir, deps), await closeCouncilSeats(dir, deps)]) {
+				assert.equal(result.ok, false);
+				if (!result.ok) assert.match(result.error, /Could not inspect/);
+			}
+			assert.ok(rex.blocks.has(seat.paneId!));
+			assert.deepEqual(readManifest(dir), before);
+			assert.equal(
+				rex.calls.slice(callsBefore).some((call) => call[0] === "split" || call[1] === "close" || call[0] === "send"),
+				false,
+			);
+		});
+	}
+
+	it("reuses a settled error seat without asking for nonexistent user input", async () => {
+		const { rex, dir, open } = setupRex();
+		assert.ok((await open()).ok);
+		const seat = readManifest(dir)!.seats[0]!;
+		rex.blocks.get(seat.paneId!)!.piState = "error";
+		const result = await open();
+		assert.ok(result.ok);
+		assert.equal(result.status, "ready");
+		assert.equal(result.seats[0]!.paneId, seat.paneId);
+	});
+
+	it("opens, adopts waiting startup prompts, reconciles vanished blocks, and closes on Rex", async () => {
+		const { root, rex, dir, deps, open } = setupRex();
+		rex.launchBehavior.set("council-demo-b", "not-ready");
+
+		const first = await open();
+		assert.ok(first.ok, first.ok ? "" : first.error);
+		assert.equal(first.backend, "rex");
+		assert.equal(first.status, "waiting");
+		const manifest1 = readManifest(dir);
+		assert.equal(manifest1.terminal, "rex");
+		const waitingPane = manifest1.seats[1]?.paneId ?? "";
+		assert.ok(waitingPane);
+
+		// Simulate user answering the trust prompt in Seat B's Rex block.
+		const blockB = rex.blocks.get(waitingPane)!;
+		blockB.piState = "idle";
+		blockB.updatedAt = rex.nextTimestamp();
+		writeHostedAgentState(councilPaths(dir).seatState("B"), {
+			version: 1,
+			name: "council-demo-b",
+			pid: blockB.pid,
+			cwd: root,
+			sessionFile: join(root, "council-demo-b.jsonl"),
+			sessionId: "sess-b",
+			updatedAt: blockB.updatedAt,
+		});
+
+		const splitsBeforeAdopt = rex.calls.filter((call) => call[0] === "split").length;
+		const adopted = await open();
+		assert.ok(adopted.ok, adopted.ok ? "" : adopted.error);
+		assert.equal(adopted.status, "ready");
+		assert.equal(rex.calls.filter((call) => call[0] === "split").length, splitsBeforeAdopt);
+		assert.equal(readManifest(dir).seats[1]?.paneId, waitingPane);
+
+		// Vanished seat's stale block is closed before restarting.
+		const stalePane = readManifest(dir).seats[0]?.paneId ?? "";
+		const staleBlock = rex.blocks.get(stalePane)!;
+		staleBlock.processName = "zsh";
+		delete staleBlock.piState;
+		const reopened = await open();
+		assert.ok(reopened.ok, reopened.ok ? "" : reopened.error);
+		assert.equal(rex.blocks.has(stalePane), false);
+		assert.notEqual(readManifest(dir).seats[0]?.paneId, stalePane);
+
+		// Wrong caller window is refused.
+		rex.blocks.get(rex.callerBlock)!.windowId = "window:other";
+		const wrongWin = await createSeatAsker(dir, deps);
+		assert.equal(wrongWin.ok, false);
+		if (!wrongWin.ok) assert.match(wrongWin.error, /bound to tab window:1/);
+		rex.blocks.get(rex.callerBlock)!.windowId = "window:1";
+
+		// Close closes only live seat blocks and never the caller block.
+		const [seatAPane, seatBPane] = readManifest(dir).seats.map((seat) => seat.paneId ?? "");
+		// Replace Seat B with a shell so close skips it.
+		rex.blocks.get(seatBPane)!.processName = "zsh";
+		delete rex.blocks.get(seatBPane)!.piState;
+		const closed = await closeCouncilSeats(dir, deps);
+		assert.ok(closed.ok, closed.ok ? "" : closed.error);
+		assert.deepEqual(closed.closed, [seatAPane]);
+		assert.deepEqual(closed.skipped, [seatBPane]);
+		assert.ok(rex.blocks.has(rex.callerBlock));
+	});
+
+	it("refuses foreign same-named Rex blocks outside the manifest", async () => {
+		const { rex, open } = setupRex();
+		rex.addAgentBlock("council-demo-a", { blockId: "block:foreign", windowId: "window:1", sidecar: false });
+		const refused = await open();
+		assert.equal(refused.ok, false);
+		if (!refused.ok) assert.match(refused.error, /outside this council's manifest/);
+	});
+
+	it("refuses open, round, and close across backends without spawning the other multiplexer", async () => {
+		// 1. Opened under Herdr (including legacy manifest without `terminal`), refused under Rex.
+		const herdrSetup = setup();
+		assert.ok((await herdrSetup.open()).ok);
+		const manifestPath = councilPaths(herdrSetup.dir).manifest;
+		const { terminal: _terminal, ...legacyManifest } = JSON.parse(readFileSync(manifestPath, "utf8"));
+		writeFileSync(manifestPath, JSON.stringify(legacyManifest));
+		assert.equal(readManifest(herdrSetup.dir).terminal, "herdr");
+
+		const rexCalls: string[][] = [];
+		const rexDeps: HostDeps = {
+			exec: async (args) => {
+				rexCalls.push(args);
+				return { code: 0, stdout: "", stderr: "" };
+			},
+			env: { REX_SESSION: "session:1", REX_BLOCK: "block:1" },
+		};
+		for (const attempt of [
+			await herdrSetup.open(ROSTER, { deps: rexDeps }),
+			await createSeatAsker(herdrSetup.dir, rexDeps),
+			await closeCouncilSeats(herdrSetup.dir, rexDeps),
+		]) {
+			assert.equal(attempt.ok, false);
+			if (!attempt.ok) assert.match(attempt.error, /opened under Herdr/);
+		}
+		assert.equal(rexCalls.length, 0);
+
+		// 2. Opened under Rex, refused under Herdr.
+		const rexSetup = setupRex();
+		assert.ok((await rexSetup.open()).ok);
+		const herdrCalls: string[][] = [];
+		const herdrDeps: HostDeps = {
+			exec: async (args) => {
+				herdrCalls.push(args);
+				return { code: 0, stdout: "", stderr: "" };
+			},
+			env: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: "w1:p1", PI_CODING_AGENT_DIR: rexSetup.root },
+		};
+		for (const attempt of [
+			await rexSetup.open(ROSTER, herdrDeps),
+			await createSeatAsker(rexSetup.dir, herdrDeps),
+			await closeCouncilSeats(rexSetup.dir, herdrDeps),
+		]) {
+			assert.equal(attempt.ok, false);
+			if (!attempt.ok) assert.match(attempt.error, /opened under Rex/);
+		}
+		assert.equal(herdrCalls.length, 0);
 	});
 });

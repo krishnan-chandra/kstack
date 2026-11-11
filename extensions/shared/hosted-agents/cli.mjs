@@ -11,13 +11,14 @@ import { resolveCouncilRoster } from "../council/roster.ts";
 import { livePlanChanged, overrideCouncilFinding, runCouncilRound } from "../council/round.ts";
 import { readManifest } from "../council/store.ts";
 import { isObject } from "../validation.ts";
+import { preflightTerminal } from "./backends.ts";
 import { closeCouncilSeats, councilRecordInfo, createSeatAsker, openCouncilSeats } from "./council-host.ts";
 import { parseFanoutSpec, runFanout } from "./fanout.ts";
-import { createNodeHerdrExec } from "./herdr-cli.ts";
 
 const USAGE = `usage: cli.mjs <subcommand> [options]
 
 subcommands:
+  preflight
   fanout --spec FILE --out FILE [--label TEXT] [--max-concurrency N]
   council open --dir DIR --slug SLUG --planner-model REF [--seats REF,REF,...]
   council round --dir DIR --plan FILE [--task FILE] [--response FILE] [--verify]
@@ -25,7 +26,7 @@ subcommands:
   council close --dir DIR
     (council DIR and FILE paths must be absolute; results print as JSON)`;
 
-const SUBCOMMANDS = new Set(["fanout", "council"]);
+const SUBCOMMANDS = new Set(["preflight", "fanout", "council"]);
 
 const COUNCIL_FLAGS = {
 	open: {
@@ -156,7 +157,7 @@ function printJson(value) {
 }
 
 async function runCouncil(options) {
-	const deps = { exec: createNodeHerdrExec() };
+	const deps = {};
 	if (options.action === "open") {
 		const roster = resolveCouncilRoster({
 			env: process.env,
@@ -192,7 +193,13 @@ async function runCouncil(options) {
 			});
 			return 1;
 		}
-		printJson({ status: opened.status, ...common, tabId: opened.tabId, seats: opened.seats });
+		printJson({
+			status: opened.status,
+			...common,
+			backend: opened.backend,
+			tabId: opened.tabId,
+			seats: opened.seats,
+		});
 		return opened.status === "ready" ? 0 : 1;
 	}
 	if (options.action === "round") {
@@ -258,6 +265,15 @@ async function main(argv) {
 		process.stderr.write(`${parsed.error}\n\n${USAGE}\n`);
 		return 2;
 	}
+	if (parsed.subcommand === "preflight") {
+		if (argv.length > 1) {
+			process.stderr.write(`unknown preflight option: ${argv[1]}\n\n${USAGE}\n`);
+			return 2;
+		}
+		const result = await preflightTerminal();
+		printJson(result);
+		return result.ok ? 0 : 1;
+	}
 	if (parsed.subcommand === "council") {
 		const options = parseCouncilArgs(argv.slice(1));
 		if (!options.ok) {
@@ -291,9 +307,7 @@ async function main(argv) {
 			process.stderr.write(`${specParsed.error}\n`);
 			return 1;
 		}
-		const outcome = await withCancellation((signal) =>
-			runFanout(specParsed.spec, { exec: createNodeHerdrExec() }, signal),
-		);
+		const outcome = await withCancellation((signal) => runFanout(specParsed.spec, {}, signal));
 		if (!outcome.ok) {
 			process.stderr.write(`${outcome.error}\n`);
 			return 1;

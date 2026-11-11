@@ -1,22 +1,22 @@
 ---
 name: arena
 description: "Spawn N parallel candidates at the same task, pick a base, graft the strongest parts of the losers into it. Use for /arena, 'arena this', 'throw it in the arena', or when one attempt at a non-trivial artifact would lock in the wrong shape."
-compatibility: Pi running inside Herdr with the Herdr Pi integration installed.
+compatibility: Pi running inside Herdr (with herdr integration install pi) or Rex.
 ---
 
 # Arena
 
-Fan out N parallel attempts at the same task in a dedicated Herdr tab. Read every candidate end to end. Pick the strongest as the base. Graft the best ideas from the others into it. Verify the synthesized result.
+Fan out N parallel attempts at the same task in a dedicated tab (a Rex window). Read every candidate end to end. Pick the strongest as the base. Graft the best ideas from the others into it. Verify the synthesized result.
 
 ## Guard and resolve paths
 
-1. Run `test "${HERDR_ENV:-}" = 1`. Stop and explain that this skill requires a Pi session inside Herdr if the check fails.
-2. Resolve this skill directory from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it.
+1. Resolve this skill directory (following symlinks) from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it and `CLI="$KSTACK/extensions/shared/hosted-agents/cli.mjs"`. Stop if `$CLI` does not exist.
+2. Run `node "$CLI" preflight`. If `ok` is `false`, report `error` and stop.
 3. Never split or focus the user's pane. Hosted agents run in their own tab created by the fan-out tool.
 
 ## Track the phases
 
-Keep one visible checklist in working notes or status updates before launching candidates. The `cli.mjs fanout` command launches all candidates in one dedicated Herdr tab (`arena: <label>`). You and the user can watch candidate progress in that tab, inspect transcripts, or steer a candidate by prompting its pane. The checklist tracks the parent-only pick, graft, and verify phases.
+Keep one visible checklist in working notes or status updates before launching candidates. The `cli.mjs fanout` command launches all candidates in one dedicated tab (`arena: <label>`). You and the user can watch candidate progress in that tab, inspect transcripts, or steer a candidate by prompting its pane. The checklist tracks the parent-only pick, graft, and verify phases.
 
 1. Frame
 2. Fan out
@@ -56,7 +56,7 @@ The N candidates will receive the same prompt, so the prompt is the contract. Ge
 1. **State the artifact** each candidate is producing.
 2. **Derive the rubric.** State what success looks like for *this* task, then turn it into 3–6 concrete gradeable criteria. Concrete: `Adds a --dry-run flag that skips writes`. Vague: `code is correct`. The rubric is the picker’s tool in Phase D; candidates only see the task.
 3. **Pick the runners.** Use `runners` from `kstack.json` when present. Otherwise default to 3–4 candidates across different available models. Spawn more when the arena covers multiple design directions. Same model N times when the work is generation-bound rather than judgment-sensitive.
-4. **Assign output paths.** Each candidate writes to its own pre-created worktree or directory. Use the `git-worktrees` skill when the repository uses Git (or `herdr worktree create --cwd "$PWD" --branch <name> --base <trunk> --no-focus`); use the repository's configured workspace mechanism for other VCS backends. N candidates writing to the same path is shared mutable state and will produce corrupt results.
+4. **Assign output paths.** Each candidate writes to its own pre-created worktree or directory. Use the `git-worktrees` skill when the repository uses Git; use the repository's configured workspace mechanism for other VCS backends. N candidates writing to the same path is shared mutable state and will produce corrupt results.
 
 ## Phase B: Fan out
 
@@ -95,7 +95,7 @@ Use `access: "read-only"` when candidates return proposals in their final report
 Launch the candidates:
 
 ```sh
-node "$KSTACK/extensions/shared/herdr/cli.mjs" fanout \
+node "$KSTACK/extensions/shared/hosted-agents/cli.mjs" fanout \
   --spec "/tmp/arena-<run-id>/spec.json" \
   --out "/tmp/arena-<run-id>/result.json"
 ```

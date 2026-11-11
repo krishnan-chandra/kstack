@@ -8,6 +8,7 @@ import openrouterRouting from "./extensions/openrouter-routing/index.ts";
 import parallelAgents from "./extensions/parallel-agents/index.ts";
 import prAutopilot from "./extensions/pr-autopilot/index.ts";
 import sessionArchive from "./extensions/session-archive/index.ts";
+import { registerHostedAgentStateReporter } from "./extensions/shared/hosted-agents/state-reporter.ts";
 import steeringSwap from "./extensions/steering-swap/index.ts";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
@@ -34,5 +35,6 @@ export async function registerKstackExtensions(
 }
 
 export default async function kstack(pi: ExtensionAPI): Promise<void> {
+	registerHostedAgentStateReporter(pi);
 	await registerKstackExtensions(pi);
 }

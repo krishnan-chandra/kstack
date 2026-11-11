@@ -24,7 +24,7 @@ fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify(args) + '\\n');
 const agent = { name: args[2], pane_id: 'w1:p2', tab_id: 'w1:t2', agent_status: 'idle', cwd: process.env.PI_CODING_AGENT_DIR };
 let result = { type: 'ok' };
 if (command === 'tab create') result = { type: 'tab_created', tab: { tab_id: 'w1:t2' }, root_pane: { pane_id: 'w1:p2' } };
-if (command === 'pane layout') result = { type: 'pane_layout', layout: { area: { width: 240, height: 60 } } };
+if (command === 'pane layout') result = { type: 'pane_layout', layout: { area: { width: 240, height: 60 }, tab_id: 'w1:t1' } };
 if (command === 'agent start') result = { type: 'agent_started', agent };
 if (command === 'agent get' || command === 'agent wait') result = { type: 'agent_info', agent };
 if (command === 'agent prompt') {
@@ -47,6 +47,10 @@ if (command === 'agent prompt') {
 			);
 			const log = join(root, "calls.jsonl");
 			const accepted = join(root, "accepted");
+			const cleanEnv = { ...process.env };
+			for (const key of Object.keys(cleanEnv)) {
+				if (key.startsWith("HERDR_") || key.startsWith("REX_")) delete cleanEnv[key];
+			}
 			child = spawn(
 				process.execPath,
 				[
@@ -59,7 +63,7 @@ if (command === 'agent prompt') {
 				],
 				{
 					env: {
-						...process.env,
+						...cleanEnv,
 						PATH: `${root}:${process.env.PATH}`,
 						HERDR_ENV: "1",
 						HERDR_WORKSPACE_ID: "w1",

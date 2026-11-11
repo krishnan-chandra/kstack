@@ -8,9 +8,15 @@ pull requests, including stacked PRs, across multiple version-control backends.
 ### Agents
 
 **Hosted agent**:
-A Pi agent that kstack starts in a named Herdr pane. Hosted agents are
-long-lived, visible, and steerable by the user.
+A Pi agent that kstack starts in a named pane of the active terminal backend
+(Herdr or Rex). Hosted agents are long-lived, visible, and steerable by the
+user.
 _Avoid_: subagent, child
+
+**Terminal backend**:
+The terminal multiplexer that hosts long-lived Pi panes: Herdr or Rex, detected
+from the caller's environment. Shared contracts say pane and tab; Rex calls
+them block and window.
 
 **Headless child**:
 A short, non-interactive `pi -p --mode json` process run through

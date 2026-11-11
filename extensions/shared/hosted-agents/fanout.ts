@@ -6,8 +6,10 @@ import { mapWithConcurrencyLimit } from "../concurrency.ts";
 import { isThinkingLevel, MODEL_ID_RE } from "../kstack-config.ts";
 import { READ_ONLY_PROMPT_FILE } from "../prompt-assets.ts";
 import { type BoundaryValue, isBoolean, isNumber, isObject, isString, type JsonObject } from "../validation.ts";
-import { type HostDeps, type HostedAgent, openAgentHost } from "./agent-host.ts";
+import { type HostDeps, openAgentHost } from "./agent-host.ts";
+import type { HostedAgent } from "./hosted-agent.ts";
 import { emptyUsage, type UsageSummary } from "./session-usage.ts";
+import type { BackendKind } from "./terminal-backend.ts";
 
 export type FanoutAccess = "read-only" | "workspace";
 
@@ -50,6 +52,7 @@ export type FanoutTaskResult =
 	  };
 
 export interface FanoutOutcome {
+	backend: BackendKind;
 	tabId: string;
 	results: FanoutTaskResult[];
 }
@@ -263,7 +266,7 @@ export async function runFanout(spec: FanoutSpec, deps: HostDeps, signal?: Abort
 				}
 			},
 		);
-		return { ok: true, outcome: { tabId: opened.host.tabId, results } };
+		return { ok: true, outcome: { backend: opened.host.backend, tabId: opened.host.tabId, results } };
 	} finally {
 		await opened.host.dispose();
 	}

@@ -1,17 +1,17 @@
 ---
 name: swarm
 description: "Fan out N parallel workers across different slices of a task, drain them, and return one consolidated report. Use for /swarm, 'swarm this', parallel coverage checks, races, gauntlets, and exploration across packages, modules, or independent work items."
-compatibility: Pi running inside Herdr with the Herdr Pi integration installed.
+compatibility: Pi running inside Herdr (with herdr integration install pi) or Rex.
 ---
 
 # Swarm
 
-Fan out N parallel workers in a dedicated Herdr tab. They may cover separate slices, race the same brief, or mix both. The parent waits, aggregates, and returns one report.
+Fan out N parallel workers in a dedicated tab (a Rex window). They may cover separate slices, race the same brief, or mix both. The parent waits, aggregates, and returns one report.
 
 ## Guard and resolve paths
 
-1. Run `test "${HERDR_ENV:-}" = 1`. Stop and explain that this skill requires a Pi session inside Herdr if the check fails.
-2. Resolve this skill directory from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it.
+1. Resolve this skill directory (following symlinks) from the absolute path used to load `SKILL.md`. Set `KSTACK` to the directory two levels above it and `CLI="$KSTACK/extensions/shared/hosted-agents/cli.mjs"`. Stop if `$CLI` does not exist.
+2. Run `node "$CLI" preflight`. If `ok` is `false`, report `error` and stop.
 3. Never split or focus the user's pane. Hosted agents run in their own tab created by the fan-out tool.
 
 ## Start
@@ -91,7 +91,7 @@ Use `access: "read-only"` and state the read-only contract in the worker prompt 
 Launch the swarm:
 
 ```sh
-node "$KSTACK/extensions/shared/herdr/cli.mjs" fanout \
+node "$KSTACK/extensions/shared/hosted-agents/cli.mjs" fanout \
   --spec "/tmp/swarm-<run-id>/spec.json" \
   --out "/tmp/swarm-<run-id>/result.json"
 ```
