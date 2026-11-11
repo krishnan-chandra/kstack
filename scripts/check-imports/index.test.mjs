@@ -102,11 +102,11 @@ test("flags stale import exception when import is no longer present", () => {
 });
 
 test("a shared .mjs importing shared .ts needs no exception (cli.mjs contract)", () => {
-	// extensions/shared/herdr/cli.mjs imports the TypeScript modules beside it so
+	// extensions/shared/hosted-agents/cli.mjs imports the TypeScript modules beside it so
 	// Node can load it through type stripping. collectTypeScriptFiles only scans
 	// .ts, so the .mjs adapter is out of scope and must stay exception-free.
 	const root = tempRoot();
-	write(root, "shared/herdr/cli.mjs", 'import { run } from "./agent-host.ts";\nvoid run;\n');
-	write(root, "shared/herdr/agent-host.ts", "export const run = 1;\n");
+	write(root, "shared/hosted-agents/cli.mjs", 'import { run } from "./agent-host.ts";\nvoid run;\n');
+	write(root, "shared/hosted-agents/agent-host.ts", "export const run = 1;\n");
 	assert.deepEqual(findImportViolations({ root, exceptions: [] }), []);
 });

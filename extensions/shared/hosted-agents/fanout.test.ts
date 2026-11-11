@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { HostDeps } from "./agent-host.ts";
+import { virtualClock } from "./clock.ts";
 import {
 	type FanoutAccess,
 	type FanoutOutcome,
@@ -13,6 +14,7 @@ import {
 	parseFanoutSpec,
 	runFanout,
 } from "./fanout.ts";
+import type { BackendExec } from "./terminal-backend.ts";
 
 interface ExecCall {
 	args: string[];
@@ -89,7 +91,7 @@ class FakeHerdr {
 		);
 	}
 
-	readonly exec: HostDeps["exec"] = async (args, options) => {
+	readonly exec: BackendExec = async (args, options) => {
 		const call: ExecCall = { args, timeoutMs: options.timeoutMs };
 		this.calls.push(call);
 		const joined = args.join(" ");
@@ -116,7 +118,7 @@ class FakeHerdr {
 				code: 0,
 				stdout: JSON.stringify({
 					id: "x",
-					result: { type: "pane_layout", layout: { area: { width: 240, height: 60 } } },
+					result: { type: "pane_layout", layout: { area: { width: 240, height: 60 }, tab_id: this.tabId } },
 				}),
 				stderr: "",
 			};
@@ -275,7 +277,7 @@ describe("fanout launch contracts", () => {
 		const controller = new AbortController();
 		let starts = 0;
 		const deps = fake.deps();
-		deps.sleep = async () => {};
+		deps.clock = virtualClock();
 		deps.exec = async (args, options) => {
 			if (args[0] === "agent" && args[1] === "start") {
 				starts++;

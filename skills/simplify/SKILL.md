@@ -46,7 +46,7 @@ Keep the bundle under 2 MiB. If the diff is larger, include `git diff --stat` an
 
 ## Parallel read-only reviewers
 
-Launch all three reviewers in one `parallel_agents` tool call. This is Kstack's shared child-agent runner and live pane: queued/running/completed state, model, elapsed time, current tool, output preview, cancellation, bounded output, and persisted subagent sessions. Do not replace it with Herdr, background `pi` commands, or a silent shell `wait`.
+Launch all three reviewers in one `parallel_agents` tool call. This is Kstack's shared child-agent runner and live pane: queued/running/completed state, model, elapsed time, current tool, output preview, cancellation, bounded output, and persisted subagent sessions. Do not replace it with a terminal multiplexer, background `pi` commands, or a silent shell `wait`.
 
 Use one task per lens with the repository root as `cwd`. Use the session's active `provider/model[:thinking]` for all three reviewers unless the user named a different model. Reviewers use normal Pi tool and extension discovery, not a snapshot of the parent's runtime. The runner appends a shared read-only system prompt; reinforce that contract in every task prompt. Unrelated skills, prompt templates, and context files are disabled.
 

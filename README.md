@@ -36,7 +36,7 @@ routes do not create workstreams.
 | [`create-pi-extension`](skills/create-pi-extension/) | Designs and implements Pi extensions using the installed documentation, repository patterns, lifecycle/security ground rules, and an incremental verification checklist. |
 | [`create-skill`](skills/create-skill/) | Creates, tests, and improves Pi skills: draft, headless with-skill vs baseline eval runs, grading, benchmark aggregation, a static review page, and description/trigger optimization. |
 | [`find-reviewers`](skills/find-reviewers/) | Recommends the 2–5 best pull-request reviewers for any git change by analyzing commit history, CODEOWNERS, adjacent-domain ownership, and author identities, returning a prioritized, evidence-backed list with a review order. |
-| [`council`](skills/council/) | Drafts an implementation plan, runs it past a council of 1–5 distinct read-only seat models in visible Herdr panes until it approves, implements the approved plan, then runs the same seats as implementation reviewers against the diff. Also starts from a user-supplied approved plan for implementation-only runs. Seats review independently, vote on each other's findings, and the CLI decides by strict-majority dismissal. Explicit invocation only. |
+| [`council`](skills/council/) | Drafts an implementation plan, runs it past a council of 1–5 distinct read-only seat models in visible terminal panes (Herdr or Rex) until it approves, implements the approved plan, then runs the same seats as implementation reviewers against the diff. Also starts from a user-supplied approved plan for implementation-only runs. Seats review independently, vote on each other's findings, and the CLI decides by strict-majority dismissal. Explicit invocation only. |
 | [`arena`](skills/arena/) | Spawns N parallel candidates at the same task, cross-judges them, picks the strongest as a base, grafts the best parts from the losers, and verifies the synthesized result. |
 | [`architect`](skills/architect/) | Grounds a change, explores structurally distinct caller-first designs through Arena, and implements against the synthesized type and module contract. Explicit invocation only. |
 | [`swarm`](skills/swarm/) | Fans out N parallel workers across different slices of a task (partition, race, or mix), aggregates results, and returns one consolidated report. |
@@ -81,7 +81,7 @@ Short headless Kstack child agents persist native Pi sessions under `~/.pi/kstac
 
 Use `search_subagent_history` to search retained inactive sessions. Use `read_subagent_history` with an exact session UUID to read normalized entries or raw JSONL chunks. Both tools validate the source file and lease before returning content. They never change source files or leases. Their disposable FTS5 cache lives at `$PI_CODING_AGENT_DIR/cache/kstack-subagent-history/index.sqlite3` and refreshes on demand. Search results are snapshots: retention can remove a source before a later read, so keep the reported UUID and path as expiring references.
 
-Long-lived [Herdr-hosted agents](extensions/shared/herdr/) use Pi's normal session directory. Read-only roles return final replies through their sessions; the host validates completion and saves response artifacts without giving them repository write tools. Fast implementation starts a fresh hosted session: use `--fast --plan-file <absolute-plan-path>` to carry a selected plan explicitly.
+Long-lived [hosted agents](extensions/shared/hosted-agents/) use Pi's normal session directory. Read-only roles return final replies through their sessions; the host validates completion and saves response artifacts without giving them repository write tools. Fast implementation starts a fresh hosted session: use `--fast --plan-file <absolute-plan-path>` to carry a selected plan explicitly.
 
 ## Configuration
 
@@ -187,7 +187,7 @@ rows stay unnamed.
 - `jj` — [Jujutsu](https://github.com/jj-vcs/jj), only when [`vcs.backend` is `"jj"`](#configuration)
 - Git 2.38 or newer for GitHub-native and Graphite stack advance/rebase behavior
 - `gt` — [Graphite CLI](https://graphite.com/docs/cli-quick-start) 1.8.5 or newer, only when [`vcs.backend` is `"graphite"`](#configuration)
-- Herdr 0.8.2 or newer, with `herdr integration install pi`, for the council skill, hosted implementation reviewers, Arena, and Swarm
+- Herdr 0.8.2 or newer (with `herdr integration install pi`) or Rex API revision 12 or newer (with a Pi version that emits OSC 7501), for the council skill, hosted implementation reviewers, Arena, and Swarm. Kstack detects the active multiplexer automatically and does not support running Herdr and Rex together.
 
 Pi loads one TypeScript entry, `kstack.ts`, from the package. The installer
 links each directory in `skills/` into the shared `~/.agents/skills` directory.
@@ -261,7 +261,7 @@ The plan → council review → implement → council review → publish workflo
 ```
 
 The skill drafts a plan, runs it past a council of distinct reviewer models in
-visible Herdr panes until it approves, implements the approved plan on a
+visible terminal panes (Herdr or Rex) until it approves, implements the approved plan on a
 dedicated Git/Graphite branch or jj bookmark, runs every remaining council seat
 as an implementation reviewer against the diff, fixes blocking findings, and —
 after explicit user approval — publishes a draft PR with reviewer recommendations.

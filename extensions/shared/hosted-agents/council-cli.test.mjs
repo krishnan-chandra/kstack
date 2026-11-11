@@ -122,8 +122,12 @@ function fixture(extraEnv = {}) {
 		replies: join(root, "replies.json"),
 		hang: join(root, "hang"),
 	};
+	const cleanEnv = { ...process.env };
+	for (const key of Object.keys(cleanEnv)) {
+		if (key.startsWith("HERDR_") || key.startsWith("REX_")) delete cleanEnv[key];
+	}
 	const env = {
-		...process.env,
+		...cleanEnv,
 		PATH: `${join(root, "bin")}:${process.env.PATH}`,
 		HERDR_ENV: "1",
 		HERDR_WORKSPACE_ID: "w1",

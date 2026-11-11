@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import type { BackendKind } from "../hosted-agents/terminal-backend.ts";
 import { acquirePublicationLock, type LockAttempt } from "../publication-lock.ts";
 import { type BoundaryValue, isObject } from "../validation.ts";
 import {
@@ -77,6 +78,8 @@ export interface ManifestSeat {
 
 export interface CouncilManifest {
 	version: 1;
+	/** Terminal multiplexer backend that owns this council; `readManifest` defaults legacy manifests to `"herdr"`. */
+	terminal: BackendKind;
 	slug: string;
 	cwd: string;
 	tabId: string;
@@ -97,6 +100,7 @@ export function councilPaths(dir: string) {
 		task: join(dir, "task.md"),
 		record: join(dir, "record.md"),
 		approvedPlan: join(dir, "approved-plan.md"),
+		seatState: (seat: SeatLetter) => join(dir, "seats", `${seat.toLowerCase()}.json`),
 		round(number: number) {
 			const roundDir = join(dir, `round-${number}`);
 			const file = (phase: CouncilPhase, seat: SeatLetter, suffix: string) =>
@@ -149,7 +153,8 @@ export function writeState(dir: string, state: CouncilState): void {
 export function readManifest(dir: string): CouncilManifest {
 	const value = readCouncilFile(councilPaths(dir).manifest, "manifest.json", ["slug", "tabId", "seats"]);
 	// SAFETY: the council writes manifest.json itself; the version and key checks reject foreign files.
-	return value as CouncilManifest;
+	const manifest = value as Omit<CouncilManifest, "terminal"> & { terminal?: BackendKind };
+	return { ...manifest, terminal: manifest.terminal ?? "herdr" };
 }
 
 export function writeManifest(dir: string, manifest: CouncilManifest): void {

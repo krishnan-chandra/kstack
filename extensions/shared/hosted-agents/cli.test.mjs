@@ -11,10 +11,18 @@ import { parseCouncilArgs, parseFanoutArgs, parseSubcommand } from "./cli.mjs";
 const execFileAsync = promisify(execFile);
 const CLI = join(import.meta.dirname, "cli.mjs");
 
+function cleanTerminalEnv(overrides = {}) {
+	const base = { ...process.env };
+	for (const key of Object.keys(base)) {
+		if (key.startsWith("HERDR_") || key.startsWith("REX_")) delete base[key];
+	}
+	return { ...base, ...overrides };
+}
+
 function runCli(args, env = {}) {
 	return execFileAsync(process.execPath, [CLI, ...args], {
 		encoding: "utf8",
-		env: { ...process.env, ...env },
+		env: cleanTerminalEnv(env),
 	}).then(
 		(result) => ({ code: 0, stdout: result.stdout, stderr: result.stderr }),
 		(error) => ({ code: error.code ?? 1, stdout: error.stdout ?? "", stderr: error.stderr ?? "" }),
@@ -22,6 +30,7 @@ function runCli(args, env = {}) {
 }
 
 test("parseSubcommand accepts the documented subcommands", () => {
+	assert.deepEqual(parseSubcommand(["preflight"]), { ok: true, subcommand: "preflight" });
 	assert.deepEqual(parseSubcommand(["fanout"]), { ok: true, subcommand: "fanout" });
 	assert.deepEqual(parseSubcommand(["council"]), { ok: true, subcommand: "council" });
 	assert.equal(parseSubcommand(["resolve-model"]).ok, false);
@@ -129,12 +138,98 @@ test("fanout exits 1 when preflight fails outside Herdr", async () => {
 			],
 		}),
 	);
-	// Explicitly clear HERDR_ENV to ensure preflight fails
-	const result = await runCli(["fanout", "--spec", specPath, "--out", join(dir, "out.json")], {
-		HERDR_ENV: "",
-	});
+	const result = await runCli(["fanout", "--spec", specPath, "--out", join(dir, "out.json")]);
 	assert.equal(result.code, 1);
 	assert.match(result.stderr, /HERDR_ENV/);
+	assert.match(result.stderr, /REX_SESSION/);
+});
+
+test("preflight selects Herdr or Rex and refuses neither or both without spawning CLIs", async () => {
+	const root = mkdtempSync(join(tmpdir(), "kstack-cli-preflight-"));
+	try {
+		const binDir = join(root, "bin");
+		const logFile = join(root, "spawns.log");
+		mkdirSync(binDir);
+		mkdirSync(join(root, "extensions"));
+		writeFileSync(join(root, "extensions", "herdr-agent-state.ts"), "");
+		writeFileSync(
+			join(binDir, "herdr"),
+			`#!${process.execPath}
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logFile)}, "herdr\\n");
+if (process.argv[2] === "pane" && process.argv[3] === "layout") {
+	process.stdout.write(JSON.stringify({ result: { type: "pane_layout", layout: { area: { width: 240, height: 60 }, tab_id: "w1:t1" } } }));
+} else process.stdout.write("running\\n");
+`,
+			{ mode: 0o755 },
+		);
+		writeFileSync(
+			join(binDir, "rex"),
+			`#!${process.execPath}
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logFile)}, "rex:" + process.argv.slice(2).join(" ") + "\\n");
+const args = process.argv.slice(2);
+if (args[0] === "whoami") {
+  process.stdout.write(JSON.stringify({ api_revision: 12, session_id: "session:1", window_id: "window:1", block_id: "block:1" }));
+} else if (args[0] === "block" && args[1] === "inspect") {
+  process.stdout.write(JSON.stringify({ block: { block_id: "block:1", window_id: "window:1", label: "shell" }, api: { methods: { program_status: {} } } }));
+} else if (args[0] === "block" && args[1] === "call" && args.at(-1) === "program_status") {
+  process.stdout.write(JSON.stringify({ records: [{ state: "working", app: "pi", updated_at: "2026-11-11T16:00:00Z", owner: { pid: 1, name: "node" } }] }));
+}
+`,
+			{ mode: 0o755 },
+		);
+
+		const badFlag = await runCli(["preflight", "--bogus"]);
+		assert.equal(badFlag.code, 2);
+
+		const neither = await runCli(["preflight"], { PATH: `${binDir}:${process.env.PATH}` });
+		assert.equal(neither.code, 1);
+		const neitherJson = JSON.parse(neither.stdout);
+		assert.equal(neitherJson.ok, false);
+		assert.match(neitherJson.error, /HERDR_ENV/);
+		assert.match(neitherJson.error, /REX_SESSION/);
+
+		const both = await runCli(["preflight"], {
+			PATH: `${binDir}:${process.env.PATH}`,
+			HERDR_ENV: "1",
+			REX_SESSION: "session:1",
+		});
+		assert.equal(both.code, 1);
+		const bothJson = JSON.parse(both.stdout);
+		assert.equal(bothJson.ok, false);
+		assert.match(bothJson.error, /Both Herdr and Rex/);
+		assert.equal(readFileSync(logFile, { flag: "a+", encoding: "utf8" }), "");
+
+		const herdrOnly = await runCli(["preflight"], {
+			PATH: `${binDir}:${process.env.PATH}`,
+			HERDR_ENV: "1",
+			HERDR_WORKSPACE_ID: "w1",
+			HERDR_PANE_ID: "w1:p1",
+			HERDR_TAB_ID: "w1:tStale",
+			PI_CODING_AGENT_DIR: root,
+		});
+		assert.equal(herdrOnly.code, 0, herdrOnly.stdout + herdrOnly.stderr);
+		assert.deepEqual(JSON.parse(herdrOnly.stdout), {
+			ok: true,
+			backend: "herdr",
+			caller: { paneId: "w1:p1", tabId: "w1:t1" },
+		});
+
+		const rexOnly = await runCli(["preflight"], {
+			PATH: `${binDir}:${process.env.PATH}`,
+			REX_SESSION: "session:1",
+			REX_BLOCK: "block:1",
+		});
+		assert.equal(rexOnly.code, 0, rexOnly.stdout + rexOnly.stderr);
+		assert.deepEqual(JSON.parse(rexOnly.stdout), {
+			ok: true,
+			backend: "rex",
+			caller: { paneId: "block:1", tabId: "window:1" },
+		});
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("parseCouncilArgs parses each action and requires absolute paths", () => {

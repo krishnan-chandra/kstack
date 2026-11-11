@@ -1,28 +1,27 @@
 ---
 name: council
-description: Draft an implementation plan, stress-test it with a council of distinct reviewer models in visible Herdr panes until the council approves or the round budget runs out, implement the approved plan on a dedicated workstream, run every remaining council seat as a read-only implementation reviewer against the diff, fix blocking findings, and — after explicit approval — publish a draft PR with reviewer recommendations. Covers both planning and implementation, so it can run the whole cycle or start from an approved plan for implementation and review only. Use explicitly with /skill:council when the user asks for a planning council, a plan critique loop, or implementing an already-approved plan under council review.
+description: Draft an implementation plan, stress-test it with a council of distinct reviewer models in visible terminal panes (Herdr or Rex) until the council approves or the round budget runs out, implement the approved plan on a dedicated workstream, run every remaining council seat as a read-only implementation reviewer against the diff, fix blocking findings, and — after explicit approval — publish a draft PR with reviewer recommendations. Covers both planning and implementation, so it can run the whole cycle or start from an approved plan for implementation and review only. Use explicitly with /skill:council when the user asks for a planning council, a plan critique loop, or implementing an already-approved plan under council review.
 license: MIT
-compatibility: Pi running inside Herdr with the Herdr Pi integration installed and a kstack.json council section or --seats.
+compatibility: Pi running inside Herdr (with herdr integration install pi) or Rex, and a kstack.json council section or --seats.
 disable-model-invocation: true
 ---
 
 # Council
 
-Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own Herdr pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. Once the council approves, you implement the exact approved snapshot on a dedicated workstream, run the same seats as implementation reviewers against the diff, fix findings, and — only after the user approves publishing — publish a draft PR with reviewer recommendations. The user is the final arbiter.
+Draft a repository-grounded implementation plan, then run it past a **council** of read-only seats. Each seat is a different model in its own terminal pane. Seats review independently, then vote on each other's findings through a ledger the CLI publishes. The CLI counts the votes and decides; you plan, revise, and answer findings. Once the council approves, you implement the exact approved snapshot on a dedicated workstream, run the same seats as implementation reviewers against the diff, fix findings, and — only after the user approves publishing — publish a draft PR with reviewer recommendations. The user is the final arbiter.
 
 ## Guard and resolve paths
 
-1. Run `test "${HERDR_ENV:-}" = 1`. Stop if this is not a Pi session inside Herdr.
-2. Resolve symlinks before walking up, because `~/.agents/skills/council` is usually a symlink into the kstack checkout:
+1. Resolve symlinks before walking up, because `~/.agents/skills/council` is usually a symlink into the kstack checkout:
 
    ```sh
    SKILL_DIR="$(cd "<directory containing this SKILL.md>" && pwd -P)"
    KSTACK="$(dirname "$(dirname "$SKILL_DIR")")"
-   CLI="$KSTACK/extensions/shared/herdr/cli.mjs"
+   CLI="$KSTACK/extensions/shared/hosted-agents/cli.mjs"
    ```
 
    Stop if `$CLI` does not exist.
-3. Check `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/herdr-agent-state.ts`. If it is missing, stop with `Run herdr integration install pi`.
+2. Run `node "$CLI" preflight`. It prints JSON (`{"ok":true,"backend":…,"caller":…}` or `{"ok":false,"error":"…"}`). If `ok` is `false`, report `error` and stop.
 
 ## Open the council
 
@@ -41,7 +40,7 @@ The command prints JSON. Seats open in one column to the right of your pane, nam
 - `waiting` (exit 1): a seat is at a prompt, usually project trust, including on its first start. Tell the user each waiting seat's `paneId`, wait for them to answer, then rerun the same `council open`. Rerunning adopts the waiting seat instead of starting another.
 - `failed` (exit 1): report `error` and each failed seat's `error` and `paneId`, then stop. For a missing roster, ask the user for `--seats` or a `council` section.
 
-Run every council command from this tab. The council is bound to it. Record the seat model references from the `seats` array of the open output; the implementation review reuses exactly these seats and models.
+Run every council command from this tab (a Rex window) and under the same terminal backend. The council is bound to both. Record the seat model references from the `seats` array of the open output; the implementation review reuses exactly these seats and models.
 
 ## Draft the plan
 

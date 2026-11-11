@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createHerdrCli, createNodeHerdrExec, HERDR_OUTPUT_CAP_BYTES, type HerdrExec } from "./herdr-cli.ts";
+import type { BackendExec } from "../terminal-backend.ts";
+import { createHerdrCli, createNodeHerdrExec, HERDR_OUTPUT_CAP_BYTES } from "./herdr-cli.ts";
 
 interface ExecCall {
 	args: string[];
@@ -12,13 +13,13 @@ type ScriptedResponse = { code: number; stdout: string; stderr: string };
 type ScriptedHandler = (call: ExecCall) => ScriptedResponse;
 
 interface ScriptedExec {
-	exec: HerdrExec;
+	exec: BackendExec;
 	calls: ExecCall[];
 }
 
 function scriptExec(handler: ScriptedHandler): ScriptedExec {
 	const calls: ExecCall[] = [];
-	const exec: HerdrExec = async (args, options) => {
+	const exec: BackendExec = async (args, options) => {
 		const call: ExecCall = { args, timeoutMs: options.timeoutMs };
 		if (options.signal) call.signal = options.signal;
 		calls.push(call);
@@ -63,7 +64,7 @@ describe("createHerdrCli", () => {
 		assert.deepEqual(outcome, { ok: false, code: "agent_blocked", message: "the agent is blocked" });
 	});
 
-	it("maps exit code 2 to syntax_error", async () => {
+	it("maps exit code 2 to protocol_error", async () => {
 		const { exec } = scriptExec(() => ({
 			code: 2,
 			stdout: "",
@@ -73,7 +74,7 @@ describe("createHerdrCli", () => {
 		const outcome = await cli.tabClose({ tabId: "w5:t1" }, { timeoutMs: 1000 });
 		assert.equal(outcome.ok, false);
 		if (!outcome.ok) {
-			assert.equal(outcome.code, "syntax_error");
+			assert.equal(outcome.code, "protocol_error");
 			assert.match(outcome.message, /unexpected argument/);
 		}
 	});
@@ -140,7 +141,7 @@ describe("createHerdrCli", () => {
 			stderr: '{"id":"x","error":{"code":"agent_not_found","message":"agent target nope not found"}}',
 		}));
 		const bad = await createHerdrCli(failing.exec).agentRead({ name: "nope", lines: 5 }, { timeoutMs: 1000 });
-		assert.deepEqual(bad, { ok: false, code: "agent_not_found", message: "agent target nope not found" });
+		assert.deepEqual(bad, { ok: false, code: "not_found", message: "agent target nope not found" });
 	});
 
 	it("agentStart and agentPrompt validate their result types", async () => {
@@ -221,7 +222,7 @@ describe("createNodeHerdrExec", () => {
 		});
 		assert.equal(outcome.ok, false);
 		if (!outcome.ok) {
-			assert.equal(outcome.code, "output_overflow");
+			assert.equal(outcome.code, "protocol_error");
 			assert.match(outcome.message, /exceeded/);
 		}
 	});

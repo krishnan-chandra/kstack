@@ -52,7 +52,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI, deps: Parallel
 			"Run parallel Pi subagents for the simplify skill with a live TUI dashboard. Children use normal Pi tool and extension discovery, with a read-only system prompt rather than a tool restriction. Task prompts are sent over stdin. Returns each final report in input order. Max 8 tasks and 4 concurrent by default.",
 		promptSnippet: "Run visible parallel subagents for the simplify workflow",
 		promptGuidelines: [
-			"Use parallel_agents instead of Herdr or manually spawned Pi processes when the simplify skill calls for parallel reviewers.",
+			"Use parallel_agents instead of a terminal multiplexer or manually spawned Pi processes when the simplify skill calls for parallel reviewers.",
 		],
 		parameters: Type.Object({
 			tasks: Type.Array(TaskSchema, { minItems: 1, maxItems: MAX_TASKS }),
