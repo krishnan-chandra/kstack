@@ -10,7 +10,7 @@ import { THINKING_LEVELS } from "../shared/kstack-config.ts";
 import { type ModelAlias, matchModelAliases } from "../shared/model-aliases.ts";
 
 /** Canonical Pi thinking/effort levels accepted by `/handoff --model <ref>:<effort>`. */
-const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
+export const HANDOFF_EFFORT_LEVELS = THINKING_LEVELS;
 const HANDOFF_ARGUMENT_FLAGS = ["--archive", "--model", "--model=", "-m"] as const;
 
 export type HandoffEffortLevel = (typeof HANDOFF_EFFORT_LEVELS)[number];
@@ -28,6 +28,11 @@ type HandoffParseResult =
 
 type ModelResolution =
 	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel }
+	| { status: "not-found" }
+	| { status: "ambiguous"; matches: HandoffModel[] };
+
+type DetailedModelResolution =
+	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel; effortSource?: "suffix" | "alias" }
 	| { status: "not-found" }
 	| { status: "ambiguous"; matches: HandoffModel[] };
 
@@ -169,11 +174,11 @@ export function parseHandoffArgs(raw: string): HandoffParseResult {
  * example a kstack.json label pointing outside the scoped models) resolves
  * as not-found.
  */
-export function resolveModelReference(
+export function resolveModelReferenceWithSource(
 	models: HandoffModel[],
 	reference: string,
 	aliases: readonly ModelAlias[] = [],
-): ModelResolution {
+): DetailedModelResolution {
 	const trimmed = reference.trim();
 	if (trimmed === "") return { status: "not-found" };
 
@@ -193,16 +198,28 @@ export function resolveModelReference(
 	const prefixMatch = matchModelReference(models, prefix, aliases);
 	if (prefixMatch.status === "resolved") {
 		// An explicit effort suffix always wins over the alias's configured level.
-		return { status: "resolved", model: prefixMatch.model, effort: suffix };
+		return { status: "resolved", model: prefixMatch.model, effort: suffix, effortSource: "suffix" };
 	}
 	return prefixMatch;
+}
+
+export function resolveModelReference(
+	models: HandoffModel[],
+	reference: string,
+	aliases: readonly ModelAlias[] = [],
+): ModelResolution {
+	const resolved = resolveModelReferenceWithSource(models, reference, aliases);
+	if (resolved.status !== "resolved") return resolved;
+	return resolved.effort === undefined
+		? { status: "resolved", model: resolved.model }
+		: { status: "resolved", model: resolved.model, effort: resolved.effort };
 }
 
 function matchModelReference(
 	models: HandoffModel[],
 	reference: string,
 	aliases: readonly ModelAlias[],
-): ModelResolution {
+): DetailedModelResolution {
 	const lower = reference.toLowerCase();
 
 	// 1. Canonical provider/model-id, case-insensitive.
@@ -229,7 +246,7 @@ function matchModelReference(
 		if (targets.size === 1) {
 			const [{ model, thinking }] = targets.values();
 			if (thinking === undefined) return { status: "resolved", model };
-			return { status: "resolved", model, effort: thinking };
+			return { status: "resolved", model, effort: thinking, effortSource: "alias" };
 		}
 		if (targets.size > 1) return { status: "ambiguous", matches: [...targets.values()].map((t) => t.model) };
 		// An alias claimed this reference but its target is unavailable.

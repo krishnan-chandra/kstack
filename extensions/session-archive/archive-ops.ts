@@ -91,16 +91,14 @@ interface StagedArchive {
 }
 
 /**
- * Validate, parse, hash, and stage a session file. Returns a rejection
- * result or the staged data. Performs no mutation. When `expectedSessionId`
- * is given, the file header must match it.
+ * Validate and parse an active session file without hashing or mutating disk/DB.
  */
-function stageSession(
+function validateActiveSessionForArchive(
 	sourcePath: string | undefined,
 	sessionDir: string,
-	deps: ArchiveDeps,
-	opts: { expectedSessionId?: string; sessionName?: string } = {},
-): { staged: StagedArchive } | { rejected: ArchiveResult } {
+	archiveRoot: string,
+	expectedSessionId?: string,
+): { canonicalSource: string; content: Buffer; parsed: ParsedSession } | { rejected: ArchiveResult } {
 	if (!sourcePath) {
 		return {
 			rejected: {
@@ -112,7 +110,7 @@ function stageSession(
 
 	let canonicalSource: string;
 	try {
-		canonicalSource = canonicalizeActiveSource(sourcePath, sessionDir, deps.archiveRoot);
+		canonicalSource = canonicalizeActiveSource(sourcePath, sessionDir, archiveRoot);
 	} catch (err) {
 		return {
 			rejected: {
@@ -134,11 +132,11 @@ function stageSession(
 			},
 		};
 	}
-	if (opts.expectedSessionId && parsed.header.id !== opts.expectedSessionId) {
+	if (expectedSessionId && parsed.header.id !== expectedSessionId) {
 		return {
 			rejected: {
 				status: "rejected",
-				message: `Session id mismatch: manager reports ${opts.expectedSessionId} but the file header says ${parsed.header.id}.`,
+				message: `Session id mismatch: manager reports ${expectedSessionId} but the file header says ${parsed.header.id}.`,
 			},
 		};
 	}
@@ -147,6 +145,47 @@ function stageSession(
 			rejected: { status: "rejected", message: "This session has no entries yet; nothing to archive." },
 		};
 	}
+
+	return { canonicalSource, content, parsed };
+}
+
+/**
+ * Read-only preflight check for archiving the currently active session.
+ */
+export function preflightArchiveCurrentSession(options: {
+	sourcePath: string | undefined;
+	sessionId: string;
+	sessionDir: string;
+	archiveRoot: string;
+}): { ok: true } | { ok: false; message: string } {
+	const result = validateActiveSessionForArchive(
+		options.sourcePath,
+		options.sessionDir,
+		options.archiveRoot,
+		options.sessionId,
+	);
+	if ("rejected" in result) {
+		return { ok: false, message: result.rejected.message };
+	}
+	return { ok: true };
+}
+
+/**
+ * Validate, parse, hash, and stage a session file. Returns a rejection
+ * result or the staged data. Performs no mutation. When `expectedSessionId`
+ * is given, the file header must match it.
+ */
+function stageSession(
+	sourcePath: string | undefined,
+	sessionDir: string,
+	deps: ArchiveDeps,
+	opts: { expectedSessionId?: string; sessionName?: string } = {},
+): { staged: StagedArchive } | { rejected: ArchiveResult } {
+	const validated = validateActiveSessionForArchive(sourcePath, sessionDir, deps.archiveRoot, opts.expectedSessionId);
+	if ("rejected" in validated) {
+		return validated;
+	}
+	const { canonicalSource, content, parsed } = validated;
 
 	const sessionId = parsed.header.id;
 	const sha256 = sha256Hex(content);

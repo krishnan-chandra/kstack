@@ -72,6 +72,28 @@ Lookup: read_handoff_history and search_handoff_history find this session in act
 
 Edit or cancel this prompt before any session replacement occurs. Saving it starts the replacement session and sends the prompt. Cancelling leaves the old session active.
 
+## Handoff tool
+
+The `handoff` tool exposes the full `/handoff` workflow to the model so a session can hand off to a fresh replacement session once the current turn settles:
+
+```text
+handoff({
+  goal: "Implement teams support",
+  model: "openai/gpt-5.2:high",
+  effort: "high",
+  archive: true,
+})
+```
+
+All parameters are optional:
+
+- `goal` — continuation goal for the replacement session (defaults to the previous resume point).
+- `model` — target model reference using the same resolution rules as `/handoff --model` (`provider/model-id`, unique bare ID, `kstack.json` label, display name, or unique partial match, optionally with `:<effort>`).
+- `effort` — thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Overrides a model alias's default; errors if it conflicts with an explicit `:<effort>` suffix on `model`.
+- `archive` — archive the current session before starting the replacement session (also allows active sources over 64 MiB).
+
+The tool validates parameters, source readability, history-tool allowlists, and claims the session's single pending transition slot before ending the turn with `terminate: true`. Once `agent_settled` fires (and was not aborted), it dispatches the replacement without opening the interactive editor, so it works in TUI, RPC, print, and JSON modes. If the run is aborted or shuts down before dispatch, the pending transition is cleared cleanly. Settle-time errors (such as a source file modified between preflight and dispatch, or a `newSession` cancellation) are reported via `ctx.ui.notify`, so in print and JSON modes without a UI context only preflight rejections in `execute()` surface directly in the tool result.
+
 ## Read-only history tools
 
 - **`read_handoff_history`** returns an **outline** of the whole linked session by default. Pass `view: "entries"` to page through entries.
@@ -127,9 +149,9 @@ Archived artifacts over 64 MiB are not parsed. The default call returns `Outline
 - **Persisted, readable default source:** default handoff rejects ephemeral `--no-session` sessions. After Pi becomes idle, it validates the source before opening the editor and again immediately before replacement. A source must be a regular, non-symlink `.jsonl` file under `$PI_CODING_AGENT_DIR/sessions` (default `~/.pi/agent/sessions`), contain valid Pi session JSONL with the current session ID, and be no larger than 64 MiB. Custom session paths and retained child-agent paths are not supported. A missing active file is rejected even if an older archive row has the same ID.
 - **Changed source during editing:** if the second default-source check fails, handoff leaves the edited prompt in the current session's editor and makes no replacement or model change. The history tools still validate again when they read the source because a successful preflight cannot prevent later filesystem changes.
 - **Archive-first validation:** `--archive` delegates source validation and finalization to the session archive state machine instead of applying the default active-reader preflight. The archive path keeps its existing active-session containment, JSONL, and session-ID checks, but it does not apply the active reader's 64 MiB limit. Use `--archive` when a valid active session exceeds that limit.
-- **Interactive only:** the command requires TUI mode so the user can edit the continuation prompt.
-- **One confirmation:** saving the editor both confirms the prompt and starts the replacement session. Even with `--archive`, there is no additional archive dialog or second submit after the switch. If preflight finds no model or credentials, the confirmed prompt is left in the editor instead. Errors after message submission begins are surfaced without restoring the prompt because the message might already be recorded; this avoids creating a duplicate turn if the user retries, and the notification advises inspecting the replacement conversation before submitting again.
-- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active. Model and effort are applied only inside the replacement session after it starts, so cancellation or replacement failure never requires restoring the predecessor. Once the replacement-session callback begins, the old session API is stale and is not used.
+- **Interactive command vs tool mode:** `/handoff` requires TUI mode so the user can edit the continuation prompt. The `handoff` tool skips the editor and runs across TUI, RPC, print, and JSON modes after `agent_settled`.
+- **One confirmation:** saving the editor both confirms the prompt and starts the replacement session for `/handoff`. Even with `--archive`, there is no additional archive dialog or second submit after the switch. The `handoff` tool executes without a UI confirmation dialog when requested. If preflight finds no model or credentials, the confirmed prompt is left in the editor instead (when UI is present). Errors after message submission begins are surfaced without restoring the prompt because the message might already be recorded; this avoids creating a duplicate turn if the user retries, and the notification advises inspecting the replacement conversation before submitting again.
+- **Cancellable:** cancelling the editor or a `session_before_switch` handler leaves the old session active, and aborting a turn before `agent_settled` cancels a tool-scheduled handoff. Model and effort are applied only inside the replacement session after it starts, so cancellation or replacement failure never requires restoring the predecessor. Once the replacement-session callback begins, the old session API is stale and is not used.
 
 ## Tests
 
@@ -137,4 +159,4 @@ Archived artifacts over 64 MiB are not parsed. The default call returns `Outline
 node --test extensions/handoff/*.test.ts
 ```
 
-The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived transcript loading, archive artifact validation, the outline representation contract (contiguous unit ranges, per-unit, header, and response bounds, `before` continuations, and payload absence), entries-view clipping and the parser cap marker, snippet search semantics shared by active and archived sources, the oversized-archive fallback, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), selection through the replacement session's live API, inheritance, effort clamping, predecessor immutability, scoped-model validation, and effective-selection mismatch reporting. The runtime smoke test loads the predecessor and replacement through separate extension module graphs and reproduces the Sol-to-Terra switch with Pi's real `AgentSessionRuntime`. It suppresses `sendUserMessage`, so it makes no provider request.
+The tests verify the deterministic prompt, replacement-session naming, structured provenance, active and archived transcript loading, archive artifact validation, the outline representation contract (contiguous unit ranges, per-unit, header, and response bounds, `before` continuations, and payload absence), entries-view clipping and the parser cap marker, snippet search semantics shared by active and archived sources, the oversized-archive fallback, path containment, reference-only lifecycle, one-confirmation auto-start, preflight recovery, post-submission error handling, cancellation paths, stale-context safety, model flag parsing, model and effort resolution (including colon-bearing model IDs), selection through the replacement session's live API, inheritance, effort clamping, predecessor immutability, scoped-model validation, effective-selection mismatch reporting, and tool parity across TUI and non-TUI modes. The runtime smoke tests load the predecessor and replacement through separate extension module graphs and reproduce Sol-to-Terra switches and archive-first tool handoffs with Pi's real `AgentSessionRuntime`, suppressing `sendUserMessage` (and using a faux `streamFunction` for tool calls) so no provider request is made.

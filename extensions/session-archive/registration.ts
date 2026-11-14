@@ -1,8 +1,14 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, SessionManager, truncateHead } from "@earendil-works/pi-coding-agent";
+import {
+	claimSessionTransition,
+	consumeSessionTransition,
+	parseToolTokenArg,
+	releaseSessionTransition,
+} from "../shared/session-transition.ts";
 import { type BoundaryValue, isString } from "../shared/validation.ts";
 import { fileExists, isArchiveWriteTarget, readUtf8Ranges } from "./archive-files.ts";
-import type { BulkArchiveOutcome } from "./archive-ops.ts";
+import type { BulkArchiveOutcome, preflightArchiveCurrentSession } from "./archive-ops.ts";
 import { formatHistoryEntries, historyPageNextLabel, selectHistoryPage } from "./history-page.ts";
 import { buildSessionChoices } from "./session-choices.ts";
 import { selectSessionChoices } from "./session-picker.ts";
@@ -66,10 +72,16 @@ export function createArchiveCommands(deps: {
 	planRebuild?: typeof import("./rebuild.ts").planRebuild;
 	applyRebuild?: typeof import("./rebuild.ts").applyRebuild;
 	createRebuildCommand?: typeof import("./rebuild.ts").createRebuildCommand;
+	consumeToolToken?: (sessionId: string, token: string) => boolean;
 }) {
-	const sessionArchive = async (_args: string, ctx: CommandContext) => {
+	const consumeToolToken =
+		deps.consumeToolToken ??
+		((sessionId: string, token: string) => consumeSessionTransition(sessionId, "archive_session", token));
+	const sessionArchive = async (args: string, ctx: CommandContext) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		const sessionName = ctx.sessionManager.getSessionName()?.trim() || undefined;
+		const toolToken = parseToolTokenArg(args);
+		const skipConfirmation = toolToken !== undefined && consumeToolToken(sessionId, toolToken);
 		await deps.archiveCurrentSession({
 			deps: { dbPath: deps.dbPath, archiveRoot: deps.archiveRoot },
 			snapshot: {
@@ -80,6 +92,7 @@ export function createArchiveCommands(deps: {
 			},
 			waitForIdle: () => ctx.waitForIdle(),
 			confirm: (title, message) => ctx.ui.confirm(title, message),
+			skipConfirmation,
 			notify: (message, level) => ctx.ui.notify(message, level),
 			startNewSession: (withSession) =>
 				// Deliberately no parentSession: the archive destination does not
@@ -277,4 +290,103 @@ export function createArchiveTools(deps: {
 	};
 
 	return { searchSessionArchive, readSessionArchive };
+}
+
+interface PendingArchiveRequest {
+	sessionId: string;
+	token: string;
+}
+
+export function createArchiveSessionToolController(deps: {
+	archiveRoot: string;
+	preflight: typeof preflightArchiveCurrentSession;
+	sendUserMessage: (content: string, options: { expandPromptTemplates: boolean }) => void;
+	claimTransition?: (sessionId: string) => string | undefined;
+	consumeTransition?: (sessionId: string, token: string) => boolean;
+	releaseTransition?: (sessionId: string, token?: string) => void;
+}) {
+	const claimTransition =
+		deps.claimTransition ?? ((sessionId: string) => claimSessionTransition(sessionId, "archive_session"));
+	const consumeTransition =
+		deps.consumeTransition ??
+		((sessionId: string, token: string) => consumeSessionTransition(sessionId, "archive_session", token));
+	const releaseTransition = deps.releaseTransition ?? releaseSessionTransition;
+	let pending: PendingArchiveRequest | undefined;
+	const claimedRequests = new Map<string, PendingArchiveRequest>();
+
+	const execute = async (
+		_toolCallId: string,
+		_params: Record<string, never>,
+		_signal: AbortSignal | undefined,
+		_onUpdate: BoundaryValue,
+		ctx: Pick<ExtensionContext, "sessionManager">,
+	) => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		const check = deps.preflight({
+			sourcePath: ctx.sessionManager.getSessionFile(),
+			sessionId,
+			sessionDir: ctx.sessionManager.getSessionDir(),
+			archiveRoot: deps.archiveRoot,
+		});
+		if (!check.ok) {
+			throw new Error(check.message);
+		}
+		const token = claimTransition(sessionId);
+		if (!token) {
+			throw new Error("A session replacement or archive is already scheduled for when this turn settles.");
+		}
+		pending = { sessionId, token };
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text:
+						`Scheduled archiving of session ${sessionId}. ` +
+						"Pi will archive this session (read-only, searchable) and start a new empty session once this turn settles.",
+				},
+			],
+			details: { scheduled: true, sessionId },
+			terminate: true,
+		};
+	};
+
+	const onAgentSettled = (event: { aborted?: boolean }, ctx: Pick<ExtensionContext, "sessionManager">): void => {
+		if (!pending) return;
+		const current = pending;
+		pending = undefined;
+		if (event.aborted || current.sessionId !== ctx.sessionManager.getSessionId()) {
+			releaseTransition(current.sessionId, current.token);
+			return;
+		}
+		claimedRequests.set(current.token, current);
+		try {
+			deps.sendUserMessage(`/session-archive --tool-token=${current.token}`, { expandPromptTemplates: true });
+		} catch (err) {
+			claimedRequests.delete(current.token);
+			releaseTransition(current.sessionId, current.token);
+			throw err;
+		}
+	};
+
+	const onSessionShutdown = (_event: BoundaryValue, ctx: Pick<ExtensionContext, "sessionManager">): void => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (pending && pending.sessionId === sessionId) {
+			releaseTransition(sessionId, pending.token);
+			pending = undefined;
+		}
+		for (const [token, request] of claimedRequests) {
+			if (request.sessionId !== sessionId) continue;
+			claimedRequests.delete(token);
+			releaseTransition(sessionId, token);
+		}
+	};
+
+	const consumeToolToken = (sessionId: string, token: string): boolean => {
+		const request = claimedRequests.get(token);
+		if (!request || request.sessionId !== sessionId) return false;
+		claimedRequests.delete(token);
+		return consumeTransition(sessionId, token);
+	};
+
+	return { execute, onAgentSettled, onSessionShutdown, consumeToolToken };
 }

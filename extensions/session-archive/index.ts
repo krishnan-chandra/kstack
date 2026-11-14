@@ -3,9 +3,10 @@
  *
  * Moves completed sessions out of Pi's active session directories into a
  * read-only archive under `$PI_CODING_AGENT_DIR/archive/`, indexes them in a
- * local SQLite/FTS5 database, and exposes SELECT-only search/read tools to
- * agents. Mutation is an explicit, confirmed user command — no agent-callable
- * tool can archive, restore, edit, or delete a session. The /sessions browser is the only immediate-toggle surface.
+ * local SQLite/FTS5 database, exposes SELECT-only search/read tools, and
+ * provides `archive_session` so a session can archive itself standalone and
+ * start a fresh empty session once the turn settles. Other mutation commands
+ * remain explicit user commands; /sessions is the immediate-toggle surface.
  */
 
 import { join } from "node:path";
@@ -14,7 +15,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { getAgentDir } from "../shared/kstack-config.ts";
 import { ensureArchiveDirs, getArchiveDbPath, getArchiveRoot } from "./archive-files.ts";
-import { createArchiveCommands, createArchiveTools, createWriteGuard } from "./registration.ts";
+import {
+	createArchiveCommands,
+	createArchiveSessionToolController,
+	createArchiveTools,
+	createWriteGuard,
+} from "./registration.ts";
 
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "session-archive", "sessions", "session-archive-other", "session-archive-all");
@@ -57,11 +63,17 @@ export default async function (pi: ExtensionAPI) {
 		readEntries,
 		searchArchive,
 	} = await import("./archive-store.ts");
-	const { archiveCurrentSession, archiveInactiveSessions, restoreArchivedSession } = await import("./archive-ops.ts");
+	const { archiveCurrentSession, archiveInactiveSessions, preflightArchiveCurrentSession, restoreArchivedSession } =
+		await import("./archive-ops.ts");
 	const { inspectArchiveIntegrity, reconcileArchive } = await import("./reconcile.ts");
 	const { applyRebuild, createRebuildCommand, planRebuild } = await import("./rebuild.ts");
 	const { createSubagentHistoryTools } = await import("./subagent-history-tools.ts");
 
+	const archiveSessionController = createArchiveSessionToolController({
+		archiveRoot,
+		preflight: preflightArchiveCurrentSession,
+		sendUserMessage: (content, options) => pi.sendUserMessage(content, options),
+	});
 	const commands = createArchiveCommands({
 		archiveRoot,
 		activeSessionsRoot,
@@ -76,6 +88,7 @@ export default async function (pi: ExtensionAPI) {
 		planRebuild,
 		applyRebuild,
 		createRebuildCommand,
+		consumeToolToken: archiveSessionController.consumeToolToken,
 	});
 	const tools = createArchiveTools({
 		dbPath,
@@ -89,6 +102,8 @@ export default async function (pi: ExtensionAPI) {
 
 	// Write/edit guard: archived content is read-only for agents.
 	pi.on("tool_call", async (event, ctx) => createWriteGuard(archiveRoot)(event, ctx));
+	pi.on("agent_settled", (event, ctx) => archiveSessionController.onAgentSettled(event, ctx));
+	pi.on("session_shutdown", (event, ctx) => archiveSessionController.onSessionShutdown(event, ctx));
 
 	pi.on("session_start", async (_event, ctx) => {
 		try {
@@ -234,5 +249,22 @@ export default async function (pi: ExtensionAPI) {
 			),
 		}),
 		execute: subagentHistoryTools.readSubagentHistory,
+	});
+
+	pi.registerTool({
+		name: "archive_session",
+		label: "Archive Session",
+		description:
+			"Archive the current Pi session standalone (read-only, searchable via search_session_archive, removed from /resume) " +
+			"and start a new empty session once this turn settles. To pass a continuation goal and history link to a new session, " +
+			"use handoff instead.",
+		promptSnippet: "Archive the current session standalone and start a new empty session once this turn settles",
+		promptGuidelines: [
+			"Call archive_session only when the user explicitly asks to archive the current session or when the current workflow explicitly directs archiving it; it replaces the current session with a new empty session once this turn settles.",
+			"Do not call archive_session merely because a task finished.",
+		],
+		executionMode: "sequential",
+		parameters: Type.Object({}),
+		execute: archiveSessionController.execute,
 	});
 }
