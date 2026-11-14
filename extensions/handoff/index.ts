@@ -24,11 +24,11 @@
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
-import { createHandoffHandler, requireHandoffSource } from "./command.ts";
+import { createHandoffHandler, createHandoffToolController, requireHandoffSource } from "./command.ts";
 import { HANDOFF_HISTORY_TOOLS } from "./history-access.ts";
 import { readHandoffHistory } from "./history-reader.ts";
 import { searchHandoffHistory } from "./history-search.ts";
-import { completeHandoffArgs } from "./model-selection.ts";
+import { completeHandoffArgs, HANDOFF_EFFORT_LEVELS } from "./model-selection.ts";
 import {
 	bindReplacementSelectionApi,
 	type ReplacementSelectionApi,
@@ -38,6 +38,9 @@ import {
 export default async function (pi: ExtensionAPI) {
 	guardCommandFallthrough(pi, "handoff");
 	let selectionApi: ReplacementSelectionApi | undefined;
+	const toolController = createHandoffToolController(pi, {
+		sendUserMessage: (content, options) => pi.sendUserMessage(content, options),
+	});
 	pi.on("session_start", (_event, ctx) => {
 		selectionApi = {
 			setModel: async (model) => {
@@ -48,7 +51,9 @@ export default async function (pi: ExtensionAPI) {
 		};
 		bindReplacementSelectionApi(ctx.sessionManager.getSessionId(), selectionApi);
 	});
+	pi.on("agent_settled", (event, ctx) => toolController.onAgentSettled(event, ctx));
 	pi.on("session_shutdown", (_event, ctx) => {
+		toolController.onSessionShutdown(_event, ctx);
 		if (selectionApi) unbindReplacementSelectionApi(ctx.sessionManager.getSessionId(), selectionApi);
 	});
 
@@ -56,7 +61,7 @@ export default async function (pi: ExtensionAPI) {
 		description:
 			"Continue in a lean session linked to current history (optional --archive, --model provider/model-id[:effort])",
 		getArgumentCompletions: completeHandoffArgs,
-		handler: createHandoffHandler(pi),
+		handler: createHandoffHandler(pi, { consumeToolRequest: toolController.consumeToolRequest }),
 	});
 
 	pi.registerTool({
@@ -119,5 +124,44 @@ export default async function (pi: ExtensionAPI) {
 			const text = searchHandoffHistory(source, params);
 			return { content: [{ type: "text" as const, text }], details: { sessionId: source.sessionId } };
 		},
+	});
+
+	pi.registerTool({
+		name: "handoff",
+		label: "Handoff Session",
+		description:
+			"Hand off to a fresh, lean Pi session linked to this session's history once this turn settles. " +
+			"Supports goal, target model/effort selection, and optional archive-first mode.",
+		promptSnippet: "Hand off to a fresh lean session linked to this session's history once this turn settles",
+		promptGuidelines: [
+			"Call handoff only when the user explicitly asks to hand off to a new session or when the current workflow explicitly directs a handoff; it replaces the current session once this turn settles.",
+			"Do not call handoff merely because a task finished.",
+		],
+		executionMode: "sequential",
+		parameters: Type.Object({
+			goal: Type.Optional(
+				Type.String({
+					description: "Continuation goal for the replacement session; defaults to the previous resume point.",
+				}),
+			),
+			model: Type.Optional(
+				Type.String({
+					description:
+						"Target model reference (provider/model-id, bare id, kstack.json label, display name, or unique partial match) with optional :<effort>.",
+				}),
+			),
+			effort: Type.Optional(
+				StringEnum(HANDOFF_EFFORT_LEVELS, {
+					description: "Thinking level for the replacement session; inherits parent effort when omitted.",
+				}),
+			),
+			archive: Type.Optional(
+				Type.Boolean({
+					description:
+						"Archive the current session before starting the replacement session (also allows >64 MiB sources).",
+				}),
+			),
+		}),
+		execute: toolController.execute,
 	});
 }

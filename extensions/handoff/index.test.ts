@@ -24,14 +24,14 @@ function mockPi() {
 }
 
 describe("handoff extension registration", () => {
-	it("registers /handoff and the history tools under the names the prompt uses", async () => {
+	it("registers /handoff, the handoff tool, and the history tools under the names the prompt uses", async () => {
 		const { pi, commands, tools } = mockPi();
 		await handoffExtension(/* SAFETY: Test double matches the ExtensionAPI subset used at registration. */ pi as never);
 
 		assert.deepEqual(commands, ["handoff"]);
 		assert.deepEqual(
 			tools.map((tool) => tool.name),
-			[HANDOFF_HISTORY_TOOLS.read, HANDOFF_HISTORY_TOOLS.search],
+			[HANDOFF_HISTORY_TOOLS.read, HANDOFF_HISTORY_TOOLS.search, "handoff"],
 		);
 		assert.deepEqual(Object.keys(tools[0].parameters.properties), [
 			"view",
@@ -42,18 +42,33 @@ describe("handoff extension registration", () => {
 			"chunk",
 			"from",
 		]);
+		assert.deepEqual(Object.keys(tools[2].parameters.properties), ["goal", "model", "effort", "archive"]);
 	});
 
 	it("keeps the model-facing tool metadata within its byte budget", async () => {
 		const { pi, tools } = mockPi();
 		await handoffExtension(/* SAFETY: Test double matches the ExtensionAPI subset used at registration. */ pi as never);
 
-		// Both tools' metadata is sent in every session: 1,952 bytes before the outline, plus at most 800.
-		const bytes = tools.reduce(
-			(sum, { name, description, parameters, promptSnippet, promptGuidelines }) =>
-				sum + Buffer.byteLength(JSON.stringify({ name, description, parameters, promptSnippet, promptGuidelines })),
-			0,
-		);
-		assert.ok(bytes <= 2752, `handoff tool metadata is ${bytes} bytes`);
+		const metadataBytes = (tool: RegisteredTool) =>
+			Buffer.byteLength(
+				JSON.stringify({
+					name: tool.name,
+					description: tool.description,
+					parameters: tool.parameters,
+					promptSnippet: tool.promptSnippet,
+					promptGuidelines: tool.promptGuidelines,
+				}),
+			);
+
+		// Both history tools' metadata is sent in every session: 1,952 bytes before the outline, plus at most 800.
+		const historyBytes = tools
+			.filter((tool) => tool.name !== "handoff")
+			.reduce((sum, tool) => sum + metadataBytes(tool), 0);
+		assert.ok(historyBytes <= 2752, `handoff history tool metadata is ${historyBytes} bytes`);
+
+		const handoffTool = tools.find((tool) => tool.name === "handoff");
+		assert.ok(handoffTool, "handoff tool must be registered");
+		const handoffBytes = metadataBytes(handoffTool);
+		assert.ok(handoffBytes <= 1400, `handoff tool metadata is ${handoffBytes} bytes`);
 	});
 });

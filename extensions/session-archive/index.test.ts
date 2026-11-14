@@ -39,13 +39,21 @@ describe("session archive retained-history registration", () => {
 			assert.ok(events.includes("session_start"));
 			assert.deepEqual(
 				tools.map((tool) => tool.name),
-				["search_session_archive", "read_session_archive", "search_subagent_history", "read_subagent_history"],
+				[
+					"search_session_archive",
+					"read_session_archive",
+					"search_subagent_history",
+					"read_subagent_history",
+					"archive_session",
+				],
 			);
 			const search = tools.find((tool) => tool.name === "search_subagent_history");
 			const read = tools.find((tool) => tool.name === "read_subagent_history");
+			const archive = tools.find((tool) => tool.name === "archive_session");
 			assert.match(search?.description ?? "", /read-only|read only/i);
 			assert.match(search?.description ?? "", /refreshes on demand/);
 			assert.match(read?.description ?? "", /exact UUID/);
+			assert.match(archive?.description ?? "", /Archive the current Pi session standalone/);
 			assert.equal(existsSync(join(temp, "archive")), false, "factory load must not initialize the archive");
 			assert.equal(existsSync(join(temp, "cache")), false, "factory load must not initialize child-history cache");
 		} finally {

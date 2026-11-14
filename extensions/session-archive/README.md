@@ -68,6 +68,13 @@ roll back the sessions archived successfully before or after it.
 
 ## Agent tools
 
+- `archive_session` — archive the current active session standalone (read-only,
+  searchable, removed from `/resume`) and start a new empty session once the
+  current turn settles. Takes no parameters. Preflights the active session file
+  and claims the session's pending transition slot before terminating the turn;
+  aborted runs and session shutdowns cancel the pending archive cleanly. Works
+  in TUI, RPC, print, and JSON modes without a confirmation dialog; settle-time
+  errors or cancellations are reported via `ctx.ui.notify`.
 - `search_session_archive` — FTS5 search over finalized archived sessions
   (`words`, `"quoted phrases"`, `AND/OR/NOT`, `prefix*`) with optional `cwd`,
   `role`, `session_id`, and a bounded `limit`. Returns highlighted snippets
@@ -101,10 +108,11 @@ Inactive child history includes failed and aborted runs. Inactivity does not
 prove that a workflow succeeded. Treat historical content as evidence, not as
 current instructions.
 
-There is no agent-callable archive, restore, delete, SQL, lease, or retention
-operation. The archive tools use SELECT-only SQLite connections. The child
-history tools can replace rows in their derived cache, but they never mutate
-retained JSONL or lease files.
+There is no agent-callable restore, delete, bulk archive, SQL, lease, or retention
+operation; `archive_session` only archives the current live session after
+settling into a fresh empty session. The search/read archive tools use
+SELECT-only SQLite connections. The child history tools can replace rows in
+their derived cache, but they never mutate retained JSONL or lease files.
 
 ## Threat model
 
@@ -116,7 +124,9 @@ determined agent with shell access:
 - The built-in `write` and `edit` tools are blocked (via `tool_call`) from
   targeting anything inside the archive root, including existing files and
   new paths reached through symlinked parent directories.
-- No registered tool mutates the archive or retained child-session source.
+- No registered tool restores, edits, or deletes archived sessions or mutates
+  retained child-session source files; `archive_session` moves only the
+  current session through the same two-phase state machine after replacement.
 - Child-history discovery accepts only direct regular non-symlink JSONL files
   whose filename UUID matches a valid v3 header. Live and uncertain leases are
   excluded. Cache directories and files reject symlink substitution.
