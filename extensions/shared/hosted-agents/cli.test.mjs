@@ -251,11 +251,20 @@ test("parseCouncilArgs parses each action and requires absolute paths", () => {
 	assert.deepEqual([round.plan, round.response, round.verify, round.task], ["/p.md", "/r.md", true, undefined]);
 	const override = parseCouncilArgs(["override", "--dir", "/c", "--finding", "A/B-1", "--reason", "accepted risk"]);
 	assert.deepEqual([override.finding, override.reason], ["A/B-1", "accepted risk"]);
+	const review = parseCouncilArgs(["review", "--dir", "/c", "--bundle", "/b", "--cwd", "/w"]);
+	assert.equal(review.ok, true);
+	assert.deepEqual([review.action, review.dir, review.bundle, review.cwd], ["review", "/c", "/b", "/w"]);
 	assert.equal(parseCouncilArgs(["close", "--dir", "/c"]).ok, true);
 
 	assert.match(parseCouncilArgs([]).error, /unknown council action/);
 	assert.match(parseCouncilArgs(["vote"]).error, /unknown council action: vote/);
 	assert.match(parseCouncilArgs(["round", "--dir", "/c"]).error, /--plan is required/);
+	assert.match(parseCouncilArgs(["review", "--dir", "/c"]).error, /--bundle is required/);
+	assert.match(parseCouncilArgs(["review", "--dir", "/c", "--bundle", "b"]).error, /--bundle must be an absolute path/);
+	assert.match(
+		parseCouncilArgs(["review", "--dir", "/c", "--bundle", "/b", "--cwd", "w"]).error,
+		/--cwd must be an absolute path/,
+	);
 	assert.match(parseCouncilArgs(["round", "--dir", "c", "--plan", "/p"]).error, /--dir must be an absolute path/);
 	assert.match(parseCouncilArgs(["round", "--dir", "/c", "--plan", "p.md"]).error, /--plan must be an absolute path/);
 	assert.match(parseCouncilArgs(["round", "--dir", "/c", "--plan", "/p", "--verify", "--verify"]).error, /only once/);
@@ -331,4 +340,39 @@ test("council override records the reason and exits 1 on a non-binding finding",
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("council skill CLI invocations parse as preflight and council actions", () => {
+	const markdown = readFileSync(new URL("../../../skills/council/SKILL.md", import.meta.url), "utf8");
+	const shellBlocks = [...markdown.matchAll(/```sh\n([\s\S]*?)\n\s*```/g)].map((match) => match[1] ?? "");
+	const inlineCalls = [...markdown.matchAll(/`(node "\$CLI" [^`]+)`/g)].map((match) => match[1] ?? "");
+	const cliLines = [...shellBlocks, ...inlineCalls]
+		.map((block) => block.replaceAll("\\\n", " "))
+		.flatMap((block) => block.split("\n"))
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith('node "$CLI" '));
+	assert.ok(cliLines.length > 0);
+	const subcommands = new Set();
+	const actions = new Set();
+	for (const line of cliLines) {
+		const expanded = line
+			.replace(/^node "\$CLI"\s+/, "")
+			.replaceAll("$COUNCIL", "/fixture/plans/demo-council")
+			.replaceAll("$PWD", "/fixture")
+			.replaceAll("<slug>", "demo")
+			.replaceAll("$PI_PROVIDER/$PI_MODEL", "anthropic/claude-opus-5-5")
+			.replaceAll("<ID>", "A/B-1")
+			.replaceAll("<the user's reason>", "accepted-risk");
+		const argv = [...expanded.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3] ?? "");
+		const sub = parseSubcommand(argv);
+		assert.ok(sub.ok, `failed to parse subcommand "${line}": ${sub.ok ? "" : sub.error}`);
+		subcommands.add(sub.subcommand);
+		if (sub.subcommand === "council") {
+			const parsed = parseCouncilArgs(argv.slice(1));
+			assert.ok(parsed.ok, `failed to parse "${line}": ${parsed.ok ? "" : parsed.error}`);
+			actions.add(parsed.action);
+		}
+	}
+	assert.deepEqual([...subcommands].sort(), ["council", "preflight"]);
+	assert.deepEqual([...actions].sort(), ["close", "open", "override", "review", "round"]);
 });

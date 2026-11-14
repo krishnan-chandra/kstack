@@ -1,7 +1,7 @@
 /**
  * Council directory layout, persisted state, atomic writes, and the exclusive
  * command lock. Every mutating council command (`open`, `round`, `override`,
- * `close`) runs under {@link withCouncilLock}.
+ * `review`, `close`) runs under {@link withCouncilLock}.
  */
 
 import { createHash } from "node:crypto";
@@ -88,6 +88,8 @@ export interface CouncilManifest {
 	excluded: string[];
 	/** Per-request seat timeout for council rounds. */
 	timeoutMinutes: number;
+	/** Per-request seat timeout for implementation reviews; omitted in legacy manifests. */
+	reviewTimeoutMinutes?: number;
 	seats: ManifestSeat[];
 }
 
@@ -154,7 +156,10 @@ export function readManifest(dir: string): CouncilManifest {
 	const value = readCouncilFile(councilPaths(dir).manifest, "manifest.json", ["slug", "tabId", "seats"]);
 	// SAFETY: the council writes manifest.json itself; the version and key checks reject foreign files.
 	const manifest = value as Omit<CouncilManifest, "terminal"> & { terminal?: BackendKind };
-	return { ...manifest, terminal: manifest.terminal ?? "herdr" };
+	return {
+		...manifest,
+		terminal: manifest.terminal ?? "herdr",
+	};
 }
 
 export function writeManifest(dir: string, manifest: CouncilManifest): void {

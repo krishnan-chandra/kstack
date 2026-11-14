@@ -5,11 +5,13 @@
  * the TypeScript modules beside it, which Node loads through type stripping.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
+import { runCouncilImplReview } from "../council/impl-review.ts";
 import { resolveCouncilRoster } from "../council/roster.ts";
 import { livePlanChanged, overrideCouncilFinding, runCouncilRound } from "../council/round.ts";
-import { readManifest } from "../council/store.ts";
+import { councilPaths, readManifest, readState } from "../council/store.ts";
+import { loadCouncilSection } from "../kstack-config.ts";
 import { isObject } from "../validation.ts";
 import { preflightTerminal } from "./backends.ts";
 import { closeCouncilSeats, councilRecordInfo, createSeatAsker, openCouncilSeats } from "./council-host.ts";
@@ -23,6 +25,7 @@ subcommands:
   council open --dir DIR --slug SLUG --planner-model REF [--seats REF,REF,...]
   council round --dir DIR --plan FILE [--task FILE] [--response FILE] [--verify]
   council override --dir DIR --finding ID --reason TEXT [--plan FILE]
+  council review --dir DIR --bundle DIR [--cwd DIR]
   council close --dir DIR
     (council DIR and FILE paths must be absolute; results print as JSON)`;
 
@@ -40,9 +43,10 @@ const COUNCIL_FLAGS = {
 		booleans: [],
 		required: ["--dir", "--finding", "--reason"],
 	},
+	review: { values: ["--dir", "--bundle", "--cwd"], booleans: [], required: ["--dir", "--bundle"] },
 	close: { values: ["--dir"], booleans: [], required: ["--dir"] },
 };
-const COUNCIL_PATH_FLAGS = ["--dir", "--plan", "--task", "--response"];
+const COUNCIL_PATH_FLAGS = ["--dir", "--plan", "--task", "--response", "--bundle", "--cwd"];
 
 async function withCancellation(run) {
 	const controller = new AbortController();
@@ -143,6 +147,8 @@ export function parseCouncilArgs(argv) {
 		verify: values["--verify"] === true,
 		finding: values["--finding"],
 		reason: values["--reason"],
+		bundle: values["--bundle"],
+		cwd: values["--cwd"],
 	};
 }
 
@@ -249,6 +255,50 @@ async function runCouncil(options) {
 		const { exitCode, ...json } = result;
 		printJson(json);
 		return exitCode;
+	}
+	if (options.action === "review") {
+		return withCancellation(async (signal) => {
+			const asker = await createSeatAsker(options.dir, deps);
+			if (!asker.ok) {
+				printJson({ status: "failed", error: asker.error });
+				return 1;
+			}
+			let maxRounds = 3;
+			if (existsSync(councilPaths(options.dir).state)) {
+				try {
+					maxRounds = readState(options.dir).maxRounds;
+				} catch (error) {
+					printJson({
+						status: "failed",
+						error: `Could not read the council state: ${error instanceof Error ? error.message : String(error)}`,
+					});
+					return 1;
+				}
+			}
+			let reviewTimeoutMinutes = asker.manifest.reviewTimeoutMinutes;
+			if (reviewTimeoutMinutes === undefined) {
+				const loaded = loadCouncilSection(process.env);
+				reviewTimeoutMinutes = loaded.status === "found" ? loaded.config.reviewTimeoutMinutes : 10;
+			}
+			const info = councilRecordInfo(asker.manifest);
+			const result = await runCouncilImplReview(
+				{
+					dir: options.dir,
+					bundleDir: options.bundle,
+					workstreamCwd: options.cwd ?? asker.manifest.cwd,
+					seats: asker.manifest.seats.map((seat) => seat.letter),
+					seatModels: info.seatModels,
+					maxRounds,
+					timeoutMs: reviewTimeoutMinutes * 60_000,
+					seatPanes: info.seatPanes,
+					signal,
+				},
+				{ askSeat: asker.askSeat },
+			);
+			const { exitCode, ...json } = result;
+			printJson(json);
+			return exitCode;
+		});
 	}
 	const closed = await closeCouncilSeats(options.dir, deps);
 	printJson(

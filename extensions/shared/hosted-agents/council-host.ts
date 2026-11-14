@@ -1,12 +1,15 @@
 /**
- * Terminal placement for planning-council seats (Herdr or Rex).
+ * Terminal placement for council seats (Herdr or Rex).
  *
- * Seats run as Pi agents (`council-<slug>-<letter>`) in panes split to the
- * right of the caller's pane, stacked in one column, inside the caller's tab
- * (or Rex window). `manifest.json` binds the council to that backend and tab,
- * records each seat's pane and sidecar state path, adopts seats that are still
- * starting, closes stale council panes before restarting a vanished seat, and
- * refuses cross-backend or foreign-agent conflicts.
+ * Seats run as Pi agents (`council-<slug>-<letter>`) inside the caller's tab
+ * (or Rex window). A fresh open splits to the right of the caller's pane and
+ * stacks seats in one column; a partial retry when a seat already survives
+ * splits the last surviving council seat downward (`keepFraction = 1 / (n + 1)`
+ * for `n` seats starting) so replacements stay in the council column without
+ * splitting the caller's pane again. `manifest.json` binds the council to that
+ * backend and tab, records each seat's pane and sidecar state path, adopts
+ * seats that are still starting, closes stale council panes before restarting
+ * a vanished seat, and refuses cross-backend or foreign-agent conflicts.
  */
 
 import { existsSync, rmSync } from "node:fs";
@@ -231,9 +234,11 @@ async function verifySeatPlacement(
 }
 
 /**
- * Open or reconcile council seats under the council lock. Seats that need a
- * start share one split of the caller's pane; a rerun with every seat alive
- * splits nothing.
+ * Open or reconcile council seats under the council lock. When no seat is
+ * alive yet, seats that need a start share one right split of the caller's
+ * pane; when at least one seat already survives, replacements split downward
+ * from the last surviving council seat (`keepFraction = 1 / (toStart.length + 1)`).
+ * A rerun with every seat alive splits nothing.
  */
 export async function openCouncilSeats(
 	input: { dir: string; slug: string; cwd: string; roster: CouncilRoster; plannerModel: string; signal?: AbortSignal },
@@ -278,6 +283,7 @@ async function openLocked(
 			plannerModel: input.plannerModel,
 			excluded: input.roster.excluded,
 			timeoutMinutes: input.roster.timeoutMinutes,
+			reviewTimeoutMinutes: input.roster.reviewTimeoutMinutes,
 			seats: input.roster.seats.map((seat) => ({
 				letter: seat.letter,
 				model: seat.model,
@@ -301,6 +307,7 @@ async function openLocked(
 
 	const reports = new Map<SeatLetter, SeatReport>();
 	const toStart: ManifestSeat[] = [];
+	const liveSeatPanes: string[] = [];
 	for (const seat of manifest.seats) {
 		const reconciled = await reconcileSeat(backend, paths, manifest, seat, caller.paneId);
 		if (reconciled.action === "refuse") return { ok: false, error: reconciled.error };
@@ -308,6 +315,7 @@ async function openLocked(
 			toStart.push(seat);
 			continue;
 		}
+		if (seat.paneId && seat.paneId !== caller.paneId) liveSeatPanes.push(seat.paneId);
 		seat.state = reconciled.action === "ready" ? "ready" : "starting";
 		reports.set(seat.letter, {
 			letter: seat.letter,
@@ -321,6 +329,7 @@ async function openLocked(
 	writeManifest(input.dir, manifest);
 
 	if (toStart.length > 0) {
+		const survivingAnchor = liveSeatPanes.at(-1);
 		const opened = await openPaneHostIn(
 			session,
 			{
@@ -328,7 +337,9 @@ async function openLocked(
 				label: input.slug,
 				cwd: manifest.cwd,
 				maxAgents: toStart.length,
-				direction: "right",
+				...(survivingAnchor
+					? { anchorPaneId: survivingAnchor, direction: "down", keepFraction: 1 / (toStart.length + 1) }
+					: { direction: "right" }),
 				maxColumns: 1,
 			},
 			deps,

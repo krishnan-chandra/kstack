@@ -71,11 +71,12 @@ if (command === 'status server') {
   const uuid = /KSTACK_RESPONSE (\\S+)/.exec(text)[1];
   const round = /round-(\\d+)/.exec(request)[1];
   const file = path.basename(request);
-  const phase = file.startsWith('cross-exam') ? 'cross-exam' : 'review';
+  const isImpl = request.includes('review-round-');
+  const phase = isImpl ? 'impl-review' : (file.startsWith('cross-exam') ? 'cross-exam' : 'review');
   const repair = file.includes('.repair.') ? '-repair' : '';
   const letter = name.slice(-1).toUpperCase();
   const replies = JSON.parse(fs.readFileSync(process.env.FIXTURE_REPLIES, 'utf8'));
-  const reply = replies[round + '/' + phase + repair + '/' + letter] ?? replies['default/' + phase];
+  const reply = replies[round + '/' + phase + repair + '/' + letter] ?? replies['default/' + phase] ?? replies['default/review'];
   if (reply === 'HANG') {
     fs.writeFileSync(process.env.FIXTURE_HANG, name);
     setInterval(() => {}, 1000);
@@ -340,6 +341,66 @@ test("round refusals before any seat is asked still report live-plan drift", { t
 		assert.match(outsideHerdr.json.error, /HERDR_ENV/);
 		assert.equal(outsideHerdr.json.planChangedSinceSnapshot, true);
 		assert.equal(f.calls().filter((call) => call[1] === "prompt").length, promptsBefore);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("council review reuses the opened seat panes in the caller tab without creating tabs or extra splits", {
+	timeout: 30000,
+}, async () => {
+	const f = fixture();
+	try {
+		f.setReplies({
+			"default/impl-review": APPROVE,
+			"1/impl-review/A":
+				"Verdict: revise\n\n## Blocking\n- [B-1] Missing null check in widget.ts\n\n## Suggestions\n- [S-1] Rename helper\n",
+			"2/impl-review/A": `${APPROVE}\n## Resolved from previous round\n- B-1: Added null check in widget.ts\n`,
+		});
+		const open = await f.run(["open", "--dir", f.files.dir, "--slug", "impl", "--planner-model", "openai/gpt-6-sol"])
+			.done;
+		assert.equal(open.code, 0, open.stdout + open.stderr);
+		const splitsAfterOpen = f.calls().filter((args) => args[1] === "split").length;
+		const startsAfterOpen = f.calls().filter((args) => args[1] === "start").length;
+
+		const bundle = join(f.root, "plans", "impl-implement");
+		mkdirSync(bundle, { recursive: true });
+		writeFileSync(join(bundle, "task.md"), "Add a widget.\n");
+		writeFileSync(join(bundle, "approved-plan.md"), "# Plan\n\n1. [STEP-1] Add the widget.\n");
+		writeFileSync(join(bundle, "execution-ledger.md"), "- [STEP-1] Add the widget. — done\n");
+		writeFileSync(join(bundle, "diff.patch"), "diff --git a/widget.ts b/widget.ts\n+// v1\n");
+		writeFileSync(join(bundle, "vcs-policy.md"), "Backend: git\n");
+
+		const review1 = await f.run(["review", "--dir", f.files.dir, "--bundle", bundle]).done;
+		assert.equal(review1.code, 0, review1.stdout + review1.stderr);
+		assert.equal(review1.json.decision, "revise");
+		assert.deepEqual(review1.json.blocking, ["A/B-1"]);
+		const verdict1 = readFileSync(review1.json.verdictFile, "utf8");
+		assert.match(verdict1, /^Decision: revise\n/);
+		assert.match(verdict1, /- \[B-1\] Missing null check in widget\.ts/);
+
+		// Rerun without updating diff.patch or execution-ledger.md refuses before asking seats.
+		const promptsAfterR1 = f.calls().filter((args) => args[1] === "prompt").length;
+		const unchanged = await f.run(["review", "--dir", f.files.dir, "--bundle", bundle]).done;
+		assert.equal(unchanged.code, 1);
+		assert.match(unchanged.json.error, /unchanged/);
+		assert.equal(f.calls().filter((args) => args[1] === "prompt").length, promptsAfterR1);
+
+		// Update diff.patch and run round 2 on the same seats.
+		writeFileSync(join(bundle, "diff.patch"), "diff --git a/widget.ts b/widget.ts\n+// v2 null check\n");
+		const review2 = await f.run(["review", "--dir", f.files.dir, "--bundle", bundle]).done;
+		assert.equal(review2.code, 0, review2.stdout + review2.stderr);
+		assert.equal(review2.json.decision, "approve");
+		assert.match(readFileSync(review2.json.verdictFile, "utf8"), /^Decision: approve\n/);
+
+		const allCalls = f.calls();
+		assert.equal(allCalls.filter((args) => args[0] === "tab").length, 0, "never creates a new tab");
+		assert.equal(allCalls.filter((args) => args[1] === "split").length, splitsAfterOpen, "never splits extra panes");
+		assert.equal(
+			allCalls.filter((args) => args[1] === "start").length,
+			startsAfterOpen,
+			"never starts duplicate seats",
+		);
 	} finally {
 		rmSync(f.root, { recursive: true, force: true });
 	}

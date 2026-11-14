@@ -24,7 +24,7 @@ interface FakeAgent {
 	cwd: string;
 }
 
-type StartBehavior = "ok" | "not-ready";
+type StartBehavior = "ok" | "not-ready" | "crash";
 
 /** Stateful Herdr fake: panes belong to tabs, agents live in panes, and names are unique. */
 class StatefulHerdr {
@@ -96,6 +96,7 @@ class StatefulHerdr {
 			const paneId = args[6] ?? "";
 			if (this.agents.has(name)) return this.error("agent_name_in_use", `agent name ${name} already in use`);
 			const behavior = this.startBehavior.get(name) ?? "ok";
+			if (behavior === "crash") return this.error("launch_failed", `agent ${name} exited during startup`);
 			this.agents.set(name, { paneId, status: behavior === "ok" ? "idle" : "blocked", cwd: this.root });
 			if (behavior === "not-ready") return this.error("agent_not_ready", `agent ${name} is waiting at a prompt`);
 			const agent = this.agents.get(name);
@@ -189,6 +190,7 @@ describe("openCouncilSeats", () => {
 		assert.ok(started.some((arg) => arg.endsWith("council-seat.md")));
 		assert.ok(started.some((arg) => arg.endsWith("read-only.md")));
 		assert.equal(JSON.parse(readFileSync(councilPaths(dir).state, "utf8")).maxRounds, 3);
+		assert.equal(manifest.reviewTimeoutMinutes, 10);
 
 		const splitsBefore = herdr.count("pane", "split");
 		const again = await open();
@@ -230,11 +232,12 @@ describe("openCouncilSeats", () => {
 		assert.equal(readManifest(dir).seats[1]?.paneId, waitingPane);
 	});
 
-	it("closes a vanished seat's stale pane before starting it again", async () => {
+	it("closes a vanished seat's stale pane and stacks its replacement into the surviving council column", async () => {
 		const { herdr, dir, open } = setup();
 		assert.ok((await open()).ok);
-		const stalePane = readManifest(dir).seats[0]?.paneId ?? "";
+		const [stalePane, survivingPane] = readManifest(dir).seats.map((seat) => seat.paneId ?? "");
 		herdr.agents.delete("council-demo-a");
+		const splitsBefore = herdr.calls.filter((call) => call[0] === "pane" && call[1] === "split").length;
 		const reopened = await open();
 		assert.ok(reopened.ok, reopened.ok ? "" : reopened.error);
 		const closeIndex = herdr.calls.findIndex((call) => call[1] === "close" && call[2] === stalePane);
@@ -242,6 +245,31 @@ describe("openCouncilSeats", () => {
 		assert.ok(closeIndex >= 0 && closeIndex < lastStart);
 		assert.notEqual(readManifest(dir).seats[0]?.paneId, stalePane);
 		assert.equal(herdr.paneTabs.has(stalePane), false);
+		const reopenSplits = herdr.calls.filter((call) => call[0] === "pane" && call[1] === "split").slice(splitsBefore);
+		assert.equal(reopenSplits.length, 1);
+		assert.equal(reopenSplits[0]?.[2], survivingPane);
+		assert.equal(reopenSplits[0]?.[4], "down");
+	});
+
+	it("stacks a seat that failed initial startup under the surviving seat on rerun instead of splitting the caller again", async () => {
+		const { herdr, dir, open } = setup();
+		herdr.startBehavior.set("council-demo-a", "crash");
+		const first = await open();
+		assert.equal(first.ok, false);
+		const failedPane = readManifest(dir).seats[0]?.paneId ?? "";
+		const survivingPane = readManifest(dir).seats[1]?.paneId ?? "";
+		assert.ok(failedPane && survivingPane);
+
+		herdr.startBehavior.set("council-demo-a", "ok");
+		const splitsBefore = herdr.calls.filter((call) => call[0] === "pane" && call[1] === "split").length;
+		const second = await open();
+		assert.ok(second.ok, second.ok ? "" : second.error);
+		assert.equal(second.status, "ready");
+		assert.equal(herdr.paneTabs.has(failedPane), false, "closed the failed startup pane");
+		const retrySplits = herdr.calls.filter((call) => call[0] === "pane" && call[1] === "split").slice(splitsBefore);
+		assert.equal(retrySplits.length, 1);
+		assert.equal(retrySplits[0]?.[2], survivingPane);
+		assert.equal(retrySplits[0]?.[4], "down");
 	});
 
 	it("refuses a name held outside the manifest and a changed roster", async () => {
@@ -423,15 +451,20 @@ describe("Council Rex backend and cross-backend binding", () => {
 		assert.equal(rex.calls.filter((call) => call[0] === "split").length, splitsBeforeAdopt);
 		assert.equal(readManifest(dir).seats[1]?.paneId, waitingPane);
 
-		// Vanished seat's stale block is closed before restarting.
+		// Vanished seat's stale block is closed before restarting inside the surviving council column.
 		const stalePane = readManifest(dir).seats[0]?.paneId ?? "";
 		const staleBlock = rex.blocks.get(stalePane)!;
 		staleBlock.processName = "zsh";
 		delete staleBlock.piState;
+		const rexSplitsBeforeReopen = rex.calls.filter((call) => call[0] === "split").length;
 		const reopened = await open();
 		assert.ok(reopened.ok, reopened.ok ? "" : reopened.error);
 		assert.equal(rex.blocks.has(stalePane), false);
 		assert.notEqual(readManifest(dir).seats[0]?.paneId, stalePane);
+		const rexReopenSplits = rex.calls.filter((call) => call[0] === "split").slice(rexSplitsBeforeReopen);
+		assert.equal(rexReopenSplits.length, 1);
+		assert.ok(rexReopenSplits[0]?.includes(waitingPane));
+		assert.ok(rexReopenSplits[0]?.includes("below"));
 
 		// Wrong caller window is refused.
 		rex.blocks.get(rex.callerBlock)!.windowId = "window:other";

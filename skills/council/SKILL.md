@@ -40,7 +40,7 @@ The command prints JSON. Seats open in one column to the right of your pane, nam
 - `waiting` (exit 1): a seat is at a prompt, usually project trust, including on its first start. Tell the user each waiting seat's `paneId`, wait for them to answer, then rerun the same `council open`. Rerunning adopts the waiting seat instead of starting another.
 - `failed` (exit 1): report `error` and each failed seat's `error` and `paneId`, then stop. For a missing roster, ask the user for `--seats` or a `council` section.
 
-Run every council command from this tab (a Rex window) and under the same terminal backend. The council is bound to both. Record the seat model references from the `seats` array of the open output; the implementation review reuses exactly these seats and models.
+Run every council command from this tab (a Rex window) and under the same terminal backend. The council is bound to both; both planning rounds and implementation review attach to these exact seat panes.
 
 ## Draft the plan
 
@@ -129,55 +129,32 @@ Approval of the plan alone is not authorization to edit. Show the user the appro
 
 ## Implementation review
 
-Run every remaining council seat (from the open output's `seats`) as a read-only implementation reviewer in parallel:
+Review the implementation bundle with the opened council seats in your tab:
 
-1. Create one prompt file per seat: copy `references/implementation-reviewer.md` and append an `## Inputs` section listing absolute paths for that seat's `task.md`, `approved-plan.md`, `execution-ledger.md`, `diff.patch`, and `vcs-policy.md`; if `playbook-path.txt` exists, include the playbook path too.
-2. Write a fanout spec JSON (one task per seat) with:
-   - `owner`: `council` (owner and task labels are capped at 16 characters)
-   - `label`: `impl-review`
-   - `cwd`: the repository root (absolute)
-   - `maxConcurrency`: the number of seats (≤ 8)
-   - per task: `label` (`seat-a`, …), `model` (the seat's model ref from the open output), `cwd` (repository root), `promptFile` (the per-seat prompt), `outputFile` (`plans/<slug>-implement/review-<letter>.md`), `access`: `"read-only"`, `noContextFiles`: true, `timeoutMinutes`: `council.reviewTimeoutMinutes` or 10.
-   `promptFile` and `outputFile` must be absolute paths. Save the spec as `local/<slug>-review-spec.json`.
+```sh
+node "$CLI" council review --dir "$COUNCIL" \
+  --bundle "$PWD/plans/<slug>-implement"
+```
 
-   For example:
+Append `--cwd "<absolute workstream path>"` when the workstream lives in a separate worktree or jj workspace from the directory where `council open` ran.
 
-   ```json
-   {
-     "owner": "council",
-     "label": "impl-review",
-     "cwd": "/fixture/repo",
-     "maxConcurrency": 2,
-     "tasks": [
-       {
-         "label": "seat-a",
-         "model": "provider/model",
-         "cwd": "/fixture/repo",
-         "promptFile": "/fixture/repo/plans/example-implement/review-prompt-a.md",
-         "outputFile": "/fixture/repo/plans/example-implement/review-a.md",
-         "access": "read-only",
-         "noContextFiles": true,
-         "timeoutMinutes": 10
-       }
-     ]
-   }
-   ```
-3. Run:
+The CLI snapshots `diff.patch` and `execution-ledger.md`, asks every manifest seat in parallel in its existing pane, validates each critique with one repair ask, and writes `plans/<slug>-implement/verdict.md` plus `review-<letter>.md`.
 
-   ```sh
-   node "$CLI" fanout --spec "<abs>/local/<slug>-review-spec.json" \
-     --out "<abs>/plans/<slug>-implement/review-summary.json"
-   ```
+Act on the JSON `status` and `decision`:
 
-4. After the fanout returns, build `plans/<slug>-implement/verdict.md` from every seat's output file: first line `Decision: approve` (all seats approved) or `Decision: revise` (any seat revised), then one section per seat (`Verdict`, `## Blocking`, `## Suggestions`, `## Resolved from previous round`). This file is the fixer's and publisher's input.
+- **approve**: Continue to [Publish](#publish) once the user approves publishing.
+- **revise**: Go to [Fix](#fix).
+- **exhausted**: The budgeted implementation-review rounds are used and findings remain in `verdictFile`. Present them to the user and let them decide: steer a seat in its pane, accept with their direction, or stop.
+- **incomplete** (exit 1): Name each seat and pane in `failures`. After the user resolves the cause (if a seat pane vanished or is not ready, rerun `council open` first to replace it in the council column), rerun the same `council review` command; it asks only seats without a valid reply against the same snapshot.
+- **failed** (exit 1): Fix the reported seat, bundle, or diff input (for example, rerunning `council open` if a seat is missing, or regenerating `diff.patch` after a fix round) and rerun.
 
 ## Fix
 
-If the verdict file says `Decision: revise`, address the blocking findings in this session (the user already approved this implementation run when they approved starting it):
+When `council review` returns `decision: "revise"`, address the blocking findings in this session (the user already approved this implementation run when they approved starting it):
 
 1. Read `references/review-fixer.md` and follow its contract: read `plans/<slug>-implement/verdict.md`, verify each finding in the live repository, fix every `[B-n]`, skip or dispute only with evidence, record verified commits on the same workstream, and never push or publish.
-2. Regenerate the diff, rebuild the per-seat prompt files (appending the previous verdicts as `## Resolved from previous round` context), and rerun the same fanout, then rebuild `verdict.md`.
-3. Loop until the verdict is `Decision: approve` or the council's `maxRounds` budget (from the open/roster output) is exhausted. If exhausted, present the open findings to the user and let them decide: steer a seat, override with their direction, or stop.
+2. Regenerate `plans/<slug>-implement/diff.patch` (and update `execution-ledger.md` when a skipped or disputed note belongs there), then rerun `council review`.
+3. Loop until `council review` returns `decision: "approve"` or `decision: "exhausted"`.
 
 ## Publish
 
