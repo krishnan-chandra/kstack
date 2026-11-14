@@ -108,9 +108,10 @@ export async function openAgentHost(
 }
 
 /**
- * Create the host in a new split of the caller's own pane instead of a separate
- * tab. The caller's tab is never closed by `dispose`, so the reviewer stays
- * visible for inspection and steering.
+ * Create the host in a new split of the caller's pane (or `anchorPaneId` when
+ * supplied) instead of a separate tab. When `direction` is set, `keepFraction`
+ * controls the source pane's share and defaults to `0.5`. The caller's tab is
+ * never closed by `dispose`, so hosted agents stay visible for steering.
  */
 export async function openPaneHost(options: PaneHostOptions, deps: HostDeps): Promise<OpenResult> {
 	const connected = await connectTerminal(deps);
@@ -118,7 +119,11 @@ export async function openPaneHost(options: PaneHostOptions, deps: HostDeps): Pr
 	return openPaneHostIn(connected.session, options, deps);
 }
 
-/** {@link openPaneHost} for a caller that already holds a preflighted session. */
+/**
+ * {@link openPaneHost} for a caller that already holds a preflighted session.
+ * Splits `options.anchorPaneId ?? session.caller.paneId` in `options.direction`
+ * (keeping `options.keepFraction ?? 0.5`) or according to `paneSplitDecision`.
+ */
 export async function openPaneHostIn(
 	session: TerminalSession,
 	options: PaneHostOptions,
@@ -128,21 +133,30 @@ export async function openPaneHostIn(
 	if (!validMaxAgents(options.maxAgents)) {
 		return { ok: false, error: `maxAgents must be an integer from 1 to ${MAX_AGENTS_PER_HOST}.` };
 	}
+	const anchorPaneId = options.anchorPaneId ?? caller.paneId;
 	let decision: PaneSplitDecision;
 	if (options.direction) {
-		decision = { direction: options.direction, ratio: 0.5 };
+		const ratio = options.keepFraction ?? 0.5;
+		if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) {
+			return { ok: false, error: "keepFraction must be between 0 and 1 (exclusive)." };
+		}
+		decision = { direction: options.direction, ratio };
 	} else {
-		const callerLayout = await backend.paneGeometry(caller.paneId);
-		decision = paneSplitDecision(callerLayout.ok ? callerLayout.value : { widthColumns: 240, heightRows: 60 });
+		const anchorLayout = await backend.paneGeometry(anchorPaneId);
+		decision = paneSplitDecision(anchorLayout.ok ? anchorLayout.value : { widthColumns: 240, heightRows: 60 });
 	}
 	const split = await backend.splitPane({
-		paneId: caller.paneId,
+		paneId: anchorPaneId,
 		direction: decision.direction,
 		keepFraction: decision.ratio,
 		cwd: options.cwd,
 	});
 	if (!split.ok) {
-		return { ok: false, error: `Could not split the caller's ${backendLabel(backend.kind)} pane: ${split.message}` };
+		const target =
+			anchorPaneId === caller.paneId
+				? `the caller's ${backendLabel(backend.kind)} pane`
+				: `${backendLabel(backend.kind)} pane ${anchorPaneId}`;
+		return { ok: false, error: `Could not split ${target}: ${split.message}` };
 	}
 	try {
 		const layout = await backend.paneGeometry(split.value.paneId);
@@ -180,8 +194,12 @@ interface HostOptions {
 }
 
 interface PaneHostOptions extends HostOptions {
-	/** Split the caller's pane this way instead of choosing from its geometry. */
+	/** Split this pane instead of the caller's pane (for example, a surviving council seat). */
+	anchorPaneId?: string;
+	/** Split the anchor pane this way instead of choosing from its geometry. */
 	direction?: PaneSplitDirection;
+	/** Source-pane share `(0, 1)` for the initial split when `direction` is set; defaults to `0.5`. */
+	keepFraction?: number;
 }
 
 /** Internal signal that a queued agent start was cancelled before or during launch. */
