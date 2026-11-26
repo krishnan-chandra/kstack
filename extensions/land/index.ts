@@ -10,7 +10,7 @@ import { stackProviderFor } from "../shared/stack/provider.ts";
 import type { VcsBackend } from "../shared/vcs/backend.ts";
 import { loadVcsBackend, type VcsBackendConfig } from "../shared/vcs/config.ts";
 import { createVcsBackend } from "../shared/vcs/factory.ts";
-import { claimLandRequest, LAND_REQUEST_EVENT, type LandRequestPayload } from "./api.ts";
+import { claimLandRequest, LAND_REQUEST_EVENT, type StackFrontierLandRequest } from "./api.ts";
 import { completeLandArgs, parseLandArgs } from "./command.ts";
 import { getRepoMethod, type LandConfig, loadLandConfig } from "./config.ts";
 import { LandLifecycle, StackLandingLifecycle } from "./lifecycle.ts";
@@ -79,7 +79,11 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return loaded.status === "loaded" ? loaded.config : { repos: {} };
 	}
 
-	async function runSingle(request: LandRequestPayload, interactiveRepository?: string): Promise<LandResult> {
+	type SingleLandInput =
+		| StackFrontierLandRequest
+		| { kind: "interactive"; options: LandOptions; ctx: ExtensionContext };
+
+	async function runSingle(request: SingleLandInput, interactiveRepository?: string): Promise<LandResult> {
 		const { ctx } = request;
 		const options = request.options;
 		const token = lifecycle.begin();
@@ -174,18 +178,7 @@ export default function landExtension(pi: ExtensionAPI): void {
 		});
 	}
 
-	async function executeRequest(
-		request: LandRequestPayload,
-		prepared?: { backend: VcsBackend; config: VcsBackendConfig; repository: string },
-	): Promise<LandResult> {
-		let result: LandResult;
-		if (!request.ctx.hasUI) {
-			result = blockedLandResult("Land requires interactive TUI/RPC mode.");
-		} else if (request.kind === "stack-frontier") {
-			result = await runSingle(request);
-		} else {
-			result = await executeInteractive(request.options, request.ctx, prepared);
-		}
+	function emitLandResult(result: LandResult): LandResult {
 		pi.sendMessage({
 			customType: "land",
 			content: [...result.blockers, ...(result.warnings ?? []), ...result.completedMutations].join("\n"),
@@ -195,7 +188,14 @@ export default function landExtension(pi: ExtensionAPI): void {
 		return result;
 	}
 
-	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, executeRequest));
+	async function executeFrontierRequest(request: StackFrontierLandRequest): Promise<LandResult> {
+		const result = request.ctx.hasUI
+			? await runSingle(request)
+			: blockedLandResult("Land requires interactive TUI/RPC mode.");
+		return emitLandResult(result);
+	}
+
+	pi.events.on(LAND_REQUEST_EVENT, (data) => claimLandRequest(data, executeFrontierRequest));
 	pi.registerCommand("land", {
 		description: "Land a merge-ready PR: /land [--pr N] [--method squash|rebase] [--readiness check|watch]",
 		getArgumentCompletions: completeLandArgs,
@@ -226,18 +226,16 @@ export default function landExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(pr.message, "error");
 				return;
 			}
-			await executeRequest(
+			const result = await executeInteractive(
 				{
-					kind: "interactive",
-					options: {
-						target: { kind: "single", prNumber: pr.prNumber },
-						readiness: parsed.args.readiness,
-						method: parsed.args.method,
-					},
-					ctx,
+					target: { kind: "single", prNumber: pr.prNumber },
+					readiness: parsed.args.readiness,
+					method: parsed.args.method,
 				},
+				ctx,
 				{ backend, config: resolved.config, repository: resolved.repository },
 			);
+			emitLandResult(result);
 		},
 	});
 }

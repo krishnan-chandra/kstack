@@ -26,11 +26,6 @@ type HandoffParseResult =
 	| { ok: true; goal: string; modelRef?: string; archive: boolean }
 	| { ok: false; error: string };
 
-type ModelResolution =
-	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel }
-	| { status: "not-found" }
-	| { status: "ambiguous"; matches: HandoffModel[] };
-
 type DetailedModelResolution =
 	| { status: "resolved"; model: HandoffModel; effort?: HandoffEffortLevel; effortSource?: "suffix" | "alias" }
 	| { status: "not-found" }
@@ -201,18 +196,6 @@ export function resolveModelReferenceWithSource(
 		return { status: "resolved", model: prefixMatch.model, effort: suffix, effortSource: "suffix" };
 	}
 	return prefixMatch;
-}
-
-export function resolveModelReference(
-	models: HandoffModel[],
-	reference: string,
-	aliases: readonly ModelAlias[] = [],
-): ModelResolution {
-	const resolved = resolveModelReferenceWithSource(models, reference, aliases);
-	if (resolved.status !== "resolved") return resolved;
-	return resolved.effort === undefined
-		? { status: "resolved", model: resolved.model }
-		: { status: "resolved", model: resolved.model, effort: resolved.effort };
 }
 
 function matchModelReference(

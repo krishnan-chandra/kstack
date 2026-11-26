@@ -1,7 +1,6 @@
-/** GitHub-native stack preflight and publication orchestration. */
+/** GitHub-native stack publication orchestration. */
 
-import { readFileSync } from "node:fs";
-import { commandDiagnostic, type ExecFn, type ExecFnResult, runCommand } from "../shared/git-exec.ts";
+import { commandDiagnostic, type ExecFn, type ExecFnResult } from "../shared/git-exec.ts";
 import {
 	GitHubError,
 	type GitHubGateway,
@@ -10,9 +9,7 @@ import {
 	type OpenPullRequest,
 } from "../shared/github.ts";
 import type { acquirePublicationLock } from "../shared/publication-lock.ts";
-import type { StackPreflight } from "../shared/stack/channel.ts";
 import {
-	parseStackManifest,
 	type StackManifest,
 	type VerifiedStackManifest,
 	verifyStackManifestGitFacts,
@@ -24,9 +21,7 @@ import { createPublicationProgress } from "../shared/stack/publication-progress.
 import { createNavigationCommentStore } from "../shared/stack/topology.ts";
 import { runPublication, type StackPlanResult, type StackTransactionPhase } from "../shared/stack/transaction.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
-import type { VcsResult } from "../shared/vcs/backend.ts";
-import { preflightVcs } from "../shared/vcs/preflight.ts";
-import { requireGit238, resolveGitRemote, resolveGitTrunk, trunkBranchFromManifestRef } from "./repository.ts";
+import { resolveGitRemote, trunkBranchFromManifestRef } from "./repository.ts";
 
 interface PublicationSlice {
 	branch: string;
@@ -62,68 +57,7 @@ interface GitHubPublicationDeps {
 	signal?: AbortSignal;
 	acquireLock?: typeof acquirePublicationLock;
 	realpath?: (path: string) => string;
-	readManifest?: (path: string) => string;
 	onPhase?: (phase: StackTransactionPhase) => void;
-}
-
-function childPolicy(input: { trunkRef: string; trunkSha: string; manifestPath?: string }): string {
-	if (!input.manifestPath) throw new Error("GitHub stack mode requires a private manifest path.");
-	return [
-		"# Local GitHub stack policy",
-		"Build a local Git branch stack; the parent owns every remote mutation.",
-		`Start from ${input.trunkRef} at immutable commit ${input.trunkSha}.`,
-		"Create one kstack/<slice> branch per approved PR slice with git switch -c, and record coherent commits on each branch.",
-		"Do not push, run gh mutations, or rewrite a published branch.",
-		`After every branch or commit change, atomically replace ${input.manifestPath} with schemaVersion 1 JSON containing trunkRef, trunkSha, and ordered slices [{branch, baseBranch, headSha, subject}].`,
-		"Leave a clean working tree with the manifest top checked out. The manifest is evidence only; the parent revalidates every fact.",
-	].join("\n\n");
-}
-
-export async function preflightGitHubStack(
-	cwd: string,
-	manifestPath: string | undefined,
-	exec: ExecFn,
-	gateway: GitHubGateway,
-	planOnly = false,
-): Promise<VcsResult<StackPreflight>> {
-	const common = await preflightVcs(cwd, "git", exec);
-	if (!common.ok) return common;
-	const version = await requireGit238(common.workspaceRoot, exec);
-	if (!version.ok) return version;
-	if (!planOnly) {
-		const clean = await runCommand(
-			exec,
-			"git",
-			["status", "--porcelain=v1", "--untracked-files=all"],
-			common.workspaceRoot,
-		);
-		if (clean.code !== 0 || clean.stdout.trim()) {
-			return {
-				ok: false,
-				error: "GitHub stack mode requires a clean working tree; commit, stash, or discard existing changes first.",
-			};
-		}
-	}
-	if (!planOnly && !manifestPath) return { ok: false, error: "GitHub stack mode requires a private manifest path." };
-	const remote = await resolveGitRemote(common.workspaceRoot, "origin", exec);
-	if (!remote.ok) return remote;
-	const trunk = await resolveGitTrunk({
-		cwd: common.workspaceRoot,
-		remote: remote.remote,
-		exec,
-		gateway,
-		fetch: !planOnly,
-	});
-	if (!trunk.ok) return trunk;
-	return {
-		ok: true,
-		workspaceRoot: common.workspaceRoot,
-		trunkRef: trunk.trunk.ref,
-		trunkSha: trunk.trunk.sha,
-		childPolicy: manifestPath
-			? childPolicy({ trunkRef: trunk.trunk.ref, trunkSha: trunk.trunk.sha, manifestPath })
-			: "",
-	};
 }
 
 export async function planGitHubPublication(input: {
@@ -279,32 +213,6 @@ function planBlocked(message: string): StackPlanResult<GitHubPublicationPlan> {
 	return { ok: false, blockers: [{ code: "provider-contract", message }] };
 }
 
-export async function publishGitHubManifestFile(input: {
-	cwd: string;
-	manifestPath: string | undefined;
-	remote: string;
-	ready: boolean;
-	deps: GitHubPublicationDeps;
-}): Promise<StackPublishOutcome> {
-	if (!input.manifestPath) return { status: "failed", error: "GitHub stack manifest path is unavailable." };
-	let raw: string;
-	try {
-		raw = (input.deps.readManifest ?? ((path) => readFileSync(path, "utf8")))(input.manifestPath);
-	} catch (error) {
-		return blocked(`Could not read the GitHub stack manifest: ${errorMessage(error)}`);
-	}
-	const parsed = parseStackManifest(raw);
-	if (!parsed.ok) return blocked(parsed.error);
-	return publishGitHubStack({
-		cwd: input.cwd,
-		manifest: parsed.manifest,
-		remote: input.remote,
-		ready: input.ready,
-		authorization: "interactive-confirmation",
-		deps: input.deps,
-	});
-}
-
 async function applyPublication(
 	plan: GitHubPublicationPlan,
 	ready: boolean,
@@ -449,14 +357,6 @@ async function applyPublication(
 		publication,
 		completedActions: [...progress.completedActions(), ...comments.completed],
 		...(commentErrors.length > 0 ? { commentErrors } : undefined),
-	};
-}
-
-function blocked(message: string, planId?: string): StackPublishOutcome {
-	return {
-		status: "blocked",
-		blockers: [{ code: "provider-contract", message }],
-		...(planId ? { planId } : undefined),
 	};
 }
 

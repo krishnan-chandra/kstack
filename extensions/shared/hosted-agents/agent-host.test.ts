@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
-import { type AgentHost, type HostDeps, openAgentHost, openPaneHost } from "./agent-host.ts";
+import { type AgentHost, type HostDeps, openAgentHost, openPaneHostIn } from "./agent-host.ts";
 import { buildAgentName, type HostedAgentSpec, hostedAgentArgs } from "./agent-spec.ts";
 import { connectTerminal, preflightTerminal } from "./backends.ts";
 import { virtualClock } from "./clock.ts";
@@ -357,7 +357,23 @@ describe("preflightTerminal (Herdr)", () => {
 	});
 });
 
-describe("openPaneHost", () => {
+async function openPaneHost(
+	options: {
+		owner: string;
+		label: string;
+		cwd: string;
+		maxAgents: number;
+		direction?: "right" | "down";
+		maxColumns?: number;
+	},
+	deps: HostDeps,
+) {
+	const connected = await connectTerminal(deps);
+	if (!connected.ok) return connected;
+	return openPaneHostIn(connected.session, { direction: "right", ...options }, deps);
+}
+
+describe("openPaneHostIn", () => {
 	for (const rollbackFails of [false, true]) {
 		it(`rolls back only its split after construction fails (rollback fails: ${rollbackFails})`, async (t) => {
 			const harness = makeHarness("pane-construction-failure");
@@ -977,23 +993,30 @@ describe("agent-host: ask protocol", () => {
 		if (result.status === "blocked") assert.equal(result.paneId, harness.fake.rootPaneId);
 	});
 
-	it("maps a prompt that settles blocked, then resumes to completion", async () => {
+	it("keeps cancellation connected after a delivered prompt blocks", async () => {
 		const harness = makeHarness("ask-blocked-settle");
 		harness.fake.agentStatus = "blocked";
 		harness.fake.onPrompt = () => {
 			harness.fake.appendSession([{ input: 11, output: 3, cost: 0.1 }]);
 		};
 		const { agent } = await startOne(harness.fake);
-		const blocked = await agent.ask(askOptions(harness));
+		const controller = new AbortController();
+		const blocked = await agent.ask(askOptions(harness, { signal: controller.signal }));
 		assert.equal(blocked.status, "blocked");
 		harness.fake.agentStatus = "idle";
-		// The agent finished while blocked: its session grew and the answer landed.
-		harness.fake.respond("resumed answer\n", { input: 4, output: 2, cost: 0.01 });
-		const resumed = await agent.resume();
-		assert.equal(resumed.status, "completed");
-		if (resumed.status === "completed") {
-			assert.equal(resumed.output, "resumed answer\n");
-			assert.deepEqual(resumed.usage, { input: 4, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 });
+		controller.abort();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(
+			harness.fake.callsMatching("agent send-keys").map((call) => call.args.slice(3)),
+			[["esc"]],
+		);
+		await agent.dispose();
+		harness.fake.onPrompt = () => harness.fake.respond("next answer\n", { input: 4, output: 2, cost: 0.01 });
+		const next = await agent.ask(askOptions(harness));
+		assert.equal(next.status, "completed");
+		if (next.status === "completed") {
+			assert.equal(next.output, "next answer\n");
+			assert.deepEqual(next.usage, { input: 4, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 });
 		}
 	});
 
@@ -1300,21 +1323,6 @@ describe("agent-host review regressions", () => {
 		await host.dispose();
 	});
 
-	it("delivers a rejected-before-send request once after the dialog resolves", async () => {
-		const h = makeHarness("blocked-delivery");
-		h.fake.promptResponses.push({
-			code: 1,
-			stdout: "",
-			stderr: JSON.stringify({ error: { code: "agent_blocked", message: "dialog" } }),
-		});
-		h.fake.onPrompt = () => h.fake.respond("delivered");
-		const { agent } = await startOne(h.fake);
-		assert.equal((await agent.ask(askOptions(h))).status, "blocked");
-		assert.equal((await agent.resume()).status, "completed");
-		assert.equal(h.fake.callsMatching("agent prompt").length, 2);
-		assert.equal(readFileSync(h.outputFile, "utf8"), "delivered");
-	});
-
 	it("cancellation wins over a successful prompt envelope and drains before returning", async () => {
 		const h = makeHarness("cancel-success");
 		const controller = new AbortController();
@@ -1327,34 +1335,6 @@ describe("agent-host review regressions", () => {
 		assert.equal(h.fake.callsMatching("agent send-keys").length, 1);
 		assert.equal(h.fake.callsMatching("agent wait").length, 1);
 		assert.equal(readFileSync(h.outputFile, "utf8"), "");
-	});
-
-	it("keeps cancellation connected while blocked and resets abort for the next request", async () => {
-		const h = makeHarness("cancel-blocked");
-		const { agent } = await startOne(h.fake);
-		for (let round = 0; round < 2; round++) {
-			const controller = new AbortController();
-			h.fake.agentStatus = "blocked";
-			assert.equal((await agent.ask(askOptions(h, { signal: controller.signal }))).status, "blocked");
-			controller.abort();
-			h.fake.agentStatus = "idle";
-			assert.equal((await agent.resume()).status, "aborted");
-		}
-		assert.equal(h.fake.callsMatching("agent send-keys").length, 2);
-	});
-
-	it("drains a timed-out resume", async () => {
-		const h = makeHarness("resume-timeout");
-		h.fake.agentStatus = "blocked";
-		const { agent } = await startOne(h.fake);
-		assert.equal((await agent.ask(askOptions(h))).status, "blocked");
-		h.fake.on(
-			(args) => args[0] === "agent" && args[1] === "wait" && args.includes("60000"),
-			() => ({ code: 1, stdout: "", stderr: JSON.stringify({ error: { code: "timeout", message: "timed out" } }) }),
-		);
-		h.fake.agentStatus = "idle";
-		assert.equal((await agent.resume()).status, "failed");
-		assert.equal(h.fake.callsMatching("agent send-keys").length, 1);
 	});
 
 	it("rejects partial file output followed by a provider error", async () => {

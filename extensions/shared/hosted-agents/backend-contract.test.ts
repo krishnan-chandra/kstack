@@ -5,7 +5,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { type HostDeps, openAgentHost, openPaneHost } from "./agent-host.ts";
+import { type HostDeps, openAgentHost, openPaneHostIn } from "./agent-host.ts";
 import { readHostedAgentState, writeHostedAgentState } from "./agent-state.ts";
 import { connectTerminal } from "./backends.ts";
 import { virtualClock } from "./clock.ts";
@@ -520,29 +520,26 @@ for (const [kind, makeWorld] of WORLDS) {
 			await opened.host.dispose({ closeTab: true });
 		});
 
-		it("handles blocked-before-send and blocked-after-send then resumes to completion", async () => {
+		it("disposes only delivered blocked prompts and allows a fresh ask after cleanup", async () => {
 			const world = makeWorld();
 			const opened = await openAgentHost({ owner: "swarm", label: "run", cwd: world.root, maxAgents: 1 }, world.deps());
 			assert.ok(opened.ok);
 			const started = await opened.host.start({ role: "worker", model: "p/m", cwd: world.root });
 			assert.ok(started.ok);
 
-			// 1. Blocked before send: resume delivers the stored prompt once unblocked.
-			world.setPromptScenario("blocked-before-send", "after pre-send unblock\n");
+			world.setPromptScenario("blocked-before-send");
 			const blockedPre = await started.agent.ask({
 				promptFile: world.instructionsFile,
 				outputFile: world.outputFile,
 				timeoutMs: 60_000,
 			});
 			assert.equal(blockedPre.status, "blocked");
+			const paneKeys = () => world.keysSentTo(started.agent.paneId);
+			const beforePreDispose = paneKeys().length;
+			await started.agent.dispose();
+			assert.deepEqual(paneKeys().slice(beforePreDispose), []);
 			world.unblockAgent(started.agent.paneId);
-			const resumedPre = await started.agent.resume();
-			assert.equal(resumedPre.status, "completed");
-			if (resumedPre.status === "completed") {
-				assert.equal(resumedPre.output, "after pre-send unblock\n");
-			}
 
-			// 2. Blocked after send: resume waits for settlement and collects the answer.
 			world.setPromptScenario("blocked-after-send");
 			const blockedPost = await started.agent.ask({
 				promptFile: world.instructionsFile,
@@ -550,11 +547,20 @@ for (const [kind, makeWorld] of WORLDS) {
 				timeoutMs: 60_000,
 			});
 			assert.equal(blockedPost.status, "blocked");
-			world.unblockAgent(started.agent.paneId, "after post-send unblock\n");
-			const resumedPost = await started.agent.resume();
-			assert.equal(resumedPost.status, "completed");
-			if (resumedPost.status === "completed") {
-				assert.equal(resumedPost.output, "after post-send unblock\n");
+			world.setAbortSettles(true);
+			const beforePostDispose = paneKeys().length;
+			await started.agent.dispose();
+			assert.deepEqual(paneKeys().slice(beforePostDispose), [["esc"]]);
+
+			world.setPromptScenario("complete", "after unblock\n");
+			const completed = await started.agent.ask({
+				promptFile: world.instructionsFile,
+				outputFile: world.outputFile,
+				timeoutMs: 60_000,
+			});
+			assert.equal(completed.status, "completed");
+			if (completed.status === "completed") {
+				assert.equal(completed.output, "after unblock\n");
 			}
 			await opened.host.dispose();
 		});
@@ -668,7 +674,10 @@ for (const [kind, makeWorld] of WORLDS) {
 
 		it("closes its allocated pane when a start is cancelled", async () => {
 			const world = makeWorld();
-			const opened = await openPaneHost(
+			const connected = await connectTerminal(world.deps());
+			assert.ok(connected.ok);
+			const opened = await openPaneHostIn(
+				connected.session,
 				{ owner: "council", label: "cancel", cwd: world.root, maxAgents: 1, direction: "right" },
 				world.deps(),
 			);

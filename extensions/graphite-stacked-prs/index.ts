@@ -8,33 +8,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
-import {
-	claimStackCapabilities,
-	claimStackLanding,
-	claimStackPreflight,
-	claimStackPublication,
-	STACK_CAPABILITIES_EVENT,
-	STACK_LANDING_EVENT,
-	STACK_PREFLIGHT_EVENT,
-	STACK_PUBLICATION_EVENT,
-	type StackProviderCapabilities,
-} from "../shared/stack/channel.ts";
+import { claimStackLanding, STACK_LANDING_EVENT } from "../shared/stack/channel.ts";
 import type { StackTransactionPhase } from "../shared/stack/transaction.ts";
-import { preflightGraphiteStack, publishGraphiteStack } from "./delivery.ts";
 import { type GraphiteLandingDeps, requestGraphiteStackLanding } from "./landing.ts";
-
-const GRAPHITE_CAPABILITIES: StackProviderCapabilities = {
-	schemaVersion: 1,
-	publication: true,
-};
-
-const GRAPHITE_PUBLICATION_STATUS = {
-	planning: "graphite-stack: planning publication",
-	confirming: "graphite-stack: confirm publication",
-	locking: "graphite-stack: waiting for the repository lock",
-	replanning: "graphite-stack: re-checking the plan",
-	applying: "graphite-stack: publishing",
-} satisfies Record<StackTransactionPhase, string>;
 
 const GRAPHITE_LANDING_STATUS = {
 	planning: "graphite-stack: planning landing",
@@ -60,10 +36,6 @@ class GraphiteStackLifecycle extends SessionRunLifecycle {
 
 	end(token: { generation: number }): void {
 		this.endRun(token);
-	}
-
-	abort(): boolean {
-		return this.abortRun();
 	}
 }
 
@@ -106,39 +78,6 @@ export default function graphiteStackedPrsExtension(pi: ExtensionAPI): void {
 			ctx.ui.setStatus("graphite-stack", undefined);
 		}
 	}
-
-	pi.events.on(STACK_CAPABILITIES_EVENT, (data) =>
-		claimStackCapabilities(data, "graphite", async () => GRAPHITE_CAPABILITIES),
-	);
-
-	pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
-		claimStackPreflight(data, "graphite", async (payload) =>
-			preflightGraphiteStack(payload.cwd, payload.manifestPath, exec, payload.planOnly),
-		),
-	);
-
-	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
-		claimStackPublication(data, "graphite", async (input, ctx) =>
-			withRun(
-				ctx,
-				async (signal) => {
-					ctx.ui.setStatus("graphite-stack", "graphite-stack: publishing");
-					const publicationSignals = [signal];
-					if (ctx.signal) publicationSignals.push(ctx.signal);
-					if (input.signal) publicationSignals.push(input.signal);
-					return publishGraphiteStack({
-						cwd: input.repositoryPath,
-						manifestPath: input.manifestPath,
-						exec,
-						ui: { hasUI: ctx.hasUI, confirm: (title, body) => ctx.ui.confirm(title, body) },
-						onPhase: (phase) => ctx.ui.setStatus("graphite-stack", GRAPHITE_PUBLICATION_STATUS[phase]),
-						signal: AbortSignal.any(publicationSignals),
-					});
-				},
-				() => ({ status: "busy" as const, message: "Another Graphite stack run is active." }),
-			),
-		),
-	);
 
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
 		claimStackLanding(data, "graphite", async ({ input, capabilities, ctx }) =>

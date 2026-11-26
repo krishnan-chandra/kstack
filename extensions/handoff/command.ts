@@ -21,13 +21,13 @@ import { archiveCurrentSession, preflightArchiveCurrentSession } from "../sessio
 import { loadKstackRoot } from "../shared/kstack-config.ts";
 import { collectCatalogueNameAliases, collectKstackModelAliases } from "../shared/model-aliases.ts";
 import { isRecord } from "../shared/narrow.ts";
-import { deriveSessionName } from "../shared/session-name.ts";
 import {
 	claimSessionTransition,
 	consumeSessionTransition,
 	parseToolTokenArg,
 	releaseSessionTransition,
 } from "../shared/session-transition.ts";
+import { extractSlug } from "../shared/slug.ts";
 import { buildReferenceHandoffPrompt, DEFAULT_HANDOFF_GOAL, formatHistoryReference } from "./handoff-context.ts";
 import {
 	availableHistoryTools,
@@ -317,7 +317,7 @@ function buildHandoffPlan(input: {
 		source: input.source,
 		historyRef: input.historyRef,
 		edited: input.edited,
-		replacementSessionName: deriveSessionName(editedGoal || input.goal),
+		replacementSessionName: extractSlug(editedGoal || input.goal, "development-task"),
 		expectedModel: input.targetModel ?? previousModel,
 		expectedEffort: input.requestedEffort ?? previousEffort,
 		targetModel: input.targetModel,

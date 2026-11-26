@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BoundaryValue } from "../shared/validation.ts";
-import { claimLandRequest, isLandRequest, LAND_REQUEST_EVENT, requestLand, requestStackFrontierLand } from "./api.ts";
+import { claimLandRequest, LAND_REQUEST_EVENT, requestStackFrontierLand } from "./api.ts";
 import type { LandResult } from "./types.ts";
 
 const SHA = "a".repeat(40);
@@ -28,25 +28,22 @@ function fixture() {
 	return { pi, listeners };
 }
 
-test("dispatches interactive and delegated frontier requests", async () => {
+function envelope(payload: BoundaryValue): BoundaryValue {
+	return { schemaVersion: 2, payload, claimed: false };
+}
+
+const noop = async () => outcome;
+
+test("dispatches delegated stack-frontier requests", async () => {
 	const { pi } = fixture();
-	const kinds: string[] = [];
+	const seen: Array<{ kind: string; repository?: string }> = [];
 	pi.events.on(LAND_REQUEST_EVENT, (value) =>
 		claimLandRequest(value, async (request) => {
-			kinds.push(request.kind);
-			if (request.kind === "stack-frontier") assert.equal(request.repository, "acme/widgets");
+			seen.push({ kind: request.kind, repository: request.repository });
 			return outcome;
 		}),
 	);
 	const ctx = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never;
-	assert.deepEqual(
-		await requestLand(
-			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
-			{ target: { kind: "single", prNumber: 3 }, readiness: "check" },
-			ctx,
-		),
-		{ handled: true, outcome },
-	);
 	assert.deepEqual(
 		await requestStackFrontierLand(
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
@@ -60,18 +57,13 @@ test("dispatches interactive and delegated frontier requests", async () => {
 		),
 		{ handled: true, outcome },
 	);
-	assert.deepEqual(kinds, ["interactive", "stack-frontier"]);
+	assert.deepEqual(seen, [{ kind: "stack-frontier", repository: "acme/widgets" }]);
 });
 
-function envelope(payload: BoundaryValue): BoundaryValue {
-	return { schemaVersion: 2, payload, claimed: false };
-}
-
-test("validates request variants and exact delegated heads", () => {
+test("validates delegated frontier heads, base refs, methods, and signals", () => {
 	const options = { target: { kind: "single", prNumber: 3 }, readiness: "check", method: "squash" };
-	assert.equal(isLandRequest(envelope({ kind: "interactive", options, ctx: {} })), true);
 	assert.equal(
-		isLandRequest(
+		claimLandRequest(
 			envelope({
 				kind: "stack-frontier",
 				options,
@@ -80,25 +72,38 @@ test("validates request variants and exact delegated heads", () => {
 				signal: new AbortController().signal,
 				ctx: {},
 			}),
+			noop,
 		),
 		true,
 	);
 	for (const expectedHeadSha of ["a".repeat(39), "A".repeat(40), "z".repeat(40)]) {
 		assert.equal(
-			isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha, expectedBaseRef: "main", ctx: {} })),
-			false,
-		);
-	}
-	assert.equal(isLandRequest(envelope({ kind: "stack-frontier", options, expectedBaseRef: "main", ctx: {} })), false);
-	assert.equal(isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha: SHA, ctx: {} })), false);
-	for (const expectedBaseRef of ["", "main\n", "main\0", "a".repeat(257)]) {
-		assert.equal(
-			isLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha: SHA, expectedBaseRef, ctx: {} })),
+			claimLandRequest(
+				envelope({ kind: "stack-frontier", options, expectedHeadSha, expectedBaseRef: "main", ctx: {} }),
+				noop,
+			),
 			false,
 		);
 	}
 	assert.equal(
-		isLandRequest(
+		claimLandRequest(envelope({ kind: "stack-frontier", options, expectedBaseRef: "main", ctx: {} }), noop),
+		false,
+	);
+	assert.equal(
+		claimLandRequest(envelope({ kind: "stack-frontier", options, expectedHeadSha: SHA, ctx: {} }), noop),
+		false,
+	);
+	for (const expectedBaseRef of ["", "main\n", "main\0", "a".repeat(257)]) {
+		assert.equal(
+			claimLandRequest(
+				envelope({ kind: "stack-frontier", options, expectedHeadSha: SHA, expectedBaseRef, ctx: {} }),
+				noop,
+			),
+			false,
+		);
+	}
+	assert.equal(
+		claimLandRequest(
 			envelope({
 				kind: "stack-frontier",
 				options: { target: { kind: "single", prNumber: 3 }, readiness: "check" },
@@ -106,66 +111,81 @@ test("validates request variants and exact delegated heads", () => {
 				expectedBaseRef: "main",
 				ctx: {},
 			}),
+			noop,
 		),
 		false,
 	);
-	assert.equal(isLandRequest(envelope({ kind: "interactive", options, expectedHeadSha: SHA, ctx: {} })), false);
-	assert.equal(
-		isLandRequest(envelope({ kind: "interactive", options, signal: new AbortController().signal, ctx: {} })),
-		false,
-	);
 });
 
-test("rejects old-schema envelopes", () => {
+test("rejects old-schema, malformed repository, and malformed option envelopes", () => {
 	const options = { target: { kind: "single", prNumber: 3 }, readiness: "check", method: "squash" };
 	assert.equal(
-		isLandRequest({
-			schemaVersion: 1,
-			payload: {
-				kind: "stack-frontier",
-				options,
-				expectedHeadSha: SHA,
-				expectedBaseRef: "main",
-				ctx: {},
+		claimLandRequest(
+			{
+				schemaVersion: 1,
+				payload: { kind: "stack-frontier", options, expectedHeadSha: SHA, expectedBaseRef: "main", ctx: {} },
+				claimed: false,
 			},
-			claimed: false,
-		}),
+			noop,
+		),
 		false,
 	);
-});
-
-test("rejects malformed delegated repository identities", () => {
 	for (const repository of ["a/b/c", "--repo", null]) {
 		assert.equal(
-			isLandRequest(
+			claimLandRequest(
 				envelope({
 					kind: "stack-frontier",
 					expectedHeadSha: SHA,
 					expectedBaseRef: "main",
 					repository,
 					ctx: {},
-					options: { target: { kind: "single", prNumber: 4 }, readiness: "check", method: "squash" },
+					options,
 				}),
+				noop,
 			),
 			false,
 		);
 	}
-});
-
-test("rejects malformed options and contexts", () => {
-	for (const payload of [
-		{ kind: "interactive", options: { target: { kind: "stack", prNumber: 3 }, readiness: "check" }, ctx: {} },
-		{ kind: "interactive", options: { target: { kind: "single", prNumber: 0 }, readiness: "check" }, ctx: {} },
-		{ kind: "interactive", options: { target: { kind: "single", prNumber: 3 }, readiness: "later" }, ctx: {} },
+	for (const bad of [
+		{ kind: "interactive", options, ctx: {} },
 		{
-			kind: "interactive",
+			kind: "stack-frontier",
+			expectedHeadSha: SHA,
+			expectedBaseRef: "main",
+			options: { target: { kind: "stack", prNumber: 3 }, readiness: "check", method: "squash" },
+			ctx: {},
+		},
+		{
+			kind: "stack-frontier",
+			expectedHeadSha: SHA,
+			expectedBaseRef: "main",
+			options: { target: { kind: "single", prNumber: 0 }, readiness: "check", method: "squash" },
+			ctx: {},
+		},
+		{
+			kind: "stack-frontier",
+			expectedHeadSha: SHA,
+			expectedBaseRef: "main",
+			options: { target: { kind: "single", prNumber: 3 }, readiness: "later", method: "squash" },
+			ctx: {},
+		},
+		{
+			kind: "stack-frontier",
+			expectedHeadSha: SHA,
+			expectedBaseRef: "main",
 			options: { target: { kind: "single", prNumber: 3 }, readiness: "check", method: "merge" },
 			ctx: {},
 		},
-		{ kind: "interactive", options: { target: { kind: "single", prNumber: 3 }, readiness: "check", cwd: "" }, ctx: {} },
-		{ kind: "interactive", options: { target: { kind: "single", prNumber: 3 }, readiness: "check" }, ctx: null },
+		{
+			kind: "stack-frontier",
+			expectedHeadSha: SHA,
+			expectedBaseRef: "main",
+			options: { target: { kind: "single", prNumber: 3 }, readiness: "check", method: "squash", cwd: "" },
+			ctx: {},
+		},
+		{ kind: "stack-frontier", expectedHeadSha: SHA, expectedBaseRef: "main", options, ctx: null },
 	]) {
-		assert.equal(isLandRequest(envelope(payload)), false);
+		assert.equal(claimLandRequest(envelope(bad), noop), false);
 	}
 });
 
@@ -178,19 +198,27 @@ test("claims once and reports an unavailable listener", async () => {
 	};
 	pi.events.on(LAND_REQUEST_EVENT, (value) => claimLandRequest(value, claim));
 	pi.events.on(LAND_REQUEST_EVENT, (value) => claimLandRequest(value, claim));
-	await requestLand(
+	const request = {
+		options: {
+			target: { kind: "single" as const, prNumber: 3 },
+			readiness: "check" as const,
+			method: "squash" as const,
+		},
+		expectedHeadSha: SHA,
+		expectedBaseRef: "main",
+		ctx: /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
+	};
+	await requestStackFrontierLand(
 		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
-		{ target: { kind: "single", prNumber: 3 }, readiness: "check" },
-		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
+		request,
 	);
 	assert.equal(claims, 1);
 
 	const unavailable = { events: { emit: () => {} } };
 	assert.deepEqual(
-		await requestLand(
+		await requestStackFrontierLand(
 			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ unavailable as never,
-			{ target: { kind: "single", prNumber: 3 }, readiness: "check" },
-			/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {} as never,
+			request,
 		),
 		{ handled: false },
 	);

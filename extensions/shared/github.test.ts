@@ -12,7 +12,6 @@ import {
 	mergePullRequest,
 	type PullRequestSnapshot,
 	type RepositorySnapshot,
-	resolveRepoName,
 	resolveRepoNameResult,
 } from "./github.ts";
 
@@ -57,9 +56,9 @@ test("ghExec retains the 15-second default, custom timeout, and signal", async (
 	assert.equal(options?.signal, controller.signal);
 });
 
-test("resolveRepoName accepts only a trimmed owner/name result", async () => {
+test("resolveRepoNameResult accepts only a trimmed owner/name result", async () => {
 	const valid: ExecFn = async () => ({ code: 0, stdout: " owner/repo\n", stderr: "" });
-	assert.equal(await resolveRepoName(valid, "/repo"), "owner/repo");
+	assert.equal((await resolveRepoNameResult(valid, "/repo")).repo, "owner/repo");
 
 	const failed = { code: 1, stdout: "owner/repo", stderr: "not authenticated" };
 	const failedExec: ExecFn = async () => failed;
@@ -70,7 +69,7 @@ test("resolveRepoName accepts only a trimmed owner/name result", async () => {
 		{ code: 0, stdout: "owner only", stderr: "" },
 	]) {
 		const exec: ExecFn = async () => output;
-		assert.equal(await resolveRepoName(exec, "/repo"), undefined);
+		assert.equal((await resolveRepoNameResult(exec, "/repo")).repo, undefined);
 	}
 });
 

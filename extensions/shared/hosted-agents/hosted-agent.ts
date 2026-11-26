@@ -1,4 +1,4 @@
-/** Request lifecycle for one hosted Pi agent: ask, resume, abort, and dispose.
+/** Request lifecycle for one hosted Pi agent: ask, abort, and dispose.
  *
  * A short pointer prompt crosses the terminal; instructions and answers cross
  * as 0600 files. The validated answer comes from Pi's session JSONL.
@@ -50,8 +50,6 @@ export interface HostedAgent {
 	readonly sessionFile: string | undefined;
 	/** One ask in flight; a second concurrent call rejects. */
 	ask(options: AskOptions): Promise<AskResult>;
-	/** Resume the stored blocked request, delivering it if it was rejected before send. */
-	resume(): Promise<AskResult>;
 	/** Cancel by ownership policy: owned agents escalate through Ctrl+C and pane close; attached agents receive Escape only. */
 	abort(): Promise<void>;
 	dispose(options?: { closePane?: boolean }): Promise<void>;
@@ -104,8 +102,6 @@ type AbortPolicy = "owned" | "attached";
 interface PendingRequest {
 	id: string;
 	options: AskOptions;
-	prompt: string;
-	delivered: boolean;
 	sessionFile: string | undefined;
 	responseOffset: number;
 	usageOffset: number;
@@ -161,7 +157,7 @@ export class HostedAgentImpl implements HostedAgent {
 		return this.askBusy || this.pending !== undefined;
 	}
 
-	/** Usage is incremental across blocked returns, but starts fresh for every request. */
+	/** Account for each session append at most once per request. */
 	private usage(): UsageSummary {
 		const request = this.pending;
 		if (!this.sessionFile || !request || (request.sessionFile && request.sessionFile !== this.sessionFile))
@@ -209,8 +205,6 @@ export class HostedAgentImpl implements HostedAgent {
 			const request: PendingRequest = {
 				id,
 				options: { ...options },
-				prompt,
-				delivered: false,
 				sessionFile: this.sessionFile,
 				responseOffset: offset,
 				usageOffset: offset,
@@ -221,19 +215,7 @@ export class HostedAgentImpl implements HostedAgent {
 			};
 			this.pending = request;
 			options.signal?.addEventListener("abort", request.onAbort, { once: true });
-			return await this.runRequest(request, false);
-		} finally {
-			this.askBusy = false;
-		}
-	}
-
-	async resume(): Promise<AskResult> {
-		if (this.askBusy) throw new Error(`Agent ${this.name} already has an ask in flight.`);
-		const request = this.pending;
-		if (!request) return emptyFailed(`${this.role}: no blocked request to resume.`);
-		this.askBusy = true;
-		try {
-			return await this.runRequest(request, true);
+			return await this.runRequest(request, prompt);
 		} finally {
 			this.askBusy = false;
 		}
@@ -256,27 +238,22 @@ export class HostedAgentImpl implements HostedAgent {
 		}
 	}
 
-	private async runRequest(request: PendingRequest, resume: boolean): Promise<AskResult> {
-		let blocked = false;
+	private async runRequest(request: PendingRequest, prompt: string): Promise<AskResult> {
+		let retainForCleanup = false;
 		try {
 			if (request.cancelled || request.options.signal?.aborted) {
 				await this.abort();
 				return { status: "aborted", usage: this.usage() };
 			}
-			let sent: SendOutcome;
-			if (resume) {
-				sent = await this.waitForSettle(request.options);
-				if ("settled" in sent && !request.delivered && !request.cancelled)
-					sent = await this.sendPointerPrompt(request.prompt, request.options);
-			} else {
-				sent = await this.sendPointerPrompt(request.prompt, request.options);
-			}
+			const delivery = await this.sendPointerPrompt(prompt, request.options);
 			if (request.cancelled || request.options.signal?.aborted) {
 				await this.abort();
 				return { status: "aborted", usage: this.usage() };
 			}
+			const sent = "snapshot" in delivery ? this.observeSettlement(delivery.snapshot) : delivery;
 			if (!("settled" in sent)) {
-				blocked = sent.status === "blocked";
+				// A blocked, delivered turn can still run; a prompt rejected before delivery cannot.
+				retainForCleanup = "snapshot" in delivery && sent.status === "blocked";
 				if (sent.status === "failed") await this.abort();
 				return sent;
 			}
@@ -293,7 +270,7 @@ export class HostedAgentImpl implements HostedAgent {
 			if (cancelled) return { status: "aborted", usage: this.usage() };
 			return { status: "failed", error: this.withPaneHint(`${this.role}: ${errorText(error)}`), usage: this.usage() };
 		} finally {
-			if (!blocked) {
+			if (!retainForCleanup) {
 				request.options.signal?.removeEventListener("abort", request.onAbort);
 				this.pending = undefined;
 			}
@@ -315,11 +292,11 @@ export class HostedAgentImpl implements HostedAgent {
 		};
 	}
 
-	/** Turn a failed prompt or wait into the request outcome shared by both paths. */
+	/** Map a rejected prompt to the caller's result. */
 	private async failureOutcome(
 		failure: BackendFailure,
 		options: Pick<AskOptions, "timeoutMs" | "signal">,
-	): Promise<SendOutcome> {
+	): Promise<AskResult> {
 		if (options.signal?.aborted || failure.code === "aborted") {
 			await this.abort();
 			return { status: "aborted", usage: this.usage() };
@@ -332,7 +309,10 @@ export class HostedAgentImpl implements HostedAgent {
 		return { status: "failed", error: `${failure.code}: ${failure.message}`, usage: this.usage() };
 	}
 
-	private async sendPointerPrompt(promptText: string, options: AskOptions): Promise<SendOutcome> {
+	private async sendPointerPrompt(
+		promptText: string,
+		options: AskOptions,
+	): Promise<{ snapshot: AgentSnapshot } | AskResult> {
 		for (let attempt = 0; attempt < 2; attempt++) {
 			if (attempt > 0) await this.clock.sleep(STALLED_RETRY_DELAY_MS);
 			if (this.pending?.cancelled || options.signal?.aborted) return { status: "aborted", usage: this.usage() };
@@ -340,10 +320,7 @@ export class HostedAgentImpl implements HostedAgent {
 				timeoutMs: options.timeoutMs,
 				...(options.signal ? { signal: options.signal } : undefined),
 			});
-			if (outcome.ok) {
-				if (this.pending) this.pending.delivered = true;
-				return this.observeSettlement(outcome.value);
-			}
+			if (outcome.ok) return { snapshot: outcome.value };
 			if (outcome.code === "prompt_stalled" && !options.signal?.aborted) continue;
 			return this.failureOutcome(outcome, options);
 		}
@@ -352,15 +329,6 @@ export class HostedAgentImpl implements HostedAgent {
 			error: `${this.role}: prompt_stalled twice; the agent never observed the prompt. Inspect pane ${this.paneId}.`,
 			usage: this.usage(),
 		};
-	}
-
-	private async waitForSettle(options: Omit<AskOptions, "promptFile">): Promise<SendOutcome> {
-		const outcome = await this.backend.waitSettled(this.ref, {
-			timeoutMs: options.timeoutMs,
-			...(options.signal ? { signal: options.signal } : undefined),
-		});
-		if (outcome.ok) return this.observeSettlement(outcome.value);
-		return this.failureOutcome(outcome, options);
 	}
 
 	private async collectAnswer(request: PendingRequest): Promise<AskResult> {

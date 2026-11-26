@@ -9,7 +9,7 @@ import {
 	type HandoffModel,
 	isHandoffEffortLevel,
 	parseHandoffArgs,
-	resolveModelReference,
+	resolveModelReferenceWithSource,
 } from "./model-selection.ts";
 
 const MODELS: HandoffModel[] = [
@@ -183,19 +183,19 @@ describe("parseHandoffArgs", () => {
 	});
 });
 
-describe("resolveModelReference", () => {
+describe("resolveModelReferenceWithSource", () => {
 	it("resolves a canonical provider/model-id exactly", () => {
-		const result = resolveModelReference(MODELS, "anthropic/claude-sonnet-4-5");
+		const result = resolveModelReferenceWithSource(MODELS, "anthropic/claude-sonnet-4-5");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[0] });
 	});
 
 	it("resolves case-insensitively", () => {
-		const result = resolveModelReference(MODELS, "OpenAI/GPT-5.2");
+		const result = resolveModelReferenceWithSource(MODELS, "OpenAI/GPT-5.2");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[2] });
 	});
 
 	it("resolves a unique bare model id", () => {
-		const result = resolveModelReference(MODELS, "gpt-5.2");
+		const result = resolveModelReferenceWithSource(MODELS, "gpt-5.2");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[2] });
 	});
 
@@ -204,39 +204,39 @@ describe("resolveModelReference", () => {
 			{ provider: "a", id: "small", name: "Small A" },
 			{ provider: "b", id: "small", name: "Small B" },
 		];
-		const result = resolveModelReference(dupes, "small");
+		const result = resolveModelReferenceWithSource(dupes, "small");
 		assert.equal(result.status, "ambiguous");
 		if (result.status === "ambiguous") assert.equal(result.matches.length, 2);
 	});
 
 	it("resolves a provider-scoped partial id", () => {
-		const result = resolveModelReference(MODELS, "anthropic/sonnet");
+		const result = resolveModelReferenceWithSource(MODELS, "anthropic/sonnet");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[0] });
 	});
 
 	it("resolves a provider-scoped partial name", () => {
-		const result = resolveModelReference(MODELS, "google/gemini");
+		const result = resolveModelReferenceWithSource(MODELS, "google/gemini");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[4] });
 	});
 
 	it("reports ambiguity for a provider-scoped partial with several matches", () => {
-		const result = resolveModelReference(MODELS, "anthropic/claude");
+		const result = resolveModelReferenceWithSource(MODELS, "anthropic/claude");
 		assert.equal(result.status, "ambiguous");
 		if (result.status === "ambiguous") assert.equal(result.matches.length, 2);
 	});
 
 	it("does not leak partial matches across providers for slashed references", () => {
-		const result = resolveModelReference(MODELS, "google/claude");
+		const result = resolveModelReferenceWithSource(MODELS, "google/claude");
 		assert.deepEqual(result, { status: "not-found" });
 	});
 
 	it("resolves a unique global partial match", () => {
-		const result = resolveModelReference(MODELS, "codex");
+		const result = resolveModelReferenceWithSource(MODELS, "codex");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[3] });
 	});
 
 	it("reports ambiguity for a global partial with several matches", () => {
-		const result = resolveModelReference(MODELS, "gpt");
+		const result = resolveModelReferenceWithSource(MODELS, "gpt");
 		assert.equal(result.status, "ambiguous");
 		if (result.status === "ambiguous") {
 			assert.deepEqual(
@@ -247,63 +247,63 @@ describe("resolveModelReference", () => {
 	});
 
 	it("returns not-found for unknown references", () => {
-		assert.deepEqual(resolveModelReference(MODELS, "nope/xyz"), { status: "not-found" });
-		assert.deepEqual(resolveModelReference(MODELS, "does-not-exist"), { status: "not-found" });
-		assert.deepEqual(resolveModelReference(MODELS, "   "), { status: "not-found" });
-		assert.deepEqual(resolveModelReference([], "anthropic/claude-sonnet-4-5"), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "nope/xyz"), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "does-not-exist"), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "   "), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource([], "anthropic/claude-sonnet-4-5"), { status: "not-found" });
 	});
 
 	it("returns no explicit effort when the reference has no suffix", () => {
-		const result = resolveModelReference(MODELS, "anthropic/claude-sonnet-4-5");
+		const result = resolveModelReferenceWithSource(MODELS, "anthropic/claude-sonnet-4-5");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[0] });
 		if (result.status === "resolved") assert.equal(result.effort, undefined);
 	});
 
 	it("resolves a canonical model with each valid effort suffix", () => {
 		for (const effort of ALL_EFFORTS) {
-			const result = resolveModelReference(MODELS, `openai/gpt-5.2:${effort}`);
-			assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort }, effort);
+			const result = resolveModelReferenceWithSource(MODELS, `openai/gpt-5.2:${effort}`);
+			assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort, effortSource: "suffix" }, effort);
 		}
 	});
 
 	it("resolves a unique partial model with a representative effort", () => {
-		const result = resolveModelReference(MODELS, "codex:max");
-		assert.deepEqual(result, { status: "resolved", model: MODELS[3], effort: "max" });
+		const result = resolveModelReferenceWithSource(MODELS, "codex:max");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[3], effort: "max", effortSource: "suffix" });
 	});
 
 	it("resolves a provider-scoped partial with an effort suffix", () => {
-		const result = resolveModelReference(MODELS, "anthropic/sonnet:high");
-		assert.deepEqual(result, { status: "resolved", model: MODELS[0], effort: "high" });
+		const result = resolveModelReferenceWithSource(MODELS, "anthropic/sonnet:high");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[0], effort: "high", effortSource: "suffix" });
 	});
 
 	it("prefers a full model id that already ends in a colon-bearing suffix", () => {
-		const result = resolveModelReference(MODELS, "openrouter/qwen/qwen3-coder:exacto");
+		const result = resolveModelReferenceWithSource(MODELS, "openrouter/qwen/qwen3-coder:exacto");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[5] });
 		if (result.status === "resolved") assert.equal(result.effort, undefined);
 	});
 
 	it("still attaches effort after a colon-bearing model id", () => {
-		const result = resolveModelReference(MODELS, "openrouter/qwen/qwen3-coder:exacto:high");
-		assert.deepEqual(result, { status: "resolved", model: MODELS[5], effort: "high" });
+		const result = resolveModelReferenceWithSource(MODELS, "openrouter/qwen/qwen3-coder:exacto:high");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[5], effort: "high", effortSource: "suffix" });
 	});
 
 	it("resolves a colon-bearing bare model id before treating the suffix as effort", () => {
-		const result = resolveModelReference(MODELS, "llama3:70b");
+		const result = resolveModelReferenceWithSource(MODELS, "llama3:70b");
 		assert.deepEqual(result, { status: "resolved", model: MODELS[6] });
 		if (result.status === "resolved") assert.equal(result.effort, undefined);
 	});
 
 	it("attaches effort to a colon-bearing bare model id", () => {
-		const result = resolveModelReference(MODELS, "llama3:70b:medium");
-		assert.deepEqual(result, { status: "resolved", model: MODELS[6], effort: "medium" });
+		const result = resolveModelReferenceWithSource(MODELS, "llama3:70b:medium");
+		assert.deepEqual(result, { status: "resolved", model: MODELS[6], effort: "medium", effortSource: "suffix" });
 	});
 
 	it("keeps a valid effort suffix with an unknown model as not-found", () => {
-		assert.deepEqual(resolveModelReference(MODELS, "nope/does-not-exist:high"), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "nope/does-not-exist:high"), { status: "not-found" });
 	});
 
 	it("keeps a valid effort suffix with an ambiguous model prefix", () => {
-		const result = resolveModelReference(MODELS, "gpt:high");
+		const result = resolveModelReferenceWithSource(MODELS, "gpt:high");
 		assert.equal(result.status, "ambiguous");
 		if (result.status === "ambiguous") {
 			assert.deepEqual(
@@ -314,12 +314,12 @@ describe("resolveModelReference", () => {
 	});
 
 	it("treats an invalid suffix as part of an unknown model reference", () => {
-		assert.deepEqual(resolveModelReference(MODELS, "openai/gpt-5.2:turbo"), { status: "not-found" });
-		assert.deepEqual(resolveModelReference(MODELS, "openai/gpt-5.2:"), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "openai/gpt-5.2:turbo"), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "openai/gpt-5.2:"), { status: "not-found" });
 	});
 });
 
-describe("resolveModelReference with aliases", () => {
+describe("resolveModelReferenceWithSource with aliases", () => {
 	const ALIASES: ModelAlias[] = [
 		{ key: "terra", alias: "terra", modelRef: "openai/gpt-5.2", thinking: "max", source: "kstack.json" },
 		{
@@ -337,21 +337,21 @@ describe("resolveModelReference with aliases", () => {
 	];
 
 	it("resolves a kstack.json label with its configured thinking level", () => {
-		const result = resolveModelReference(MODELS, "terra", ALIASES);
-		assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort: "max" });
+		const result = resolveModelReferenceWithSource(MODELS, "terra", ALIASES);
+		assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort: "max", effortSource: "alias" });
 	});
 
 	it("lets an explicit effort suffix override the alias thinking level", () => {
-		const result = resolveModelReference(MODELS, "terra:low", ALIASES);
-		assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort: "low" });
+		const result = resolveModelReferenceWithSource(MODELS, "terra:low", ALIASES);
+		assert.deepEqual(result, { status: "resolved", model: MODELS[2], effort: "low", effortSource: "suffix" });
 	});
 
 	it("resolves a display name by normalized and slug forms", () => {
-		assert.deepEqual(resolveModelReference(MODELS, "Claude Sonnet 4.5", ALIASES), {
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "Claude Sonnet 4.5", ALIASES), {
 			status: "resolved",
 			model: MODELS[0],
 		});
-		assert.deepEqual(resolveModelReference(MODELS, "claude-sonnet-4.5", ALIASES), {
+		assert.deepEqual(resolveModelReferenceWithSource(MODELS, "claude-sonnet-4.5", ALIASES), {
 			status: "resolved",
 			model: MODELS[0],
 		});
@@ -361,7 +361,7 @@ describe("resolveModelReference with aliases", () => {
 		const colliding: ModelAlias[] = [
 			{ key: "gpt-5.2", alias: "gpt-5.2", modelRef: "anthropic/claude-opus-4-6", source: "kstack.json" },
 		];
-		const result = resolveModelReference(MODELS, "gpt-5.2", colliding);
+		const result = resolveModelReferenceWithSource(MODELS, "gpt-5.2", colliding);
 		assert.deepEqual(result, { status: "resolved", model: MODELS[2] });
 	});
 
@@ -369,13 +369,13 @@ describe("resolveModelReference with aliases", () => {
 		const codexAlias: ModelAlias[] = [
 			{ key: "gpt", alias: "gpt", modelRef: "openai/gpt-5.2-codex", source: "kstack.json" },
 		];
-		const result = resolveModelReference(MODELS, "gpt", codexAlias);
+		const result = resolveModelReferenceWithSource(MODELS, "gpt", codexAlias);
 		assert.deepEqual(result, { status: "resolved", model: MODELS[3] });
 	});
 
 	it("reports not-found when the alias target is outside the catalogue", () => {
 		const scoped = [MODELS[0]];
-		assert.deepEqual(resolveModelReference(scoped, "terra", ALIASES), { status: "not-found" });
+		assert.deepEqual(resolveModelReferenceWithSource(scoped, "terra", ALIASES), { status: "not-found" });
 	});
 
 	it("reports ambiguity when aliases map one name to different models", () => {
@@ -383,7 +383,7 @@ describe("resolveModelReference with aliases", () => {
 			{ key: "fast", alias: "fast", modelRef: "openai/gpt-5.2", source: "kstack.json" },
 			{ key: "fast", alias: "GPT-5.2 Codex", modelRef: "openai/gpt-5.2-codex", source: "model name" },
 		];
-		const result = resolveModelReference(MODELS, "fast", dupes);
+		const result = resolveModelReferenceWithSource(MODELS, "fast", dupes);
 		assert.equal(result.status, "ambiguous");
 		if (result.status === "ambiguous") assert.equal(result.matches.length, 2);
 	});
@@ -393,7 +393,7 @@ describe("resolveModelReference with aliases", () => {
 			{ key: "sonnet", alias: "sonnet", modelRef: "anthropic/claude-sonnet-4-5", source: "kstack.json" },
 			{ key: "sonnet", alias: "Sonnet", modelRef: "claude-sonnet-4-5", source: "model name" },
 		];
-		const result = resolveModelReference(MODELS, "sonnet", dupes);
+		const result = resolveModelReferenceWithSource(MODELS, "sonnet", dupes);
 		assert.equal(result.status, "resolved");
 	});
 });

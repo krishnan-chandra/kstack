@@ -131,11 +131,3 @@ export type AdvanceOutcome =
 
 export type StackMergeMethod = MergeMethod;
 export type StackReadinessMode = "check" | "watch";
-
-export interface StackPublicationRequestInput {
-	repositoryPath: string;
-	trunkRevset?: string;
-	topBookmark?: string;
-	remote?: string;
-	signal?: AbortSignal;
-}

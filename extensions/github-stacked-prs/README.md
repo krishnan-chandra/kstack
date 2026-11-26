@@ -4,24 +4,18 @@ GitHub-native stack provider for the plain Git backend. It uses Git branches,
 the shared GitHub gateway, and kstack navigation comments. GitHub does not have
 a native stacks API, so navigation comments remain the stack-topology store.
 
-The extension claims the four shared stack channels for provider `"github"`:
+The extension claims the shared stack landing channel for provider `"github"`:
 
-- `kstack:stack:capabilities`
-- `kstack:stack:preflight`
-- `kstack:stack:publish`
 - `kstack:stack:land-through-pr`
 
 It also registers `/gh-stack publish` and the `gh_stack_publish` tool.
 
 ## Publish a stack
 
-Stack publication writes a private schema-version-1 manifest. The parent
-validates the manifest against the clean Git working tree, immutable trunk and
-branch SHAs, branch ancestry, and the checked-out top branch before it changes
-the remote.
-
-To republish an existing local stack, derive the same manifest from Git
-ancestry:
+`/gh-stack publish` and `gh_stack_publish` derive an in-memory stack manifest
+from local Git ancestry and validate it against the clean Git working tree,
+immutable trunk and branch SHAs, branch ancestry, and the checked-out top
+branch before changing the remote:
 
 ```text
 /gh-stack publish --top kstack/top

@@ -150,18 +150,14 @@ cannot undo a merge or remove a request from a merge queue.
 
 ## API
 
-The `kstack:land:request` event has two request modes. An `interactive` request
-accepts `LandOptions`, performs stack-prefix discovery in jj and Graphite
-repositories, and uses the same confirmation rules as `/land`.
-
-A `stack-frontier` request is trusted in-process authority for one frontier. It
-requires a positive PR number, a concrete squash or rebase method, an exact
-40-character lowercase head SHA, and an approved `expectedBaseRef` branch name
-(schema version 2). Land bypasses stack routing for this mode, so a provider
-cannot recurse into its own stack channel. Land checks the pinned head and
-approved base before readiness, against pr-autopilot's evidence, after readiness,
-and immediately before merge submission. It also passes the SHA to GitHub through
-`--match-head-commit`.
+The `kstack:land:request` event accepts `stack-frontier` requests, which carry
+trusted in-process authority for one frontier. A request requires a positive PR
+number, a concrete squash or rebase method, an exact 40-character lowercase head
+SHA, and an approved `expectedBaseRef` branch name (schema version 2). Land
+bypasses stack routing for this mode, so a provider cannot recurse into its own
+stack channel. Land checks the pinned head and approved base before readiness,
+against pr-autopilot's evidence, after readiness, and immediately before merge
+submission. It also passes the SHA to GitHub through `--match-head-commit`.
 
 A stack caller may also supply `repository` (`owner/name`). Land scopes its
 GitHub commands and the delegated Autopilot request to that repository. jj

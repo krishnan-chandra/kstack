@@ -1,13 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BoundaryValue } from "../shared/validation.ts";
-import {
-	claimPrAutopilotRequest,
-	isPrAutopilotRequest,
-	PRAUTOPILOT_REQUEST_EVENT,
-	type PrAutopilotRequest,
-	requestPrAutopilot,
-} from "./api.ts";
+import { claimPrAutopilotRequest, PRAUTOPILOT_REQUEST_EVENT, requestPrAutopilot } from "./api.ts";
 import { issueAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotResult } from "./types.ts";
 
@@ -81,11 +75,14 @@ test("forwards and validates an explicit repository independently of cwd", async
 	assert.equal(received, "acme/widgets");
 	for (const repository of ["a/b/c", "--repo", null]) {
 		assert.equal(
-			isPrAutopilotRequest({
-				schemaVersion: 1,
-				claimed: false,
-				payload: { mode: "check", prNumber: 42, ctx, cwd: "/secondary", repository },
-			}),
+			claimPrAutopilotRequest(
+				{
+					schemaVersion: 1,
+					claimed: false,
+					payload: { mode: "check", prNumber: 42, ctx, cwd: "/secondary", repository },
+				},
+				async () => outcome,
+			),
 			false,
 		);
 	}
@@ -201,27 +198,22 @@ test("unclaimed request reports unavailable", async () => {
 });
 
 test("a second claim attempt does not settle the request twice", async () => {
+	const { pi } = fakeBus();
 	let runs = 0;
-	const envelope = /* SAFETY: This test controls the fixture and exercises only the asserted contract. */ {
-		schemaVersion: 1,
-		payload: { mode: "threads" as const, prNumber: 9, ctx, cwd: "/repo" },
-		claimed: false,
-	} as PrAutopilotRequest;
-	assert.equal(
-		claimPrAutopilotRequest(envelope, async () => {
-			runs++;
-			return outcome;
-		}),
-		true,
+	const claim = async () => {
+		runs++;
+		return outcome;
+	};
+	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) => claimPrAutopilotRequest(value, claim));
+	pi.events.on(PRAUTOPILOT_REQUEST_EVENT, (value) => claimPrAutopilotRequest(value, claim));
+	const result = await requestPrAutopilot(
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ pi as never,
+		"threads",
+		9,
+		/* SAFETY: This test controls the fixture and exercises only the asserted contract. */ ctx as never,
+		"/repo",
 	);
-	assert.equal(
-		claimPrAutopilotRequest(envelope, async () => {
-			runs++;
-			return outcome;
-		}),
-		false,
-	);
-	assert.deepEqual(await envelope.completion, outcome);
+	assert.deepEqual(result, { handled: true, outcome });
 	assert.equal(runs, 1);
 });
 
@@ -256,14 +248,13 @@ test("payload with signal set to a non-signal value is rejected", async () => {
 			assert.fail("non-signal signal value must not be claimed");
 		}),
 	);
-	const forgedEnvelope: PrAutopilotRequest = {
+	const forgedEnvelope = {
 		schemaVersion: 1,
 		payload: {
 			mode: "check",
 			prNumber: 5,
-			ctx: /* SAFETY: This test controls the minimal context fixture. */ ctx as never,
+			ctx,
 			cwd: "/repo",
-			// @ts-expect-error: This test intentionally bypasses type safety to exercise runtime rejection.
 			signal: "not-a-signal",
 		},
 		claimed: false,
