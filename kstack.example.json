@@ -24,7 +24,6 @@
   "openrouter-routing": {
     "default": "floor",
     "models": {
-      "openrouter/google/gemini-3.8-flash": "nitro",
       "openrouter/mistralai/mistral-small-2603": "none"
     }
   },
@@ -52,9 +51,9 @@
         "thinking": "off"
       },
       {
-        "label": "glimmer",
-        "model": "openrouter/meta/muse-spark-open",
-        "thinking": "medium"
+        "label": "hydrogen",
+        "model": "openrouter/google/gemini-4-hydrogen",
+        "thinking": "high"
       }
     ],
     "crossJudge": {
@@ -96,9 +95,9 @@
         "thinking": "low"
       },
       {
-        "label": "gemini",
-        "model": "openrouter/google/gemini-3.8-flash",
-        "thinking": "medium"
+        "label": "hydrogen",
+        "model": "openrouter/google/gemini-4-hydrogen",
+        "thinking": "low"
       }
     ],
     "maxConcurrency": 3,
