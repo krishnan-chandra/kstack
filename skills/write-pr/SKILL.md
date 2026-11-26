@@ -30,7 +30,7 @@ For a stacked PR, use this section instead of the current-branch steps below. Th
    - With jj, use `trunk()` below the bottom slice and the preceding bookmark below each later slice. Run `jj diff -r '<local-slice-base>..<slice-bookmark>'` and `jj log -r '<local-slice-base>..<slice-bookmark>'`.
    - With Git refs, run `git diff <target-base>...<slice-bookmark>` and `git log --oneline <target-base>..<slice-bookmark>`.
 3. Write the title, summary, and review guide only from that slice. Exclude predecessor slices and working-copy changes above the bookmark.
-4. After the stack publisher creates or updates the PR, apply the metadata with `gh pr edit <number> --title '<title>' --body-file <body-file>`.
+4. After the stack publisher creates or updates the PR, apply the metadata with `gh pr edit <number> --title "$(cat <title-file>)" --body-file <body-file>` as described in [Apply the PR metadata](#apply-the-pr-metadata).
 
 If any slice has an empty diff or cannot be inspected, stop instead of publishing misleading metadata.
 
@@ -74,6 +74,7 @@ Write one concrete title that names the primary user-visible or developer-visibl
 
 - Follow the repository's established title pattern when one is clear.
 - Prefer an imperative title such as `Add retry limits to archive uploads`.
+- When reusing a code reference from an existing PR title or commit subject, preserve its backticks unless the repository’s title rules say otherwise. For new references, follow recent PR titles rather than adding backticks by default.
 - Keep it concise, normally under 72 characters. Do not end it with a period.
 - Do not invent issue IDs, scope prefixes, performance claims, or behavior absent from the diff.
 
@@ -114,14 +115,14 @@ Before applying the body, compare every claim with the diff. In particular, chec
 
 Before any `gh pr create` or `gh pr edit`, re-read the selected repository template and compare it with the final title and body. Verify that the title obeys every template rule and that the body preserves every required heading, checklist item, warning, and HTML comment in order. Verify that every requested section has substantive content rather than a placeholder. Stop before mutation if the metadata does not conform.
 
-Write the body to a temporary file so shell quoting cannot corrupt Markdown.
+Write both the title and body to temporary files without unquoted shell expansion (for example, with the file-writing tool or a single-quoted `<<'EOF'` heredoc) so shell quoting cannot corrupt backticks, `$`, apostrophes, or Markdown. Do not pass a title inside double-quoted `--title "..."` arguments, where the shell evaluates backticks as command substitution and strips or corrupts code formatting.
 
 For a stacked slice, let the stack publisher create or locate the PR. Then use `gh pr edit` with the explicit PR number. Skip the standalone push and creation steps below.
 
 For an existing standalone PR:
 
 ```bash
-gh pr edit <number> --title '<title>' --body-file <body-file>
+gh pr edit <number> --title "$(cat <title-file>)" --body-file <body-file>
 ```
 
 For a new standalone PR:
@@ -130,7 +131,7 @@ For a new standalone PR:
 2. Create the PR explicitly as a draft:
 
 ```bash
-gh pr create --draft --base <base> --head <current-branch> --title '<title>' --body-file <body-file>
+gh pr create --draft --base <base> --head <current-branch> --title "$(cat <title-file>)" --body-file <body-file>
 ```
 
 Do not change draft state, reviewers, labels, assignees, milestones, or projects on an existing PR unless the user asks.
