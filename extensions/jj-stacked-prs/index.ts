@@ -7,17 +7,7 @@ import { issueAutopilotConfirmation, requestPrAutopilot } from "../pr-autopilot/
 import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { isMergeMethod } from "../shared/github.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
-import {
-	claimStackCapabilities,
-	claimStackLanding,
-	claimStackPreflight,
-	claimStackPublication,
-	STACK_CAPABILITIES_EVENT,
-	STACK_LANDING_EVENT,
-	STACK_PREFLIGHT_EVENT,
-	STACK_PUBLICATION_EVENT,
-	type StackProviderCapabilities,
-} from "../shared/stack/channel.ts";
+import { claimStackLanding, STACK_LANDING_EVENT } from "../shared/stack/channel.ts";
 import { completeJjStackArgs, parseJjStackArgs } from "./args.ts";
 import { landStack, landStackFromTool, landStackThroughPullRequest } from "./land.ts";
 import {
@@ -27,22 +17,13 @@ import {
 	planStack,
 	publishStack,
 	publishStackFromTool,
-	requestPublicationFromInput,
 	type StackUi,
 	syncStack,
 } from "./orchestrator.ts";
-import { preflightJjStack } from "./preflight.ts";
 import { createProcessRunner } from "./process.ts";
 import { boundText, renderInspect, renderLandOutcome, renderOutcome, renderPlan } from "./render.ts";
 import { combinePublicationSignals } from "./signals.ts";
 import { DEFAULT_MAX_STACK, MIN_MAX_STACK } from "./types.ts";
-
-const JJ_CAPABILITIES: StackProviderCapabilities = {
-	schemaVersion: 1,
-	publication: true,
-	commands: ["inspect", "plan", "publish", "sync", "advance", "land"],
-	tools: ["jj_stack_inspect", "jj_stack_plan", "jj_stack_publish", "jj_stack_land"],
-};
 
 class StackLifecycle extends SessionRunLifecycle {
 	begin() {
@@ -141,39 +122,6 @@ export default function jjStackedPrsExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	pi.events.on(STACK_CAPABILITIES_EVENT, (data) => claimStackCapabilities(data, "jj", async () => JJ_CAPABILITIES));
-	pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
-		claimStackPreflight(data, "jj", async (payload) =>
-			preflightJjStack(payload.cwd, (command, args, options) => pi.exec(command, args, options)),
-		),
-	);
-	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
-		claimStackPublication(data, "jj", async (input, ctx) => {
-			if (!ctx.hasUI) {
-				return {
-					status: "blocked",
-					blockers: [{ code: "missing-ui", message: "Publication requires interactive TUI/RPC mode." }],
-				};
-			}
-			return withRun(
-				ctx,
-				(signal) => {
-					const combined = combinePublicationSignals(signal, ctx.signal);
-					return requestPublicationFromInput(
-						{
-							repositoryPath: input.repositoryPath,
-							trunkRevset: input.trunk,
-							topBookmark: input.topRef,
-							remote: input.remote,
-							signal: input.signal,
-						},
-						publicationDeps(ctx, combined),
-					);
-				},
-				() => ({ status: "busy" as const, message: "Another stacked-PR run is active." }),
-			);
-		}),
-	);
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
 		claimStackLanding(data, "jj", async ({ input, ctx }) =>
 			withRun(

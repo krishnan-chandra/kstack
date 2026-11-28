@@ -12,7 +12,6 @@ import {
 	planStack,
 	publishStack,
 	publishStackFromTool,
-	requestPublicationFromInput,
 	syncStack,
 } from "./orchestrator.ts";
 import { renderInspect, renderPlan } from "./render.ts";
@@ -1644,43 +1643,6 @@ describe("sync and advance", () => {
 		);
 		assert.equal(result.status, "completed");
 		assert.deepEqual(jj.calls, ["abandon:trunk..feat1", "fetch"]);
-	});
-});
-
-describe("requestPublicationFromInput", () => {
-	it("honors both the request and orchestrator cancellation signals", async () => {
-		const request = new AbortController();
-		const orchestrator = new AbortController();
-		orchestrator.abort();
-		const result = await requestPublicationFromInput(
-			{ repositoryPath: "/repo", topBookmark: "feat2", remote: "origin", signal: request.signal },
-			{
-				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
-				ui: ui(),
-				jj: fakeJj(),
-				nativeStack: fakeNativeStack(),
-				github: fakeGithub(),
-				realpath: (path) => path,
-				signal: orchestrator.signal,
-			},
-		);
-		assert.equal(result.status, "cancelled");
-	});
-
-	it("infers a unique GitHub remote and unique top", async () => {
-		const result = await requestPublicationFromInput(
-			{ repositoryPath: "/repo" },
-			{
-				run: async () => ({ kind: "ok", code: 0, stdout: ".\n", stderr: "" }),
-				ui: ui(),
-				jj: fakeJj(),
-				nativeStack: fakeNativeStack(),
-				github: fakeGithub(),
-				realpath: (path) => path,
-				acquirePublicationLock: permissiveLock(),
-			},
-		);
-		assert.equal(result.status, "completed");
 	});
 });
 

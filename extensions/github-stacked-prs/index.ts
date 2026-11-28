@@ -7,30 +7,13 @@ import { guardCommandFallthrough } from "../shared/command-fallthrough.ts";
 import { makeExec } from "../shared/git-exec.ts";
 import { createGitHubGateway, isMergeMethod } from "../shared/github.ts";
 import { SessionRunLifecycle } from "../shared/session-lifecycle.ts";
-import {
-	claimStackCapabilities,
-	claimStackLanding,
-	claimStackPreflight,
-	claimStackPublication,
-	STACK_CAPABILITIES_EVENT,
-	STACK_LANDING_EVENT,
-	STACK_PREFLIGHT_EVENT,
-	STACK_PUBLICATION_EVENT,
-	type StackProviderCapabilities,
-} from "../shared/stack/channel.ts";
+import { claimStackLanding, STACK_LANDING_EVENT } from "../shared/stack/channel.ts";
 import { publicationMetadataFollowUp, type StackPublishOutcome } from "../shared/stack/outcome.ts";
 import type { StackTransactionPhase } from "../shared/stack/transaction.ts";
 import { completeGitHubStackArgs, parseGitHubStackArgs } from "./args.ts";
-import { preflightGitHubStack, publishGitHubManifestFile, publishGitHubStack } from "./delivery.ts";
+import { publishGitHubStack } from "./delivery.ts";
 import { discoverGitHubStack } from "./discovery.ts";
 import { requestGitHubStackLanding } from "./landing.ts";
-
-const CAPABILITIES: StackProviderCapabilities = {
-	schemaVersion: 1,
-	publication: true,
-	commands: ["publish"],
-	tools: ["gh_stack_publish"],
-};
 
 const GITHUB_PUBLICATION_STATUS = {
 	planning: "gh-stack: planning publication",
@@ -139,37 +122,6 @@ export default function githubStackedPrsExtension(pi: ExtensionAPI): void {
 		});
 	}
 
-	pi.events.on(STACK_CAPABILITIES_EVENT, (data) => claimStackCapabilities(data, "github", async () => CAPABILITIES));
-	pi.events.on(STACK_PREFLIGHT_EVENT, (data) =>
-		claimStackPreflight(data, "github", (payload) =>
-			preflightGitHubStack(payload.cwd, payload.manifestPath, exec, gateway, payload.planOnly),
-		),
-	);
-	pi.events.on(STACK_PUBLICATION_EVENT, (data) =>
-		claimStackPublication(data, "github", async (input, ctx) =>
-			withRun(
-				ctx,
-				(signal) => {
-					ctx.ui.setStatus("gh-stack", "gh-stack: publishing");
-					return publishGitHubManifestFile({
-						cwd: input.repositoryPath,
-						manifestPath: input.manifestPath,
-						remote: input.remote ?? "origin",
-						ready: false,
-						deps: {
-							exec,
-							gateway,
-							hasUI: ctx.hasUI,
-							confirm: (title, body) => ctx.ui.confirm(title, body),
-							onPhase: (phase) => ctx.ui.setStatus("gh-stack", GITHUB_PUBLICATION_STATUS[phase]),
-							signal: combineSignals(signal, ctx.signal, input.signal),
-						},
-					});
-				},
-				() => ({ status: "busy" as const, message: "Another GitHub stack run is active." }),
-			),
-		),
-	);
 	pi.events.on(STACK_LANDING_EVENT, (data) =>
 		claimStackLanding(data, "github", async ({ input, ctx }) =>
 			withRun(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getRepository, resolveRepoName } from "./github.ts";
+import { getRepository, resolveRepoNameResult } from "./github.ts";
 import { isRepositoryName, resolveGitHubRepository, scopeGitHubExec } from "./github-repository.ts";
 
 test("resolves a non-colocated jj repository from its origin remote", async () => {
@@ -122,7 +122,7 @@ test("resolves delegated repository metadata without ambient Git discovery", asy
 				});
 		return { code: 0, stdout, stderr: "" };
 	}, "acme/widgets");
-	assert.equal(await resolveRepoName(exec, "/secondary"), "acme/widgets");
+	assert.equal((await resolveRepoNameResult(exec, "/secondary")).repo, "acme/widgets");
 	assert.deepEqual(await getRepository(exec, "/secondary"), {
 		nameWithOwner: "acme/widgets",
 		defaultBranch: "main",

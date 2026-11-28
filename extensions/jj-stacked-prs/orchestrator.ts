@@ -1,7 +1,6 @@
 import type { BoundaryValue } from "../shared/validation.ts";
 /** Inspect, plan, publish, sync, and advance state machines. */
 
-import { realpathSync } from "node:fs";
 import type { DelegatedFrontierResponse } from "../land/api.ts";
 import type { AutopilotResult } from "../pr-autopilot/types.ts";
 import { mapWithConcurrencyLimit } from "../shared/concurrency.ts";
@@ -46,7 +45,6 @@ import {
 	type StackBlocker,
 	type StackCommit,
 	type StackMergeMethod,
-	type StackPublicationRequestInput,
 	type StackReadinessMode,
 	type StackSlice,
 	type SyncOutcome,
@@ -441,44 +439,6 @@ export async function applyAdvance(
 	} catch (error) {
 		return mutationFailure(error, input.operationId, "advance", mutationCompleted);
 	}
-}
-
-export async function requestPublicationFromInput(
-	input: StackPublicationRequestInput,
-	deps: OrchestratorDeps,
-): Promise<StackPublishOutcome> {
-	const cwd = canonicalize(input.repositoryPath, deps.realpath);
-	const signal =
-		deps.signal && input.signal ? AbortSignal.any([deps.signal, input.signal]) : (deps.signal ?? input.signal);
-	const requestDeps = { ...deps, signal };
-	let top = input.topBookmark;
-	if (!top) {
-		const inspect = await inspectStack({ cwd, trunk: input.trunkRevset }, requestDeps);
-		const inferred = inferUniqueTop(inspect.stack);
-		if ("blocker" in inferred) return { status: "blocked", blockers: [inferred.blocker] };
-		top = inferred.top;
-	}
-	let remote = input.remote;
-	if (!remote) {
-		const jj = deps.jj ?? createJjAdapter(deps.run);
-		const remotes = (await jj.listRemotes(cwd, signal)).filter((candidate) => candidate.github);
-		if (remotes.length === 1) remote = remotes[0].name;
-		else if (remotes.length === 0) {
-			return { status: "blocked", blockers: [{ code: "missing-remote", message: "No GitHub remote exists." }] };
-		} else if (!deps.ui.hasUI) {
-			return {
-				status: "blocked",
-				blockers: [{ code: "ambiguous-remote", message: "Multiple GitHub remotes exist; specify remote." }],
-			};
-		} else {
-			remote = await deps.ui.select(
-				"Select the GitHub remote to publish",
-				remotes.map((item) => item.name),
-			);
-			if (!remote) return { status: "declined" };
-		}
-	}
-	return publishStack({ cwd, top, remote, trunk: input.trunkRevset }, requestDeps);
 }
 
 async function applyPublication(
@@ -920,12 +880,4 @@ function mutationFailure(
 	}
 	if (mutationCompleted) return { status: "partial", operationId, blockers: [], error: errorMessage(error) };
 	return { status: "failed", error: errorMessage(error), operationId };
-}
-
-function canonicalize(path: string, realpath?: (value: string) => string): string {
-	try {
-		return (realpath ?? realpathSync)(path);
-	} catch {
-		return path;
-	}
 }

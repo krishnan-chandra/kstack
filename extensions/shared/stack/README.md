@@ -163,17 +163,14 @@ with a warning for jj and Graphite because those mappings are fixed.
 
 `StackProviderId` is intentionally not `VcsBackendId`; do not merge them.
 
-## Request channels
+## Request channel
 
-`channel.ts` defines the four request/claim channels connecting stack providers
-with host workflows (stack publication and `land`):
+`channel.ts` defines the request/claim channel connecting stack providers with
+`land`:
 
-- `kstack:stack:capabilities` (`StackCapabilitiesPayload` → `StackProviderCapabilities`)
-- `kstack:stack:preflight` (`StackPreflightPayload` → `VcsResult<StackPreflight>`)
-- `kstack:stack:publish` (`StackPublicationPayload` → `StackPublishOutcome`)
 - `kstack:stack:land-through-pr` (`StackLandingPayload` → `StackPrefixLandOutcome`)
 
-All payloads identify the target `provider: StackProviderId`. Provider extensions
+Payloads identify the target `provider: StackProviderId`. Provider extensions
 claim requests matching their provider ID and ignore other providers, preserving
 claim-once mechanics. `StackLandingCapabilities` contains only the optional
 `runAutopilot` callback used by Graphite's native landing flow. jj and GitHub

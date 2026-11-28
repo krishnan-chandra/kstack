@@ -129,21 +129,6 @@ describe("createHerdrCli", () => {
 		assert.match(outcome.value, /status: running/);
 	});
 
-	it("agentRead passes through the plain-text output and maps failures", async () => {
-		const { exec } = scriptExec(() => ({ code: 0, stdout: "DONE /tmp/x/out.md\n", stderr: "" }));
-		const cli = createHerdrCli(exec);
-		const ok = await cli.agentRead({ name: "agent", lines: 200 }, { timeoutMs: 1000 });
-		assert.ok(ok.ok);
-		assert.equal(ok.value, "DONE /tmp/x/out.md\n");
-		const failing = scriptExec(() => ({
-			code: 1,
-			stdout: "",
-			stderr: '{"id":"x","error":{"code":"agent_not_found","message":"agent target nope not found"}}',
-		}));
-		const bad = await createHerdrCli(failing.exec).agentRead({ name: "nope", lines: 5 }, { timeoutMs: 1000 });
-		assert.deepEqual(bad, { ok: false, code: "not_found", message: "agent target nope not found" });
-	});
-
 	it("agentStart and agentPrompt validate their result types", async () => {
 		const { exec } = scriptExec(() => ({
 			code: 0,

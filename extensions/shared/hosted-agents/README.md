@@ -20,7 +20,7 @@ The modules use Node APIs and injected effects. Only `state-reporter.ts` imports
 | `state-reporter.ts` | Env-gated Pi extension hook that writes the sidecar on `session_start`, `agent_start`, and `session_tree`. |
 | `agent-spec.ts` | `HostedAgentSpec`, the hosted Pi argv, and agent-name rules. |
 | `agent-host.ts` | Pane allocation, startup, and host disposal. |
-| `hosted-agent.ts` | One agent's request lifecycle: ask, resume, cancellation, and disposal; `attachHostedAgent`. |
+| `hosted-agent.ts` | One agent's request lifecycle: ask, cancellation, and disposal; `attachHostedAgent`. |
 | `response.ts` | Validates a request-tagged terminal response from Pi's session JSONL. |
 | `session-usage.ts` | Incremental usage accounting for one request. |
 | `layout.ts` | Grid pane-placement decisions (`keepFraction` ratios). |
@@ -44,7 +44,7 @@ Skills run `node <kstack>/extensions/shared/hosted-agents/cli.mjs preflight` bef
 
 `openAgentHost` creates one unfocused tab (a Rex window) in the caller's session or workspace. Pane allocation is serialized, while startup and prompting may run concurrently. Each pane uses its assigned agent cwd. If the first agent's cwd differs from the tab cwd, the host allocates another pane rather than reusing the root shell. A new pane may not have reached its shell prompt when startup begins; the host retries `pane_busy` up to three times, one second apart. It does not retry blocked or ambiguous launches. Startup failures consume their reserved pane. The host validates the agent's reported cwd at startup and before each new request, and refuses a new request while the agent is working on a human turn. It never focuses, splits, or closes the caller's pane.
 
-Use `openAgentHost` when Kstack creates and owns the agents in a new tab, and `openPaneHost` when the agents should share the caller's tab as panes split off the caller's own pane (or an explicit `anchorPaneId`). `openPaneHost` accepts an optional `anchorPaneId`, `direction`, `keepFraction` (defaulting to `0.5` when `direction` is set), and `maxColumns` for the agent grid inside it; fresh councils split the caller's pane `right` with one column so seats stack to the right of the caller, while partial retries split a surviving council seat `down`. `layout.ts` expresses splits as `keepFraction` (the source pane's share); the Herdr adapter passes it directly as `--ratio`, while the Rex adapter converts it to `--ratio round((1 - keepFraction) * 100)` (clamped to `1..99`) and maps `down` to `below`. A `HostedAgentSpec.exactName` uses that agent name verbatim: no random suffix, and a name conflict fails instead of retrying. Every failed `start` reports the pane it reserved and the name it tried, when known.
+Use `openAgentHost` when Kstack creates and owns the agents in a new tab, and `openPaneHostIn` when the agents should share the caller's tab as panes split off the caller's own pane (or an explicit `anchorPaneId`) inside an already-preflighted session. `openPaneHostIn` takes `direction`, optional `anchorPaneId`, `keepFraction` (defaulting to `0.5`), and `maxColumns` for the agent grid inside it; fresh councils split the caller's pane `right` with one column so seats stack to the right of the caller, while partial retries split a surviving council seat `down`. `layout.ts` expresses splits as `keepFraction` (the source pane's share); the Herdr adapter passes it directly as `--ratio`, while the Rex adapter converts it to `--ratio round((1 - keepFraction) * 100)` (clamped to `1..99`) and maps `down` to `below`. A `HostedAgentSpec.exactName` uses that agent name verbatim: no random suffix, and a name conflict fails instead of retrying. Every failed `start` reports the pane it reserved and the name it tried, when known.
 
 Use `attachHostedAgent` only for an existing agent in a user- or skill-owned pane. It takes the agent's `AgentRef` (name, pane, and sidecar path on Rex) and a connected `TerminalSession`, and attaches the request lifecycle without creating a tab or repeating preflight. For these attached agents, cancellation sends Escape (`esc` on Herdr, `escape` on Rex) and never sends Ctrl+C or closes the pane. `attachHostedAgent` refuses the caller's pane.
 
@@ -64,15 +64,15 @@ Read-only fanout tasks receive the shared read-only system prompt automatically;
 
 ## Request and response contract
 
-An agent owns at most one pending request. The request stores its UUID, files, options, delivery state, session identity, usage cursor, and cancellation listener. A blocked return retains that request; `resume()` accepts no replacement files.
+An agent owns at most one in-flight request. The request stores its UUID, files, options, session identity, usage cursor, and cancellation listener. A blocked return reports `{ status: "blocked", paneId, usage }`. If the terminal rejected the prompt before delivery, there is no work to cancel. If the turn blocked after delivery, cancellation stays connected; dispose the request through `agent.dispose()` before asking again.
 
 A short pointer prompt tells Pi to read the instructions file, then return its complete answer in its final reply with a first-line `KSTACK_RESPONSE <request UUID>` marker. The host accepts the reply only after the backend settles and Pi's terminal persisted assistant message has `stopReason: "stop"` and the matching marker. Provider errors, interrupted turns, missing acknowledgements, and incomplete session entries fail closed. Screen text and nonempty answer files are not completion evidence.
 
-The host saves the validated response at the caller's output path, creating missing parent directories. Read-only agents need no `write` or `bash` capability. If a prompt is rejected before delivery with `agent_blocked`, `resume()` waits for the dialog to resolve and sends the stored request once. If the prompt was already delivered, `resume()` only waits. A session switch or cwd change during a pending request fails closed.
+The host saves the validated response at the caller's output path, creating missing parent directories. Read-only agents need no `write` or `bash` capability. A session switch or cwd change during a pending request fails closed.
 
 ## Cancellation and retention
 
-Cancellation stays connected across blocked returns and takes precedence over completion. Cancellation and timeout for host-owned agents drain through Escape, then both Ctrl+C presses in one call (`herdr agent send-keys` or `rex send-key`), then pane close if the preceding steps do not settle. Attached agents receive Escape only. On Rex, `sendKeys` and `closePane` also refuse the caller's own block ID directly.
+Cancellation takes precedence over completion. Cancellation and timeout for host-owned agents drain through Escape, then both Ctrl+C presses in one call (`herdr agent send-keys` or `rex send-key`), then pane close if the preceding steps do not settle. Attached agents receive Escape only. On Rex, `sendKeys` and `closePane` also refuse the caller's own block ID directly.
 
 Disposal cancels pending work. Idle panes and tabs are retained unless `closePane` or `closeTab` is requested. An owned exchange directory is removed when no request is outstanding. The CLI handles SIGINT and SIGTERM, stops scheduling queued tasks, drains active requests, and writes ordered partial fanout outcomes.
 
@@ -82,7 +82,7 @@ Disposal cancels pending work. Idle panes and tabs are retained unless `closePan
 - Pointer prompt at most 512 bytes; instruction text stays in a protected file.
 - Output cap defaults to 256 KiB and may be set from 1 byte to 4 MiB. Truncation is marked.
 - Response reads use at most the final 32 MiB of session appends.
-- Ask and resume wait timeout: 1–60 minutes. Startup timeout: 3–300 seconds.
+- Ask wait timeout: 1–60 minutes. Startup timeout: 3–300 seconds.
 - Exchange directories and council seat directories use mode 0700; instruction, output, and sidecar files use 0600.
 
 These controls are not a sandbox. Writable agents have the user's permissions. Fanout canonicalizes writable cwds and rejects overlapping directories and directories inside, equal to, or containing the repository root.

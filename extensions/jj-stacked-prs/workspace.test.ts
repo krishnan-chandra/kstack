@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,7 +11,6 @@ import { execFromRunner } from "./github-gateway.ts";
 import { createJjAdapter } from "./jj.ts";
 import { planStack } from "./orchestrator.ts";
 import { generateDeterministicPrMetadata } from "./pr-metadata.ts";
-import { preflightJjStack } from "./preflight.ts";
 import { createProcessRunner, type ProcessRunner } from "./process.ts";
 
 const hasJj = spawnSync("jj", ["--version"], { stdio: "ignore" }).status === 0;
@@ -99,9 +98,6 @@ for (const colocated of [true, false]) {
 				await jj(cwd, "describe", "-m", "Add feature");
 				await jj(cwd, "bookmark", "create", bookmark);
 				const exec = execFromRunner(run);
-				const preflight = await preflightJjStack(cwd, exec);
-				assert.equal(preflight.ok, true, JSON.stringify(preflight));
-				if (preflight.ok) assert.equal(preflight.workspaceRoot, realpathSync(cwd));
 				assert.deepEqual(await resolveGitHubRepository(exec, cwd, "jj"), {
 					ok: true,
 					repository: "acme/widgets",

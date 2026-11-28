@@ -195,7 +195,6 @@ interface HerdrCli {
 		run: ExecOptions,
 	): Promise<Outcome<HerdrAgentInfo>>;
 	agentGet(options: { name: string }, run: ExecOptions): Promise<Outcome<HerdrAgentInfo>>;
-	agentRead(options: { name: string; lines: number }, run: ExecOptions): Promise<Outcome<string>>;
 	agentSendKeys(
 		options: { name: string; keys: readonly ("esc" | "ctrl+c")[] },
 		run: ExecOptions,
@@ -366,11 +365,6 @@ export function createHerdrCli(exec: BackendExec): HerdrCli {
 			return run(args, agentParse, runOptions);
 		},
 		agentGet: (options, runOptions) => run(["agent", "get", options.name], agentParse, runOptions),
-		agentRead: (options, runOptions) =>
-			runText(
-				["agent", "read", options.name, "--source", "recent-unwrapped", "--lines", String(options.lines)],
-				runOptions,
-			),
 		agentSendKeys: (options, runOptions) =>
 			run(
 				["agent", "send-keys", options.name, ...options.keys],

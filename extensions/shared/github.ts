@@ -85,11 +85,6 @@ export async function resolveRepoNameResult(
 	return { ...result, repo: result.code === 0 && REPOSITORY_NAME.test(repo) ? repo : undefined };
 }
 
-/** Resolve the current checkout's GitHub owner/name, if available. */
-export async function resolveRepoName(exec: ExecFn, cwd: string, signal?: AbortSignal): Promise<string | undefined> {
-	return (await resolveRepoNameResult(exec, cwd, signal)).repo;
-}
-
 function parseJson(text: string): BoundaryValue {
 	try {
 		return JSON.parse(text);

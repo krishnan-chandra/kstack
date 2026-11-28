@@ -1,7 +1,7 @@
 /** Typed in-process contract for invoking PR autopilot from another extension. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isRepositoryName } from "../shared/github-repository.ts";
-import { createRequestChannel, type RequestEnvelope } from "../shared/request-channel.ts";
+import { createRequestChannel } from "../shared/request-channel.ts";
 import { type BoundaryValue, isObject, isString } from "../shared/validation.ts";
 import { type AutopilotConfirmation, isAutopilotConfirmation } from "./confirmation.ts";
 import type { AutopilotMode, AutopilotResult } from "./types.ts";
@@ -37,9 +37,6 @@ function isOptionalAbortSignal(value: BoundaryValue): value is AbortSignal | und
 	return value === undefined || value instanceof AbortSignal;
 }
 
-/* exported: request-channel contract */
-export interface PrAutopilotRequest extends RequestEnvelope<PrAutopilotPayload, AutopilotResult, 1> {}
-
 const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 	event: PRAUTOPILOT_REQUEST_EVENT,
 	schemaVersion: 1,
@@ -59,11 +56,6 @@ const channel = createRequestChannel<PrAutopilotPayload, AutopilotResult, 1>({
 		(!("repository" in value) || value.repository === undefined || isRepositoryName(value.repository)) &&
 		(!("signal" in value) || isOptionalAbortSignal(value.signal)),
 });
-
-/* exported: request-channel contract */
-export function isPrAutopilotRequest(value: BoundaryValue): value is PrAutopilotRequest {
-	return channel.isRequest(value);
-}
 
 export function claimPrAutopilotRequest(
 	value: BoundaryValue,

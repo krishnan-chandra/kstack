@@ -1,8 +1,7 @@
-/** Provider-neutral stack manifest parsing and immutable Git-fact verification. */
+/** Provider-neutral stack manifest types and immutable Git-fact verification. */
 
 import { commandDiagnostic, type ExecFn, runCommand } from "../git-exec.ts";
-import { isRecord } from "../narrow.ts";
-import { type BoundaryValue, isString, type JsonObject } from "../validation.ts";
+import { type BoundaryValue, isString } from "../validation.ts";
 
 export const MAX_STACK_SLICES = 50;
 const MAX_STACK_REF_CHARS = 240;
@@ -25,80 +24,15 @@ export interface StackManifest {
 	slices: readonly StackManifestSlice[];
 }
 
-type StackManifestParseResult = { ok: true; manifest: StackManifest } | { ok: false; error: string };
-
 export interface VerifiedStackManifest {
 	repositoryRoot: string;
 	manifest: StackManifest;
-}
-
-function exactKeys(value: JsonObject, expected: readonly string[]): boolean {
-	const actual = Object.keys(value).sort();
-	const sortedExpected = [...expected].sort();
-	return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
 }
 
 export function isSafeStackRef(value: BoundaryValue, owned = false): value is string {
 	if (!isString(value) || value.length === 0 || value.length > MAX_STACK_REF_CHARS) return false;
 	if (!(owned ? OWNED_STACK_REF_RE : SAFE_REF_RE).test(value)) return false;
 	return !value.includes("..") && !value.includes("//") && !value.endsWith(".") && !value.endsWith(".lock");
-}
-
-/** Parse bounded stack evidence. Providers still verify every field against local Git. */
-export function parseStackManifest(raw: string): StackManifestParseResult {
-	let value: BoundaryValue;
-	try {
-		value = JSON.parse(raw);
-	} catch {
-		return { ok: false, error: "Stack manifest is not valid JSON." };
-	}
-	if (!isRecord(value) || !exactKeys(value, ["schemaVersion", "trunkRef", "trunkSha", "slices"])) {
-		return { ok: false, error: "Stack manifest must contain only schemaVersion, trunkRef, trunkSha, and slices." };
-	}
-	if (value.schemaVersion !== 1 || !isSafeStackRef(value.trunkRef) || !STACK_SHA_RE.test(String(value.trunkSha))) {
-		return { ok: false, error: "Stack manifest has an unsupported schema or invalid trunk." };
-	}
-	if (!Array.isArray(value.slices) || value.slices.length === 0 || value.slices.length > MAX_STACK_SLICES) {
-		return { ok: false, error: `Stack manifest must contain 1-${MAX_STACK_SLICES} slices.` };
-	}
-	const slices: StackManifestSlice[] = [];
-	const seen = new Set<string>();
-	for (const candidate of value.slices) {
-		if (!isRecord(candidate) || !exactKeys(candidate, ["branch", "baseBranch", "headSha", "subject"])) {
-			return { ok: false, error: "Every stack slice must contain only branch, baseBranch, headSha, and subject." };
-		}
-		if (
-			!isSafeStackRef(candidate.branch, true) ||
-			!isSafeStackRef(candidate.baseBranch) ||
-			!STACK_SHA_RE.test(String(candidate.headSha)) ||
-			!isString(candidate.subject) ||
-			candidate.subject.trim().length === 0 ||
-			candidate.subject.length > MAX_STACK_SUBJECT_CHARS ||
-			/[\0\r\n]/.test(candidate.subject) ||
-			seen.has(candidate.branch)
-		) {
-			return { ok: false, error: "Stack manifest has invalid or duplicate slice fields." };
-		}
-		seen.add(candidate.branch);
-		slices.push({
-			branch: candidate.branch,
-			baseBranch: candidate.baseBranch,
-			headSha: String(candidate.headSha),
-			subject: candidate.subject,
-		});
-	}
-	if (slices[0].baseBranch !== value.trunkRef) {
-		return { ok: false, error: "The first stack slice must be based on trunk." };
-	}
-	for (let index = 1; index < slices.length; index++) {
-		if (slices[index].baseBranch !== slices[index - 1].branch) {
-			return { ok: false, error: "Stack manifest slices must form a linear base chain." };
-		}
-	}
-	return {
-		ok: true,
-		manifest: { schemaVersion: 1, trunkRef: value.trunkRef, trunkSha: String(value.trunkSha), slices },
-	};
 }
 
 /** Verify the immutable Git facts shared by manifest-based stack providers. */

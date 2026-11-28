@@ -1,11 +1,12 @@
 /** Pane allocation and agent startup for groups of hosted Pi agents (Herdr or Rex).
  *
- * `openAgentHost` owns a new background tab (or Rex window); `openPaneHost`
- * splits the caller's own pane and hosts the agents as siblings in the
- * caller's tab, which it never closes. Either way panes are retained by
- * default so the user can keep talking to the agents. The request lifecycle
- * lives in `./hosted-agent.ts`; multiplexer commands live behind
- * {@link TerminalBackend} in `./herdr/` and `./rex/`.
+ * `openAgentHost` owns a new background tab (or Rex window); `openPaneHostIn`
+ * splits the caller's own pane (or an anchor pane) in an already-preflighted
+ * terminal session and hosts the agents as siblings in the caller's tab, which
+ * it never closes. Either way panes are retained by default so the user can
+ * keep talking to the agents. The request lifecycle lives in `./hosted-agent.ts`;
+ * multiplexer commands live behind {@link TerminalBackend} in `./herdr/` and
+ * `./rex/`.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -16,13 +17,7 @@ import { type BackendDeps, connectTerminal, type TerminalSession } from "./backe
 import { systemClock } from "./clock.ts";
 import { sameCwd } from "./cwd.ts";
 import { errorText, type HostedAgent, HostedAgentImpl } from "./hosted-agent.ts";
-import {
-	type AgentPanePlacement,
-	type PaneSplitDecision,
-	type PaneSplitDirection,
-	paneSplitDecision,
-	placeAgent,
-} from "./layout.ts";
+import { type AgentPanePlacement, type PaneSplitDirection, placeAgent } from "./layout.ts";
 import {
 	type AgentSnapshot,
 	type BackendKind,
@@ -108,21 +103,10 @@ export async function openAgentHost(
 }
 
 /**
- * Create the host in a new split of the caller's pane (or `anchorPaneId` when
- * supplied) instead of a separate tab. When `direction` is set, `keepFraction`
- * controls the source pane's share and defaults to `0.5`. The caller's tab is
- * never closed by `dispose`, so hosted agents stay visible for steering.
- */
-export async function openPaneHost(options: PaneHostOptions, deps: HostDeps): Promise<OpenResult> {
-	const connected = await connectTerminal(deps);
-	if (!connected.ok) return connected;
-	return openPaneHostIn(connected.session, options, deps);
-}
-
-/**
- * {@link openPaneHost} for a caller that already holds a preflighted session.
- * Splits `options.anchorPaneId ?? session.caller.paneId` in `options.direction`
- * (keeping `options.keepFraction ?? 0.5`) or according to `paneSplitDecision`.
+ * Create a pane-hosted agent group in a preflighted terminal session by
+ * splitting `options.anchorPaneId ?? session.caller.paneId` in `options.direction`
+ * (keeping `options.keepFraction ?? 0.5`). The caller's tab is never closed by
+ * `dispose`, so hosted agents stay visible for steering.
  */
 export async function openPaneHostIn(
 	session: TerminalSession,
@@ -134,21 +118,14 @@ export async function openPaneHostIn(
 		return { ok: false, error: `maxAgents must be an integer from 1 to ${MAX_AGENTS_PER_HOST}.` };
 	}
 	const anchorPaneId = options.anchorPaneId ?? caller.paneId;
-	let decision: PaneSplitDecision;
-	if (options.direction) {
-		const ratio = options.keepFraction ?? 0.5;
-		if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) {
-			return { ok: false, error: "keepFraction must be between 0 and 1 (exclusive)." };
-		}
-		decision = { direction: options.direction, ratio };
-	} else {
-		const anchorLayout = await backend.paneGeometry(anchorPaneId);
-		decision = paneSplitDecision(anchorLayout.ok ? anchorLayout.value : { widthColumns: 240, heightRows: 60 });
+	const ratio = options.keepFraction ?? 0.5;
+	if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) {
+		return { ok: false, error: "keepFraction must be between 0 and 1 (exclusive)." };
 	}
 	const split = await backend.splitPane({
 		paneId: anchorPaneId,
-		direction: decision.direction,
-		keepFraction: decision.ratio,
+		direction: options.direction,
+		keepFraction: ratio,
 		cwd: options.cwd,
 	});
 	if (!split.ok) {
@@ -196,9 +173,9 @@ interface HostOptions {
 interface PaneHostOptions extends HostOptions {
 	/** Split this pane instead of the caller's pane (for example, a surviving council seat). */
 	anchorPaneId?: string;
-	/** Split the anchor pane this way instead of choosing from its geometry. */
-	direction?: PaneSplitDirection;
-	/** Source-pane share `(0, 1)` for the initial split when `direction` is set; defaults to `0.5`. */
+	/** Direction to split the anchor pane. */
+	direction: PaneSplitDirection;
+	/** Source-pane share `(0, 1)` for the initial split; defaults to `0.5`. */
 	keepFraction?: number;
 }
 

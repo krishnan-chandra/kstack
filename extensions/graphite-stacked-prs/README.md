@@ -1,20 +1,16 @@
 # graphite-stacked-prs
 
-Consolidated provider extension for Graphite stack validation, publication, and prefix landing.
+Provider extension for Graphite stack prefix landing through `/land`.
 
-In Graphite mode (`vcs.backend = "graphite"`), this extension claims the shared stack channels defined in [`extensions/shared/stack/`](../shared/stack/README.md):
+In Graphite mode (`vcs.backend = "graphite"`), this extension claims the shared stack landing channel defined in [`extensions/shared/stack/`](../shared/stack/README.md):
 
-- `kstack:stack:capabilities` (`provider: "graphite"`)
-- `kstack:stack:preflight` (`provider: "graphite"`)
-- `kstack:stack:publish` (`provider: "graphite"`)
 - `kstack:stack:land-through-pr` (`provider: "graphite"`)
 
-Graphite users drive stacked workflows through `/land`, stack publication, and native `gt`. This extension provides no standalone commands or tools.
+Graphite users drive stacked workflows through `/land` and native `gt`. This extension provides no standalone commands or tools.
 
 ## What it does
 
-- Validates local Graphite stack topology against immutable Git commits, Graphite trunk, and `gt submit --stack --dry-run` / `gt merge --dry-run` scope.
-- Enforces parent-owned publication by inspecting the provider-neutral private JSON stack manifest from [`shared/stack/manifest.ts`](../shared/stack/manifest.ts), revalidating every branch/headSha/diff against Git, and submitting through `gt submit --stack --draft --no-edit` from the shared [stack transaction](../shared/stack/README.md#stack-transaction): confirm, lock, re-plan, and submit only if the plan ID still matches.
+- Validates local Graphite stack topology against immutable Git commits, Graphite trunk, and `gt merge --dry-run` scope.
 - Lands complete Graphite stack prefixes through `/land --pr <number>`. Validates all predecessor PRs, runs PR autopilot readiness on every PR in the prefix before the shared [stack transaction](../shared/stack/README.md#stack-transaction) starts (an Autopilot fix publishes through Graphite, which takes the same lock), then dry-runs the native merge, confirms the landing plan with the user, acquires the publication lock, repeats the inspection and dry run, invokes native `gt merge` only if the plan ID still matches, verifies remote merge completion on GitHub for each PR, and synchronizes the local stack with `gt sync`.
 
 ## What it refuses

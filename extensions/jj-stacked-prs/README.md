@@ -124,18 +124,15 @@ publication. It may edit titles/bodies for the trusted PR map and recommend
 reviewers. It does not push, create PRs, repair bases, or update navigation
 comments.
 
-## Shared stack channels
+## Shared stack channel
 
-In jj mode (`vcs.backend = "jj"`), this extension claims the four shared stack
-provider channels defined in [`extensions/shared/stack/`](../shared/stack/README.md):
+In jj mode (`vcs.backend = "jj"`), this extension claims the shared stack
+landing channel defined in [`extensions/shared/stack/`](../shared/stack/README.md):
 
-- `kstack:stack:capabilities` (`provider: "jj"`)
-- `kstack:stack:preflight` (`provider: "jj"`)
-- `kstack:stack:publish` (`provider: "jj"`)
 - `kstack:stack:land-through-pr` (`provider: "jj"`)
 
-These channels allow stack publication and `/land --pr` to interoperate
-with Jujutsu stacks without direct extension-to-extension dependencies.
+This channel allows `/land --pr` to interoperate with Jujutsu stacks without
+direct extension-to-extension dependencies.
 
 Completed outcomes return a base-to-top PR map using the shared stack
 vocabulary in [`extensions/shared/stack/`](../shared/stack/README.md)

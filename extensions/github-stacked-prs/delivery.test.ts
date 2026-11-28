@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { ExecFn } from "../shared/git-exec.ts";
 import { GitHubError, type GitHubGateway, type OpenPullRequest } from "../shared/github.ts";
 import type { VerifiedStackManifest } from "../shared/stack/manifest.ts";
-import { planGitHubPublication, preflightGitHubStack, publishGitHubStack } from "./delivery.ts";
+import { planGitHubPublication, publishGitHubStack } from "./delivery.ts";
 
 const trunk = "a".repeat(40);
 const local = "b".repeat(40);
@@ -239,44 +239,6 @@ describe("GitHub publication transition traces", () => {
 });
 
 describe("GitHub stack publication", () => {
-	it("blocks a dirty tree during stack preflight", async () => {
-		const { exec } = execFixture({
-			"git --version": { stdout: "git version 2.38.0\n" },
-			"git status --porcelain=v1 --untracked-files=all": { stdout: " M existing.ts\n" },
-		});
-		const result = await preflightGitHubStack("/repo", "/tmp/manifest.json", exec, gateway());
-		assert.equal(result.ok, false);
-		assert.match(result.ok ? "" : result.error, /clean working tree/);
-	});
-
-	it("plan-only accepts a dirty tree and pins local trunk without fetching or a manifest", async () => {
-		const { exec, calls } = execFixture({
-			"git --version": { stdout: "git version 2.38.0\n" },
-			"git status --porcelain=v1 --untracked-files=all": { stdout: " M existing.ts\n" },
-			"git symbolic-ref refs/remotes/origin/HEAD": { code: 1 },
-		});
-		const result = await preflightGitHubStack("/repo", undefined, exec, gateway(), true);
-		assert.ok(result.ok);
-		assert.equal(result.trunkSha, trunk);
-		assert.equal(result.childPolicy, "");
-		assert.equal(
-			calls.some((call) => /git (fetch|push|checkout|switch|status)/.test(call)),
-			false,
-		);
-	});
-
-	it("fetches and pins the remote-tracking trunk during preflight", async () => {
-		const { exec, calls } = execFixture({
-			"git --version": { stdout: "git version 2.38.0\n" },
-			"git symbolic-ref refs/remotes/origin/HEAD": { code: 1 },
-			"git fetch origin +refs/heads/main:refs/remotes/origin/main": {},
-		});
-		const result = await preflightGitHubStack("/repo", "/tmp/manifest.json", exec, gateway());
-		assert.equal(result.ok, true);
-		assert.ok(calls.includes("git fetch origin +refs/heads/main:refs/remotes/origin/main"));
-		assert.equal(result.ok ? result.trunkRef : "", "refs/remotes/origin/main");
-	});
-
 	it("plans an exact leased republish for an existing PR", async () => {
 		const existing = { ...existingPr, headCommitId: remoteHead };
 		const { exec } = execFixture();

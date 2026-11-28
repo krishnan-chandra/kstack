@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { requestStackCapabilities, requestStackLanding, requestStackPublication } from "../shared/stack/channel.ts";
+import { requestStackLanding } from "../shared/stack/channel.ts";
 import type { BoundaryValue } from "../shared/validation.ts";
 import githubStackedPrsExtension, { renderOutcome } from "./index.ts";
 
@@ -139,43 +139,6 @@ describe("github-stacked-prs extension", () => {
 		}
 	});
 
-	it("emits the initial publishing status for the delegated publication path and clears it on failure", async () => {
-		const { pi } = mockPi();
-		const statuses: Array<{ key: string; value: string | undefined }> = [];
-		const ctx = {
-			cwd: process.cwd(),
-			hasUI: true,
-			waitForIdle: async () => {},
-			ui: {
-				setStatus: (key: string, value: string | undefined) => {
-					statuses.push({ key, value });
-				},
-				notify: () => {},
-				confirm: async () => true,
-			},
-		};
-
-		githubStackedPrsExtension(
-			/* SAFETY: Test double matches the ExtensionAPI subset used at registration. */ pi as never,
-		);
-
-		const result = await requestStackPublication(
-			/* SAFETY: Test double implements the request-channel event bus. */ pi as never,
-			{
-				provider: "github",
-				input: { repositoryPath: process.cwd(), manifestPath: "/nonexistent/manifest.json" },
-				ctx: /* SAFETY: Test double matches the ExtensionCommandContext subset. */ ctx as never,
-			},
-		);
-
-		assert.equal(result.handled, true);
-		if (result.handled) assert.equal(result.outcome.status, "blocked");
-		assert.deepEqual(statuses, [
-			{ key: "gh-stack", value: "gh-stack: publishing" },
-			{ key: "gh-stack", value: undefined },
-		]);
-	});
-
 	it("emits the initial landing status for the delegated landing path and clears it on failure", async () => {
 		const { pi } = mockPi();
 		const statuses: Array<{ key: string; value: string | undefined }> = [];
@@ -223,19 +186,11 @@ describe("github-stacked-prs extension", () => {
 		]);
 	});
 
-	it("claims GitHub capabilities and registers its one command/tool pair", async () => {
+	it("registers its one command/tool pair", () => {
 		const { pi, commands, tools } = mockPi();
 		githubStackedPrsExtension(
 			/* SAFETY: Test double matches the ExtensionAPI subset used at registration. */ pi as never,
 		);
-		const result = await requestStackCapabilities(
-			/* SAFETY: Test double implements the request-channel event bus. */ pi as never,
-			"github",
-		);
-		assert.deepEqual(result, {
-			handled: true,
-			outcome: { schemaVersion: 1, publication: true, commands: ["publish"], tools: ["gh_stack_publish"] },
-		});
 		assert.deepEqual(commands, ["gh-stack"]);
 		assert.deepEqual(tools, ["gh_stack_publish"]);
 	});
